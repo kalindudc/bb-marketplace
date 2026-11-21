@@ -126,6 +126,7 @@ export const executionPostureSchema = z.object({
   aggregate: z.enum(["local-pre-exec", "local-detection-only", "remote-detection-only"]),
   guard: z.enum(["unavailable", "prepared", "armed", "failed"]),
   toolGate: z.enum(["pi-observed", "not-established"]),
+  clusterWrites: z.boolean().optional(),
   filesystem: z.enum(["macos-sandbox", "none", "not-established"]),
   network: z.enum(["macos-check-deny", "not-enforced", "not-established"]),
   checker: z.enum(["not-a-checker", "contained", "pre-exec-no-containment", "detection-only-no-containment"]),

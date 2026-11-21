@@ -1,8 +1,9 @@
 import { memberHost } from "./member-engagement";
 import { wasReleased } from "../shared/member-engagement";
+import type { ActGrant } from "../scope/act-grants";
 import { existsSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   registerScopes,
@@ -114,6 +115,36 @@ export class BackendScopes {
       onActObservation: (observation) => this.observeAct(observation),
       onShellGrantUsed: (threadId, id) => { this.recordGrantUse(threadId, id); this.syncGrants(threadId); },
     });
+  }
+  private clusterHost(threadId: string) {
+    const { deliveries, host } = this.runtime.placements();
+    const row = this.api.status().threads.find(row => row.threadId === threadId);
+    if (row?.hostScope !== "acknowledged") return null;
+    const state = deliveries.forThread(threadId);
+    if (state?.kind !== "ready") return null;
+    const { hostId, cwd: _cwd, ...binding } = state.expected;
+    return { host, hostId, input: { ...binding, operationId: randomUUID() } };
+  }
+  async clusterGuardArmed(threadId: string) {
+    if (this.api.clusterGuardArmed(threadId)) return true;
+    const remote = this.clusterHost(threadId);
+    if (!remote) return false;
+    try { return (await remote.host.call(remote.hostId, "sessionStatus", remote.input)).clusterWrites === true; }
+    catch { return false; }
+  }
+  async revokeClusterGrant(threadId: string, askId: string) {
+    const { store, deliveries, host } = this.runtime.placements();
+    const placement = store.byMember(threadId);
+    if (!placement) return this.api.revokeClusterGrant(threadId, askId);
+    const record = deliveries.get(placement.id);
+    if (!record || record.memberThreadId !== threadId) return;
+    const { hostId, placementId, generation, endpointId } = record.binding;
+    await host.call(hostId, "revokeClusterGrant", { placementId, generation, endpointId, operationId: randomUUID(), askId });
+  }
+  async issueClusterGrant(grant: ActGrant) {
+    const remote = this.clusterHost(grant.threadId);
+    if (!remote) return this.api.issueClusterGrant(grant);
+    await remote.host.call(remote.hostId, "issueClusterGrant", { ...remote.input, grant });
   }
   private pullRequestPolicy(threadId: string) {
     const k = this.runtime.keeper, member = k.member(threadId);
@@ -944,6 +975,13 @@ export class BackendScopes {
     const grants = [...new Map([...store.issuedShellGrants("memberThreadId", threadId), ...latestGrants].map(grant => [grant.id, grant])).values()];
     const available = grants.some(grant => grant.state === "issued") && status.mode === "enforce" && local && shellGrantCapable(local.file, local.scope)
       ? new Set(readShellGrants(local.file, local.scope).map(grant => grant.id)) : null;
+    const placement = row.binding?.placementId && this.runtime.placements().store.get(row.binding.placementId);
+    const guarded = !row.error && (this.api.clusterGuardArmed(threadId) || placement && placement.posture.clusterWrites && row.hostScope === "acknowledged");
+    const legacy = !row.error && (row.armed || placement && placement.posture.toolGate === "pi-observed");
+    const prepared = !row.error && member?.role === "member" && guardPosture?.mode !== "detection-only" &&
+      this.runtime.keeper.store.runtime(threadId).clusterSessionPending === true &&
+      (status.guard.installed && !status.guard.stale && !row.binding || placement && placement.posture.guard === "prepared");
+    const clusterGuard = guarded ? "armed" as const : legacy ? "restart" as const : prepared ? "ready" as const : "not-prevented" as const;
     return row
       ? {
           threadId,
@@ -955,9 +993,10 @@ export class BackendScopes {
           shellGrants: grants.map(grant => ({
             ...grant, usable: grant.state === "issued" && (available?.has(grant.id) ?? false),
           })),
-          ...(guardPosture ? { guardPosture } : {}),
+          ...(guardPosture ? { guardPosture: { ...guardPosture, label: clusterGuard === "armed" ? guardPosture.label : `${guardPosture.label}; ${clusterGuard === "ready" ? "Ready for the member's next session" : clusterGuard === "restart" ? "restart needed: cluster writes not prevented" : "cluster writes not prevented"}` } } : {}),
           error: row.error ?? null,
           armed: row.armed,
+          clusterGuard,
           pendingAskId:
             this.runtime.keeper.store.runtime(threadId).scopePending ?? null,
         }

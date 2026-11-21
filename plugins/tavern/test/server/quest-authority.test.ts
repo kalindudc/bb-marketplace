@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { seedQuest, planInput } from "./support";
 import { QuestAuthority } from "../../src/server/quest-authority";
@@ -108,7 +108,58 @@ it("keeps the full compound command and each distinct target on a cluster write 
   expect(ask.target?.command).toBe(command);
   expect(ask.clusterTargets).toEqual([{ context: "demo", namespace: "tools" }, { context: "other", namespace: "apps" }]);
   expect(() => f.k.ask("lead", { ...input, kind: "production" })).toThrow(/Use kind cluster-write/);
+  const remote = "ssh fixture 'kubectl --context demo apply -f sample.yaml'";
+  expect(f.k.ask("lead", { ...input, target: { command: remote } })).toMatchObject({ target: { command: remote }, clusterTargets: [{ context: "demo" }] });
   expect(() => f.k.ask("lead", { ...input, target: { command: "kubectl apply 'unterminated" } })).toThrow(/unterminated single quote.*send the literal command/i);
+});
+it("records approval separately from the confirmation that permits one run", async () => {
+  const f = await fixture();
+  const command = "kubectl --context demo apply -f sample.yaml";
+  const ask = f.k.ask("lead", { ...request(f.q.id), kind: "cluster-write", target: { command }, change: "Update the fixture." });
+  const answer = requireUserAct(client, "answerAsk");
+  expect(ask.runThreadId).toBe("lead");
+  expect(() => f.k.answerAsk(ask.id, "confirm-run", null, "page", "user", "page (client, unattested)", {}, answer)).toThrow(/Approve/);
+  f.k.answerAsk(ask.id, "approve", null, "page", "user", "page (client, unattested)", {}, answer);
+  expect(f.k.store.get("asks", ask.id)).toMatchObject({ state: "open", clusterApproval: { via: "page", surface: "page (client, unattested)" }, answer: null });
+  f.k.answerAsk(ask.id, "confirm-run", null, "banner", "user", "banner (client, unattested)", {}, answer);
+  expect(f.k.store.get("asks", ask.id)).toMatchObject({ state: "answered", answer: { optionId: "confirm-run", via: "banner", surface: "banner (client, unattested)" } });
+});
+it("issues a single grant after confirmation, wakes the Keeper and refuses a detection-only thread", async () => {
+  const f = await fixture();
+  const ask = f.k.ask("lead", { ...request(f.q.id), kind: "cluster-write", target: { command: "kubectl apply -f sample.yaml" }, change: "Update the fixture." });
+  const receipt = requireUserAct(client, "answerAsk");
+  const answer = (option: string) => f.runtime.answerAsk(ask.id, option, null, "page", true, "client (unattested)", receipt);
+  await expect(answer("approve")).rejects.toThrow(/cannot be guarded/);
+  const issue = vi.fn(async () => {});
+  f.runtime.scopes = { clusterGuardArmed: async () => true, issueClusterGrant: issue } as never;
+  const wake = vi.spyOn(f.runtime, "wakeKeeper").mockResolvedValue();
+  await answer("approve");
+  expect(issue).not.toHaveBeenCalled(); expect(wake).not.toHaveBeenCalled();
+  await Promise.all([answer("confirm-run"), answer("confirm-run")]);
+  expect(issue).toHaveBeenCalledTimes(1);
+  expect(wake).toHaveBeenCalledWith("lead", "confirmed cluster write");
+  expect(issue.mock.calls[0]).toEqual([expect.objectContaining({ threadId: "lead", scope: "once", askId: ask.id, expiresAt: f.time() + 900_000 })]);
+  const revoke = vi.fn<() => Promise<void>>(async () => { throw new Error("Host not reachable"); });
+  Object.assign(f.runtime.scopes!, { revokeClusterGrant: revoke });
+  const close = vi.fn();
+  await expect(f.runtime.closeAfterRevokingClusterGrants(close)).rejects.toThrow(/wait for the grant to expire/i);
+  expect(close).not.toHaveBeenCalled();
+  revoke.mockResolvedValueOnce(undefined);
+  await f.runtime.closeAfterRevokingClusterGrants(close);
+  expect(revoke).toHaveBeenCalledWith("lead", ask.id);
+  expect(close).toHaveBeenCalledTimes(1);
+});
+it("tells the Keeper about a failed cluster grant delivery", async () => {
+  const f = await fixture();
+  const ask = f.k.ask("lead", { ...request(f.q.id), kind: "cluster-write", target: { command: "kubectl apply -f sample.yaml" }, change: "Update the fixture." });
+  const receipt = requireUserAct(client, "answerAsk");
+  const answer = (option: string) => f.runtime.answerAsk(ask.id, option, null, "page", true, "client (unattested)", receipt);
+  f.runtime.scopes = { clusterGuardArmed: async () => true, issueClusterGrant: async () => { throw new Error("Fixture host unavailable"); } } as never;
+  const wake = vi.spyOn(f.runtime, "wakeKeeper").mockResolvedValue();
+  await answer("approve");
+  await expect(answer("confirm-run")).resolves.toMatchObject({ clusterGrantError: expect.stringContaining("Fixture host unavailable") });
+  expect(f.k.store.events().find(e => e.type === "ask.cluster-run-failed")).toMatchObject({ data: { askId: ask.id, reason: "Fixture host unavailable" } });
+  expect(wake).toHaveBeenCalledWith("lead", "cluster grant delivery failed");
 });
 it("rejects non-client callers and missing receipts", async () => {
   const f = await fixture();

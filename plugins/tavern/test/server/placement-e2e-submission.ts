@@ -61,6 +61,10 @@ export async function submissionFixture(format: "sha1" | "sha256" = "sha1") {
     else if (call.method === "registerTransfer") result = registry.registerTransfer(hostContract.registerTransfer.input.parse(call.input));
     else if (call.method === "pushedBase") result = await pushedBase(registry, hostContract.pushedBase.input.parse(call.input), call.signal);
     else if (call.method === "snapshotWorktree") result = await snapshotWorktree(registry, hostContract.snapshotWorktree.input.parse(call.input), call.signal);
+    else if (call.method === "sessionStatus") {
+      const { revision, scopeDigest } = hostContract.sessionStatus.input.parse(call.input);
+      result = hostContract.sessionStatus.output.parse({ state: "armed", revision, scopeDigest, clusterWrites: true });
+    }
     else {
       const transport = createTransport(registry), method = call.method as keyof typeof transport;
       if (!(method in transport)) throw new Error("Unexpected method " + call.method);

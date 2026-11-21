@@ -9,6 +9,7 @@ import { prepareCall } from "./prepare";
 import { bindChecks } from "./checker";
 import { bindWorktree, checkedWorktreeRoot, gitWorktreeRoot, needsWorktree, readerFallback } from "./worktree";
 
+import { matchesActReceipt, observedActReceipt } from "./act-grants";
 import { claimPullRequestGrant, observedPullRequestReceipt, pullRequestGrantAvailable } from "./pr-grants";
 import { forgetShellGrantCall, checkShellGrantReceipt, hasShellGrantGuard, readShellGrants } from "./shell-grants";
 
@@ -222,12 +223,13 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
         if (remote?.kind === "ready") {
           if (providerId === "pi" ? row.type !== "item/completed" : row.type !== "item/started") { advance(); continue; }
           const expected = identity(remote);
+          const clusterObservation = providerId === "pi" ? observedActReceipt(item) : undefined;
           let violation: Violation | undefined;
           for (const rawCall of rawCalls) {
             const before = lookup(threadId);
             if (before?.kind !== "ready" || !sameBinding(identity(before), expected)) { await hold(threadId, providerId, row.id, row.seq, "The remote assignment changed before inspection; keep the event pending until the Keeper reconciles its current binding.", expected); return; }
             let reply: HostOutput<"prepareCall">;
-            try { reply = hostContract.prepareCall.output.parse(await before.prepare({ ...rawCall, cwd: rawCall.cwd || before.cwd, observationId: observedPullRequestReceipt(item) ?? row.id })); }
+            try { reply = hostContract.prepareCall.output.parse(await before.prepare({ ...rawCall, cwd: rawCall.cwd || before.cwd, observationId: observedPullRequestReceipt(item) ?? row.id, ...(clusterObservation === undefined ? {} : { clusterObservation }) })); }
             catch { await hold(threadId, providerId, row.id, row.seq, "Remote scope inspection is unavailable or returned an invalid reply; reconnect or update the host worker before retrying this event.", expected); return; }
             const after = lookup(threadId);
             if (disposed || store.records.get(threadId) !== record || after?.kind !== "ready" || !sameBinding(identity(after), expected) || reply.scopeRevision !== expected.revision || reply.scopeDigest !== expected.scopeDigest) {
@@ -295,7 +297,9 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
             const local = { ...call, containment: providerId === "pi" && process.platform === "darwin" && scope.sandbox ? "sandbox" as const : undefined };
             const id = observedPullRequestReceipt(item) ?? row.id;
             const prepared = prepareCall(local, { scope });
-            decision = evaluate(scope, { ...prepared, shellGrants: modeFor(threadId) === "watch" && providerId === "pi" && !record.binding ? readShellGrants(record.file, scope) : undefined, prGrantAvailable: grant => pullRequestGrantAvailable(record.file, grant, id) },
+            const receipt = providerId === "pi" ? observedActReceipt(item) : undefined;
+            const clusterWriteApproved = matchesActReceipt(record.file, threadId, "cluster-write", prepared.input.command ?? prepared.input.cmd, receipt);
+            decision = evaluate(scope, { ...prepared, clusterWriteApproved, ...(clusterWriteApproved ? { clusterObservation: receipt } : {}), shellGrants: modeFor(threadId) === "watch" && providerId === "pi" && !record.binding ? readShellGrants(record.file, scope) : undefined, prGrantAvailable: grant => pullRequestGrantAvailable(record.file, grant, id) },
               providerId === "pi" && modeFor(threadId) === "enforce" && scope.role === "wanderer" && scope.preset === "open" && !hasShellGrantGuard(record.file, scope));
             if (decision.allow && decision.prGrant && !claimPullRequestGrant(record.file, decision.prGrant, id) && !pullRequestGrantAvailable(record.file, decision.prGrant, id))
               decision = blocked(call.toolName, "pr-sends-as-you", "the one-use pull request exception was already used");

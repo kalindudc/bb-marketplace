@@ -12,7 +12,7 @@ import { draftEditKey, githubApiRead } from "./github";
 import { prCommandDigest, pullRequestOwned } from "./pr-policy";
 import { commandWritePaths, knownWritePaths, ruleMatches, shellCommands, type ShellCommand } from "./shell";
 
-export interface ScopeCall { containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; shellGrants?: readonly ShellGrantProjection[]; prGrantAvailable?(id: string): boolean }
+export interface ScopeCall { clusterWriteApproved?: boolean; clusterObservation?: string; containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; shellGrants?: readonly ShellGrantProjection[]; prGrantAvailable?(id: string): boolean }
 export type Decision = { allow: true; check?: boolean; acts?: Act[]; prGrant?: string; shellGrant?: string } | { allow: false; ruleId: string; reason: string; act?: ActKind };
 const allowed: Decision = { allow: true };
 export const BLOCK_MARKER = "[Tavern scope blocked]";
@@ -81,16 +81,37 @@ export function temporaryRoot(scope: Scope): string | undefined {
   })) return;
   return root;
 }
+export function clusterWriteBlock(source: string, closing = false, role?: string) {
+  const action = role === "keeper"
+    ? "Ask with tavern_ask, kind cluster-write: give the exact command, context, namespace, what changes and how to undo it."
+    : "Tell your Keeper the exact command, context, namespace, what changes and how to undo it. The Keeper asks the user to approve it for this thread.";
+  return { allow: false as const, ruleId: closing ? "closing-act" : "cluster-write", reason: `${BLOCK_MARKER} Blocked ${source.slice(0, 2000)}: ${closing ? "Closing time: cluster writes wait for your return. " : ""}Cluster writes always need the user's approval and confirmation for the exact command. ${action} Carry on with other work meanwhile.` };
+}
+export function clusterWriteCommands(source: string, cwd: string, depth = 0): ShellCommand[] {
+  if (depth >= 16) throw new Error("nested shell commands exceed the guard's inspection limit");
+  return shellCommands(source, cwd).flatMap(command => [
+    ...(actsForCommand(command).some(act => act.kind === "cluster-write") ? [command] : []),
+    ...nestedCommands(command).flatMap(nested => clusterWriteCommands(nested, command.cwd, depth + 1)),
+  ]);
+}
+export function hasClusterWrite(source: string, cwd: string): boolean {
+  try { return clusterWriteCommands(source, cwd).length > 0; }
+  catch { return fallbackActs(source).some(act => act.kind === "cluster-write"); }
+}
 export function authorityDecision(scope: Scope, call: ScopeCall): Decision | undefined {
   if (scope.role !== "keeper" && ["spawn", "bb_workflow_run"].includes(call.toolName)) return { allow: false, ruleId: "member-spawn", reason: "Members don't start threads; ask your Keeper to hire." };
   const source = call.input.command ?? call.input.cmd;
   if (typeof source !== "string") return;
+  const closing = !call.clusterObservation && scope.shell.deny.some(rule => rule.id.startsWith("away:") || rule.id === "cluster-write-while-away");
   let commands: ShellCommand[];
   try { commands = shellCommands(source, call.cwd); } catch {
-    if (fallbackActs(source).some(act => act.kind === "tavern-control")) return { allow: false, ruleId: "tavern-control", reason: "Tavern's controls are the user's; ask the user." };
+    const acts = fallbackActs(source);
+    if ((closing || !call.clusterWriteApproved) && acts.some(act => act.kind === "cluster-write")) return clusterWriteBlock(source, closing, scope.role);
+    if (acts.some(act => act.kind === "tavern-control")) return { allow: false, ruleId: "tavern-control", reason: "Tavern's controls are the user's; ask the user." };
     return;
   }
   for (const command of commands) {
+    if ((closing || !call.clusterWriteApproved) && actsForCommand(command).some(act => act.kind === "cluster-write")) return clusterWriteBlock(source, closing, scope.role);
     if (userControl(command)) return { allow: false, ruleId: "tavern-control", reason: "Tavern's controls are the user's; ask the user." };
     const words = bbPositionals(command.argv);
     if (scope.role !== "keeper" && words[0] === "bb" && words[1] === "thread") {
@@ -99,11 +120,15 @@ export function authorityDecision(scope: Scope, call: ScopeCall): Decision | und
     }
     for (const source of nestedCommands(command)) {
       const decision = authorityDecision(scope, { ...call, input: { command: source } });
-      if (decision) return decision;
+      if (decision) return !decision.allow && ["cluster-write", "closing-act"].includes(decision.ruleId) ? clusterWriteBlock(String(call.input.command ?? call.input.cmd), decision.ruleId === "closing-act", scope.role) : decision;
     }
   }
 }
 export function evaluate(scope: Scope, call: ScopeCall, legacyWanderer = false): Decision {
+  return evaluateShell(scope, call, legacyWanderer, false);
+}
+
+function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, remote: boolean): Decision {
   const olderOpenBaseline = legacyWanderer && scope.role === "wanderer" && scope.preset === "open";
   const authority = authorityDecision(scope, call);
   if (authority) return authority;
@@ -131,7 +156,7 @@ export function evaluate(scope: Scope, call: ScopeCall, legacyWanderer = false):
     if (refused) return closingAct(scope, refused, source)
       ? blocked("shell command", "closing-act", "Closing time: " + refused.kind + " waits for your return")
       : blockedAct(source, refused, refused.kind === "deploy" ? "deploy-fallback" : refused.ruleId);
-    if (scope.preset === "open") return acts.length ? { allow: true, acts } : allowed;
+    if (remote || scope.preset === "open") return acts.length ? { allow: true, acts } : allowed;
     for (const rule of scope.shell.deny) if (rule.regex && new RegExp(rule.regex).test(source)) return blocked("shell command", rule.id, rule.why);
     if (contained) return allowed;
     return blocked("shell command", "shell-parse", "unsupported shell syntax cannot be checked safely");
@@ -143,11 +168,11 @@ export function evaluate(scope: Scope, call: ScopeCall, legacyWanderer = false):
   const observed: Act[] = [];
   for (const command of commands) {
     for (const source of nestedCommands(command)) {
-      const result = evaluate(scope, { ...call, input: { command: source }, cwd: command.cwd, prGrantAvailable: undefined, shellGrants: undefined }, legacyWanderer);
+      const result = evaluateShell(scope, { ...call, input: { command: source }, cwd: command.cwd, prGrantAvailable: undefined, shellGrants: undefined }, legacyWanderer, remote || command.argv[0] === "ssh");
       if (!result.allow) return result;
       observed.push(...result.acts ?? []);
     }
-    const read = (contained ? containmentRead : readonlyProgram)(command), check = checkInvocation(scope, command, source, read);
+    const read = (contained ? containmentRead : readonlyProgram)(command), check = !remote && checkInvocation(scope, command, source, read);
     if (check) {
       const root = scope.checks?.worktree, location = call.resolvedPaths?.[normalizeToolPath(command.cwd, call.cwd)] ?? command.cwd;
       if (!root?.startsWith("/") || root === "/" || root === scope.env.variables.HOME || !within(location, root) || command.uncertain) return blocked(command.text, "checker-worktree", "checks must run in the trusted maker worktree; ask the Keeper to bind checks.worktree or use that directory");
@@ -176,14 +201,18 @@ export function evaluate(scope: Scope, call: ScopeCall, legacyWanderer = false):
       }
       if (prException) prGrant = prException.id;
     }
-    for (const act of route && !smithOwned ? [route] : scope.pullRequestPolicy?.alwaysAsk === false && route?.kind === "send" ? [route] : actsForCommand(command)) {
+    const commandActs = route && !smithOwned ? [route] : scope.pullRequestPolicy?.alwaysAsk === false && route?.kind === "send" ? [route] : actsForCommand(command);
+    const approvedClusterWrite = call.clusterWriteApproved && commandActs.some(act => act.kind === "cluster-write");
+    for (const act of commandActs) {
       observed.push(act);
-      if (closingAct(scope, act, command)) return blocked(command.text, "closing-act", "Closing time: " + act.kind + " waits for your return");
-      if (!olderOpenBaseline && !baselineHolds(scope, call, command, act) && !excepted(act.ruleId)) {
+      const isApprovedClusterAct = approvedClusterWrite && act.kind === "cluster-write";
+      if (!(isApprovedClusterAct && call.clusterObservation) && closingAct(scope, act, command)) return blocked(command.text, "closing-act", "Closing time: " + act.kind + " waits for your return");
+      if (!isApprovedClusterAct && !olderOpenBaseline && !baselineHolds(scope, call, command, act) && !excepted(act.ruleId)) {
         if (!matchesGrant(act)) return blockedAct(source, act);
         shellGrant = grant!.id;
       }
     }
+    if (remote) continue;
     for (const rule of scope.shell.deny) if (!isCatalogueRule(rule) && ruleMatches(rule, command) && !excepted(rule.id)) return blocked(command.text, rule.id, rule.why);
     const paths = commandWritePaths(command);
     if (scope.preset !== "open" && command.gitEnvironment) return blocked(command.text, "git-environment", "GIT_DIR and GIT_WORK_TREE can redirect writes outside the bound checkout");
@@ -202,7 +231,7 @@ export function evaluate(scope: Scope, call: ScopeCall, legacyWanderer = false):
     if (contained && scope.writes.mode === "none" && !shellGrant && readerNeedsDecision(command)) return blocked(command.text, "legacy-act", "this consequential command requires a scope decision");
     if (scope.writes.mode === "none" && !contained) {
       const knownWriter = ["tee", "mkdir", "cp", "mv", "touch", "rm", "rmdir"].includes(program) && knownWritePaths(argv).length > 0;
-      if (!read && !check && !knownWriter && !shellGrant) return blocked(command.text, "readonly-shell", "this scope permits inspected read programs, not arbitrary programs or opaque shell input");
+      if (!read && !check && !knownWriter && !shellGrant && !approvedClusterWrite) return blocked(command.text, "readonly-shell", "this scope permits inspected read programs, not arbitrary programs or opaque shell input");
     }
   }
   return { allow: true, ...(checking ? { check: true } : {}), ...(observed.length ? { acts: observed } : {}), ...(prGrant ? { prGrant } : {}), ...(shellGrant ? { shellGrant } : {}) };

@@ -9,12 +9,12 @@ import { readyFixture, readyGit, deliverGate, readyGate } from "./placement-e2e-
 
 it("binds the SDK host and environment, carries the tree, and acknowledges the exact scope in one member batch", readyGate, 60_000);
 it("retains an unmarked extension and admits readiness with a visible guard warning", deliverGate, 60_000);
-it("shares concurrent calls and returns the same completed result without new native work", async () => {
+it("shares concurrent calls and rechecks the completed setup without replaying it", async () => {
   const f = await readyFixture(), ready = f.make();
   const first = ready.forThread("member"), second = ready.forThread("member"); expect(second).toBe(first);
   const result = await first, calls = f.harness.experimental_hostRpcCalls.length;
   expect(await ready.forThread("member")).toBe(result); expect(await f.make().forThread("member")).toBe(result);
-  expect(f.harness.experimental_hostRpcCalls.slice(calls).map(call => call.method)).toEqual(["inspect", "inspect"]);
+  expect(f.harness.experimental_hostRpcCalls.slice(calls).map(call => call.method)).toEqual(["inspect", "sessionStatus", "inspect", "sessionStatus"]);
 }, 60_000);
 it("refuses an unplaced caller without any native work", async () => {
   const f = await readyFixture(); expect(await f.make().forThread("unplaced")).toBe("This member was not placed by a machine rule; nothing to set up.");

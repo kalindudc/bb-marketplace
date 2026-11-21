@@ -68,6 +68,22 @@ it("shows the rest duration and keep reason in the Member panel", async () => {
   const slot = await panel({ ...memberPanelDecor, member: { ...memberPanelDecor.member!, restNote } });
   expect(slot.getByText(restNote)).toBeTruthy();
 });
+it("shows that a new member's cluster guard will arm on its next session", async () => {
+  const slot = await panel({ ...memberPanelDecor, scope: { ...memberPanelDecor.scope!, clusterGuard: "ready" } });
+  expect(slot.getByText("Ready for the member's next session")).toBeTruthy();
+});
+it.each(["armed", "restart"] as const)("shows only exceptional Keeper cluster posture (%s)", async clusterGuard => {
+  const decor = { ...fixtureDecor, characters: false, scope: { ...memberPanelDecor.scope!, clusterGuard } };
+  const slot = renderSlot({ component: ThreadWidget }, { threadId: decor.threadId }, { rpc: { decor: () => decor, registry: () => fixtureRegistry } });
+  try {
+    await slot.findByRole("button", { name: /Open the Keeper’s ledger/ });
+    expect(slot.queryByText("Cluster writes require confirmation")).toBeNull();
+    const warning = slot.queryByText("restart needed: cluster writes not prevented");
+    expect(!!warning).toBe(clusterGuard === "restart");
+    if (process.env.TAVERN_G1BN_HARNESS === "1" && warning)
+      process.stdout.write("G1BN_HARNESS=" + JSON.stringify(slot.container.innerHTML) + "\n");
+  } finally { slot.lifecycle.unmount(); }
+});
 it("draws identity chips, a glance card and collapsed counted sections", async () => {
   const slot = await panel();
   expect(slot.container.querySelector('[data-part="MemberIdentity"].chips')).not.toBeNull();

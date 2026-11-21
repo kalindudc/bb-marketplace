@@ -17,6 +17,8 @@ export const NEWS = new Set([
   "member.briefed",
   "member.brief-refused",
   "ask.answered",
+  "ask.cluster-run-ready",
+  "ask.cluster-run-failed",
   "ask.defaulted",
   "route.corrected",
   "route.missed",
@@ -52,6 +54,7 @@ export const NEWS = new Set([
 export function isNewsEvent(event: Pick<TavernEvent, "type" | "actor" | "data">, keeperId: string) {
   return (
     NEWS.has(event.type) &&
+    !(event.type === "ask.answered" && event.data.optionId === "confirm-run") &&
     !(event.actor.kind === "agent" && event.actor.threadId === keeperId) &&
     !(event.type === "thread.archived" && event.data.keeperArchiveRequested === true)
   );
@@ -65,5 +68,6 @@ export const WAKE_NEWS = new Set(["handback.resolved", "report.filed", "member.h
 
 /** Whether one event should wake this Keeper now (a hire it made itself does not need to wake it). */
 export function isWakeEvent(event: Pick<TavernEvent, "type" | "actor" | "data">, keeperId: string) {
+  if (event.type === "ask.answered" && event.data.optionId === "confirm-run") return false;
   return WAKE_NEWS.has(event.type) && !(event.actor.kind === "agent" && event.actor.threadId === keeperId);
 }

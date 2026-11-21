@@ -47,6 +47,26 @@ function guarded(file: string, cwd: string) {
   guard(pi);
   return { emit: (name: string, event = {}) => handlers.get(name)?.(event, { cwd }), tools: () => active };
 }
+it("issues only to an armed native cluster guard and revokes an outstanding grant", async () => {
+  const f = await fixture();
+  const input = f.input();
+  const ack = await f.service.bindScope(input);
+  const status = { ...f.authority, revision: ack.revision, scopeDigest: ack.scopeDigest };
+  const command = "kubectl apply -f sample.yaml", now = Date.now();
+  const grant = { threadId: "member", act: "cluster-write", targetDigest: digest(command), target: command, scope: "once" as const, askId: "ask-1", issuedAt: now, expiresAt: now + 60_000, usedAt: null };
+  await expect(f.service.issueClusterGrant({ ...status, grant })).rejects.toThrow(/not prevented/);
+  const pi = guarded(ack.scopeFile, f.repo);
+  pi.emit("session_start");
+  expect(await f.service.sessionStatus(status)).toMatchObject({ state: "armed", clusterWrites: true });
+  await expect(f.service.issueClusterGrant({ ...status, grant: { ...grant, threadId: "wrong" } })).rejects.toThrow(/does not match/);
+  await expect(f.service.issueClusterGrant({ ...status, grant })).resolves.toEqual({ issued: true });
+  const call = () => pi.emit("tool_call", { toolName: "bash", toolCallId: "act-1", input: { command } });
+  expect(call()).toBeUndefined();
+  expect(call()).toMatchObject({ block: true });
+  await f.service.issueClusterGrant({ ...status, grant: { ...grant, askId: "ask-2" } });
+  expect(f.service.revokeClusterGrant({ ...f.authority, askId: "ask-2" })).toMatchObject({ revoked: true });
+  expect(call()).toMatchObject({ block: true });
+});
 it("requires native variables in bind ACKs and rejects routing/thread overrides", () => {
   const value = { revision: 1, scopeDigest: "a".repeat(64), scopeFile: "/native/scope.json" };
   expect(hostContract.bindScope.output.safeParse(value).success).toBe(false);
@@ -126,11 +146,16 @@ it("does not publish a scope or ACK after cancellation during repository validat
 });
 it("release fences an in-flight bind, removes only owned files and is idempotent after revoke/root loss", async () => {
   const f = await fixture(), first = await f.service.bindScope(f.input()); let entered!: () => void, resume!: () => void;
+  writeFileSync(first.scopeFile + ".grants", "{}");
+  mkdirSync(first.scopeFile + ".act-grants");
+  writeFileSync(join(first.scopeFile + ".act-grants", "fixture.json"), "{}");
   const waiting = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { resume = resolve; }), original = context.assertRepository;
   vi.spyOn(context, "assertRepository").mockImplementation(async ctx => { entered(); await gate; await original(ctx); });
   const binding = f.service.bindScope(f.input(f.delivery, 2)); const rejected = expect(binding).rejects.toThrow(/released|cancel/i); await waiting;
   expect(await f.service.releaseScope(f.authority)).toEqual({ released: true }); resume(); await rejected;
   expect(existsSync(first.scopeFile)).toBe(false);
+  expect(existsSync(first.scopeFile + ".grants")).toBe(false);
+  expect(existsSync(first.scopeFile + ".act-grants")).toBe(false);
   f.registry.revokePlacement({ placementId: "placement", generation: 1, reason: "released" }); rmSync(f.repo, { recursive: true });
   expect(await f.service.releaseScope(f.authority)).toEqual({ released: true });
 });
@@ -256,7 +281,7 @@ it("native session status distinguishes delivered policy from a real guard-loade
   expect(await f.service.sessionStatus(input)).toMatchObject({ state: "not-observed" });
   const pi = guarded(ack.scopeFile, f.repo); pi.emit("session_start");
   expect(pi.tools()).toContain("private_tool"); expect(pi.emit("tool_call", { toolName: "read", input: { path: "tracked" } })).toBeUndefined();
-  expect(await f.service.sessionStatus(input)).toEqual({ state: "armed", revision: 1, scopeDigest: ack.scopeDigest });
+  expect(await f.service.sessionStatus(input)).toEqual({ state: "armed", revision: 1, scopeDigest: ack.scopeDigest, clusterWrites: true });
   const marker = JSON.parse(readFileSync(store.armedFile(ack.scopeFile), "utf8")); expect(marker).toMatchObject({ threadId: "member", pid: process.pid, hostBinding: { placementId: "placement", generation: 1, endpointId: "member-workspace", revision: 1, scopeDigest: ack.scopeDigest }, renderedDigest: digest(readFileSync(ack.scopeFile, "utf8")) });
 });
 it.each(["placementId", "generation", "endpointId", "revision", "scopeDigest", "renderedDigest", "threadId", "issuedAt"])("native session rejects stale marker %s", async field => {

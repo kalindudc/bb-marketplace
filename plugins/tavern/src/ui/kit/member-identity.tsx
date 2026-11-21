@@ -12,11 +12,21 @@ import "./member-identity.css";
 type MemberScope = ThreadDecor["scope"];
 export type MemberIdentityProps = { member: Member; registry: Registry; briefSteer?: BriefSteer; scope?: MemberScope; compact?: boolean; finished?: boolean; violations?: ThreadDecor["violations"]; variant?: "chips"; onScopeDetails?: () => void };
 
+export function clusterGuardWords(scope: MemberScope) {
+  return scope?.clusterGuard === "armed" ? "Cluster writes require confirmation" :
+    scope?.clusterGuard === "ready" ? "Ready for the member's next session" :
+    scope?.clusterGuard === "restart" ? "restart needed: cluster writes not prevented" :
+    scope?.clusterGuard === "not-prevented" ? "cluster writes not prevented" : null;
+}
 function guardWords(member: Member, scope: MemberScope, finished: boolean) {
   if (!scope && member.role === "solo") return "no Tavern guard (started by you)";
   if (finished) return member.guardPosture ? member.guardPosture.mode === "pre-exec" ? "enforced during the run" : "watched during the run" : "guard state not recorded";
   const mode = scope?.mode ?? scope?.scope?.mode;
   const posture = scope?.guardPosture ?? member.guardPosture;
+  if (scope?.clusterGuard !== "armed") {
+    const cluster = clusterGuardWords(scope);
+    if (cluster) return cluster;
+  }
   if (mode === "off") return "off";
   if (mode === "watch" || posture?.mode === "detection-only") return "watch only";
   if (!scope?.armed || !scope.scope || scope.error || scope.guard?.stale || scope.guard?.installed === false) return "not armed yet";

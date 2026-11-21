@@ -167,7 +167,11 @@ export class AwayRuntime {
     }
     const affected = this.keepersWithWork();
     const { neverWhileClosed, productionWakeHours } = this.runtime.config().away;
-    commitUserAct(this.k.store, () => this.k.now(), receipt, () => this.store.close(input, neverWhileClosed, productionWakeHours));
+    await this.runtime.closeAfterRevokingClusterGrants(() => {
+      const latest = this.store.snapshot().revision;
+      if (revision !== latest || input.settingsRevision !== undefined && this.runtime.settings?.snapshot().revision !== input.settingsRevision) throw new AwayConflict(latest);
+      commitUserAct(this.k.store, () => this.k.now(), receipt, () => this.store.close(input, neverWhileClosed, productionWakeHours));
+    });
     await this.refreshLocalScopes();
     for (const member of this.members()) this.stage(member);
     this.changed();
@@ -328,7 +332,7 @@ export class AwayRuntime {
     for (const row of scopes.api.status().threads) {
       if (!row.scope || row.binding !== undefined || row.hostScope !== undefined) continue;
       const active = window !== null && window.returnedAt === null;
-      const current = active ? hasAwayDenials(row.scope, window) : !row.scope.shell.deny.some(rule => rule.id.startsWith("away:"));
+      const current = active ? hasAwayDenials(row.scope, window) : !row.scope.shell.deny.some(rule => rule.id.startsWith("away:") || rule.id === "cluster-write-while-away");
       if (current && !row.error) continue;
       try { await scopes.api.rebindScope(row.threadId); }
       catch (error) { failed = true; this.runtime.bb.log.warn(`Tavern Closing time local denials ${row.threadId}: ${String(error)}; protection or restoration remains pending.`); }
@@ -364,7 +368,7 @@ export class AwayRuntime {
       const quests = window.quests.filter(quest => this.k.store.get("quests", quest.questId)?.keeperThreadId === keeperThreadId);
       const items = windowStopKinds(window);
       const drafts = items.length === AWAY_STOP_LIST.length ? "Drafts-ready means private work and reports only. " : "";
-      return `Closing time: ${status.dueBack ? "due back" : "closed until"} ${new Date(window.until).toISOString()}. Per-quest ends (first 12 of ${quests.length}): ${JSON.stringify(quests.slice(0, 12))}. ${items.length ? `Closing time blocks ${awayStopNames(items)} until you return.` : "Closing time adds no blocks to ordinary scope rules."} ${drafts}An expected closing-time hold is not a blocker to wake the user about. No new consent or scope widening. Watched work is ${window.allowWatched ? "explicitly permitted, not prevented" : "held"}. User note (quoted data): ${JSON.stringify(window.note)}`;
+      return `Closing time: ${status.dueBack ? "due back" : "closed until"} ${new Date(window.until).toISOString()}. Per-quest ends (first 12 of ${quests.length}): ${JSON.stringify(quests.slice(0, 12))}. ${items.length ? `Closing time blocks ${awayStopNames(items)} until you return.` : "No other Closing time stops are selected; cluster writes still wait for your return."} ${drafts}An expected closing-time hold is not a blocker to wake the user about. No new consent or scope widening. Watched work is ${window.allowWatched ? "explicitly permitted, not prevented" : "held"}. User note (quoted data): ${JSON.stringify(window.note)}`;
     }
     if (this.k.store.runtime(keeperThreadId).cursor > window.eventCeiling!) return "";
     const digest = readAwayDigest(this.k, this.store, { limit: 1 });

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { hostContract, type Authority, type HostInput, type HostOutput } from "../host-contract";
 import { envForScope } from "../scope/env";
 import { blocked, evaluate, type ScopeCall } from "../scope/engine";
+import { issueActGrant, matchesActReceipt, revokeActGrant } from "../scope/act-grants";
 import { claimPullRequestGrant, pullRequestGrantAvailable } from "../scope/pr-grants";
 import { prepareCall as prepareFacts } from "../scope/prepare";
 import { nativeScopeVariablesSchema } from "../scope/host-env";
@@ -205,7 +206,9 @@ export class NativeScopes {
       const call = await this.facts(context, scope, { kind, toolName, input: toolInput, cwd }, check);
       check();
       const file = this.registry.scopeStatePath(authority, "scope.json"), observationId = input.call.observationId;
-      let decision = evaluate(this.intact(authority, record), { ...call, prGrantAvailable: id => !!observationId && pullRequestGrantAvailable(file, id, observationId) });
+      const receipt = input.call.clusterObservation;
+      const clusterWriteApproved = matchesActReceipt(file, scope.threadId, "cluster-write", toolInput.command ?? toolInput.cmd, receipt);
+      let decision = evaluate(this.intact(authority, record), { ...call, clusterWriteApproved, ...(clusterWriteApproved ? { clusterObservation: receipt } : {}), prGrantAvailable: id => !!observationId && pullRequestGrantAvailable(file, id, observationId) });
       if (decision.allow && decision.prGrant && !claimPullRequestGrant(file, decision.prGrant, observationId!) && !pullRequestGrantAvailable(file, decision.prGrant, observationId))
         decision = blocked(call.toolName, "pr-sends-as-you", "the one-use pull request exception was already used");
       check();
@@ -229,7 +232,6 @@ export class NativeScopes {
     try { scope = this.intact(authority, record); }
     catch (error) { if (error instanceof HostError && error.code === "scope-integrity") return reply("stale"); throw error; }
     this.workspace(scopeDeliveryFileSchema.parse(JSON.parse(record.deliveryJson)), authority, endpoint);
-    if (scope.mode !== "enforce") return reply("not-observed");
     let marker: z.infer<typeof scopeArmedSchema>;
     try {
       const file = this.registry.scopeStatePath(authority, "scope.armed"), status = lstatSync(file);
@@ -238,13 +240,34 @@ export class NativeScopes {
     } catch (error) { return reply((error as NodeJS.ErrnoException).code === "ENOENT" ? "not-observed" : "stale"); }
     if (!marker.hostBinding || marker.threadId !== scope.threadId || marker.issuedAt !== scope.issuedAt || JSON.stringify(marker.hostBinding) !== JSON.stringify(record.binding) || marker.renderedDigest !== record.renderedDigest) return reply("stale");
     try { process.kill(marker.pid, 0); } catch { return reply("stale"); }
-    return reply("armed");
+    return { ...reply(scope.mode === "enforce" ? "armed" : "not-observed"), ...(marker.clusterWrites === 1 ? { clusterWrites: true as const } : {}) };
+  }
+  async issueClusterGrant(raw: HostInput<"issueClusterGrant">, signal?: AbortSignal): Promise<HostOutput<"issueClusterGrant">> {
+    const { grant, ...statusInput } = hostContract.issueClusterGrant.input.parse(raw), authority = authorityOf(statusInput);
+    const observed = await this.sessionStatus(statusInput, signal);
+    if (!observed.clusterWrites) throw new HostError("guard-unarmed", "This thread cannot be guarded. Cluster writes are not prevented.");
+    const check = () => {
+      const { scope } = this.acknowledged(authority, statusInput.revision, statusInput.scopeDigest, signal);
+      if (scope.threadId !== grant.threadId || grant.act !== "cluster-write" || grant.expiresAt <= Date.now())
+        throw new HostError("invalid-cluster-grant", "The cluster command grant does not match this scope or has expired.");
+    };
+    check(); issueActGrant(this.registry.scopeStatePath(authority, "scope.json"), grant, check);
+    return { issued: true };
+  }
+  revokeClusterGrant(raw: HostInput<"revokeClusterGrant">, signal?: AbortSignal): HostOutput<"revokeClusterGrant"> {
+    const { askId, ...authority } = hostContract.revokeClusterGrant.input.parse(raw);
+    if (signal?.aborted) throw abortError();
+    revokeActGrant(this.registry.scopeStatePath(authority, "scope.json"), askId);
+    return { revoked: true };
   }
   async releaseScope(raw: HostInput<"releaseScope">, signal?: AbortSignal): Promise<HostOutput<"releaseScope">> {
     const authority = hostContract.releaseScope.input.parse(raw);
     const check = () => { if (signal?.aborted) throw abortError(); this.registry.scopeStatePath(authority, "binding.json"); };
     check(); this.writeRecord(authority, { state: "released" }, check);
     for (const name of ["scope.json", "scope.armed"] as const) { check(); rmSync(this.registry.scopeStatePath(authority, name), { force: true }); }
+    for (const suffix of [".grants", ".act-grants"]) {
+      check(); rmSync(this.registry.scopeStatePath(authority, "scope.json") + suffix, { force: true, recursive: true });
+    }
     check(); return { released: true };
   }
 }

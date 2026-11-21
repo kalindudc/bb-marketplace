@@ -97,6 +97,15 @@ async function fixture(installGuard = false) {
 }
 
 describe("backend scope integration", () => {
+  it("distinguishes a freshly hired member from a session running an older guard", async () => {
+    const f = await fixture(true);
+    await f.runtime.hire("lead", "project", f.input);
+    const scopes = f.runtime.scopes!;
+    expect(scopes.view("child")?.clusterGuard).toBe("ready");
+    const scope = scopes.view("child")!.scope!;
+    writeFileSync(join(f.root, "scopes/child.armed"), JSON.stringify({ threadId: "child", issuedAt: scope.issuedAt, pid: process.pid, at: Date.now() }));
+    expect(scopes.view("child")?.clusterGuard).toBe("restart");
+  });
   it("refreshes the Keeper shell when the sends-as-you undo lane shifts and resets", async () => {
     const f = await fixture();
     const config = f.runtime.config();

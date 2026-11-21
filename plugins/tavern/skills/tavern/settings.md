@@ -44,6 +44,7 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `keepers.party_max` | Sets the hard party ceiling. | `5` | User; Plain |
 | `keepers.stale_strikes` | Sets how many stale turns a member can have before the Keeper raises the issue. | `2` | User; Granted |
 | `keepers.always_ask` | Selects kinds that go to the user by default, without changing verdict requirements. | `["production","merge","credential","sends-as-you","destructive"]` | User |
+| `keepers.cluster_grant_minutes` | Sets how many minutes a confirmed cluster command can wait before it needs a new ask. | `15` | User; Granted |
 | `keepers.restatement_bytes` | Caps how much Keeper memory fits in a restatement. Lowering this can lose important context. | `28000` | User; Granted |
 | `keepers.tick_fact_chars` | Caps the number of characters of facts in a Keeper tick. | `14000` | User; Granted |
 | `keepers.failures_before_ask` | Sets how many failures a Keeper sees before it asks the user. | `2` | User; Granted |

@@ -46,7 +46,8 @@ function rules(window: AwayWindow): ShellRule[] {
   return [...subset, awaySelectionRule(policyKey(window), items)];
 }
 export function narrowAwayScope(scope: Scope, window: AwayWindow | null): Scope {
-  if (window === null || window.returnedAt !== null || !window.stopList.length) return scope;
+  if (window === null || window.returnedAt !== null) return scope;
+  if (!window.stopList.length) return { ...scope, shell: { ...scope.shell, deny: [...scope.shell.deny, { id: "cluster-write-while-away", regex: "(?!)", why: "Cluster writes wait for your return" }] } };
   return { ...scope, tools: { ...scope.tools, deny: [...scope.tools.deny, ...tools(window)] }, shell: { ...scope.shell, deny: [...scope.shell.deny, ...rules(window)] } };
 }
 export function localAwayPrevention(status: ReturnType<ReturnType<typeof registerScopes>["status"]> | null, member: Member | null, window: AwayWindow | null): boolean {
@@ -58,6 +59,7 @@ export function localAwayPrevention(status: ReturnType<ReturnType<typeof registe
 export function hasAwayDenials(scope: Scope, window: AwayWindow): boolean {
   const required = rules(window);
   const installed = scope.shell.deny.filter(rule => rule.id.startsWith("away:"));
+  if (!required.length) return scope.shell.deny.some(rule => rule.id === "cluster-write-while-away") && !installed.length;
   return installed.length === required.length &&
     tools(window).every(tool => scope.tools.deny.includes(tool)) && required.every(rule =>
       installed.some(actual => JSON.stringify(actual) === JSON.stringify(rule)) && !scope.shell.allow.some(grant => grant.id === rule.id));

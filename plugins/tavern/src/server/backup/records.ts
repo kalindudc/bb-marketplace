@@ -101,8 +101,9 @@ export class BackupRecords {
         continue;
       }
       if (row.kind !== "asks") continue;
-      const ask = askSchema.parse(JSON.parse(String(row.data)));
-      if (ask.state === "open" && (deliveryAsks.get(ask.id) === ask.keeperThreadId || ask.effect?.type === "grant-shell-act") ||
+      const { clusterGrantExpiresAt, ...ask } = askSchema.parse(JSON.parse(String(row.data)));
+      if (clusterGrantExpiresAt !== undefined) row.data = JSON.stringify(ask);
+      if (ask.state === "open" && (ask.kind === "cluster-write" || deliveryAsks.get(ask.id) === ask.keeperThreadId || ask.effect?.type === "grant-shell-act") ||
         ask.state === "withdrawn" && ask.withdrawnCause === "backup-restored" && ask.withdrawnAt == null) {
         row.data = JSON.stringify(askSchema.parse({ ...ask, state: "withdrawn", withdrawnCause: "backup-restored", withdrawnAt: restoredAt }));
       }

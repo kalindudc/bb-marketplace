@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
-import { within } from "@testing-library/react";
+import { fireEvent, within } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import { waitFor } from "@testing-library/react";
+import { rpcContract } from "../../../src/shared/contract";
 import { AskCard } from "../../../src/ui/kit/ask-card";
 import { fixtureAsk, fixtureGreenlight, fixtureRegistry } from "../../../src/ui/thread/fixtures";
 import { KeepersSection } from "../../../src/ui/page/settings";
@@ -30,6 +32,28 @@ it.each(["production", "merge", "destructive", "credential", "sends-as-you"] as 
   }
 });
 
+it("shows both steps on one card and tells a detection-only thread not to run", async () => {
+  const ask = { ...clusterAsk, runThreadId: "keeper-1", runThreadName: "Wren", options: [{ id: "approve", label: "Approve", detail: "", recommended: false }] };
+  const approve = { ...ask, clusterApproval: { at: 1000, via: "page" as const, surface: "client (unattested)", note: null }, options: [{ id: "confirm-run", label: "Confirm this run", detail: "", recommended: false }] };
+  const guarded = renderSlot({ component: AskCard }, { ask }, { experimental_rpcContract: rpcContract, rpc: { clusterRunStatus: () => ({ guarded: true }), answerAsk: (input: unknown) => rpcContract.answerAsk.input.parse(input).optionId === "approve" ? { ok: true, ask: approve } : { ok: true } } });
+  try {
+    const vote = await guarded.findByRole("radio", { name: "Approve" });
+    await guarded.findByText("Wren");
+    await waitFor(() => expect((vote as HTMLInputElement).disabled).toBe(false));
+    fireEvent.click(vote);
+    fireEvent.click(await guarded.findByRole("button", { name: "Approve" }));
+    await guarded.findByRole("heading", { name: "Run it now?" });
+    expect(guarded.getByText(command)).toBeTruthy();
+    fireEvent.click(guarded.getByRole("radio", { name: "Confirm this run" }));
+    fireEvent.click(guarded.getByRole("button", { name: "Run it now" }));
+    await guarded.findByText("Answered");
+  } finally { guarded.lifecycle.unmount(); }
+  const unguarded = renderSlot({ component: AskCard }, { ask }, { rpc: { clusterRunStatus: () => ({ guarded: false }) } });
+  try {
+    await unguarded.findByText(/This thread cannot be guarded/);
+    expect((unguarded.getByRole("radio", { name: "Approve" }) as HTMLInputElement).disabled).toBe(true);
+  } finally { unguarded.lifecycle.unmount(); }
+});
 const greenlight = () => renderSlot({ component: AskCard }, { ask: fixtureGreenlight }, { rpc: {
   registry: () => fixtureRegistry,
   questAuthority: () => ({ keeperName: "Wren", rows: [{ kind: "cluster-write", lane: "user" }], delegations: [], preapprovals: [], review: { used: 0, total: 3 }, spendBudget: null }),
@@ -46,13 +70,25 @@ it("states the cluster write rule on both greenlight and delegation", async () =
 });
 
 it.runIf(process.env.TAVERN_LAYOUT_HARNESS === "1")("renders the cluster ask, greenlight and settings fixtures", async () => {
-  const cluster = renderSlot({ component: AskCard }, { ask: { ...clusterAsk, options: [{ id: "approve", label: "Approve the act", detail: "Approve one run of this exact command. A changed command or another run needs a new ask.", recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], target: { command: "kubectl --context 'demo context' apply -f ./deployment-with-a-long-unbroken-name-for-the-cluster-approval-fixture.yaml --namespace=tools && helm --kube-context other -n apps upgrade release ./chart" } }, onFold: () => {} });
+  const { setup } = await import("../../server/runtime-fixture");
+  const { requireUserAct } = await import("../../../src/server/authority");
+  const { k } = setup({}, process.cwd());
+  const ask = k.ask("lead", { ...clusterAsk, boardQuestId: null, effect: { type: "decision" }, target: { command: "kubectl --context 'demo context' apply -f ./deployment-with-a-long-unbroken-name-for-the-cluster-approval-fixture.yaml --namespace=tools && helm --kube-context other -n apps upgrade release ./chart" } });
+  const renderAsk = (value: typeof ask) => renderSlot({ component: AskCard }, { ask: value, onFold: () => {} }, { rpc: { clusterRunStatus: () => ({ guarded: true }) } });
+  const cluster = renderAsk(ask);
+  k.answerAsk(ask.id, "approve", null, "page", "user", "client (unattested)", {}, requireUserAct({ experimental_caller: { kind: "client" } } as never, "answerAsk"));
+  const second = renderAsk(k.store.get("asks", ask.id)!);
   const plan = greenlight();
   const settings = renderSlot({ component: KeepersSection }, {}, { rpc: { settings: () => settingsView } });
   try {
     await plan.findByRole("heading", { name: "Authority on this quest" });
     await settings.findByRole("group", { name: "Always ask" });
+    await waitFor(() => {
+      expect((cluster.getByRole("radio", { name: /^Approve/ }) as HTMLInputElement).disabled).toBe(false);
+      expect((second.getByRole("radio", { name: /^Run it now/ }) as HTMLInputElement).disabled).toBe(false);
+    });
+    expect(within(second.container).getByRole("radio", { name: /^Decline/ })).toBeTruthy();
     plan.getByText("Let Wren decide for this quest").parentElement!.setAttribute("open", "");
-    process.stdout.write("LAYOUT_HARNESS=" + JSON.stringify(Object.fromEntries(Object.entries({ cluster, plan, settings }).map(([name, slot]) => [name, slot.container.innerHTML]))) + "\n");
-  } finally { for (const slot of [cluster, plan, settings]) slot.lifecycle.unmount(); }
+    process.stdout.write("LAYOUT_HARNESS=" + JSON.stringify(Object.fromEntries(Object.entries({ cluster, second, plan, settings }).map(([name, slot]) => [name, slot.container.innerHTML]))) + "\n");
+  } finally { for (const slot of [cluster, second, plan, settings]) slot.lifecycle.unmount(); }
 });
