@@ -67,7 +67,7 @@ const scopeCall = z.object({
 }).strict();
 export const scopeDecisionSchema = z.discriminatedUnion("allow", [
   z.object({ allow: z.literal(true), check: z.boolean().optional(), prGrant: id.optional(), acts: z.array(z.object({ kind: z.enum(ACT_KINDS), ruleId: id, why: text }).strict()).optional() }).strict(),
-  z.object({ allow: z.literal(false), ruleId: id, reason: text }).strict(),
+  z.object({ allow: z.literal(false), ruleId: id, reason: text, act: z.enum(ACT_KINDS).optional() }).strict(),
 ]);
 const empty = z.object({}).strict();
 const retryable = { experimental_retryable: true } as const;

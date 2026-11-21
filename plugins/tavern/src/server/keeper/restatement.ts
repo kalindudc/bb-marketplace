@@ -15,6 +15,7 @@ import { PLACEMENT_CLASSES, placementClassLine, placementGuidance } from "../pla
 import { matchPlacementRule } from "../placement/match";
 import { PlacementStore } from "../placement/store";
 import { summariesToday } from "../summaries";
+import { actAskKind, watchActWords } from "../../scope/act-routing";
 
 export const clock = localClock;
 const quoted = (value: string) => JSON.stringify(value);
@@ -245,7 +246,21 @@ export function renderRestatement(
     const count = today.get(quest.id);
     return count === undefined ? [] : [`${boundedData(quest.short, 60, "…")}: ${count} summaries today`];
   });
+  const observations = k.store.query("scopeActObservations", "keeperThreadId", threadId, 100)
+    .filter(row => row.boardQuestId === null || summaries.some(q => q.id === row.boardQuestId && q.phase !== "stopping"));
+  const watch = watchActWords(observations);
+  const grants = new Map<string, ReturnType<typeof k.store.issuedShellGrants>>();
+  const held = [...new Set(observations.filter(row => row.preflight && row.resolvedAt === undefined).flatMap(row => {
+    const member = k.member(row.threadId), ask = actAskKind(row.act);
+    if (!ask || !(member?.role === "keeper" || isLiveMember(k.store, member, "brief"))) return [];
+    if (!grants.has(row.threadId)) grants.set(row.threadId, k.store.query("shellGrants", "memberThreadId", row.threadId, 100));
+    if (grants.get(row.threadId)!.some(grant => grant.boardQuestId === row.boardQuestId && grant.target.act === row.act && grant.issuedAt >= row.at)) return [];
+    const reference = row.command && row.cwd ? ` heldEventId=${JSON.stringify(row.threadId + ":" + row.eventId)}` : "";
+    return [`${boundedData(k.name(member), 45, "…")}: Held ${row.act}; needs a ${ask} ask.${reference}`];
+  }))];
   const parts = [
+    ...(held.length ? [section("Recently held shell acts", held, 700, "more holds; see the Ledger")] : []),
+    ...(watch ? [watch] : []),
     ...(undoLanes.length ? [section("Undo record", undoLanes.map(keeperUndoLaneWords), priorities ? 800 : 1600, "more kinds; see the Ledger or call tavern_status")] : []),
     ...(holds.length ? [section(
       "Active user holds — checker handoff held, waiting for the user\'s release; Warden hire/re-task blocked; details: tavern_status section=holds",

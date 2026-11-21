@@ -16,6 +16,8 @@ import { awayContract } from "./away-rpc";
 import { alertRouteContract } from "./alert-route";
 import { awayStatusSchema } from "./away";
 import { scopeSchema } from "../scope/schema";
+import { ACT_KINDS } from "../scope/act-routing";
+import { shellGrantSchema } from "./shell-grant";
 import { characterAuthorshipSchema, characterReportVoicesSchema } from "./character-presentation";
 import {
   askSchema,
@@ -124,6 +126,8 @@ export type MapHistory = z.infer<typeof mapHistorySchema>;
 export const memberScopeSchema = z.object({
   threadId, scope: scopeSchema.nullable(), error: z.string().nullable(), armed: z.boolean(), pendingAskId: id.nullable(),
   guardPosture: memberSchema.shape.guardPosture,
+  shellGrants: z.array(shellGrantSchema.extend({ usable: z.boolean() })).optional(),
+  restartNeeded: z.string().nullable().optional(),
   // added by Builder B: expose the configured mode and rejected class/project policy changes.
   mode: z.enum(["enforce", "watch", "off"]).optional(), problems: z.array(z.string()).optional(),
   guard: z.object({ installed: z.boolean(), stale: z.boolean(), sandbox: z.enum(["available", "missing", "not-applicable"]), claude: z.literal("phase-2-not-installed") }).optional(),
@@ -132,7 +136,7 @@ export const scopeViolationSchema = z.object({
   threadId, providerId: z.string(), at: z.number(), eventId: z.string(), seq: z.number(), ruleId: z.string(), reason: z.string(),
   stopped: z.boolean(), stopError: z.string().optional(), latencyMs: z.number(), call: z.unknown().optional(),
   // added by Builder B: watch observations are not enforced violations or blocker asks.
-  mode: z.enum(["enforce", "watch"]).optional(),
+  mode: z.enum(["enforce", "watch"]).optional(), act: z.enum(ACT_KINDS).optional(),
 });
 
 // added by Builder B: counts and snapshot watermarks keep clipped decision lists honest and bulk acknowledgement race-safe.
@@ -469,6 +473,7 @@ export const rpcContract = defineContract({
   delegateQuest: { input: z.object({ boardQuestId: id, kind: delegationKindSchema, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
   preapproveQuest: { input: preapprovalInputSchema.extend({ boardQuestId: id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
   revokeQuestAuthority: { input: z.object({ boardQuestId: id, id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
+  revokeShellGrant: { input: z.object({ threadId, id }).strict(), output: ok },
   answerAsk: {
     input: z.object({ askId: id, optionId: z.string(), note: z.string().max(2000).nullable().default(null), via: z.enum(["banner", "page", "phone", "chat"]), pullRequestChoices: pullRequestChoicesSchema.optional() }).strict(),
     output: ok.extend({ pullRequestErrors: z.array(z.string()).optional() }),

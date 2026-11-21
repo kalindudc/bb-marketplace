@@ -54,14 +54,14 @@ describe("scope persistence and env", () => {
     expect(recovered.records.get("t1")?.error).toBeTruthy();
     expect(envForScope(recovered.records, "t1")).toContainEqual(expect.objectContaining({ name: "TAVERN_SCOPE_FILE" }));
   });
-  it("resolves only scoped threads and injects opt-in speed bumps without I/O", () => {
+  it("resolves only scoped threads without injecting the legacy speed bumps", () => {
     const { store, s } = fixture();
     expect(envForScope(store.records, null)).toEqual([]);
     expect(envForScope(store.records, "unknown")).toEqual([]);
     const vars = Object.fromEntries(envForScope(store.records, "t1").map(entry => [entry.name, entry.value]));
-    expect(vars.TAVERN_SCOPE_FILE).toBe(store.file("t1")); expect(vars.GH_TOKEN).toBeUndefined(); expect(vars.GIT_CONFIG_COUNT).toBeTruthy();
-    s.github = "none"; store.write("t1", s);
-    expect(envForScope(store.records, "t1")).toContainEqual(expect.objectContaining({ name: "GH_TOKEN", value: "tavern-scope-denied" }));
+    expect(vars.TAVERN_SCOPE_FILE).toBe(store.file("t1")); expect(vars.GH_TOKEN).toBeUndefined(); expect(vars.GIT_CONFIG_COUNT).toBeUndefined();
+    s.github = "none"; s.env.poisonGh = true; store.write("t1", s);
+    expect(envForScope(store.records, "t1").some(entry => entry.name === "GH_TOKEN")).toBe(false);
     s.env = { poisonGh: false, blockGitPush: false, variables: {} }; store.write("t1", s);
     expect(envForScope(store.records, "t1").map(entry => entry.name)).toEqual(["TAVERN_SCOPE_FILE", "TAVERN_SCOPE_MODE"]);
   });

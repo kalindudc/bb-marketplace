@@ -176,6 +176,10 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     delegateQuest: () => call("delegateQuest", { boardQuestId: f.q.id, kind: "merge", via: "page" }),
     preapproveQuest: () => call("preapproveQuest", { boardQuestId: f.q.id, greenlight: null, placement: false, conclude: false, endsAt: null, via: "page" }),
     revokeQuestAuthority: () => call("revokeQuestAuthority", { boardQuestId: f.q.id, id: f.k.quest(f.q.id).delegations![0]!.id, via: "page" }),
+    revokeShellGrant: () => {
+      f.k.store.put("shellGrants", "fixture", { id: "fixture", keeperThreadId: "lead", memberThreadId: "member", boardQuestId: f.q.id, target: { act: "publish", command: "npm publish", cwd: "/repo", digest: "a".repeat(64) }, scope: "quest", state: "issued", by: "user", issuedAt: 1, changedAt: 1 });
+      return call("revokeShellGrant", { threadId: "member", id: "fixture" });
+    },
     answerAsk: () => call("answerAsk", { askId: f.ask.id, optionId: "yes", via: "page" }),
     olderSummaries: () => call("olderSummaries", { boardQuestId: f.q.id, beforeId: "absent" }),
     summary: () => call("summary", { id: "absent", threadId: "lead" }),

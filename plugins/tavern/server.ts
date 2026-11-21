@@ -129,7 +129,7 @@ export default async function tavern(bb: BbPluginApi) {
   runtime.taleRenderer = new TaleCompanions(bb, keeper);
   bb.onDispose(() => runtime.taleRenderer?.settled());
   registerTools(bb, runtime);
-  const backups = createBackupService(bb, settings, runtime.registry);
+  const backups = createBackupService(bb, settings, runtime.registry, () => runtime.scopes?.clearGrantProjections());
   const setup = new SetupService(bb, settings, store, new SetupPreflight(bb, async (projectId, id) =>
     (projectId === null ? runtime.snapshot() : await runtime.prepareRegistry(projectId)).classes.find(role => role.id === id)));
   bb.rpc.register(rpcContract, { ...rpcHandlers(runtime), ...settingsHandlers(settings, new SettingsFiles(settings)), ...setup.handlers(), ...backupHandlers(backups),

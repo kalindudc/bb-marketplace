@@ -37,6 +37,7 @@ export const NEWS = new Set([
   "hire.expired",
   "tick.failed",
   "scope.violation",
+  "scope.act-held",
   "scope.applied",
   "scope.declined",
   "thread.archived",

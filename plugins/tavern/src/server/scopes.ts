@@ -1,6 +1,8 @@
 import { memberHost } from "./member-engagement";
 import { wasReleased } from "../shared/member-engagement";
 import { existsSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   registerScopes,
@@ -22,11 +24,40 @@ import { gitWorktreeRoot, needsWorktree } from "../scope/worktree";
 import { normalizeRemote } from "../scope/remote";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Ask, Member } from "../shared/schema";
+import { publishShellGrants, readShellGrants, removeShellGrantProjection, scopeRestartReason, shellGrantCapable, shellGrantTarget, shellGrantUse } from "../scope/shell-grants";
+import { actAskKind } from "../scope/act-routing";
+import { prepareCall } from "../scope/prepare";
+import { settleShellGrant } from "./shell-grants";
+import { isLiveKeeper, isLiveMember } from "./liveness";
+import { commitUserAct, type UserActReceipt } from "./authority";
 import { DEFAULT_SETTINGS } from "../shared/settings";
 import { SCOPE_DENIAL_TEXT } from "../shared/text";
 import type { ScopeRequest } from "./keeper/store";
 import { readUndoLanes } from "./undo-record";
 import type { TavernRuntime } from "./runtime";
+
+function scopeChanges(before: Scope, after: Scope) {
+  const added = (next: string[], prior: string[]) => next.filter(value => !prior.includes(value));
+  const labels = (prefix: string, values: string[]) => values.map(value => `${prefix} ${value}`);
+  const allowed = [...labels("tool", added(after.tools.allow, before.tools.allow)), ...labels("tool", added(before.tools.deny, after.tools.deny)), ...labels("write to", added(after.writes.allow, before.writes.allow))];
+  const denied = [...labels("tool", added(after.tools.deny, before.tools.deny)), ...labels("tool", added(before.tools.allow, after.tools.allow)), ...labels("write to", added(after.writes.deny, before.writes.deny)), ...labels("write to", added(before.writes.allow, after.writes.allow))];
+  const phrases: string[] = [];
+  const list = (heading: string, items: string[]) => {
+    const values = [...new Set(items)];
+    if (values.length) phrases.push(`${heading}: ${values.slice(0, 4).join(", ")}${values.length > 4 ? ` and ${values.length - 4} more` : ""}`);
+  };
+  list("now allowed", allowed);
+  list("now denied", denied);
+  if (!isDeepStrictEqual(before.shell, after.shell)) phrases.push("shell rules changed");
+  if (before.preset !== after.preset) phrases.push(`class baseline is now ${after.preset}`);
+  if (before.network !== after.network) phrases.push(after.network === "none" ? "network access is now denied" : "network access is now allowed");
+  if (before.writes.mode !== after.writes.mode) phrases.push(`write access changed to ${after.writes.mode}`);
+  const github = before.env.poisonGh && !after.env.poisonGh;
+  const push = before.env.blockGitPush && !after.env.blockGitPush;
+  if (github || push) phrases.push(`no longer set: the ${github && push ? "GitHub and push environment overrides" : github ? "GitHub environment override" : "push environment override"}`);
+  const text = phrases.join("; ") || "Refreshed the saved scope binding";
+  return text.charAt(0).toUpperCase() + text.slice(1) + ".";
+}
 
 export type BackendScopeOptions = Pick<
   ScopesDeps,
@@ -38,6 +69,7 @@ export class BackendScopes {
   private resolvingClass: import("../shared/schema").ClassDef | undefined;
   private readonly cwd = new Map<string, string>();
   private readonly answering = new Map<string, Promise<void>>();
+  private refreshingScopes = false;
   constructor(
     readonly runtime: TavernRuntime,
     private readonly options: BackendScopeOptions = {},
@@ -70,6 +102,7 @@ export class BackendScopes {
         return undefined;
       },
       narrowBoundScope: scope => runtime.away.narrowScope(scope),
+      onScopeModeChanged: (threadId, mode) => this.scopeRefreshed(threadId, `Scope mode is now ${mode}.`),
       pullRequestPolicy: threadId => this.pullRequestPolicy(threadId),
       cwdForThread: (threadId) => this.cwd.get(threadId),
       projectForThread: (threadId) => this.context(threadId),
@@ -78,6 +111,8 @@ export class BackendScopes {
           .snapshot(this.resolvingProject)
           .classes.find((role) => role.id === classId)?.scope,
       onViolation: (violation) => this.violation(violation),
+      onActObservation: (observation) => this.observeAct(observation),
+      onShellGrantUsed: (threadId, id) => { this.recordGrantUse(threadId, id); this.syncGrants(threadId); },
     });
   }
   private pullRequestPolicy(threadId: string) {
@@ -105,6 +140,7 @@ export class BackendScopes {
       const member = runtime.keeper.member(row.threadId), state = runtime.keeper.store.runtime(row.threadId);
       try {
         this.refreshPullRequestPolicy(row.threadId);
+        this.syncGrants(row.threadId);
         if (await this.api.protectOpenPolicy(row.threadId)) {
           runtime.keeper.store.event(runtime.keeper.now(), member?.keeperThreadId ?? row.threadId, member?.boardQuestId ?? null,
             "scope.refreshed", "Protected the trusted scope policy in an open scope",
@@ -124,6 +160,64 @@ export class BackendScopes {
         runtime.keeper.changed(row.threadId, member.boardQuestId);
       } catch (error) { runtime.bb.log.warn(`Tavern scope preset refresh ${row.threadId}: ${String(error)}`); }
     }
+  }
+  private scopeRefreshed(threadId: string, text: string, policyVersion?: string) {
+    const k = this.runtime.keeper, member = k.member(threadId);
+    if (!member) return;
+    if (!isLiveKeeper(k.store, member, "present") && !isLiveMember(k.store, member, "brief")) return;
+    k.store.event(k.now(), member.keeperThreadId ?? threadId, member.boardQuestId, "scope.refreshed", text, { memberThreadId: threadId, ...(policyVersion ? { policyVersion } : {}) }, { kind: "tavern" });
+    k.changed(threadId, member.boardQuestId);
+  }
+  async refreshLiveScopes() {
+    if (this.refreshingScopes) return;
+    this.refreshingScopes = true;
+    const runtime = this.runtime, k = runtime.keeper;
+    const projects = new Map<string, { snapshot: ReturnType<TavernRuntime["snapshot"]>; context: ProjectContext; files: ReturnType<BackendScopes["api"]["policy"]> }>();
+    try {
+      for (const row of this.api.status().threads) {
+        const member = k.member(row.threadId);
+        if (!row.scope || row.error || !member || !isLiveKeeper(k.store, member, "present") && !isLiveMember(k.store, member, "brief")) continue;
+        try {
+          const template = this.api.scopeTemplate(row.threadId);
+          if (!template) continue;
+          const state = k.store.runtime(row.threadId), projectId = state.projectId;
+          if (!projectId || state.builtinKeeperFallback) continue;
+          let project = projects.get(projectId);
+          if (!project) {
+            await runtime.prepareRegistry(projectId);
+            const context = this.context(row.threadId);
+            project = { snapshot: runtime.snapshot(projectId), context, files: this.api.policy(context) };
+            projects.set(projectId, project);
+          }
+          const definition = project.snapshot.classes.find(role => role.id === member.classId);
+          if (!definition) continue;
+          const input = k.store.get("scopeInputs", row.threadId);
+          const { context, files } = project;
+          const resolved = this.api.resolveForRefresh(member.classId, context, definition.scope, files, input?.initial);
+          if (!input) {
+            const { threadId: _id, issuedAt: _issued, mode: _mode, checks: _checks, expectedWorktree: _root, assignedBranch: _branch, pullRequestPolicy: _prs, workspaceKind: _kind, enforceFrom: _from, env: priorEnv, ...prior } = template;
+            const { threadId: _nextId, issuedAt: _nextIssued, mode: _nextMode, checks: _nextChecks, expectedWorktree: _nextRoot, assignedBranch: _nextBranch, pullRequestPolicy: _nextPrs, workspaceKind: _nextKind, enforceFrom: _nextFrom, env: nextEnv, ...next } = resolved.scope;
+            if (!isDeepStrictEqual({ ...prior, variables: priorEnv.variables }, { ...next, variables: nextEnv.variables })) continue;
+            k.store.put("scopeInputs", row.threadId, { changes: [] });
+          }
+          let scope = resolved.scope;
+          for (const change of input?.changes ?? []) scope = this.api.replayOverride(scope, context, files, change.override, change.approved).scope;
+          const version = createHash("sha256").update(JSON.stringify(files.sources)).digest("hex");
+          const fingerprint = createHash("sha256").update(JSON.stringify([scope, version, this.api.mode()])).digest("hex");
+          if (fingerprint !== input?.fingerprint) {
+            const updated = await this.api.rebuildScope(row.threadId, template, scope);
+            if (updated) this.scopeRefreshed(row.threadId, scopeChanges(template, this.api.scopeTemplate(row.threadId) ?? scope), version);
+            if ((updated || this.api.scopeTemplate(row.threadId) === template) && k.store.get("scopeInputs", row.threadId)?.changes.length === (input?.changes.length ?? 0))
+              k.store.put("scopeInputs", row.threadId, { ...(input?.initial ? { initial: input.initial } : {}), changes: input?.changes ?? [], fingerprint });
+          }
+          this.syncGrants(row.threadId);
+        } catch (error) { runtime.bb.log.warn(`Tavern scope refresh ${row.threadId}: ${String(error)}`); }
+      }
+    } finally { this.refreshingScopes = false; }
+  }
+  private storeScopeOverride(threadId: string, override: ScopeOverride, approved?: string[]) {
+    const store = this.runtime.keeper.store, inputs = store.get("scopeInputs", threadId);
+    if (inputs) store.put("scopeInputs", threadId, { ...inputs, fingerprint: undefined, changes: [...inputs.changes, { override, ...(approved ? { approved } : {}) }] });
   }
   context(threadId: string): ProjectContext {
     if (this.runtime.keeper.member(threadId)?.role === "keeper" && this.runtime.keeper.store.runtime(threadId).builtinKeeperFallback) return {};
@@ -312,6 +406,7 @@ export class BackendScopes {
     if (resolution.scope.preset === "checker" && checks) resolution.scope.checks = checks;
     this.recordProblems(member.threadId, resolution.problems);
     await this.api.writeScope(member.threadId, resolution.scope);
+    this.runtime.keeper.store.put("scopeInputs", member.threadId, { changes: [] });
     this.runtime.keeper.store.patch(member.threadId, { scopeKeeperFallback: !!state.builtinKeeperFallback });
     this.runtime.keeper.changed(member.threadId, member.boardQuestId);
   }
@@ -330,6 +425,7 @@ export class BackendScopes {
     if (pending) return this.runtime.keeper.store.runtime(member.threadId).scopePending!;
     this.recordProblems(member.threadId, resolution.problems);
     await this.api.writeScope(member.threadId, resolution.scope);
+    this.runtime.keeper.store.put("scopeInputs", member.threadId, { ...(override ? { initial: override } : {}), changes: [] });
     if (resolution.widenings.length) {
       const ask = this.request(
         member,
@@ -374,6 +470,7 @@ export class BackendScopes {
     if (!current) throw new Error("No valid scope for this member");
     this.validateTools(override, current);
     const result = await this.api.applyOverride(memberThreadId, override);
+    this.storeScopeOverride(memberThreadId, override);
     this.recordProblems(memberThreadId, result.problems);
     const ask = result.widenings.length
       ? this.request(member, override, result.widenings, reason, null)
@@ -563,6 +660,7 @@ export class BackendScopes {
     await this.api.applyOverride(member.threadId, request.override, {
       approvedRuleIds: request.widenings,
     });
+    this.storeScopeOverride(member.threadId, request.override, request.widenings);
     if (remembering) {
       if (!request.widenings.every((id) => !id.includes(":")))
         throw new Error(
@@ -622,6 +720,110 @@ export class BackendScopes {
       }
     }
   }
+  clearGrantProjections() {
+    for (const { threadId } of this.api.status().threads) removeShellGrantProjection(this.api.scopeFile(threadId));
+  }
+  syncGrants(threadId: string) {
+    const record = this.api.localScopeRecord(threadId);
+    if (!record) return;
+    const k = this.runtime.keeper;
+    const grants = k.store.issuedShellGrants("memberThreadId", threadId);
+    if (!grants.length && !existsSync(record.file + ".grants")) return;
+    const active = grants.flatMap(grant => {
+      if (grant.scope === "once" && shellGrantUse(record.file, grant.id) !== null) {
+        this.recordGrantUse(threadId, grant.id);
+        return [];
+      }
+      const member = k.member(threadId);
+      if (!isLiveMember(k.store, member) || member.boardQuestId !== grant.boardQuestId || member.keeperThreadId !== grant.keeperThreadId) {
+        settleShellGrant(k.store, grant.id, "expired", k.now(), "The member or quest ended.");
+        return [];
+      }
+      return [{ id: grant.id, digest: grant.target.digest, scope: grant.scope }];
+    });
+    if (publishShellGrants(record.file, record.scope, active)) this.scopeRefreshed(threadId, "Updated the member’s shell grants.");
+  }
+  revokeGrant(threadId: string, id: string, receipt: UserActReceipt | undefined) {
+    const k = this.runtime.keeper;
+    const grant = k.store.get("shellGrants", id);
+    if (!grant || grant.memberThreadId !== threadId || receipt?.act !== "revokeShellGrant") throw new Error("Revoking this grant requires your explicit action.");
+    commitUserAct(k.store, k.now, receipt, () => {
+      const record = this.api.localScopeRecord(threadId);
+      if (record && grant.scope === "once" && shellGrantUse(record.file, id) !== null) this.recordGrantUse(threadId, id);
+      settleShellGrant(k.store, id, "revoked", k.now(), "You revoked the shell grant.");
+      this.syncGrants(threadId);
+    });
+    k.changed(threadId, grant.boardQuestId);
+  }
+  expireQuestGrants(questId: string) {
+    const k = this.runtime.keeper;
+    const active = k.store.issuedShellGrants("boardQuestId", questId);
+    for (const grant of active) {
+      const record = this.api.localScopeRecord(grant.memberThreadId);
+      if (grant.scope === "once" && record && shellGrantUse(record.file, grant.id) !== null) this.recordGrantUse(grant.memberThreadId, grant.id);
+      else settleShellGrant(k.store, grant.id, "expired", k.now(), "The quest ended.");
+    }
+    for (const threadId of new Set(active.map(grant => grant.memberThreadId))) this.syncGrants(threadId);
+  }
+  private recordGrantUse(threadId: string, id: string) {
+    const k = this.runtime.keeper, grant = k.store.get("shellGrants", id);
+    if (grant?.memberThreadId !== threadId || grant.state !== "issued") return;
+    settleShellGrant(k.store, id, "used", k.now(), "The guard used this once grant.");
+    k.changed(threadId, grant.boardQuestId);
+  }
+  askAct(keeperThreadId: string, input: ({ memberThreadId: string; command: string } | { heldEventId: string }) & { why: string; unsure?: boolean; draft?: Ask["draft"] }) {
+    const k = this.runtime.keeper;
+    k.require(keeperThreadId, "keeper");
+    const heldEventId = "heldEventId" in input ? input.heldEventId : undefined;
+    const held = heldEventId === undefined ? null : k.store.get("scopeActObservations", heldEventId);
+    if (heldEventId !== undefined && (!held?.preflight || held.resolvedAt !== undefined || held.keeperThreadId !== keeperThreadId || !held.command || !held.cwd))
+      throw new Error("Choose an open held shell act from this Keeper’s tick.");
+    const member = k.member("memberThreadId" in input ? input.memberThreadId : held!.threadId);
+    if (!isLiveMember(k.store, member) || member.keeperThreadId !== keeperThreadId || !member.boardQuestId)
+      throw new Error("Shell grants are for an active member of this Keeper's quest.");
+    const status = this.api.status().threads.find(row => row.threadId === member.threadId);
+    if (held && held.boardQuestId !== member.boardQuestId) throw new Error("That held shell act belongs to another quest.");
+    if (heldEventId) {
+      const existing = k.store.openAsks(keeperThreadId, member.boardQuestId).find(ask => ask.effect?.type === "grant-shell-act" && ask.effect.heldEventId === heldEventId);
+      if (existing) return existing;
+    }
+    const command = "command" in input ? input.command : held!.command!;
+    const cwd = held?.cwd ?? this.cwd.get(member.threadId) ?? status?.scope?.expectedWorktree;
+    if (status?.binding || !cwd || !status?.scope || status.error || member.guardPosture?.mode === "detection-only") throw new Error("The member needs a local pre-execution scope for shell grants.");
+    if (/^\s*(?:kubectl|terraform|helm|kapp)\s/.test(command)) throw new Error("Cluster writes use a separate user-only ask; ordinary shell grants cannot cover them.");
+    const target = shellGrantTarget(prepareCall({ kind: "bash", toolName: "bash", cwd, input: { command } }, { scope: status.scope }));
+    const kind = target && actAskKind(target.act);
+    if (!target || !kind || held && target.act !== held.act) throw new Error("Give one literal shell act with its exact target, no wrappers or redirects.");
+    return k.ask(keeperThreadId, {
+      kind, boardQuestId: member.boardQuestId, unsure: input.unsure,
+      effect: { type: "grant-shell-act", memberThreadId: member.threadId, target, ...(heldEventId ? { heldEventId } : {}) },
+      target: { command: target.command },
+      question: `Grant ${k.name(member)} this ${target.act}?`, why: input.why,
+      draft: input.draft,
+      options: [
+        { id: "once", label: "Once", detail: "Allow this exact command one time.", recommended: true },
+        { id: "quest", label: "For this quest", detail: "Allow this exact command until the member or quest ends.", recommended: false },
+        { id: "deny", label: "Decline", detail: "The member keeps its current scope.", recommended: false },
+      ],
+      meanwhile: "The member can continue other work.",
+      holds: member.waypointId ? [member.waypointId] : [],
+    });
+  }
+  observeAct(observation: import("../scope/watch").ActObservation) {
+    const k = this.runtime.keeper, member = k.member(observation.threadId);
+    const keeperThreadId = member?.role === "keeper" ? member.threadId : member?.keeperThreadId;
+    if (!member || !keeperThreadId) return;
+    const key = `${member.threadId}:${observation.eventId}`;
+    const saved = k.store.atomic(() => {
+      if (k.store.get("scopeActObservations", key)) return false;
+      const record = { ...observation, keeperThreadId, boardQuestId: member.boardQuestId };
+      k.store.put("scopeActObservations", key, record);
+      if (record.preflight) k.store.event(k.now(), keeperThreadId, member.boardQuestId, "scope.act-held",
+        `${k.name(member)}: held ${record.act}`, record, { kind: "tavern" });
+      return true;
+    });
+    if (saved) k.changed(member.threadId, member.boardQuestId);
+  }
   async violation(violation: Violation) {
     const k = this.runtime.keeper;
     const member = k.member(violation.threadId);
@@ -680,7 +882,7 @@ export class BackendScopes {
               },
             ],
             meanwhile:
-              "Keep unrelated work moving. Do not retry the blocked call under another tool.",
+              "Keep unrelated work moving while the Keeper checks what happened.",
             holds: member.waypointId ? [member.waypointId] : [],
           },
           { scopeThreadId: member.threadId },
@@ -699,8 +901,14 @@ export class BackendScopes {
     k.changed(member.threadId, member.boardQuestId);
   }
   clearScope(threadId: string) {
-    this.api.clearScope(threadId);
     const k = this.runtime.keeper;
+    const record = this.api.localScopeRecord(threadId);
+    removeShellGrantProjection(this.api.scopeFile(threadId));
+    this.api.clearScope(threadId);
+    for (const grant of k.store.issuedShellGrants("memberThreadId", threadId)) {
+      if (record && grant.scope === "once" && shellGrantUse(record.file, grant.id) !== null) this.recordGrantUse(threadId, grant.id);
+      else settleShellGrant(k.store, grant.id, "expired", k.now(), "The member's scope ended.");
+    }
     const request = this.pending(threadId);
     if (!request) return;
     const askId = k.store.runtime(threadId).scopePending!;
@@ -725,7 +933,17 @@ export class BackendScopes {
     } catch (error) {
       problems.push(`Policy read failed: ${String(error)}`);
     }
-    const guardPosture = this.runtime.keeper.member(threadId)?.guardPosture;
+    const { keeper } = this.runtime;
+    const store = keeper.store, member = keeper.member(threadId);
+    const guardPosture = member?.guardPosture;
+    if (row.scope && (isLiveMember(store, member, "brief") || isLiveKeeper(store, member, "present")) &&
+        !store.runtime(threadId).builtinKeeperFallback && !store.get("scopeInputs", threadId))
+      problems.push("This older scope was kept as saved. Tavern cannot refresh it without its original inputs.");
+    const local = this.api.localScopeRecord(threadId);
+    const latestGrants = store.query("shellGrants", "memberThreadId", threadId, 100);
+    const grants = [...new Map([...store.issuedShellGrants("memberThreadId", threadId), ...latestGrants].map(grant => [grant.id, grant])).values()];
+    const available = grants.some(grant => grant.state === "issued") && status.mode === "enforce" && local && shellGrantCapable(local.file, local.scope)
+      ? new Set(readShellGrants(local.file, local.scope).map(grant => grant.id)) : null;
     return row
       ? {
           threadId,
@@ -733,6 +951,10 @@ export class BackendScopes {
           guard: status.guard,
           problems: [...new Set(problems)].slice(0, 30),
           scope: row.scope,
+          restartNeeded: local ? scopeRestartReason(local.file, local.scope) : null,
+          shellGrants: grants.map(grant => ({
+            ...grant, usable: grant.state === "issued" && (available?.has(grant.id) ?? false),
+          })),
           ...(guardPosture ? { guardPosture } : {}),
           error: row.error ?? null,
           armed: row.armed,

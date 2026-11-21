@@ -54,11 +54,12 @@ export class QuestAuthority {
     });
     k.changed(q.keeperThreadId, q.id);
   }
-  baseLane(ask: Pick<Ask, "kind" | "boardQuestId"> & { unsure?: boolean }): "user" | "keeper" {
-    const rule = QUEST_LANES[ask.kind as keyof typeof QUEST_LANES];
-    if (!rule?.delegatable || ask.unsure || !ask.boardQuestId) return "user";
+  baseLane(ask: Pick<Ask, "kind" | "boardQuestId" | "effect"> & { unsure?: boolean }): "user" | "keeper" {
+    if (ask.kind === "cluster-write" || ask.unsure || !ask.boardQuestId) return "user";
     const q = this.keeper.store.get("quests", ask.boardQuestId);
     if (!q || ["done", "stopping", "stopped"].includes(q.phase)) return "user";
+    if (ask.effect?.type === "grant-shell-act" && ask.effect.target.act === "publish") return "keeper";
+    if (!QUEST_LANES[ask.kind as keyof typeof QUEST_LANES]?.delegatable) return "user";
     const kind = ask.kind as DelegationKind;
     return !this.keeper.settings(q.id).keepers.alwaysAsk.includes(kind) || q.delegations?.some(g => g.kind === kind && this.active(g)) ? "keeper" : "user";
   }

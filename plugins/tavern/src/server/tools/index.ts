@@ -316,7 +316,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_ask",
     "Opened an ask",
-    "Record a non-blocking ask. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. Use cluster-write for Kubernetes, Terraform, Helm and kapp writes; give target.command and change. Each run needs its own user answer, plus immediate user confirmation before execution. Give undo when known, or say it cannot be undone. Sends-as-you needs the full recipient and draft. For a checker-handoff release, use blocker, boardQuestId and releaseCheckerHandoff:true; Tavern pins the hold and supplies its question and options. Include options, a recommendation, what continues and the held waypoints. Use an untimed decision for clarification. Never use a native question tool or infer approval from chat or a timer. An answer records a choice; it does not execute an act or supply credentials.",
+    "Open a non-blocking ask. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. For cluster writes give target.command, change and undo when known; each run needs the user's approval and immediate confirmation. For other held shell acts pass shellGrant.heldEventId from the tick; Tavern supplies the lane and options. Sends-as-you needs the full recipient and draft. For checker-handoff release, use blocker, boardQuestId and releaseCheckerHandoff:true; Tavern pins the hold. Include options, a recommendation, what continues and the held waypoints. Use untimed decision for clarification. Never use a native question tool or infer approval from chat or a timer. An answer does not execute an act or supply credentials.",
     askSchema
       .pick({
         question: true,
@@ -336,8 +336,18 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         change: askSchema.shape.change,
         undo: askSchema.shape.undo,
         draft: askSchema.shape.draft.optional(),
+        shellGrant: z.union([
+          z.object({ heldEventId: z.string().min(1).max(420) }).strict(),
+          z.object({ memberThreadId: z.string().min(1).max(200), command: z.string().min(1).max(8000) }).strict(),
+        ]).optional(),
       }),
     (input, threadId) => {
+      if (input.shellGrant) {
+        if (!runtime.scopes) throw new Error("Shell grants are unavailable.");
+        if (input.proceedInMinutes != null) throw new Error("Shell grant asks never default.");
+        const ask = runtime.scopes.askAct(threadId, { ...input.shellGrant, why: input.why, unsure: input.unsure, draft: input.draft });
+        return `Ask recorded. Continue unrelated work. Write on its own line:\n::tavern-ask{id="${ask.id}"}`;
+      }
       if (input.kind === "scope")
         throw new Error(
           "Scope asks are created by tavern_hire or tavern_scope and bind the exact requested grants or detection-only hire",

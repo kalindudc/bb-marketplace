@@ -39,7 +39,7 @@ it.each(commands)("recognises %s: %s for every class", (kind, command) => {
   for (const role of ["ranger", "warden", "smith", "wanderer", "keeper"]) {
     const decision = evaluate(scope(role), call(command));
     const managed = ["ready", "close", "review"].includes(kind) || /\bpr (?:comment|edit)\b/.test(command);
-    expect(decision.allow, role).toBe(!managed && (role === "keeper" || role === "wanderer"));
+    expect(decision.allow, role).toBe(!managed && role === "keeper");
     if (role === "keeper" && !managed) expect(decision).toMatchObject({ acts: expect.arrayContaining([expect.objectContaining({ kind })]) });
     if (managed && role === "keeper" && kind !== "ready") expect(decision).toMatchObject({ reason: expect.stringContaining("tavern_pull_request") });
   }
@@ -98,9 +98,19 @@ it("keeps project narrowing even when it reuses a legacy rule id", () => {
   s.shell.deny.push({ id: "deploy", argv: ["npm", "test"], why: "Project-specific restriction" });
   expect(evaluate(s, call("npm test")).allow).toBe(false);
 });
-it("never tells a recorded act not to try another route", () => {
-  const s = scope("smith"); s.mode = "watch";
-  const decision = evaluate(s, call("dt pr merge 1"));
-  expect(decision).toMatchObject({ allow: false });
-  if (!decision.allow) expect(decision.reason).not.toContain("do not try another route");
+it.each([
+  ["dt pr merge 1", "merge", "merge"],
+  ["npm publish", "publish", "decision"],
+  ["quick deploy ./site demo", "deploy", "production"],
+  ["curl -X POST https://example.test", "send", "sends-as-you"],
+  ["bb thread delete fixture", "delete", "destructive"],
+  ["gh auth token", "credential", "credential"],
+])("names the act and ask without stalling unrelated work: %s", (command, kind, ask) => {
+  const decision = evaluate(scope("smith"), call(command));
+  expect(decision).toMatchObject({ allow: false, act: kind });
+  if (decision.allow) throw new Error("Expected a refusal");
+  expect(decision.reason).toContain(`needs a ${ask} ask`);
+  expect(decision.reason).toContain("Nothing was done.");
+  expect(decision.reason).toContain("Tell your Keeper what you need it for and carry on with other work.");
+  expect(decision.reason).not.toMatch(/tavern_report|do not try another route/i);
 });

@@ -136,8 +136,11 @@ it("records allowed acts separately from violations and attention inputs", () =>
   expect(new ScopeStore(root).acts("t1")).toHaveLength(1);
   expect(store.violations("t1")).toEqual([]);
 });
-it("keeps ordinary Wanderer acts open but sends an unverified pull request edit to the user", () => {
+it("preserves a running legacy Wanderer's open baseline without permitting an unverified pull request edit", () => {
   const s = bindPaths(scopeForClass("wanderer"), { home: "/home/me", tmp: ["/tmp"], scopesDir: "/scopes" });
-  for (const command of ["git push origin feature", "gh pr merge 1", "curl -X POST https://remote.test", "gh pr merge 1 'unterminated"]) expect(evaluate(s, call(command)).allow, command).toBe(true);
-  expect(evaluate(s, call("gh pr edit 1 --body x"))).toMatchObject({ allow: false, ruleId: "pr-sends-as-you" });
+  for (const command of ["git push origin feature", "gh pr merge 1", "curl -X POST https://remote.test", "gh pr merge 1 'unterminated"]) {
+    expect(evaluate(s, call(command), true).allow, command).toBe(true);
+    expect(evaluate(s, call(command)).allow, command).toBe(false);
+  }
+  expect(evaluate(s, call("gh pr edit 1 --body x"), true)).toMatchObject({ allow: false, ruleId: "pr-sends-as-you" });
 });

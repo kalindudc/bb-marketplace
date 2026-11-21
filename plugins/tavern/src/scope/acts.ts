@@ -1,3 +1,4 @@
+import type { ActKind } from "./act-routing";
 import { selectedAwayGuards } from "./away-policy";
 import type { Scope, ShellRule } from "./schema";
 import { writeAllowed } from "./paths";
@@ -29,8 +30,7 @@ export function userControl(command: ShellCommand): boolean {
     (!spec.option || command.argv.some(arg => arg === spec.option || arg.startsWith(spec.option + "="))));
 }
 
-export const ACT_KINDS = ["merge", "publish", "ready", "close", "review", "deploy", "cluster-write", "send", "delete", "configure", "credential", "tavern-control", "allocate"] as const;
-export type ActKind = typeof ACT_KINDS[number];
+export { ACT_KINDS, type ActKind } from "./act-routing";
 export interface Act { kind: ActKind; ruleId: string; why: string }
 interface ActDefinition extends Act { commands: string[]; matches(command: ShellCommand): boolean; fallback: RegExp }
 const pr = (command: ShellCommand, actions: string[]) => ["gh", "dt"].includes(command.argv[0]) && command.argv[1] === "pr" && actions.includes(command.argv[2]);
@@ -175,7 +175,8 @@ export function fallbackPullRequestRoute(source: string): Act | undefined {
 }
 export function baselineHolds(scope: Scope, call: ScopeCall, command: ShellCommand, act: Act): boolean {
   if (act.kind === "tavern-control") return false;
-  if (scope.role === "keeper" || scope.role === "wanderer" && scope.preset === "open") return true;
+  if (scope.role === "keeper") return true;
+  if (scope.role === "wanderer" && scope.preset === "open" && (act.ruleId === "pr-owned-write" || act.ruleId === "pr-sends-as-you" && scope.pullRequestPolicy?.alwaysAsk === false)) return true;
   if (scope.role !== "smith" || scope.preset !== "worktree" || act.kind !== "publish") return false;
   const [p, s, a] = command.argv;
   if (!writeAllowed(scope, command.cwd, command.cwd)) return false;

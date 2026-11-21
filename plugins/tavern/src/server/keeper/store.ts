@@ -71,6 +71,9 @@ export interface Records {
   };
   scopeRequests: ScopeRequest;
   scopeViolations: Violation;
+  scopeActObservations: import("../../scope/watch").ActObservation & { keeperThreadId: string; boardQuestId: string | null };
+  shellGrants: import("../../shared/shell-grant").ShellGrant;
+  scopeInputs: { initial?: ScopeOverride; fingerprint?: string; changes: { override: ScopeOverride; approved?: string[] }[] };
   skips: { boardQuestId: string; version: number; waypointId: string };
   hires: HireIntent;
   placementPicks: { remote: string; projectId: string; ruleId: string; at: number };
@@ -344,6 +347,10 @@ export class KeeperStore {
       )
       .all(kind, value, limit) as { data: string }[];
     return rows.map((row) => this.decode(kind, row.data)).reverse();
+  }
+  issuedShellGrants(field: "memberThreadId" | "boardQuestId", value: string) {
+    const rows = this.db.prepare(`SELECT data FROM tavern_records WHERE kind='shellGrants' AND json_extract(data,'$.state')='issued' AND json_extract(data,'$.${field}')=? ORDER BY rowid`).all(value) as { data: string }[];
+    return rows.map(row => this.decode("shellGrants", row.data));
   }
   hireForMember(memberThreadId: string): (HireIntent & { id: string }) | null {
     const row = this.db.prepare(

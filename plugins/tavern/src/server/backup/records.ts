@@ -9,6 +9,7 @@ import type { Database } from "../ports";
 import type { SettingsStore } from "../settings/store";
 import { LIMITS } from "../limits";
 import { sparseTunablesSchema } from "../../shared/settings";
+import { shellGrantSchema } from "../../shared/shell-grant";
 import { awayHoldSchema, type AwayHold } from "../away/holds";
 import { awayCompletedWindowSchema, awayStateSchema, type AwayState, type AwayWindow } from "../../shared/away";
 import { isCloseEffect } from "../../shared/closing";
@@ -25,7 +26,7 @@ type Column = { name: string; type: string; notnull: number; pk: number; dflt_va
 const legacyMemberSchema = memberSchema.extend({ state: z.union([memberSchema.shape.state, z.literal("done"), z.literal("stopped")]) });
 const recordSchemas: Record<string, z.ZodType> = { pullRequests: pullRequestSchema, taleDeliveries: taleDeliverySchema, taleDeliveryAttempts: taleDeliveryAttemptSchema, taleKeeps: taleKeepSchema, serviceRecords: serviceQuestRecordSchema, serviceVerdicts: serviceVerdictSchema, serviceRecordState: serviceRecordStateSchema, members: memberSchema, quests: boardQuestSchema, plans: planSchema, asks: askSchema, decisions: decisionSchema, rules: ruleSchema, reports: reportSchema, summaries: summarySchema, routes: routeSchema, notes: keeperNoteSchema, gates: gateRecordSchema };
 const jsonColumns = new Set(["data", "actor", "entry_ids", "before_data", "after_data", "snapshot", "changes", "undo_data", "evidence"]);
-const privateRecordKinds = new Set(["placementArtifactManifests", "stopAll"]);
+const privateRecordKinds = new Set(["placementArtifactManifests", "stopAll", "scopeInputs"]);
 const privateAuthorityTables = ["tavern_placements", "tavern_source_snapshots", "tavern_placement_discoveries", "tavern_snapshot_owners"];
 // Setup proposals hold agent-named commands against a past settings revision; a restore never revives them.
 const excluded = new Set(["tavern_settings", "tavern_insight_meta", "tavern_setup_proposals", ...privateAuthorityTables]);
@@ -93,9 +94,14 @@ export class BackupRecords {
     }
     const records = snapshot.tables.tavern_records;
     if (records) for (const row of records.rows) {
+      if (row.kind === "shellGrants") {
+        const grant = shellGrantSchema.parse(JSON.parse(String(row.data)));
+        if (grant.state === "issued") row.data = JSON.stringify({ ...grant, state: "expired", changedAt: restoredAt ?? grant.changedAt });
+        continue;
+      }
       if (row.kind !== "asks") continue;
       const ask = askSchema.parse(JSON.parse(String(row.data)));
-      if (ask.state === "open" && deliveryAsks.get(ask.id) === ask.keeperThreadId ||
+      if (ask.state === "open" && (deliveryAsks.get(ask.id) === ask.keeperThreadId || ask.effect?.type === "grant-shell-act") ||
         ask.state === "withdrawn" && ask.withdrawnCause === "backup-restored" && ask.withdrawnAt == null) {
         row.data = JSON.stringify(askSchema.parse({ ...ask, state: "withdrawn", withdrawnCause: "backup-restored", withdrawnAt: restoredAt }));
       }
@@ -130,7 +136,7 @@ export class BackupRecords {
         }
         if (typeof row.actor === "string") actorSchema.parse(JSON.parse(row.actor));
         if (name === "tavern_records") {
-          if (privateRecordKinds.has(String(row.kind))) throw new Error("Private placement preservation manifests and live brake state cannot be restored from portable records");
+          if (privateRecordKinds.has(String(row.kind))) throw new Error("Private placement preservation manifests, live brake state and scope inputs cannot be restored from portable records");
           const data = JSON.parse(String(row.data));
           z.record(z.string(), z.json()).parse(data);
           if (row.kind === "away") {

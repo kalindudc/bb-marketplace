@@ -5,6 +5,7 @@ import { scopeFileSchema, scopeRenderedFileSchema, type Scope } from "../../src/
 import { armedFile, armScope, type NativeScopeReceipt } from "../../src/scope/store";
 import { prepareCall } from "../../src/scope/prepare";
 import { claimPullRequestGrant, pullRequestGrantAvailable, pullRequestReceiptLine } from "../../src/scope/pr-grants";
+import { armShellGrantCapability, claimShellGrant, oldScopeEnvironment, readShellGrants } from "../../src/scope/shell-grants";
 import { realPath } from "../../src/scope/paths";
 import { sandboxCommand } from "../../src/scope/sandbox";
 import { bindChecks } from "../../src/scope/checker";
@@ -28,6 +29,18 @@ export default function tavernGuard(pi: PiGuardApi): void {
   const enforcementNotes = new Set<string>();
   const containmentNotes = new Map<string, string>();
   const pullRequestReceipts = new Map<string, string>();
+  const shellReceipts = new Map<string, string>();
+  let localArm: { issuedAt: number; at: number } | undefined;
+  const legacyEnv = oldScopeEnvironment(process.env);
+  const arm = (scope: Scope) => {
+    if (nativeReceipt) return armScope(file, scope, nativeReceipt);
+    if (localArm?.issuedAt !== scope.issuedAt) {
+      const at = Date.now();
+      armShellGrantCapability(file, scope, at, legacyEnv);
+      localArm = { issuedAt: scope.issuedAt, at };
+    }
+    armScope(file, scope, undefined, localArm.at);
+  };
   const modeNote = "[Tavern scope] Enforcement enabled; this call and subsequent calls use the current scope. Earlier calls made while off were not enforced.";
   let mode: Scope["mode"] = process.env.TAVERN_SCOPE_MODE === "off" ? "off" : process.env.TAVERN_SCOPE_MODE === "watch" ? "watch" : "enforce";
   const load = (): Scope => {
@@ -71,9 +84,9 @@ export default function tavernGuard(pi: PiGuardApi): void {
     let scope: Scope;
     try { scope = load(); } catch { rmSync(armedFile(file), { force: true }); hide(null); return; }
     hide(scope);
-    armScope(file, scope, nativeReceipt);
+    arm(scope);
   };
-  pi.on("session_start", () => { worktree = undefined; refresh(); });
+  pi.on("session_start", () => { worktree = undefined; localArm = undefined; refresh(); });
   pi.on("before_agent_start", refresh);
   pi.on("tool_call", (event, ctx) => {
     const name = event.toolName ?? "unknown";
@@ -89,19 +102,28 @@ export default function tavernGuard(pi: PiGuardApi): void {
     if (mode !== "enforce") return;
     const switched = previousMode === "off";
     try {
-      armScope(file, scope, nativeReceipt);
+      arm(scope);
       const contained = !nativeReceipt && process.platform === "darwin" && scope.sandbox && ["bash", "Bash"].includes(name);
       const call = prepareCall({ kind: "tool", toolName: name, input: event.input ?? {}, cwd: ctx.cwd, containment: contained ? "sandbox" : undefined }, { scope });
-      const decision = evaluate(scope, { ...call, prGrantAvailable: id => !!event.toolCallId && pullRequestGrantAvailable(file, id) });
-      if (!decision.allow) return { block: true, reason: decision.reason + (switched ? "\n" + modeNote : "") };
+      const shellGrants = !nativeReceipt && !legacyEnv.length && event.toolCallId && ["bash", "Bash"].includes(name) ? readShellGrants(file, scope) : undefined;
+      const decision = evaluate(scope, { ...call, shellGrants, prGrantAvailable: id => !!event.toolCallId && pullRequestGrantAvailable(file, id) });
+      if (!decision.allow) return { block: true, reason: decision.reason +
+        (decision.act ? "\nWorking directory: " + JSON.stringify(ctx.cwd) : "") + (switched ? "\n" + modeNote : "") };
       if (decision.prGrant) {
         const receipt = randomUUID();
         if (!claimPullRequestGrant(file, decision.prGrant, receipt))
           return { block: true, reason: "[Tavern scope blocked] This pull request exception was already used." };
         pullRequestReceipts.set(event.toolCallId!, receipt);
       }
+      const source = name.toLowerCase() === "bash" && typeof event.input?.command === "string" ? event.input.command : undefined;
+      const wrapped = source === undefined ? undefined : sandboxCommand(scope, source, decision.check === true, call.fetchWriteRoots);
+      if (decision.shellGrant) {
+        const receipt = randomUUID();
+        if (source === undefined || wrapped === undefined || !claimShellGrant(file, scope, decision.shellGrant, receipt, [source, wrapped])) return { block: true, reason: "[Tavern scope blocked] This shell grant has ended or was already used. Nothing was done." };
+        shellReceipts.set(event.toolCallId!, `Tavern shell grant receipt: ${decision.shellGrant} ${receipt}`);
+      }
       if (switched) enforcementNotes.add(event.toolCallId ?? name);
-      if (name.toLowerCase() === "bash" && typeof event.input?.command === "string") event.input.command = sandboxCommand(scope, event.input.command, decision.check === true, call.fetchWriteRoots);
+      if (event.input && wrapped !== undefined) event.input.command = wrapped;
       if (!nativeReceipt && process.platform === "darwin" && scope.sandbox && name.toLowerCase() === "bash") containmentNotes.set(event.toolCallId ?? name, `Tavern: a ${scope.preset === "worktree" ? "Smith writes only to its worktree, " : scope.preset === "checker" ? "Warden writes only to " : "Ranger writes only to "}$BB_THREAD_STORAGE and temp. Save there instead.`);
     } catch (error) {
       if (emergency.includes(name)) return;
@@ -115,6 +137,8 @@ export default function tavernGuard(pi: PiGuardApi): void {
     const notes: string[] = [];
     const receipt = pullRequestReceipts.get(key); pullRequestReceipts.delete(key);
     if (receipt) notes.push(pullRequestReceiptLine(receipt));
+    const shellReceipt = shellReceipts.get(key); shellReceipts.delete(key);
+    if (shellReceipt) notes.push(shellReceipt);
     if (hint && (event.content ?? []).some(part => typeof part === "object" && part !== null && "text" in part && typeof part.text === "string" && part.text.includes("Operation not permitted"))) notes.push(hint);
     if (enforcementNotes.delete(key)) notes.push(modeNote);
     if (!notes.length) return;

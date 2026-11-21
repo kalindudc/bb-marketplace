@@ -437,6 +437,8 @@ export const askOptionSchema = z.object({
   recommended: z.boolean().default(false),
 });
 
+import { shellGrantTargetSchema } from "./shell-grant";
+
 export const askEffectSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("greenlight"), planVersion: z.number().int().nonnegative(), requiresExplicit: z.literal(true).optional() }),
   z.object({ type: z.literal("conclude"), draft: concludeDraftSchema }),
@@ -448,6 +450,7 @@ export const askEffectSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("retry-stop"), memberThreadId: threadId.optional(), hireTokens: z.array(z.string()).optional() }),
   z.object({ type: z.literal("retry-brief"), threadId, briefId: id }),
   z.object({ type: z.literal("grant-scope"), memberThreadId: threadId }),
+  z.object({ type: z.literal("grant-shell-act"), memberThreadId: threadId, target: shellGrantTargetSchema, heldEventId: z.string().min(1).max(420).optional() }).strict(),
   z.object({ type: z.literal("scope-blocker"), memberThreadId: threadId }),
   z.object({ type: z.literal("detection-hire"), binding: z.object({ fingerprint: z.string(), providerId: z.string(), model: z.string(), characterId: z.string().nullable(), displayName: z.string(), token: z.string().optional() }) }),
   z.object({ type: z.literal("decision"), outcomes: z.array(z.object({ optionId: z.string(), outcome: z.enum(["approve", "decline"]) })).optional() }),

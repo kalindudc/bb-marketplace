@@ -22,7 +22,7 @@ import { backupName, bundleHash, managedBackupName, safePayloadPath, sealBundle,
 type Input = { withData?: boolean; projects?: boolean; parts?: BackupPart[] };
 export interface BackupProject { id: string; name: string; path: string }
 export interface ProjectInventory { projects: BackupProject[]; problems: string[] }
-export interface BackupOptions { settings: SettingsStore; registry: Registry; version: string; projects: () => Promise<BackupProject[] | ProjectInventory>; now?: () => number; changed?: () => void; warn?: (message: string) => void }
+export interface BackupOptions { settings: SettingsStore; registry: Registry; version: string; projects: () => Promise<BackupProject[] | ProjectInventory>; now?: () => number; changed?: () => void; beforeRecordsRestore?: () => void; warn?: (message: string) => void }
 type Target = { path: string; logical: string; before: string | null; text: string; kind: "class" | "character" | "scopes" };
 type SaveResult = { code: "ok" | "error"; backup: BackupEntry | null; path: string | null; manifest: BackupManifest | null; pruned: string[]; problem: string | null };
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
@@ -277,7 +277,10 @@ export class BackupService {
       const written: Target[] = [];
       try {
         commitUserAct(new KeeperStore(this.options.settings.db), () => this.options.settings.now(), receipt, () => this.options.settings.atomic(() => {
-          if (plan.result.records.action === "restore" && plan.data) this.records.restore(plan.data);
+          if (plan.result.records.action === "restore" && plan.data) {
+            this.options.beforeRecordsRestore?.();
+            this.records.restore(plan.data);
+          }
           for (const target of plan.targets) {
             const latest = this.target(target.logical, target.text, target.kind);
             if (latest.path !== target.path || latest.before !== target.before) throw new RestoreStale("Files changed after preview");

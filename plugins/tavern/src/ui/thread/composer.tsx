@@ -21,6 +21,7 @@ import { memberIdentityWords } from "../kit/member-identity";
 import { HUE_CSS } from "../../shared/heraldry";
 import { PlacementFacts } from "../kit/placement";
 import { memberIdentityLabel } from "../../shared/identity";
+import { watchActWords } from "../../scope/act-routing";
 
 export const CLASS_PROVIDER = "classes";
 
@@ -386,20 +387,39 @@ function Phase({ phase }: { phase: QuestPhase }) {
   return <span className="tw-ph" aria-hidden="true">{phases.map((p, i) => <i key={p} className={i < at ? "d" : i === at ? "c" : ""} />)}<span className="tw-pw">{phase === "closing" ? phaseWord(phase) : phase}</span></span>;
 }
 
-const scopeAlerts = (data: ThreadDecor) => (data.scope?.problems?.length ?? 0) + (data.violations?.length ?? 0) + (data.scope?.error ? 1 : 0) + (data.scope?.pendingAskId ? 1 : 0);
+const scopeAlerts = (data: ThreadDecor) => (data.scope?.problems?.length ?? 0) + (data.violations?.filter(v => v.mode !== "watch").length ?? 0) + (data.scope?.error ? 1 : 0) + (data.scope?.pendingAskId ? 1 : 0);
 
 /** A member's guardrails in plain words: the mode, what it may touch, policy problems, and each rule break with whether it was stopped. */
 function ScopePanel({ data }: { data: ThreadDecor }) {
+  const revoke = experimental_useRpcMutation({ contract: rpcContract, method: "revokeShellGrant" });
+  const [grantError, setGrantError] = useState<unknown>(null);
   const ms = data.scope; if (!ms) return <p className="m">No scope details are recorded for this member.</p>;
-  const mode = ms.mode ?? "enforce"; const sc = ms.scope; const violations = data.violations ?? [];
+  const mode = ms.mode ?? "enforce"; const sc = ms.scope; const observations = data.violations ?? [];
+  const watch = watchActWords(observations);
+  const otherWatch = observations.filter(v => v.mode === "watch" && !v.act).length;
+  const violations = observations.filter(v => v.mode !== "watch");
   return <section className="tw-scope" aria-label="Scope (guardrails)">
     <h4>Scope details</h4>
+    <p className="m small">The act catalogue checks shell commands, not non-shell tool actions or commands inside an interpreter.</p>
     {ms.error && <p className="problem" role="alert">The scope could not be applied: {ms.error}</p>}
     {sc && mode !== "off" && <ul className="tw-sfacts">{sc.writes.allow.length > 0 && <li>Allowed write paths: {sc.writes.allow.join(", ")}</li>}{sc.shell.deny.length > 0 && <li>{plural(sc.shell.deny.length, "blocked command rule")}</li>}</ul>}
     {ms.pendingAskId && <p className="m small">A wider scope is waiting for your answer in the Keeper’s thread.</p>}
     {(ms.problems ?? []).length > 0 && <ul className="tw-sprob" aria-label="Policy problems">{ms.problems!.map((pr, i) => <li key={i}><b>Policy problem</b> <span>{pr}</span></li>)}</ul>}
-    {violations.length > 0 && <ul className="tw-viol" aria-label="Rule breaks">{violations.map(v => { const watch = v.mode === "watch"; return <li key={`${v.eventId}-${v.seq}`} className={watch ? "watch" : v.stopped ? "stopped" : "missed"}><span className="vs">{watch ? "Recorded, not stopped" : v.stopped ? "Stopped" : "Not stopped"}</span><span className="vr">{v.reason} <code>{v.ruleId}</code>{v.stopError ? <span className="m"> · {v.stopError}</span> : null}</span><TimeAgo at={v.at} /></li>; })}</ul>}
-    <p className="m small">A scope change applies to the next tool call. The environment speed bumps (GH_TOKEN and the git push block) reach a running agent only after its session restarts.</p>
+    {ms.shellGrants?.length ? <div className="tw-shell-grants">
+      <h4>Shell grants</h4>
+      <ul aria-label="Shell grants">{ms.shellGrants.map(grant => <li key={grant.id}>
+        <code>{grant.target.command}</code>
+        <span className="m tw-grant-target"><code>{grant.target.cwd}</code>{grant.target.destinations?.map(value => <code key={value}>{value}</code>)}</span>
+        <span>{grant.scope === "once" ? "Once" : "For this quest"}</span>
+        <span className="m">{grant.state === "issued" ? mode !== "enforce" ? "Not enforced in this mode" : grant.usable ? "Ready" : ms.restartNeeded ? "Waiting for restart" : "Ready for the member's next session" : { used: "Used", expired: "Ended", revoked: "Revoked" }[grant.state]}</span>
+        {grant.state === "issued" && <button type="button" className="btn sm" disabled={revoke.isPending} onClick={() => { setGrantError(null); void revoke.mutate({ threadId: data.threadId, id: grant.id }).catch(setGrantError); }}>Revoke</button>}
+      </li>)}</ul>
+      <QueryState error={grantError} />
+    </div> : null}
+    {watch && <p className="m small">{watch}</p>}
+    {otherWatch > 0 && <p className="m small">{plural(otherWatch, "other Watch observation")}. Nothing was stopped.</p>}
+    {violations.length > 0 && <ul className="tw-viol" aria-label="Rule breaks">{violations.map(v => <li key={`${v.eventId}-${v.seq}`} className={v.stopped ? "stopped" : "missed"}><span className="vs">{v.stopped ? "Stopped" : "Not stopped"}</span><span className="vr">{v.reason} <code>{v.ruleId}</code>{v.stopError ? <span className="m"> · {v.stopError}</span> : null}</span><TimeAgo at={v.at} /></li>)}</ul>}
+    {ms.restartNeeded ? <p className="m small"><b>Restart needed.</b> {ms.restartNeeded}</p> : <p className="m small">A scope change applies to the next guarded call.</p>}
   </section>;
 }
 

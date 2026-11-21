@@ -106,10 +106,12 @@ it("rejects a symlinked executable file without reading or modifying its target"
   const f = await fixture(), input = f.input(), ack = await f.service.bindScope(input), outside = join(f.root, "outside"); writeFileSync(outside, "keep"); rmSync(ack.scopeFile); symlinkSync(outside, ack.scopeFile);
   await expect(f.service.bindScope(input)).rejects.toThrow(/integrity|symlink|regular/i); expect(readFileSync(outside, "utf8")).toBe("keep");
 });
-it("rejects a native env whose complete routing and speed-bump entries exceed the SDK budget", async () => {
+it.each([[27, 30], [28, 31]])("reserves two SDK routing entries with %i extra native variables", async (extras, count) => {
   const f = await fixture("ranger");
-  for (let i = 0; i < 12; i++) { f.delivery.env.variables["EXTRA_" + i] = "value"; f.delivery.bindingTemplate.env.variables["EXTRA_" + i] = "value"; }
-  await expect(f.service.bindScope(f.input())).rejects.toThrow(/env|32|budget/i);
+  for (let i = 0; i < extras; i++) { f.delivery.env.variables["EXTRA_" + i] = "value"; f.delivery.bindingTemplate.env.variables["EXTRA_" + i] = "value"; }
+  const binding = f.service.bindScope(f.input());
+  if (count === 30) expect(Object.keys((await binding).variables)).toHaveLength(count);
+  else await expect(binding).rejects.toThrow("Native scope variables must fit 30 entries and 64 KiB");
 });
 it("binds checker commands to the checker-local carried root rather than the maker path", async () => {
   const f = await fixture("warden"); f.delivery.checks!.worktree = "/maker/host/repo"; f.delivery.bindingTemplate.checks!.worktree = "/maker/host/repo";

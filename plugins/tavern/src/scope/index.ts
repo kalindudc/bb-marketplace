@@ -34,6 +34,7 @@ export interface ScopesDeps extends WatchDeps {
   assignedBranchForThread?(threadId: string): Promise<string | undefined>;
   hostTargetForThread?(threadId: string): import("./schema").ScopeHostTarget | undefined;
   onHostTemplateChanged?(threadId: string): void;
+  onScopeModeChanged?(threadId: string, mode: ScopeMode): void;
   narrowBoundScope?(scope: Scope): Scope;
   pullRequestPolicy?(threadId: string): Scope["pullRequestPolicy"];
   dataDir?: string;
@@ -204,7 +205,9 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
       mode = value;
       for (const threadId of store.records.keys()) {
         const previous = store.records.get(threadId);
+        if ((previous?.mode ?? previous?.scope?.mode) === mode) continue;
         store.setMode(threadId, mode);
+        deps.onScopeModeChanged?.(threadId, mode);
         if (previous?.binding && previous.template?.mode !== mode) deps.onHostTemplateChanged?.(threadId);
         if (mode !== "enforce") store.saveProgress(threadId, store.progress(threadId).cursor, false);
       }
@@ -222,6 +225,28 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
       store.write(threadId, bound, record.template && { ...record.template, pullRequestPolicy }, undefined, true);
       if (record.binding) deps.onHostTemplateChanged?.(threadId);
       return true;
+    },
+    scopeFile: (threadId: string) => store.file(threadId),
+    scopeTemplate: (threadId: string) => store.records.get(threadId)?.template,
+    rebuildScope(threadId: string, template: Scope, next: Scope) {
+      return enqueue(threadId, async check => {
+        const before = store.records.get(threadId);
+        if (before?.template !== template || !before.scope || before.error) return false;
+        const updated = {
+          ...next, role: template.role, threadId, issuedAt: template.issuedAt, mode,
+          ...(template.assignedBranch ? { assignedBranch: template.assignedBranch } : {}),
+          ...(template.expectedWorktree ? { expectedWorktree: template.expectedWorktree } : {}),
+          ...(template.workspaceKind ? { workspaceKind: template.workspaceKind } : {}),
+          ...(template.checks ? { checks: template.checks } : {}),
+        };
+        if (next.preset !== "checker") delete updated.checks;
+        await bindAndWrite(threadId, updated, check);
+        return store.records.get(threadId) !== before;
+      });
+    },
+    localScopeRecord: (threadId: string) => {
+      const record = store.records.get(threadId);
+      return record?.scope && !record.error && !record.binding ? { file: record.file, scope: record.scope } : null;
     },
     hostTemplate: (threadId: string) => originalHostTemplate(store.records.get(threadId)),
     clearScope: (threadId: string) => store.clear(threadId),
@@ -242,6 +267,10 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
         return { scope, widenings: result.widenings, problems: result.problems };
       });
     },
+    resolveForRefresh: (classId: string, context: ProjectContext, definition: ClassScope | undefined, files: ReturnType<ScopePolicy["policy"]>, override?: ScopeOverride) =>
+      policy.resolve(classId, context, override, definition, files),
+    replayOverride: (scope: Scope, context: ProjectContext, files: ReturnType<ScopePolicy["policy"]>, override: ScopeOverride, approved?: string[]) =>
+      policy.apply(scope, context, override, approved, scope, files),
     policy: (context: ProjectContext) => policy.policy(context),
     rememberWidening: (context: ProjectContext, classId: string, ruleIds: string[], target?: "project" | "global") => policy.rememberWidening(context, classId, ruleIds, target),
   };

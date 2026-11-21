@@ -1,6 +1,8 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { hostContract, type HostOutput } from "../host-contract";
-import { BLOCK_MARKER, blocked, evaluate, type Decision, type ScopeCall } from "./engine";
+import { BLOCK_MARKER, HELD_MARKER, blocked, evaluate, type Decision, type ScopeCall } from "./engine";
+import { ACT_KINDS, type ActKind } from "./acts";
+import { actAskKind } from "./act-routing";
 import { scopeObservationBindingSchema, ScopeStore, type ScopeObservationBinding, type ScopeObservationHold, type ScopeRecord, type Violation } from "./store";
 import type { ScopeHostBinding } from "./schema";
 import { prepareCall } from "./prepare";
@@ -8,6 +10,7 @@ import { bindChecks } from "./checker";
 import { bindWorktree, checkedWorktreeRoot, gitWorktreeRoot, needsWorktree, readerFallback } from "./worktree";
 
 import { claimPullRequestGrant, observedPullRequestReceipt, pullRequestGrantAvailable } from "./pr-grants";
+import { forgetShellGrantCall, checkShellGrantReceipt, hasShellGrantGuard, readShellGrants } from "./shell-grants";
 
 export type RemoteScopeObservation = { kind: "unavailable"; reason: string } | { kind: "open"; reason: string } | {
   kind: "ready"; hostId: string; cwd: string; binding: ScopeHostBinding;
@@ -15,10 +18,13 @@ export type RemoteScopeObservation = { kind: "unavailable"; reason: string } | {
 };
 export interface WatchDeps {
   onViolation(violation: Violation, binding?: ScopeObservationBinding): void | Promise<void>;
+  onActObservation?(observation: ActObservation): void;
+  onShellGrantUsed?(threadId: string, grantId: string): void;
   cwdForThread?(threadId: string): string | undefined;
   remoteForThread?(threadId: string): RemoteScopeObservation | undefined;
   onObservationHold?(hold: ScopeObservationHold): void | Promise<void>;
 }
+export type ActObservation = Pick<Violation, "threadId" | "eventId" | "at" | "mode"> & { act: ActKind; preflight?: true; command?: string; cwd?: string; resolvedAt?: number };
 type Item = Record<string, unknown>;
 const emergency = new Set(["tavern_report", "journal", "quest", "tavern_ready"]);
 const identity = (value: Extract<RemoteScopeObservation, { kind: "ready" }>): ScopeObservationBinding => scopeObservationBindingSchema.parse({ ...value.binding, hostId: value.hostId, cwd: value.cwd });
@@ -42,16 +48,25 @@ export function callsFromItem(item: Item, fallbackCwd: string): ScopeCall[] {
   if (item.type === "delegation") return [{ kind: "tool", toolName: "spawn", input: item, cwd }];
   return [];
 }
-function guardBlocked(item: Item): boolean {
-  const results = [item.result, item.resultText, item.aggregatedOutput, item.error];
-  if (results.some(value => value !== undefined && JSON.stringify(value).includes(BLOCK_MARKER))) return true;
-  if (item.status !== "failed") return false;
-  const texts = results.flatMap(value => {
+const resultValues = (item: Item) => [item.result, item.resultText, item.aggregatedOutput, item.error];
+function resultTexts(item: Item) {
+  return resultValues(item).flatMap(value => {
     if (typeof value === "string") return [value];
     if (!value || typeof value !== "object" || !("content" in value) || !Array.isArray(value.content)) return [];
     return value.content.flatMap(block => block && typeof block === "object" && "text" in block && typeof block.text === "string" ? [block.text] : []);
   });
-  return texts.some(text => text === "Blocked by user" || text === "Tool execution was blocked" || /^\[(?:CRITICAL|HIGH)\] Command blocked (?:automatically|in non-interactive mode)(?:\r?\n|$)/.test(text));
+}
+function heldAct(item: Item) {
+  if (item.status !== "failed" && item.status !== "blocked") return undefined;
+  const texts = resultTexts(item);
+  return ACT_KINDS.find(act => {
+    const kind = actAskKind(act);
+    return kind && texts.some(text => text.startsWith(`${HELD_MARKER}${act}. This needs a ${kind} ask. Nothing was done.`));
+  });
+}
+function guardBlocked(item: Item): boolean {
+  if (item.status !== "failed") return false;
+  return resultTexts(item).some(text => text.startsWith(BLOCK_MARKER) || text === "Blocked by user" || text === "Tool execution was blocked" || /^\[(?:CRITICAL|HIGH)\] Command blocked (?:automatically|in non-interactive mode)(?:\r?\n|$)/.test(text));
 }
 export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchDeps): void {
   const pending = new Map<string, Promise<void>>();
@@ -106,8 +121,11 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
     }
     if (store.records.has(threadId)) store.saveProgress(threadId, seq, !!stopError, binding);
     const at = Date.now();
-    const violation: Violation = { threadId, providerId, at, eventId, seq, ruleId: decision.ruleId, reason: decision.reason, call, mode, stopped: mode === "enforce" && !stopError, stopError, latencyMs: Math.max(0, at - createdAt) };
+    const ask = decision.act && actAskKind(decision.act);
+    const reason = decision.act && ask ? `${decision.act} needed a ${ask} ask; detected after dispatch.` : decision.reason;
+    const violation: Violation = { threadId, providerId, at, eventId, seq, ruleId: decision.ruleId, reason, ...(decision.act ? { act: decision.act } : {}), call, mode, stopped: mode === "enforce" && !stopError, stopError, latencyMs: Math.max(0, at - createdAt) };
     store.record(violation);
+    if (mode === "watch" && decision.act) deps.onActObservation?.({ threadId, eventId, at, mode, act: decision.act });
     if (mode === "enforce") {
       try { await deps.onViolation(violation, binding); }
       catch (error) { bb.log.warn("Tavern scope notification failed: " + String(error)); }
@@ -176,7 +194,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
           if (row.type === "item/completed" && typeof item?.id === "string") starts.get(threadId)?.delete(item.id);
           const held = store.observationHold(threadId); if (held && held.seq <= cursor) store.clearObservationHold(threadId);
         };
-        if (record.scope && row.createdAt < record.scope.issuedAt || !item || item.approvalStatus === "denied" || item.status === "denied" || item.status === "blocked") { advance(); continue; }
+        if (record.scope && row.createdAt < record.scope.issuedAt || !item) { advance(); continue; }
         let beganAt = row.createdAt;
         if (typeof item.id === "string") {
           const times = starts.get(threadId) ?? new Map<string, number>(); starts.set(threadId, times);
@@ -184,7 +202,20 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
         }
         if (record.scope?.enforceFrom !== undefined && beganAt < record.scope.enforceFrom) { advance(); continue; }
         const rawCalls = callsFromItem(item, "");
-        if (!rawCalls.length || rawCalls.every(call => emergency.has(call.toolName)) || providerId === "pi" && row.type === "item/completed" && guardBlocked(item)) { advance(); continue; }
+        const command = rawCalls.length === 1 && ["bash", "Bash"].includes(rawCalls[0].toolName) ? rawCalls[0].input.command ?? rawCalls[0].input.cmd : undefined;
+        if (providerId === "pi" && row.type === "item/completed" && (item.status === "blocked" || guardBlocked(item))) {
+          const act = modeFor(threadId) === "enforce" && item.approvalStatus !== "denied" && rawCalls.some(call => typeof (call.input.command ?? call.input.cmd) === "string") ? heldAct(item) : undefined;
+          if (act) {
+            const directory = resultTexts(item).filter(text => text.startsWith(HELD_MARKER)).map(text => /^Working directory: ("[^\n]*")$/m.exec(text)?.[1]).find(Boolean);
+            let reportedCwd: unknown;
+            if (directory) { try { reportedCwd = JSON.parse(directory); } catch { reportedCwd = undefined; } }
+            const cwd = typeof reportedCwd === "string" ? reportedCwd : rawCalls[0]?.cwd;
+            const exact = typeof command === "string" && command.length <= 8000 && cwd?.startsWith("/") && cwd.length <= 4000;
+            deps.onActObservation?.({ threadId, eventId: row.id, at: row.createdAt, mode: "enforce", act, preflight: true, ...(exact ? { command, cwd } : {}) });
+          }
+          advance(); continue;
+        }
+        if (!rawCalls.length || rawCalls.every(call => emergency.has(call.toolName)) || item.approvalStatus === "denied" || item.status === "denied" || item.status === "blocked") { advance(); continue; }
         const remote = lookup(threadId);
         if (remote?.kind === "unavailable") { await hold(threadId, providerId, row.id, row.seq, remote.reason); return; }
         if (remote?.kind === "open") { advance(); continue; }
@@ -209,6 +240,19 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
           else advance();
           continue;
         }
+        let acceptedGrant = false;
+        if (providerId === "pi" && row.type === "item/completed" && typeof command === "string") {
+          for (const receipt of resultTexts(item).flatMap(text => [...text.matchAll(/^Tavern shell grant receipt: ([A-Za-z0-9_-]{1,120}) ([a-f0-9-]{36})$/gm)]).reverse()) {
+            const scope = checkShellGrantReceipt(record.file, receipt[1], receipt[2], command);
+            if (!scope) continue;
+            if (scope === "once") deps.onShellGrantUsed?.(threadId, receipt[1]);
+            advance();
+            if (scope === "quest") forgetShellGrantCall(record.file, receipt[1], receipt[2]);
+            acceptedGrant = true;
+            break;
+          }
+        }
+        if (acceptedGrant) continue;
         advance();
         const calls = callsFromItem(item, deps.cwdForThread?.(threadId) ?? process.cwd());
         if (providerId === "pi") {
@@ -251,7 +295,8 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
             const local = { ...call, containment: providerId === "pi" && process.platform === "darwin" && scope.sandbox ? "sandbox" as const : undefined };
             const id = observedPullRequestReceipt(item) ?? row.id;
             const prepared = prepareCall(local, { scope });
-            decision = evaluate(scope, { ...prepared, prGrantAvailable: grant => pullRequestGrantAvailable(record.file, grant, id) });
+            decision = evaluate(scope, { ...prepared, shellGrants: modeFor(threadId) === "watch" && providerId === "pi" && !record.binding ? readShellGrants(record.file, scope) : undefined, prGrantAvailable: grant => pullRequestGrantAvailable(record.file, grant, id) },
+              providerId === "pi" && modeFor(threadId) === "enforce" && scope.role === "wanderer" && scope.preset === "open" && !hasShellGrantGuard(record.file, scope));
             if (decision.allow && decision.prGrant && !claimPullRequestGrant(record.file, decision.prGrant, id) && !pullRequestGrantAvailable(record.file, decision.prGrant, id))
               decision = blocked(call.toolName, "pr-sends-as-you", "the one-use pull request exception was already used");
           }

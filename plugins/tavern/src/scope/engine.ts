@@ -1,6 +1,8 @@
 import type { Scope } from "./schema";
 import { agentProgram, bbPositionals, nestedCommands } from "./legacy";
-import { actsForCommand, baselineHolds, isCatalogueRule, closingAct, fallbackActs, fallbackPullRequestRoute, pullRequestRoute, readerNeedsDecision, userControl, kubectlRead, type Act } from "./acts";
+import { actsForCommand, baselineHolds, isCatalogueRule, closingAct, fallbackActs, fallbackPullRequestRoute, pullRequestRoute, readerNeedsDecision, userControl, kubectlRead, type Act, type ActKind } from "./acts";
+import { actAskKind } from "./act-routing";
+import { shellGrantTarget, type ShellGrantProjection } from "./shell-grants";
 import { readerFallback } from "./worktree";
 import { checkInvocation } from "./checker";
 import { glob, isSink, normalizeToolPath, within, writeAllowed, writeDenied } from "./paths";
@@ -10,12 +12,20 @@ import { draftEditKey, githubApiRead } from "./github";
 import { prCommandDigest, pullRequestOwned } from "./pr-policy";
 import { commandWritePaths, knownWritePaths, ruleMatches, shellCommands, type ShellCommand } from "./shell";
 
-export interface ScopeCall { containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; prGrantAvailable?(id: string): boolean }
-export type Decision = { allow: true; check?: boolean; acts?: Act[]; prGrant?: string } | { allow: false; ruleId: string; reason: string };
+export interface ScopeCall { containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; shellGrants?: readonly ShellGrantProjection[]; prGrantAvailable?(id: string): boolean }
+export type Decision = { allow: true; check?: boolean; acts?: Act[]; prGrant?: string; shellGrant?: string } | { allow: false; ruleId: string; reason: string; act?: ActKind };
 const allowed: Decision = { allow: true };
 export const BLOCK_MARKER = "[Tavern scope blocked]";
+export const HELD_MARKER = BLOCK_MARKER + " Held ";
+const keepWorking = "Tell your Keeper what you need it for and carry on with other work.";
 export function blocked(what: string, ruleId: string, why: string): Decision {
-  return { allow: false, ruleId, reason: `${BLOCK_MARKER} Blocked ${what}: ${why}. Report the need with tavern_report status needs-decision.` };
+  return { allow: false, ruleId, reason: `${BLOCK_MARKER} Blocked ${what}: ${why.replace(/\.$/, "")}. ${keepWorking}` };
+}
+function blockedAct(what: string, act: Act, ruleId = act.ruleId): Decision {
+  const ask = actAskKind(act.kind);
+  if (!ask) return blocked(what, ruleId, act.why);
+  const why = ruleId === "pr-sends-as-you" ? " " + act.why : "";
+  return { allow: false, act: act.kind, ruleId, reason: `${HELD_MARKER}${act.kind}. This needs a ${ask} ask. Nothing was done. ${keepWorking} Held command: ${JSON.stringify(what.slice(0, 8000))}.${why}` };
 }
 export function toolAllowed(scope: Scope, name: string): boolean {
   return !scope.tools.deny.some(pattern => glob(pattern, name)) && scope.tools.allow.some(pattern => glob(pattern, name));
@@ -93,7 +103,8 @@ export function authorityDecision(scope: Scope, call: ScopeCall): Decision | und
     }
   }
 }
-export function evaluate(scope: Scope, call: ScopeCall): Decision {
+export function evaluate(scope: Scope, call: ScopeCall, legacyWanderer = false): Decision {
+  const olderOpenBaseline = legacyWanderer && scope.role === "wanderer" && scope.preset === "open";
   const authority = authorityDecision(scope, call);
   if (authority) return authority;
   const contained = call.containment === "sandbox" && scope.sandbox && ["bash", "Bash"].includes(call.toolName);
@@ -116,18 +127,23 @@ export function evaluate(scope: Scope, call: ScopeCall): Decision {
   try { commands = shellCommands(source, call.cwd, { temporaryRoot: temporaryRoot(scope), isRead: contained ? containmentRead : readonlyProgram, gitRoots: call.gitRoots, directories: call.directories, env: scope.env.variables, containment: contained ? "sandbox" : undefined }); } catch {
     const route = fallbackPullRequestRoute(source);
     const acts = route ? [route, ...fallbackActs(source)] : fallbackActs(source);
-    const refused = (route && (route.kind !== "send" || scope.pullRequestPolicy?.alwaysAsk !== false) ? route : undefined) ?? acts.find(act => closingAct(scope, act, source) || !(scope.role === "keeper" || scope.role === "wanderer" && scope.preset === "open") || act.kind === "tavern-control");
-    if (refused) return blocked("shell command", refused.kind === "deploy" ? "deploy-fallback" : refused.ruleId, refused.why);
+    const refused = (route && (route.kind !== "send" || scope.pullRequestPolicy?.alwaysAsk !== false) ? route : undefined) ?? acts.find(act => closingAct(scope, act, source) || (!olderOpenBaseline && scope.role !== "keeper") || act.kind === "tavern-control");
+    if (refused) return closingAct(scope, refused, source)
+      ? blocked("shell command", "closing-act", "Closing time: " + refused.kind + " waits for your return")
+      : blockedAct(source, refused, refused.kind === "deploy" ? "deploy-fallback" : refused.ruleId);
     if (scope.preset === "open") return acts.length ? { allow: true, acts } : allowed;
     for (const rule of scope.shell.deny) if (rule.regex && new RegExp(rule.regex).test(source)) return blocked("shell command", rule.id, rule.why);
     if (contained) return allowed;
     return blocked("shell command", "shell-parse", "unsupported shell syntax cannot be checked safely");
   }
-  let checking = false, prGrant: string | undefined;
+  let checking = false, prGrant: string | undefined, shellGrant: string | undefined;
+  const grantTarget = call.shellGrants?.length && commands.length === 1 ? shellGrantTarget(call, commands[0]) : null;
+  const grant = grantTarget && call.shellGrants?.find(g => g.digest === grantTarget.digest);
+  const matchesGrant = (act: Act) => !!grant && grantTarget?.act === act.kind;
   const observed: Act[] = [];
   for (const command of commands) {
     for (const source of nestedCommands(command)) {
-      const result = evaluate(scope, { ...call, input: { command: source }, cwd: command.cwd, prGrantAvailable: undefined });
+      const result = evaluate(scope, { ...call, input: { command: source }, cwd: command.cwd, prGrantAvailable: undefined, shellGrants: undefined }, legacyWanderer);
       if (!result.allow) return result;
       observed.push(...result.acts ?? []);
     }
@@ -152,14 +168,21 @@ export function evaluate(scope: Scope, call: ScopeCall): Decision {
     const route = pullRequestRoute(command, smithOwned || questOwned);
     if (route && (route.kind === "ready" || route.kind === "close")) return blocked(command.text, route.ruleId, route.why);
     if (route?.kind === "send") {
-      const grant = commands.length === 1 && !command.githubEnvironment && scope.pullRequestPolicy?.grants.find(g => g.digest === prCommandDigest(source) && call.prGrantAvailable?.(g.id));
-      if (!grant && scope.pullRequestPolicy?.alwaysAsk !== false) return blocked(command.text, route.ruleId, route.why);
-      if (grant) prGrant = grant.id;
+      const prException = commands.length === 1 && !command.githubEnvironment && scope.pullRequestPolicy?.grants.find(g => g.digest === prCommandDigest(source) && call.prGrantAvailable?.(g.id));
+      if (!prException && scope.pullRequestPolicy?.alwaysAsk !== false) {
+        if (closingAct(scope, route, command)) return blocked(command.text, "closing-act", "Closing time: " + route.kind + " waits for your return");
+        if (!matchesGrant(route)) return blockedAct(source, route);
+        shellGrant = grant!.id;
+      }
+      if (prException) prGrant = prException.id;
     }
     for (const act of route && !smithOwned ? [route] : scope.pullRequestPolicy?.alwaysAsk === false && route?.kind === "send" ? [route] : actsForCommand(command)) {
       observed.push(act);
       if (closingAct(scope, act, command)) return blocked(command.text, "closing-act", "Closing time: " + act.kind + " waits for your return");
-      if (!baselineHolds(scope, call, command, act) && !excepted(act.ruleId)) return blocked(command.text, act.ruleId, act.why);
+      if (!olderOpenBaseline && !baselineHolds(scope, call, command, act) && !excepted(act.ruleId)) {
+        if (!matchesGrant(act)) return blockedAct(source, act);
+        shellGrant = grant!.id;
+      }
     }
     for (const rule of scope.shell.deny) if (!isCatalogueRule(rule) && ruleMatches(rule, command) && !excepted(rule.id)) return blocked(command.text, rule.id, rule.why);
     const paths = commandWritePaths(command);
@@ -176,11 +199,11 @@ export function evaluate(scope: Scope, call: ScopeCall): Decision {
     if (!contained && command.fedInput && command.scriptInput === "opaque") return blocked(command.text, "shell-input", "shell input from a pipe or redirect cannot be inspected");
     if (!contained && scope.preset === "worktree" && command.cwdAlternative && !readonlyProgram(command) && !canWrite(command.cwd, command.cwd)) return blocked(command.text, "shell-location", "one possible working directory is outside allowed roots");
     if (!contained && command.uncertain && !readonlyProgram(command)) return blocked(command.text, "shell-location", "the command's working directory or symlinks cannot be proven");
-    if (contained && scope.writes.mode === "none" && readerNeedsDecision(command)) return blocked(command.text, "legacy-act", "this consequential command requires a scope decision");
+    if (contained && scope.writes.mode === "none" && !shellGrant && readerNeedsDecision(command)) return blocked(command.text, "legacy-act", "this consequential command requires a scope decision");
     if (scope.writes.mode === "none" && !contained) {
       const knownWriter = ["tee", "mkdir", "cp", "mv", "touch", "rm", "rmdir"].includes(program) && knownWritePaths(argv).length > 0;
-      if (!read && !check && !knownWriter) return blocked(command.text, "readonly-shell", "this scope permits inspected read programs, not arbitrary programs or opaque shell input");
+      if (!read && !check && !knownWriter && !shellGrant) return blocked(command.text, "readonly-shell", "this scope permits inspected read programs, not arbitrary programs or opaque shell input");
     }
   }
-  return { allow: true, ...(checking ? { check: true } : {}), ...(observed.length ? { acts: observed } : {}), ...(prGrant ? { prGrant } : {}) };
+  return { allow: true, ...(checking ? { check: true } : {}), ...(observed.length ? { acts: observed } : {}), ...(prGrant ? { prGrant } : {}), ...(shellGrant ? { shellGrant } : {}) };
 }

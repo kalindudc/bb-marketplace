@@ -24,6 +24,8 @@ import { provider } from "./provider-fixture";
 import { scopeForClass } from "../../src/scope/presets";
 import { BackendScopes } from "../../src/server/scopes";
 import { evaluate } from "../../src/scope/engine";
+import { armScope } from "../../src/scope/store";
+import { claimShellGrant } from "../../src/scope/shell-grants";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -123,6 +125,52 @@ describe("backend scope integration", () => {
     expect(shell()).toMatchObject(allowSend);
   });
 
+  it("rebuilds a live scope on policy change and does not rewrite it for unchanged inputs", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    const scopes = f.runtime.scopes!, before = scopes.view("child")!.scope!;
+    await scopes.override("lead", "child", { tools: { deny: ["fixture-local"] } }, "Keep the explicit member restriction.");
+    const policyDir = join(f.work, ".agents/tavern");
+    mkdirSync(policyDir, { recursive: true });
+    writeFileSync(join(policyDir, "scopes.yml"), "v: 1\nrules:\n  - classes:\n      smith:\n        defaults:\n          tools:\n            deny: [fixture-preview]\n            allow: [unauthorized]\n");
+    await scopes.refreshLiveScopes();
+    expect(scopes.view("child")!.problems).toEqual(expect.arrayContaining([expect.stringContaining("project policies may only narrow")]));
+    expect(scopes.view("child")!.scope).toMatchObject({ issuedAt: before.issuedAt, tools: { deny: expect.arrayContaining(["fixture-preview", "fixture-local"]) } });
+    const refreshed = () => f.k.store.events("lead").filter(e => e.type === "scope.refreshed" && e.data.memberThreadId === "child");
+    expect(refreshed()).toHaveLength(1);
+    expect(refreshed()[0]!.text).toContain("Now denied: tool fixture-preview");
+    await scopes.refreshLiveScopes();
+    expect(refreshed()).toHaveLength(1);
+    expect(evaluate(scopes.view("child")!.scope!, { kind: "tool", toolName: "fixture-preview", cwd: f.work, input: {} }).allow).toBe(false);
+    writeFileSync(join(policyDir, "scopes.yml"), "v: 1\nrules: []\n");
+    await scopes.refreshLiveScopes();
+    expect(scopes.view("child")!.scope!.tools.deny).not.toContain("fixture-preview");
+    expect(scopes.view("child")!.scope!.tools.deny).toContain("fixture-local");
+    expect(refreshed()).toHaveLength(2);
+  });
+  it("keeps the last good live scope when the project policy is malformed", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    const scopes = f.runtime.scopes!;
+    const file = join(f.work, ".agents/tavern/scopes.yml");
+    mkdirSync(join(f.work, ".agents/tavern"), { recursive: true });
+    writeFileSync(file, "v: 1\nrules:\n  - classes:\n      smith:\n        defaults:\n          tools:\n            deny: [first-deny]\n");
+    await scopes.refreshLiveScopes();
+    const lastGood = scopes.view("child")!.scope;
+    writeFileSync(file, "v: [bad");
+    await scopes.refreshLiveScopes();
+    expect(scopes.view("child")!.scope).toEqual(lastGood);
+    expect(scopes.view("child")!.problems).toEqual(expect.arrayContaining([expect.stringContaining("Policy read failed")]));
+  });
+  it("names only the legacy environment change when nothing else changes", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    const scopes = f.runtime.scopes!, prior = scopes.api.scopeTemplate("child")!;
+    await scopes.api.writeScope("child", { ...prior, env: { ...prior.env, poisonGh: true, blockGitPush: true } });
+    await scopes.refreshLiveScopes(); await scopes.refreshLiveScopes();
+    expect(f.k.store.events("lead").filter(e => e.type === "scope.refreshed" && e.data.memberThreadId === "child").map(e => e.text))
+      .toEqual(["No longer set: the GitHub and push environment overrides."]);
+  });
   it("pins the hire assignment and ignores later SDK checkout changes", async () => {
     const f = await fixture();
     const get = f.bb.sdk.environments.get;
@@ -720,6 +768,110 @@ describe("backend scope integration", () => {
     const remembered = readFileSync(join(f.root, ".agents/tavern/scopes.yml"), "utf8");
     expect(remembered).toContain("github.com/company/demo");
     expect(remembered).not.toContain("kalindudc/demo");
+  });
+  it("lists the held act with its ask kind in the Keeper's tick and keeps Watch neutral", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    f.k.store.patch("lead", { cursor: f.k.store.eventSequence("lead"), userAt: null, reanchor: null });
+    const base = { threadId: "child", at: f.time(), eventId: "held", act: "merge" as const };
+    f.runtime.scopes!.observeAct({ ...base, mode: "enforce", preflight: true });
+    f.runtime.scopes!.observeAct({ ...base, eventId: "recorded", mode: "watch" });
+    f.runtime.scopes!.observeAct({ ...base, eventId: "recorded", mode: "watch" });
+    const restatement = f.k.restatement("lead");
+    expect(restatement).toContain("Held merge; needs a merge ask.");
+    expect(restatement).toContain("would have needed a grant: 1 merge");
+    expect(restatement).not.toContain("tavern_report status needs-decision");
+    await f.runtime.tick("lead");
+    const ticks = f.harness.inspection.sdk.callsTo("threads.send").filter(call => (call.args[0] as { threadId: string }).threadId === "lead");
+    expect(JSON.stringify(ticks)).toContain("Held merge; needs a merge ask.");
+    expect(f.k.store.events("lead").filter(e => e.type === "scope.act-held")).toHaveLength(1);
+    expect(f.k.store.openAsks("lead").filter(a => a.kind === "blocker")).toHaveLength(0);
+    expect(f.k.member("child")?.state).toBe("idle");
+  });
+  it("opens an ask for the held command and directory without retyping either, then clears the hold", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    const scopes = f.runtime.scopes!, command = "npm publish --tag 'proof'";
+    const cwd = join(f.work, "nested");
+    mkdirSync(cwd);
+    scopes.observeAct({ threadId: "child", eventId: "exact", at: f.time(), mode: "enforce", preflight: true, act: "publish", command, cwd });
+    expect(f.k.restatement("lead")).toContain('heldEventId="child:exact"');
+    const ask = scopes.askAct("lead", { heldEventId: "child:exact", why: "The plan calls for this package." });
+    expect(ask.effect).toMatchObject({ type: "grant-shell-act", target: { command, cwd: realpathSync(cwd) }, heldEventId: "child:exact" });
+    f.k.decide("lead", { askId: ask.id, optionId: "deny", boardQuestId: f.q.id, text: "Do not publish", why: "Keep the dry run.", source: "keeper", reversible: true });
+    expect(f.k.restatement("lead")).not.toContain('heldEventId="child:exact"');
+    expect(() => scopes.askAct("lead", { heldEventId: "child:exact", why: "Old hold." })).toThrow(/open held shell act/i);
+    scopes.observeAct({ threadId: "child", eventId: "again", at: f.time(), mode: "enforce", preflight: true, act: "publish", command, cwd });
+    const allow = scopes.askAct("lead", { heldEventId: "child:again", why: "Publish the verified package." });
+    f.k.decide("lead", { askId: allow.id, optionId: "once", boardQuestId: f.q.id, text: "Publish", why: "The plan covers it.", source: "keeper", reversible: true });
+    expect(f.k.restatement("lead")).not.toContain('heldEventId="child:again"');
+  });
+  it("keeps changing the user's tools out of the Keeper lane", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    const ask = f.runtime.scopes!.askAct("lead", { memberThreadId: "child", command: "bb plugin install fixture", why: "Install the fixture." });
+    expect(ask.effect).toMatchObject({ type: "grant-shell-act", target: { act: "configure" } });
+    expect(f.k.authority.lane(ask)).toBe("user");
+    expect(() => f.k.decide("lead", { askId: ask.id, optionId: "once", boardQuestId: f.q.id, text: "Install", why: "Requested", source: "keeper", reversible: true })).toThrow("This ask belongs to the user");
+  });
+  it("issues an exact member grant in the Keeper lane and expires it on release", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    const ask = f.runtime.scopes!.askAct("lead", { memberThreadId: "child", command: "npm publish --registry https://registry.example.test", why: "The plan calls for publishing the package." });
+    expect(ask.effect?.type).toBe("grant-shell-act");
+    expect(f.k.authority.lane(ask)).toBe("keeper");
+    expect(ask.options.map(a => a.id)).toEqual(["once", "quest", "deny"]);
+    f.k.decide("lead", { askId: ask.id, optionId: "quest", boardQuestId: f.q.id, text: "Publish this package only", why: "The approved plan calls for it.", source: "keeper", reversible: true });
+    expect(f.k.store.events("lead").filter(e => e.type === "grant.issued")).toHaveLength(1);
+    expect(f.runtime.scopes!.view("child")?.shellGrants).toMatchObject([{ scope: "quest", state: "issued", usable: false }]);
+    const decision = f.k.decide("lead", { boardQuestId: f.q.id, text: "Release the publisher", why: "No more calls", source: "keeper", reversible: true });
+    await f.runtime.release("lead", "child", "No more calls", { kind: "decision", id: decision.id });
+    expect(f.k.store.events("lead").filter(e => e.type === "grant.expired")).toHaveLength(1);
+  });
+  it("requires the user for a merge grant and never offers an ordinary cluster grant", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    const ask = f.runtime.scopes!.askAct("lead", { memberThreadId: "child", command: `gh pr merge https://github.example.test/org/repo/pull/42 --merge --match-head-commit ${"a".repeat(40)}`, why: "Merge verified work." });
+    expect(ask.kind).toBe("merge");
+    expect(f.k.authority.lane(ask)).toBe("user");
+    expect(() => f.k.decide("lead", { askId: ask.id, optionId: "once", boardQuestId: f.q.id, text: "Merge", why: "Checked", source: "keeper", reversible: true })).toThrow("This ask belongs to the user");
+    expect(() => f.runtime.scopes!.askAct("lead", { memberThreadId: "child", command: "kubectl apply -f object.yaml", why: "Apply change." })).toThrow(/cluster writes/i);
+    expect(f.k.store.events("lead").filter(e => e.type === "grant.issued")).toHaveLength(0);
+  });
+  it("records grant.used once after the granted shell command completes in Enforce", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    const scopes = f.runtime.scopes!, command = "npm publish --tag proof";
+    const ask = scopes.askAct("lead", { memberThreadId: "child", command, why: "Publish the reviewed package." });
+    f.k.decide("lead", { askId: ask.id, optionId: "once", boardQuestId: f.q.id, text: "Publish", why: "The plan covers it.", source: "keeper", reversible: true });
+    const record = scopes.api.localScopeRecord("child")!, receipt = "a".repeat(36);
+    armScope(record.file, record.scope);
+    expect(claimShellGrant(record.file, record.scope, ask.id, receipt, [command])).toBe(true);
+    const event = { id: "completion", seq: 1, createdAt: Date.now(), type: "item/completed", data: { item: { id: "call1", type: "commandExecution", command, cwd: f.work, status: "completed", aggregatedOutput: `published\nTavern shell grant receipt: ${ask.id} ${receipt}` } } };
+    f.bb.sdk.threads.events.list = vi.fn(async () => [event]) as never;
+    const hooks = vi.mocked(f.bb.events.on).mock.calls as unknown as [string, (payload: unknown) => Promise<void>][];
+    const watcher = hooks.find(([name]) => name === "experimental_thread.events")![1];
+    await watcher({ thread: makeThreadResponse({ id: "child", providerId: "pi" }), sequence: 1 });
+    await watcher({ thread: makeThreadResponse({ id: "child", providerId: "pi" }), sequence: 1 });
+    expect(f.bb.sdk.threads.stop).not.toHaveBeenCalled();
+    expect(scopes.violations(["child"])).toEqual([]);
+    expect(f.k.store.get("shellGrants", ask.id)?.state).toBe("used");
+    expect(f.k.store.events("lead").filter(e => e.type === "grant.used")).toHaveLength(1);
+  });
+  it("revokes an exact grant from the member panel and ends a different grant when the quest stops", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    registerRpc(f.bb, f.runtime);
+    const ask = (command: string) => f.runtime.scopes!.askAct("lead", { memberThreadId: "child", command, why: "The plan calls for this package." , unsure: true });
+    const first = ask("npm publish --registry https://registry.example.test");
+    const second = ask("npm publish --registry https://registry2.example.test");
+    for (const row of [first, second]) await f.harness.invokeRpc("answerAsk", { askId: row.id, optionId: "quest", via: "page" });
+    await f.harness.invokeRpc("revokeShellGrant", { threadId: "child", id: first.id });
+    expect(f.k.store.get("shellGrants", first.id)?.state).toBe("revoked");
+    await f.runtime.stop(f.q.id);
+    expect(f.k.store.get("shellGrants", second.id)?.state).toBe("expired");
+    expect(f.k.store.events("lead").filter(e => e.type === "grant.revoked")).toHaveLength(1);
+    expect(f.k.store.events("lead").filter(e => e.type === "grant.expired")).toHaveLength(1);
   });
   it("returns watch-only observations in RPCs without opening blockers or marking the member waiting", async () => {
     const f = await fixture();

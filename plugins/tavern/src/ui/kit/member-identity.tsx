@@ -48,7 +48,7 @@ export function MemberIdentity({ member, registry, briefSteer, scope, compact = 
   const name = memberIdentityLabel(member, registry);
   const sc = scope?.scope;
   const guard = guardWords(member, scope, finished);
-  const alerts = (scope?.problems?.length ?? 0) + violations.length + (scope?.error ? 1 : 0) + (variant === "chips" && scope?.pendingAskId ? 1 : 0);
+  const alerts = (scope?.problems?.length ?? 0) + violations.filter(v => v.mode !== "watch").length + (scope?.error ? 1 : 0) + (variant === "chips" && scope?.pendingAskId ? 1 : 0);
   const chips = variant === "chips";
   return <div className={`member-identity ${compact ? "compact" : ""}${chips ? " chips" : ""}`} role={chips ? "group" : undefined} data-part="MemberIdentity" aria-label={`${name}, member identity`}>
     {!compact && identity && <Crest {...identity} size={32} />}

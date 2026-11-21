@@ -76,8 +76,8 @@ export class ScopePolicy {
     }
     return { sources, entries, classes, problems };
   }
-  resolve(classId: string, context: ProjectContext, override: ScopeOverride = {}, definition?: ClassScope): ScopeResolution {
-    const policy = this.policy(context), problems = [...policy.problems];
+  resolve(classId: string, context: ProjectContext, override: ScopeOverride = {}, definition?: ClassScope, policy = this.policy(context)): ScopeResolution {
+    const problems = [...policy.problems];
     let base = scopeForClass(classId);
     if (definition !== undefined) {
       const chosen = classScopeSchema.parse(definition), preset = typeof chosen === "string" ? chosen : chosen.preset;
@@ -92,11 +92,11 @@ export class ScopePolicy {
       } catch (error) { problems.push("Ignored widening class scope for " + classId + ": " + String(error)); }
     }
     for (const entry of policy.entries.filter(entry => entry.classId === classId)) base = mergeOverride(base, entry.defaults, entry.remote);
-    const result = this.apply(base, context, override);
+    const result = this.apply(base, context, override, [], base, policy);
     return { ...result, problems: [...new Set([...problems, ...result.problems])] };
   }
-  apply(scope: Scope, context: ProjectContext, input: ScopeOverride, approved: readonly string[] = [], granted: Scope = scope): ScopeResolution {
-    const override = scopeOverrideSchema.parse(input), policy = this.policy(context);
+  apply(scope: Scope, context: ProjectContext, input: ScopeOverride, approved: readonly string[] = [], granted: Scope = scope, policy = this.policy(context)): ScopeResolution {
+    const override = scopeOverrideSchema.parse(input);
     mergeOverride(scope, override);
     const permits = policy.entries.filter(entry => entry.classId === scope.role);
     const existing = new Set(scope.shell.allow.filter(rule => !rule.remote).map(rule => rule.id));

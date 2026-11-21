@@ -584,6 +584,7 @@ export class TavernRuntime {
   enableScopes(options: BackendScopeOptions = {}) {
     if (this.scopes) throw new Error("Tavern scopes are already registered");
     this.scopes = new BackendScopes(this, options);
+    this.keeper.syncShellGrants = threadId => this.scopes!.syncGrants(threadId);
   }
   private detectionCharacter(askId?: string) {
     const effect = askId ? this.keeper.store.get("asks", askId)?.effect : null;
@@ -2580,6 +2581,7 @@ export class TavernRuntime {
     if (this.stopAll.reason()) return;
     try { this.settingsMaintenance(); }
     catch (error) { this.bb.log.warn(`Tavern settings maintenance: ${String(error)}`); }
+    await this.maintain("Scope refresh", null, [{ name: "scopes", run: () => this.scopes?.refreshLiveScopes() }]);
     await this.maintain("Closing time maintenance", null, [{ name: "sweep", run: () => this.away.sweep() }]);
     const keepers = this.keeper.store.all("members").filter(m => m.role === "keeper");
     try { this.reviewCache = this.readReview(); }
@@ -2612,6 +2614,7 @@ export class TavernRuntime {
   }
   async stop(id: string, reason: string | null = null, receipt?: UserActReceipt) {
     const q = commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => this.keeper.recordStop(id, reason));
+    this.scopes?.expireQuestGrants(id);
     await this.retryStops(q.keeperThreadId, id, true);
     const current = this.keeper.summary(id);
     return { phase: current.phase as "stopping" | "stopped", unconfirmed: current.stopUnconfirmed ?? 0 };
@@ -2826,6 +2829,7 @@ export class TavernRuntime {
       ...(awayWindow ? { awayWindowId: awayWindow.id, deferredMemberThreadIds: summary.members.map(member => member.threadId) } : {}),
     } });
     for (const askId of withdrawnAskIds) k.withdrawAsk(askId, "quest-returned");
+    this.scopes?.expireQuestGrants(id);
     this.serviceRecords.record(id);
     this.bb.rpc.experimental_invalidate([tags.registry()]);
     k.changed(threadId, id);
@@ -3474,6 +3478,7 @@ export class TavernRuntime {
     }));
     if (this.scopes) {
       await this.scopes.refreshPresets();
+      await this.maintain("Scope refresh", null, [{ name: "scopes", run: () => this.scopes?.refreshLiveScopes() }]);
       await this.recheckDispatch();
     }
   }

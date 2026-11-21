@@ -109,7 +109,7 @@ it.each(["reserved", "invalid-name", "nul", "oversized", "too-many", "entry-budg
   if (kind === "nul") state.acknowledged.variables.EXTRA = "a\0b";
   if (kind === "oversized") state.acknowledged.variables.EXTRA = "x".repeat(65537);
   if (kind === "too-many") state.acknowledged.variables = Object.fromEntries(Array.from({ length: 31 }, (_, i) => ["KEY_" + i, "value"]));
-  if (kind === "entry-budget") state.acknowledged.variables = Object.fromEntries(Array.from({ length: 20 }, (_, i) => ["KEY_" + i, "value"]));
+  if (kind === "entry-budget") state.acknowledged.variables = Object.fromEntries(Array.from({ length: 31 }, (_, i) => ["KEY_" + i, "value"]));
   if (kind === "relative-path") state.acknowledged.scopeFile = "relative/scope.json";
   f.host.mockReturnValue(state); expect(await f.env()).toEqual([]); expect(f.local).not.toHaveBeenCalled();
 });
@@ -162,16 +162,16 @@ it("does not downgrade a corrupt host marker to local authority", async () => {
   writeFileSync(join(f.root, "scopes/member.json.host"), "invalid host marker"); const restored = f.start(false);
   expect(restored.status().threads[0].binding).toEqual({ kind: "host", placementId: null, generation: null }); expect(await f.env()).toEqual([]); expect(f.local).not.toHaveBeenCalled();
 });
-it("uses the full SDK env budget without truncating native values or speed bumps", async () => {
+it("uses the full SDK env budget without injecting speed bumps", async () => {
   const f = fixture(), scopes = f.start(); await scopes.writeScope("member", scopes.resolve("ranger", {}).scope, { binding });
-  const state = f.ready(scopes); for (let i = 0; i < 8; i++) state.acknowledged.variables["EXTRA_" + i] = "native"; f.host.mockReturnValue(state);
-  const entries = await f.env(); expect(entries).toHaveLength(32); expect(entries).toContainEqual(expect.objectContaining({ name: "GIT_CONFIG_VALUE_8", value: "../" }));
+  const state = f.ready(scopes); for (let i = 0; i < 27; i++) state.acknowledged.variables["EXTRA_" + i] = "native"; f.host.mockReturnValue(state);
+  const entries = await f.env(); expect(entries).toHaveLength(32); expect(entries).toContainEqual(expect.objectContaining({ name: "EXTRA_26", value: "native" }));
   state.acknowledged.variables.ONE_TOO_MANY = "native"; expect(await f.env()).toEqual([]);
 });
-it("bounds native env UTF-8 bytes and rejects conflicts with active scope speed bumps", async () => {
+it("bounds native environment UTF-8 bytes without discarding host-provided Git configuration", async () => {
   const f = fixture(), scopes = f.start(); await scopes.writeScope("member", scopes.resolve("ranger", {}).scope, { binding });
   const state = f.ready(scopes); state.acknowledged.variables.EXTRA = "é".repeat(33000); f.host.mockReturnValue(state); expect(await f.env()).toEqual([]);
-  delete state.acknowledged.variables.EXTRA; state.acknowledged.variables.GIT_CONFIG_COUNT = "0"; expect(await f.env()).toEqual([]);
+  delete state.acknowledged.variables.EXTRA; state.acknowledged.variables.GIT_CONFIG_COUNT = "0"; expect(await f.env()).toContainEqual(expect.objectContaining({ name: "GIT_CONFIG_COUNT", value: "0" }));
 });
 it("refuses lower generations or another placement without releasing the original scope", async () => {
   const f = fixture(), scopes = f.start(); await scopes.writeScope("member", scopes.resolve("ranger", {}).scope, { binding: { ...binding, generation: 2 } });

@@ -487,6 +487,12 @@ export function rpcHandlers(
     delegateQuest: ({ boardQuestId, kind, via }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => { requireUserAct(context, "delegateQuest"); k.authority.delegate(boardQuestId, kind, receipt ? { ...receipt, surface: `${via} (client, unattested)` } : receipt!); return { ok: true }; },
     preapproveQuest: ({ boardQuestId, via, ...input }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => { requireUserAct(context, "preapproveQuest"); k.authority.preapprove(boardQuestId, input, receipt ? { ...receipt, surface: `${via} (client, unattested)` } : receipt!); void runtime.applyStandingAnswers(boardQuestId).catch(error => runtime.bb.log.warn(`Tavern pre-approval: ${String(error)}`)); return { ok: true }; },
     revokeQuestAuthority: ({ boardQuestId, id, via }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => { requireUserAct(context, "revokeQuestAuthority"); k.authority.revoke(boardQuestId, id, receipt ? { ...receipt, surface: `${via} (client, unattested)` } : receipt!); return { ok: true }; },
+    revokeShellGrant: ({ threadId, id }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
+      requireUserAct(context, "revokeShellGrant");
+      if (!runtime.scopes) throw new Error("Shell grants are unavailable.");
+      runtime.scopes.revokeGrant(threadId, id, receipt);
+      return { ok: true };
+    },
     answerAsk: async ({ askId, optionId, note, via, pullRequestChoices }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
       const result = await runtime.answerAsk(askId, optionId, note, via, context?.experimental_caller.kind === "client", receipt?.surface, receipt, false, pullRequestChoices);
       const ask = k.store.get("asks", askId)!;

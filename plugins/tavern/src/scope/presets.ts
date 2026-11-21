@@ -16,7 +16,7 @@ export function scopeForClass(classId: string, narrowing?: ScopeNarrowing, defin
     shell: { deny: open ? [] : LEGACY_CATALOGUE_RULES.filter(rule => rule.id !== "git-push" || preset !== "worktree"), allow: [] },
     ...(preset === "checker" ? { checks: { commands: [] } } : {}),
     network: "any", github: open || preset === "worktree" ? "draft-pr-only" : "read",
-    env: { poisonGh: true, blockGitPush: !open && preset !== "worktree" }, sandbox: !open, onViolation: "block",
+    env: { poisonGh: false, blockGitPush: false }, sandbox: !open, onViolation: "block",
   });
   return narrowScope(narrowScope(scope, typeof chosen === "object" ? (({ preset: _, ...rest }) => rest)(chosen) : undefined), narrowing);
 }

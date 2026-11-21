@@ -9,7 +9,7 @@ import type { ActKind } from "./acts";
 export interface ActAudit { threadId: string; providerId: string; at: number; eventId: string; seq: number; kind: ActKind; call: ScopeCall; mode: "watch" | "enforce" }
 
 export interface ScopeRecord { file: string; scope: Scope | null; template?: Scope; error?: string; mode?: Scope["mode"]; binding?: ScopeControllerBinding; presetProvenance?: { id: Scope["preset"]; version: string } }
-export interface Violation { threadId: string; providerId: string; at: number; eventId: string; seq: number; ruleId: string; reason: string; call?: ScopeCall; latencyMs: number; stopped: boolean; stopError?: string; mode?: "enforce" | "watch" }
+export interface Violation { threadId: string; providerId: string; at: number; eventId: string; seq: number; ruleId: string; reason: string; call?: ScopeCall; latencyMs: number; stopped: boolean; stopError?: string; mode?: "enforce" | "watch"; act?: ActKind }
 export const scopeObservationBindingSchema = scopeHostBindingSchema.extend({ hostId: z.string().min(1).max(200), cwd: z.string().min(1).max(32768) }).strict();
 export type ScopeObservationBinding = z.infer<typeof scopeObservationBindingSchema>;
 const observationHoldSchema = z.object({
@@ -29,8 +29,8 @@ export function atomicWrite(file: string, value: string, check?: () => void): vo
   try { check?.(); writeFileSync(temp, value, { mode: 0o600, flag: "wx" }); check?.(); renameSync(temp, file); }
   finally { rmSync(temp, { force: true }); }
 }
-export function armScope(file: string, scope: Scope, native?: NativeScopeReceipt): void {
-  atomicWrite(armedFile(file), JSON.stringify(scopeArmedSchema.parse({ threadId: scope.threadId, issuedAt: scope.issuedAt, pid: process.pid, at: Date.now(), ...native })));
+export function armScope(file: string, scope: Scope, native?: NativeScopeReceipt, at = Date.now()): void {
+  atomicWrite(armedFile(file), JSON.stringify(scopeArmedSchema.parse({ threadId: scope.threadId, issuedAt: scope.issuedAt, pid: process.pid, at, ...native })));
 }
 export class ScopeStore {
   readonly directory: string;

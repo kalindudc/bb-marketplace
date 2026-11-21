@@ -15,17 +15,6 @@ export function envForScope(records: ReadonlyMap<string, ScopeRecord>, threadId:
   const scope = record.scope;
   for (const [name, value] of Object.entries(scope?.env.variables ?? {})) if (name !== "PWD") entries.push({ name, value, reason: "Tavern bound scope environment" });
   entries.push({ name: "TAVERN_SCOPE_MODE", value: record.mode ?? scope?.mode ?? "enforce", reason: "Tavern scope enforcement mode" });
-  if ((record.mode ?? scope?.mode ?? "enforce") === "enforce") {
-    if (scope?.env.poisonGh && scope.github === "none") entries.push({ name: "GH_TOKEN", value: "tavern-scope-denied", reason: "Tavern scope disables GitHub" });
-    if (scope?.env.blockGitPush) {
-      const prefixes = ["https://", "http://", "ssh://", "git://", "git@", "file://", "/", "./", "../"];
-      entries.push({ name: "GIT_CONFIG_COUNT", value: String(prefixes.length), reason: "Tavern push speed bump" });
-      prefixes.forEach((prefix, i) => {
-        entries.push({ name: `GIT_CONFIG_KEY_${i}`, value: `url.tavern-denied://${i}/.pushInsteadOf`, reason: "Tavern push speed bump" });
-        entries.push({ name: `GIT_CONFIG_VALUE_${i}`, value: prefix, reason: "Tavern push speed bump" });
-      });
-    }
-  }
   if (hosted && (entries.length > 32 || new Set(entries.map(entry => entry.name)).size !== entries.length)) return [];
   return entries;
 }

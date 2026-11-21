@@ -4,7 +4,7 @@ const keeper = { level: "keeper", proof: "recorded reversible decision" } as con
 const pullRequest = { level: "keeper", proof: "receipt on a quest-owned pull request" } as const;
 const invariant = { level: "tavern", proof: "invariant" } as const;
 export const AUTHORITY = {
-  delegateQuest: explicit, preapproveQuest: explicit, revokeQuestAuthority: explicit,
+  delegateQuest: explicit, preapproveQuest: explicit, revokeQuestAuthority: explicit, revokeShellGrant: explicit,
   answerAsk: explicit, greenlight: explicit, conclude: explicit, closeEarly: explicit,
   resolveHandBack: explicit,
   releaseCheckerHandoff: explicit, awayClose: explicit, awayReturn: explicit,

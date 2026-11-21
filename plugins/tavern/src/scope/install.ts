@@ -40,7 +40,7 @@ export default async function (pi) {
     pi.on("before_agent_start", hide);
     pi.on("tool_call", event => !enforcing() || permitted.includes(event.toolName) ? undefined : {
       block: true,
-      reason: "[Tavern scope blocked] Guard could not load: " + String(error) + ". Report the need with tavern_report status needs-decision; ask the Keeper to repair the installation."
+      reason: "[Tavern scope blocked] Guard could not load: " + String(error) + ". Nothing was done. Ask your Keeper to repair the guard and carry on with other work."
     });
   }
 }

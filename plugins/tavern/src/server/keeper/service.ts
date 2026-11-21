@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { KeeperCallKind } from "../../shared/undo-lane";
 import { applyAskEffect, type EffectHandlers, type AskEffect } from "../ask-effects";
+import { issueShellGrant, settleShellGrant } from "../shell-grants";
 import type { RequestSources } from "../../shared/request-source";
 import { briefSteers } from "../request-sources";
 import { LIMITS } from "../limits";
@@ -95,6 +96,7 @@ export class Keeper {
   settings: (questId?: string | null) => TavernSettings = () =>
     DEFAULT_SETTINGS;
   askOpened: (ask: Ask) => void = () => {};
+  syncShellGrants: (threadId: string) => void = () => {};
   routineAskOpened: (ask: Ask) => Promise<void> = async () => {};
   readonly authority = new QuestAuthority(this);
   readonly memory = new KeeperMemory(this);
@@ -1164,11 +1166,11 @@ export class Keeper {
     }
     if (input.kind === "cluster-write" && (!exactCommand?.trim() || !input.change?.trim()))
       throw new Error("Cluster writes need the exact command and what it changes.");
-    if (["merge", "production", "cluster-write"].includes(input.kind)) {
+    if (input.kind === "cluster-write" || (input.effect.type !== "grant-shell-act" && ["merge", "production"].includes(input.kind))) {
       const detail = input.kind === "cluster-write" ? "Approve one run of this exact command. A changed command or another run needs a new ask." : "Authorize the exact act; Keeper approval needs a current Warden verdict.";
       input = { ...input, options: [{ id: "approve", label: "Approve the act", detail, recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], effect: { type: "decision", outcomes: [{ optionId: "approve", outcome: "approve" }, { optionId: "deny", outcome: "decline" }] } };
     }
-    const lane = this.authority.baseLane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure });
+    const lane = this.authority.baseLane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure, effect: input.effect });
     if (questId && lane === "user" && DELEGATABLE_KINDS.includes(input.kind as DelegationKind)) {
       input = { ...input, options: [...input.options, this.authority.delegationOption(threadId)] };
     }
@@ -1253,7 +1255,7 @@ export class Keeper {
       assertUndoLane(this.store, ask.keeperThreadId, ask.kind);
       if (this.authority.lane(ask) !== "keeper") throw new Error("This ask belongs to the user");
       const outcome = ask.effect?.type === "decision" ? ask.effect.outcomes?.find(answer => answer.optionId === optionId)?.outcome : undefined;
-      if (outcome !== "decline") this.authority.assertVerdict(ask);
+      if (outcome !== "decline" && !(ask.effect?.type === "grant-shell-act" && optionId === "deny")) this.authority.assertVerdict(ask);
     }
     const effect = ask.effect!;
     if (ask.kind === "greenlight" && effect.type !== "greenlight") throw new Error("This old ask has no plan version; ask the Keeper to propose the plan again.");
@@ -1293,6 +1295,16 @@ export class Keeper {
       });
       applyAskEffect(effect, {
         ...effects,
+        "grant-shell-act": () => {
+          if (effect.type !== "grant-shell-act") return;
+          if (by !== "keeper" && (by !== "user" || receipt?.act !== "answerAsk" || via === "timer")) throw new Error("A shell grant needs an explicit answer.");
+          if (optionId === "once" || optionId === "quest") issueShellGrant(this.store, ask, optionId, by, this.now());
+          if (effect.heldEventId) {
+            const hold = this.store.get("scopeActObservations", effect.heldEventId);
+            if (hold && hold.keeperThreadId === ask.keeperThreadId && hold.threadId === effect.memberThreadId)
+              this.store.put("scopeActObservations", effect.heldEventId, { ...hold, resolvedAt: this.now() });
+          }
+        },
         "settle-waypoint": effect => {
           if (effect.type !== "settle-waypoint" || optionId !== "approve") return;
           if (by !== "user" || receipt?.act !== "answerAsk" || !ask.boardQuestId) throw new Error("This waypoint needs your explicit answer.");
@@ -1336,6 +1348,7 @@ export class Keeper {
       );
     });
     if (by === "user") this.userAction(ask.keeperThreadId);
+    if (effect.type === "grant-shell-act" && by !== "keeper") this.syncShellGrants(effect.memberThreadId);
     this.changed(ask.keeperThreadId, ask.boardQuestId);
   }
   postSummary(threadId: string, draft: SummaryDraft) {
@@ -1447,6 +1460,8 @@ export class Keeper {
       );
       }
     });
+    const grant = input.askId ? this.store.get("shellGrants", input.askId) : null;
+    if (grant) this.syncShellGrants(grant.memberThreadId);
     this.changed(threadId, questId);
     return decision;
   }
@@ -1456,13 +1471,17 @@ export class Keeper {
     if (!d.reversible) throw new Error("This decision is not reversible");
     if (d.undone) return;
     const approval = this.store.get("autoGreenlights", id);
+    const shellGrant = d.askId ? this.store.get("shellGrants", d.askId) : null;
+    if (shellGrant) this.syncShellGrants(shellGrant.memberThreadId);
     const q = (approval || d.waypointCall || d.checkChange) && d.boardQuestId ? this.quest(d.boardQuestId) : null;
     if ((approval || d.checkChange) && q?.phase === "held") throw new Error("This quest is held; resume it first");
     if ((d.waypointCall || d.checkChange) && q && !isOpenQuest(q)) throw new Error("This quest has ended; its waypoint record is fixed");
     this.store.atomic(() => {
       let phaseChanged = false;
       this.store.put("decisions", id, { ...d, undone: true });
-      if (d.askId) {
+      const grantAtUndo = shellGrant && this.store.get("shellGrants", shellGrant.id);
+      if (grantAtUndo?.state === "issued") settleShellGrant(this.store, grantAtUndo.id, "revoked", this.now(), "Undo revoked the Keeper’s shell grant.");
+      if (d.askId && !shellGrant) {
         const ask = this.store.get("asks", d.askId);
         if (ask?.answer?.by === "keeper" && ask.answer.optionId === d.optionId && (!ask.boardQuestId || isOpenQuest(this.quest(ask.boardQuestId)))) this.store.put("asks", ask.id, { ...ask, state: "open", answer: null, unsure: true, lane: "user" });
       }
@@ -1527,11 +1546,12 @@ export class Keeper {
         d.keeperThreadId,
         d.boardQuestId,
         "decision.undone",
-        `Undo this decision and reconcile its effects: ${d.text}`,
+        grantAtUndo ? "The grant cannot be used again. Commands that already ran cannot be undone by Tavern." : `Undo this decision and reconcile its effects: ${d.text}`,
         { decisionId: id },
         { kind: "user" },
       );
     });
+    if (shellGrant) this.syncShellGrants(shellGrant.memberThreadId);
     this.userAction(d.keeperThreadId);
     this.invalidate([...this.changedTags(d.keeperThreadId, d.boardQuestId), tags.undoLanes()]);
   }

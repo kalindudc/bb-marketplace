@@ -7,9 +7,9 @@ import type { SettingsStore } from "../settings/store";
 import { BackupService, type ProjectInventory } from "./service";
 
 export { BackupService } from "./service";
-export function createBackupService(bb: BbPluginApi, settings: SettingsStore, registry: Registry) {
+export function createBackupService(bb: BbPluginApi, settings: SettingsStore, registry: Registry, beforeRecordsRestore?: () => void) {
   const { version } = z.object({ version: z.string().min(1) }).parse(JSON.parse(readFileSync(join(registry.directories().builtin, "package.json"), "utf8")));
-  return new BackupService({ settings, registry, version,
+  return new BackupService({ settings, registry, version, beforeRecordsRestore,
     changed: () => bb.rpc.experimental_invalidate(["tavern:backups", "tavern:registry", "tavern:settings", "tavern:insights", "tavern:board"]),
     warn: message => bb.log.warn(message),
     projects: async (): Promise<ProjectInventory> => {

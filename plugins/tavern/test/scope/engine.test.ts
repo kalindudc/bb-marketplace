@@ -14,9 +14,10 @@ describe("scope engine", () => {
     expect(scopeSchema.safeParse({ ...scope("ranger"), v: 2 }).success).toBe(false);
     expect(scopeSchema.safeParse({ ...scope("ranger"), shell: { deny: [{ id: "bad", regex: "[", why: "bad" }], allow: [] } }).success).toBe(false);
   });
-  it("allows open threads without changing their tools", () => {
-    expect(bash("wanderer", "git push --force origin main").allow).toBe(true);
+  it("leaves ordinary tools open but holds consequential shell acts for a guarded Wanderer", () => {
+    expect(evaluate(scope("wanderer"), { kind: "tool", toolName: "anything", input: {}, cwd: "/repo" }).allow).toBe(true);
     expect(evaluate(scope("unknown"), { kind: "tool", toolName: "anything", input: {}, cwd: "/repo" }).allow).toBe(true);
+    expect(bash("wanderer", "git push --force origin main")).toMatchObject({ allow: false, act: "merge" });
   });
   it("makes reads, reports and other plugin tools available", () => {
     for (const name of ["read", "quest", "tavern_report", "flare", "mcp__tool_gateway__slack_read_thread"]) expect(evaluate(scope("ranger"), { kind: "tool", toolName: name, input: {}, cwd: "/repo" }).allow).toBe(true);
@@ -48,8 +49,12 @@ describe("scope engine", () => {
   });
   it("block reasons explain the next action", () => {
     const result = bash("smith", "gh pr merge 1");
-    expect(result.allow).toBe(false);
-    if (!result.allow) expect(result.reason).toContain("tavern_report status needs-decision");
+    expect(result).toMatchObject({ allow: false, act: "merge" });
+    if (!result.allow) {
+      expect(result.reason).toContain("This needs a merge ask.");
+      expect(result.reason).toContain("Tell your Keeper");
+      expect(result.reason).toContain('Held command: "gh pr merge 1"');
+    }
   });
   it("preserves late worktree bindings but refuses evaluation until bound and rejects widening", () => {
     const late = bindPaths(scopeForClass("smith"), { home: "/home/me", tmp: ["/tmp"], scopesDir: "/data/scopes" });

@@ -125,7 +125,7 @@ export function MemberPanel({ data, registry, scopeDetails, onQuest, cue }: { da
   const finished = memberFinished(data);
   const waypointId = member.checkerWaypointId ?? member.waypointId;
   const waypoint = data.boardQuest && waypointId ? `Waypoint ${waypointId.replace(/^w/, "")}` : undefined;
-  const alerts = (data.scope?.problems?.length ?? 0) + (data.violations?.length ?? 0) + (data.scope?.error ? 1 : 0) + (data.scope?.pendingAskId ? 1 : 0);
+  const alerts = (data.scope?.problems?.length ?? 0) + (data.violations?.filter(v => v.mode !== "watch").length ?? 0) + (data.scope?.error ? 1 : 0) + (data.scope?.pendingAskId ? 1 : 0);
   return <div className="tw-member-panel">
     {registry && <MemberIdentity member={member} registry={registry} scope={data.scope} violations={data.violations} finished={finished} variant="chips" onScopeDetails={() => setMemberFold(data.threadId, "scope", true)} />}
     {!registry && <PlacementFacts placement={member.placement} memberName={memberName(member, { classes: [], characters: [] })} variant="card" />}

@@ -46,6 +46,18 @@ describe("Tavern records snapshots", () => {
       }
     } finally { source.db.close(); target.db.close(); }
   });
+  it("restores grant history without restoring active permission", () => {
+    const source = setup(), target = setup();
+    try {
+      const insert = source.db.prepare("INSERT INTO tavern_records(kind,id,data) VALUES('shellGrants',?,?)");
+      const record = { keeperThreadId: "lead", memberThreadId: "member", boardQuestId: "quest", target: { act: "publish", command: "npm publish", cwd: "/repo", digest: "a".repeat(64) }, scope: "once", by: "user", issuedAt: 1, changedAt: 2 };
+      insert.run("active", JSON.stringify({ id: "active", ...record, state: "issued" }));
+      insert.run("spent", JSON.stringify({ id: "spent", ...record, state: "used" }));
+      target.records.restore(source.records.capture());
+      const restored = target.db.prepare("SELECT data FROM tavern_records WHERE kind='shellGrants' ORDER BY id").all() as { data: string }[];
+      expect(restored.map(row => JSON.parse(row.data).state)).toEqual(["expired", "used"]);
+    } finally { source.db.close(); target.db.close(); }
+  });
   it("does not export or restore local setup proposals", () => {
     const source = setup(), target = setup();
     try {

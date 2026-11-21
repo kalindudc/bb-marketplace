@@ -11,6 +11,8 @@ import { bindPaths } from "../../src/scope/paths";
 import { registerWatcher, callsFromItem } from "../../src/scope/watch";
 import { BLOCK_MARKER } from "../../src/scope/engine";
 import { guardLoaderSource } from "../../src/scope/install";
+import guard, { type PiGuardApi } from "../../adapters/pi/extension";
+import { checkShellGrantReceipt, publishShellGrants, shellGrantTarget } from "../../src/scope/shell-grants";
 const roots: string[] = [];
 afterEach(() => { vi.unstubAllEnvs(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function setup(providerId = "codex", mode: "enforce" | "watch" | "off" = "enforce") {
@@ -24,6 +26,58 @@ function setup(providerId = "codex", mode: "enforce" | "watch" | "off" = "enforc
   registerWatcher(bb, store, { onViolation });
   return { root, store, scope, bb, onViolation, started, handlers, setRows: (value: any[]) => { rows = value; }, failStop: () => { fail = true; }, succeedStop: () => { fail = false; }, stops: () => stops, emit: (sequence: number) => handlers.get("experimental_thread.events")!({ thread: { id: "t1", providerId }, sequence }) };
 }
+function mountGuard(file: string, cwd: string) {
+  vi.stubEnv("TAVERN_SCOPE_FILE", file);
+  vi.stubEnv("BB_THREAD_ID", "t1");
+  const hooks = new Map<string, Parameters<PiGuardApi["on"]>[1]>();
+  guard({ on: (key, fn) => hooks.set(key, fn), getActiveTools: () => ["bash"], setActiveTools: () => {} });
+  const ctx = { cwd };
+  hooks.get("session_start")!({}, ctx);
+  return {
+    call: (input: { command: string }) => hooks.get("tool_call")!({ toolName: "bash", toolCallId: "call1", input }, ctx),
+    result: () => hooks.get("tool_result")!({ toolName: "bash", toolCallId: "call1", content: [{ type: "text", text: "completed" }] }, ctx) as { content: { text: string }[] },
+  };
+}
+it.each([
+  ["git push origin feature", "publish"], ["gh issue create --title t --body b", "publish"], ["curl -X POST https://example.test -d a", "send"],
+])("records a legacy Wanderer's %s without stopping; the new guard holds it", async (command, kind) => {
+  const f = setup("pi");
+  const scope = bindPaths({ ...scopeForClass("wanderer"), threadId: "t1", issuedAt: 1 }, { home: f.root, tmp: [tmpdir()], scopesDir: f.store.directory });
+  f.store.write("t1", scope); f.store.arm(scope);
+  const row = { ...f.started, id: "completed", seq: 2, type: "item/completed", data: { item: { ...f.started.data.item, command, cwd: f.root, status: "completed" } } };
+  f.setRows([row]); await f.emit(2);
+  expect(f.stops()).toBe(0);
+  expect(f.store.violations()).toEqual([]);
+  expect(f.store.acts()).toMatchObject([{ kind, mode: "enforce" }]);
+  const installed = mountGuard(f.store.file("t1"), f.root);
+  const held = installed.call({ command });
+  expect(held).toMatchObject({ block: true, reason: expect.stringContaining(JSON.stringify(command)) });
+  const observe = vi.fn();
+  registerWatcher(f.bb, f.store, { onViolation: f.onViolation, onActObservation: observe });
+  f.setRows([{ ...row, id: "held", seq: 3, data: { item: { ...row.data.item, status: "failed", aggregatedOutput: (held as { reason: string }).reason } } }]);
+  await f.emit(3);
+  expect(observe).toHaveBeenCalledWith(expect.objectContaining({ act: kind, command, cwd: f.root }));
+  expect(f.stops()).toBe(0);
+});
+it.each(["once", "quest", "forged"] as const)("handles a %s grant receipt at Enforce completion", async kind => {
+  const f = setup("pi"), file = f.store.file("t1"), command = "npm publish";
+  const installed = mountGuard(file, f.root);
+  const target = shellGrantTarget({ kind: "bash", toolName: "bash", input: { command }, cwd: f.root })!;
+  publishShellGrants(file, f.scope, [{ id: "grant-test", digest: target.digest, scope: kind === "quest" ? "quest" : "once" }]);
+  const input = { command };
+  expect(installed.call(input)).toBeUndefined();
+  const output = installed.result().content.map(block => block.text).join("\n");
+  const token = output.match(/grant-test ([a-f0-9-]{36})/)![1]!;
+  const used = vi.fn();
+  registerWatcher(f.bb, f.store, { onViolation: f.onViolation, onShellGrantUsed: used });
+  f.setRows([{ ...f.started, id: "completed", seq: 2, type: "item/completed", data: { item: { ...f.started.data.item, command: kind === "forged" ? "npm publish elsewhere" : input.command, cwd: f.root, status: "completed", aggregatedOutput: output } } }]);
+  await f.emit(2); await f.emit(2);
+  expect(f.stops()).toBe(kind === "forged" ? 1 : 0);
+  expect(f.store.violations()).toHaveLength(kind === "forged" ? 1 : 0);
+  expect(used).toHaveBeenCalledTimes(kind === "once" ? 1 : 0);
+  if (kind === "once") expect(used).toHaveBeenCalledWith("t1", "grant-test");
+  if (kind === "quest") expect(checkShellGrantReceipt(file, "grant-test", token, input.command)).toBeNull();
+});
 it("follows bb's pi start-before-preflight, failed-completion sequence without stopping a blocked call", async () => {
   // provider-pi createPiDeltaTranslator: tool_execution_start -> item.open; tool_execution_end -> item.close with resultText/aggregatedOutput.
   const f = setup("pi"); f.store.arm(f.scope);
@@ -49,6 +103,7 @@ it.each(["[HIGH] Command blocked in non-interactive mode\n\nCommand:\n  git push
 });
 it.each([
   { status: "completed", aggregatedOutput: "[CRITICAL] Command blocked automatically\n\nCommand:\n  git push origin main" },
+  { status: "completed", aggregatedOutput: BLOCK_MARKER + " Held merge. This needs a merge ask. Nothing was done." },
   { status: "failed", aggregatedOutput: "Test log:\n[CRITICAL] Command blocked automatically\n\nCommand:\n  git push origin main", exitCode: 1 },
   { status: "failed", aggregatedOutput: "Permission denied", exitCode: 1 },
 ])("does not confuse execution output or ordinary failure with a preflight result: %j", async result => {
@@ -65,6 +120,18 @@ it("skips bb host-daemon native fileChange.error on a preflight-blocked write", 
   const f = setup("pi"); f.store.arm(f.scope);
   f.setRows([{ ...f.started, type: "item/completed", seq: 2, data: { item: { id: "call1", type: "fileChange", status: "failed", approvalStatus: null, changes: [{ path: "/outside/file", kind: "add" }], error: BLOCK_MARKER + " Blocked write to /outside/file." } } }]);
   await f.emit(2); expect(f.stops()).toBe(0); expect(f.store.violations()).toEqual([]);
+});
+it("records a held act without stopping the member or opening a violation", async () => {
+  const f = setup("pi"); f.store.arm(f.scope);
+  const onActObservation = vi.fn();
+  registerWatcher(f.bb, f.store, { onViolation: f.onViolation, onActObservation });
+  f.setRows([{ ...f.started, id: "held", type: "item/completed", seq: 2, data: { item: { ...f.started.data.item, status: "failed", exitCode: 1, aggregatedOutput: BLOCK_MARKER + " Held merge. This needs a merge ask. Nothing was done. Tell your Keeper what you need it for and carry on with other work." } } }]);
+  await f.emit(2);
+  expect(onActObservation).toHaveBeenCalledOnce();
+  expect(onActObservation).toHaveBeenCalledWith(expect.objectContaining({ eventId: "held", act: "merge", preflight: true }));
+  expect(f.stops()).toBe(0);
+  expect(f.onViolation).not.toHaveBeenCalled();
+  expect(f.store.violations()).toEqual([]);
 });
 it("does evaluate an armed pi call that actually completed without a guard block", async () => {
   const f = setup("pi"); f.store.arm(f.scope);
@@ -115,5 +182,6 @@ it("the unscoped shim is lightweight and a missing scoped target fails closed", 
   expect(performance.now() - start).toBeLessThan(100); expect(pi.on).not.toHaveBeenCalled();
   vi.stubEnv("TAVERN_SCOPE_FILE", "/missing/scope.json"); await fn(pi);
   const guard = pi.on.mock.calls.find(call => call[0] === "tool_call")![1];
-  expect(guard({ toolName: "bash" })).toMatchObject({ block: true }); expect(guard({ toolName: "tavern_report" })).toBeUndefined();
+  expect(guard({ toolName: "bash" })).toMatchObject({ block: true, reason: expect.stringContaining("Nothing was done. Ask your Keeper") });
+  expect(guard({ toolName: "bash" }).reason).not.toContain("tavern_report"); expect(guard({ toolName: "tavern_report" })).toBeUndefined();
 });

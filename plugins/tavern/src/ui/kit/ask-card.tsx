@@ -50,7 +50,8 @@ function ScopeGrant({ change }: { change: NonNullable<Ask["scopeChange"]> }) {
 /** One ask, answered in place. Consequential kinds start with nothing selected; sends-as-you shows sender, recipient and the full draft. */
 export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = false, describeEffects = false }: { ask: Ask; via?: "banner" | "page" | "phone" | "chat"; onFold?: () => void; onAnswered?: (answered: Ask) => void; headless?: boolean; describeEffects?: boolean }) {
   const name = useId();
-  const [optionId, setOption] = useState<string | null>(ask.kind === "decision" ? ask.options.find(o => o.recommended)?.id ?? null : null);
+  const shellGrant = ask.effect?.type === "grant-shell-act" ? ask.effect : null;
+  const [optionId, setOption] = useState<string | null>(ask.kind === "decision" && !shellGrant ? ask.options.find(o => o.recommended)?.id ?? null : null);
   const [note, setNote] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [receipt, setReceipt] = useState<{ label: string; at: number; note: string | null; pullRequestErrors?: string[] } | null>(null);
@@ -78,7 +79,7 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
   }
   const missingGrant = ask.kind === "scope" && !ask.scopeChange;
   const canSend = (ask.kind !== "sends-as-you" || ask.draft !== null) && !(missingGrant && optionId !== null && GRANTING(optionId));
-  const action = early && optionId === "close-early" ? "Close early" : ask.kind === "sends-as-you" ? "Send as you" : ask.kind === "greenlight" ? "Form the party (greenlight)" : ask.kind === "scope" && optionId !== null && GRANTING(optionId) ? "Grant this scope" : "Send answer";
+  const action = shellGrant && (optionId === "once" || optionId === "quest") ? "Grant this command" : shellGrant ? "Send answer" : early && optionId === "close-early" ? "Close early" : ask.kind === "sends-as-you" ? "Send as you" : ask.kind === "greenlight" ? "Form the party (greenlight)" : ask.kind === "scope" && optionId !== null && GRANTING(optionId) ? "Grant this scope" : "Send answer";
   async function submit() {
     if (!optionId || !canSend) return;
     setError(null);
@@ -113,6 +114,12 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
         </dl>
       )}
       {ask.scopeChange && <ScopeGrant change={ask.scopeChange} />}
+      {shellGrant && <dl className="sendbox grant" aria-label="Exact shell grant">
+        <dt>Act</dt><dd>{shellGrant.target.act}</dd>
+        <dt>Command</dt><dd><code className="wrap">{shellGrant.target.command}</code></dd>
+        <dt>Directory</dt><dd><code className="wrap">{shellGrant.target.cwd}</code></dd>
+        {shellGrant.target.destinations?.length ? <><dt>Destination</dt><dd>{shellGrant.target.destinations.map(value => <code className="wrap" key={value}>{value}</code>)}</dd></> : null}
+      </dl>}
       {ask.kind === "sends-as-you" && ask.draft === null && <p role="alert" className="problem">The send preview is missing. Ask the Keeper for the recipient and the full draft before answering.</p>}
       {missingGrant && <p role="alert" className="problem">The grant details are missing, so this scope cannot be widened here. You can still keep the current restrictions.</p>}
       {closing?.draft.fromSteer && <blockquote className="close-quote"><b>You said, {clockTime(closing.draft.fromSteer.at)}:</b> <span data-content>“{closing.draft.fromSteer.text}”</span></blockquote>}
@@ -149,7 +156,7 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
       <QueryState error={error} />
       <div className="ask-f">
         <button type="button" className={`btn ${ask.kind === "greenlight" ? "pri seal" : "pri"}`} disabled={!optionId || answer.isPending || !canSend} aria-describedby={describeEffects ? `${name}-effect` : undefined} onClick={() => void submit()}>{ask.kind === "greenlight" && <Glyph name="wax-seal" />}{answer.isPending ? "Sending…" : action}</button>
-        {describeEffects && <span className="ask-effect" id={`${name}-effect`}>{ask.kind === "sends-as-you" ? "Sends the message above as you." : "Applies your choice and tells the Keeper."}</span>}
+        {describeEffects && <span className="ask-effect" id={`${name}-effect`}>{shellGrant ? "Records your choice. Nothing runs from this card." : ask.kind === "sends-as-you" ? "Sends the message above as you." : "Applies your choice and tells the Keeper."}</span>}
         {onFold && <>
           <button type="button" className="btn" aria-describedby={describeEffects ? `${name}-fold-effect` : undefined} onClick={onFold}>Not now</button>
           {describeEffects && <span className="ask-effect" id={`${name}-fold-effect`}>Hides the form without answering.</span>}

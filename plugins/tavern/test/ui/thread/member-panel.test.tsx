@@ -7,6 +7,8 @@ import { ThreadWidget } from "../../../src/ui/thread/composer";
 import { clearThreadState } from "../../../src/ui/thread/state";
 import { fixtureDecor, fixtureQuest, fixtureRegistry } from "../../../src/ui/thread/fixtures";
 import { threadDecorSchema, type ThreadDecor } from "../../../src/shared/contract";
+import { askSchema } from "../../../src/shared/schema";
+import { AskCard } from "../../../src/ui/kit/ask-card";
 import { motion } from "../../../src/ui/kit/motion";
 import { glowVars } from "../../../src/ui/kit/primitives";
 import { HUE_CSS } from "../../../src/shared/heraldry";
@@ -24,6 +26,43 @@ async function panel(decor: ThreadDecor = memberPanelDecor) {
   if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
   return slot;
 }
+it("shows a neutral Watch count instead of the refusal", async () => {
+  const violation = { threadId: memberPanelDecor.threadId, providerId: "pi", at: 1, eventId: "watch", seq: 1, ruleId: "git-push-main", reason: "A refusal which does not belong in Watch", stopped: false, latencyMs: 1, mode: "watch", act: "merge" };
+  const slot = await panel(threadDecorSchema.parse({ ...memberPanelDecor, characters: false, scope: { ...memberPanelDecor.scope, mode: "watch" }, violations: [violation] }));
+  fireEvent.click(slot.getByRole("button", { name: /^Scope and guardrails/ }));
+  expect(slot.getByText("would have needed a grant: 1 merge")).toBeTruthy();
+  expect(slot.queryByText(violation.reason)).toBeNull();
+  if (process.env.TAVERN_SCOPE_LAYOUT === "1") process.stdout.write("SCOPE_LAYOUT=" + JSON.stringify(slot.container.innerHTML) + "\n");
+});
+it("labels grants that need a restart and offers a revoke action", async () => {
+  const grant = { id: "grant-fixture", keeperThreadId: "lead", memberThreadId: memberPanelDecor.threadId, boardQuestId: "vault", target: { act: "publish", command: "npm publish --registry https://registry.example.test", cwd: "/repo", digest: "a".repeat(64) }, state: "issued", scope: "quest", by: "keeper", issuedAt: 1, changedAt: 1, usable: false };
+  const decor = threadDecorSchema.parse({ ...memberPanelDecor, scope: { ...memberPanelDecor.scope, shellGrants: [grant], restartNeeded: "This session still has Tavern’s old Git push block environment settings." } });
+  const slot = await panel(decor);
+  fireEvent.click(slot.getByRole("button", { name: /^Scope and guardrails/ }));
+  expect(slot.getByText(grant.target.command)).toBeTruthy();
+  expect(slot.getByText("Waiting for restart")).toBeTruthy();
+  expect(slot.getByText("Restart needed.")).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Revoke" })).toBeTruthy();
+  const memberHtml = slot.container.innerHTML;
+  slot.lifecycle.unmount();
+  clearThreadState();
+  const dormant = threadDecorSchema.parse({ ...decor, scope: { ...decor.scope, restartNeeded: null } });
+  const dormantSlot = await panel(dormant);
+  const scopeFold = await dormantSlot.findByRole("button", { name: /^Scope and guardrails/ });
+  if (scopeFold.getAttribute("aria-expanded") !== "true") fireEvent.click(scopeFold);
+  expect(within(dormantSlot.container).getByText("Ready for the member's next session")).toBeTruthy();
+  const ask = askSchema.parse({
+    id: "grant-fixture", boardQuestId: "vault", keeperThreadId: "lead", kind: "decision", question: "Grant Vex this publish?", why: "The plan calls for this package.", state: "open", createdAt: 1, answer: null, proceedAt: null, draft: null, meanwhile: "The member can continue other work.", holds: [],
+    options: [{ id: "once", label: "Once", recommended: true }, { id: "quest", label: "For this quest" }, { id: "deny", label: "Decline" }],
+    effect: { type: "grant-shell-act", memberThreadId: memberPanelDecor.threadId, target: grant.target },
+  });
+  const card = renderSlot({ component: () => <AskCard ask={ask} describeEffects /> }, {}, {});
+  const cardQueries = within(card.container);
+  expect(cardQueries.getByText(grant.target.command)).toBeTruthy();
+  expect(cardQueries.getByRole("radio", { name: "For this quest" })).toBeTruthy();
+  expect(cardQueries.getByRole("button", { name: "Send answer" }).hasAttribute("disabled")).toBe(true);
+  if (process.env.TAVERN_SCOPE_LAYOUT === "1") process.stdout.write("GRANTS_LAYOUT=" + JSON.stringify({ ask: card.container.innerHTML, member: memberHtml, dormant: dormantSlot.container.innerHTML }) + "\n");
+});
 it("shows the rest duration and keep reason in the Member panel", async () => {
   const restNote = "resting 40 min; machine held; work settled. kept until 13:00: expect a follow-up.";
   const slot = await panel({ ...memberPanelDecor, member: { ...memberPanelDecor.member!, restNote } });
