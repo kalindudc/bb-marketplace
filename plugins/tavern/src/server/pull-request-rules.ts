@@ -113,22 +113,25 @@ export async function managePullRequest(runtime: TavernRuntime, threadId: string
   k.require(threadId, "keeper");
   if (input.action === "draft") {
     const verb = { comment: "Comment on", review: "Review", approve: "Approve", close: "Close", edit: "Edit" }[input.operation];
-    const lane = k.authority.lane({ kind: "sends-as-you", boardQuestId: input.boardQuestId ?? null, unsure: input.unsure });
+    const message = input.operation !== "edit" && input.operation !== "close";
+    const kind = message ? "sends-as-you" : "decision";
+    const effect = { type: "pull-request-draft", operation: input.operation } as const;
+    const lane = k.authority.lane({ kind, effect, boardQuestId: input.boardQuestId ?? null, unsure: input.unsure });
     const digest = lane === "keeper" ? checkedPullRequestCommand(input.command ?? "", input.url, input.operation) : null;
-    if (digest && !runtime.scopes?.refreshPullRequestPolicy(threadId)) throw new Error("Tavern needs a bound scope before it can grant one use of this command.");
-    const ask = k.ask(threadId, { boardQuestId: input.boardQuestId, kind: "sends-as-you", unsure: input.unsure,
-      effect: { type: "pull-request-draft", operation: input.operation }, draft: { to: input.url, body: input.body },
+    if (digest && !runtime.scopes?.refreshPullRequestPolicy(threadId)) throw new Error("Tavern needs a bound scope before granting one use of an exact pull request command.");
+    const ask = k.ask(threadId, { boardQuestId: input.boardQuestId, kind, unsure: input.unsure,
+      effect, draft: { to: input.url, body: input.body },
       question: `${verb} this pull request?`, why: "This pull request is not known to belong to the quest.",
       meanwhile: "Tavern does not post or change the pull request for you.", holds: [],
       options: [{ id: "approve", label: "Use this draft", detail: "Record your choice. Post or apply the draft yourself on the forge.", recommended: true },
         { id: "deny", label: "Leave it alone", detail: "Do not post or change anything.", recommended: false }],
     });
     if (digest) {
-      const decision = k.decide(threadId, { boardQuestId: ask.boardQuestId, askId: ask.id, optionId: "approve", kind: "sends-as-you",
-        text: `${verb} ${input.url}`, why: "The sends-as-you lane is the Keeper’s for this quest.", source: "keeper", reversible: true }, undefined,
-        { pullRequestGrant: { digest } });
+      const decision = k.decide(threadId, { boardQuestId: ask.boardQuestId, askId: ask.id, optionId: "approve",
+        text: `${verb} ${input.url}`, why: "The Keeper can decide this external pull request change.", source: "keeper", reversible: true },
+        undefined, { pullRequestGrant: { digest } });
       if (!runtime.scopes!.refreshPullRequestPolicy(threadId)) throw new Error("The decision was recorded, but the scope is no longer bound. No command was run.");
-      return { decisionId: decision.id, command: input.command, use: "Run this exact command once. Undo revokes an unused exception; it does not remove a post." };
+      return { decisionId: decision.id, command: input.command, use: "Run this exact command once." };
     }
     return `Write on its own line:\n::tavern-ask{id="${ask.id}"}`;
   }

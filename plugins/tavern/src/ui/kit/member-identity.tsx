@@ -18,6 +18,11 @@ export function clusterGuardWords(scope: MemberScope) {
     scope?.clusterGuard === "restart" ? "restart needed: cluster writes not prevented" :
     scope?.clusterGuard === "not-prevented" ? "cluster writes not prevented" : null;
 }
+export function sendGuardWords(scope: MemberScope) {
+  return scope?.sendGuard === "armed" ? "Listed sends are prevented" :
+    scope?.sendGuard === "restart" ? "Restart needed: sends are not prevented" :
+    scope?.sendGuard === "not-prevented" ? "Sends are not prevented" : null;
+}
 function guardWords(member: Member, scope: MemberScope, finished: boolean) {
   if (!scope && member.role === "solo") return "no Tavern guard (started by you)";
   if (finished) return member.guardPosture ? member.guardPosture.mode === "pre-exec" ? "enforced during the run" : "watched during the run" : "guard state not recorded";

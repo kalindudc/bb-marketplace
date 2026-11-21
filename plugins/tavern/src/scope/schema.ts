@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { communicationAuthoritySchema, sendToolsSchema } from "../shared/communication";
 import { gitOidSchema, workspaceKindSchema } from "../shared/placement";
 
 export const PRESETS = ["readonly", "checker", "worktree", "keeper", "open"] as const;
@@ -29,6 +30,8 @@ export const scopeSchema = z.object({
   expectedWorktree: z.string().optional(),
   assignedBranch: z.string().min(1).max(1000).optional(),
   pullRequestPolicy: pullRequestPolicySchema.optional(),
+  sendTools: sendToolsSchema.optional(),
+  communicationAuthority: communicationAuthoritySchema.optional(),
   workspaceKind: workspaceKindSchema.optional(),
   checks: z.object({ worktree: z.string().min(1).optional(), commands: z.array(z.string().min(1).max(8000)).max(100) }).strict().optional(),
   enforceFrom: z.number().int().nonnegative().optional(),

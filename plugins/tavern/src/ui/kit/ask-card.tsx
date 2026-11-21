@@ -10,7 +10,7 @@ import { useRegistry } from "./registry";
 import { isCloseEffect, type PullRequestChoices } from "../../shared/closing";
 import { WaiverRows } from "./waiver-rows";
 
-const KIND: Record<Ask["kind"], string> = { greenlight: "Greenlight", decision: "Decision", conclude: "Conclude", production: "Production", "cluster-write": "Cluster write", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
+const KIND: Record<Ask["kind"], string> = { greenlight: "Greenlight", decision: "Decision", conclude: "Conclude", production: "Production", "cluster-write": "Cluster write", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", "drafts-as-you": "Draft as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
 const VIA: Record<string, string> = { banner: "in the thread", page: "in the common room", phone: "on the phone", chat: "in the chat", cli: "from the CLI", timer: "by its default" };
 const holdsText = (holds: string[]) => holds.length === 0 ? "No other work" : holds.map(h => /^w\d+$/.test(h) ? `waypoint ${h.slice(1)}` : h).join(", ");
 
@@ -53,6 +53,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
   const [approvedAsk, setApprovedAsk] = useState<Ask>();
   const ask = originalAsk.state === "open" && approvedAsk?.id === originalAsk.id && !originalAsk.clusterApproval ? approvedAsk : originalAsk;
   const cluster = ask.kind === "cluster-write";
+  const communication = ask.effect?.type === "communication-hold" ? ask.effect.hold : null;
   const readiness = experimental_useRpcQuery({ contract: rpcContract, method: "clusterRunStatus", input: { askId: ask.id }, enabled: cluster && ask.state === "open" });
   const shellGrant = ask.effect?.type === "grant-shell-act" ? ask.effect : null;
   const [optionId, setOption] = useState<string | null>(ask.kind === "decision" && !shellGrant ? ask.options.find(o => o.recommended)?.id ?? null : null);
@@ -85,8 +86,8 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
   }
   const missingGrant = ask.kind === "scope" && !ask.scopeChange;
   const clusterReady = !cluster || optionId === "deny" || readiness.data?.guarded === true;
-  const canSend = clusterReady && (ask.kind !== "sends-as-you" || ask.draft !== null) && !(missingGrant && optionId !== null && GRANTING(optionId));
-  const action = shellGrant && (optionId === "once" || optionId === "quest") ? "Grant this command" : shellGrant ? "Send answer" : early && optionId === "close-early" ? "Close early" : ask.kind === "sends-as-you" ? "Send as you" : ask.kind === "greenlight" ? "Form the party (greenlight)" : ask.kind === "scope" && optionId !== null && GRANTING(optionId) ? "Grant this scope" : cluster && optionId === "approve" ? "Approve" : cluster && optionId === "confirm-run" ? "Run it now" : "Send answer";
+  const canSend = clusterReady && (ask.kind !== "sends-as-you" || ask.draft !== null || communication !== null) && !(missingGrant && optionId !== null && GRANTING(optionId));
+  const action = shellGrant && (optionId === "once" || optionId === "quest") ? "Grant this command" : shellGrant ? "Send answer" : early && optionId === "close-early" ? "Close early" : communication || ask.effect?.type === "pull-request-draft" ? "Record answer" : ask.kind === "sends-as-you" ? "Record answer" : ask.kind === "greenlight" ? "Form the party (greenlight)" : ask.kind === "scope" && optionId !== null && GRANTING(optionId) ? "Grant this scope" : cluster && optionId === "approve" ? "Approve" : cluster && optionId === "confirm-run" ? "Run it now" : "Send answer";
   async function submit() {
     if (!optionId || !canSend) return;
     setError(null);
@@ -119,6 +120,12 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
       </dl>}
       {ask.undo && CONSEQUENTIAL_ASK_KINDS.some(kind => kind === ask.kind) && <dl className="sendbox"><dt>Undo</dt><dd>{ask.undo}</dd></dl>}
       {ask.lane === "keeper" && <p role="status">This kind is delegated to the Keeper. You can still answer here or revoke it in the ledger.</p>}
+      {communication && <dl className="sendbox" aria-label="Held message">
+        <dt>Tool</dt><dd className="wrap">{communication.tool}</dd>
+        <dt>To</dt><dd className="wrap">{communication.target ?? "The call did not reveal the recipient."}</dd>
+        <dt>Message</dt><dd className="draft" data-content>{communication.body ?? "The call did not reveal the full message."}</dd>
+        {communication.detail && <><dt>Command</dt><dd><code className="draft">{communication.detail}</code></dd></>}
+      </dl>}
       {ask.draft && (
         <dl className="sendbox" aria-label="Exactly what would be sent">
           <dt>Sends as</dt><dd className="warn">You</dd>
@@ -133,7 +140,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
         <dt>Directory</dt><dd><code className="wrap">{shellGrant.target.cwd}</code></dd>
         {shellGrant.target.destinations?.length ? <><dt>Destination</dt><dd>{shellGrant.target.destinations.map(value => <code className="wrap" key={value}>{value}</code>)}</dd></> : null}
       </dl>}
-      {ask.kind === "sends-as-you" && ask.draft === null && <p role="alert" className="problem">The send preview is missing. Ask the Keeper for the recipient and the full draft before answering.</p>}
+      {ask.kind === "sends-as-you" && ask.draft === null && !communication && <p role="alert" className="problem">The send preview is missing. Ask the Keeper for the recipient and the full draft before answering.</p>}
       {missingGrant && <p role="alert" className="problem">The grant details are missing, so this scope cannot be widened here. You can still keep the current restrictions.</p>}
       {closing?.draft.fromSteer && <blockquote className="close-quote"><b>You said, {clockTime(closing.draft.fromSteer.at)}:</b> <span data-content>“{closing.draft.fromSteer.text}”</span></blockquote>}
       {early?.draft.noPlan && early.draft.reason && <p className="m" data-content>Reason for closing early: {early.draft.reason}</p>}
@@ -169,7 +176,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
       <QueryState error={error} />
       <div className="ask-f">
         <button type="button" className={`btn ${ask.kind === "greenlight" ? "pri seal" : "pri"}`} disabled={!optionId || answer.isPending || !canSend} aria-describedby={describeEffects ? `${name}-effect` : undefined} onClick={() => void submit()}>{ask.kind === "greenlight" && <Glyph name="wax-seal" />}{answer.isPending ? "Sending…" : action}</button>
-        {describeEffects && <span className="ask-effect" id={`${name}-effect`}>{ask.kind === "sends-as-you" ? "Sends the message above as you." : cluster || shellGrant ? "Records your choice; it does not run the command." : "Applies your choice and tells the Keeper."}</span>}
+        {describeEffects && <span className="ask-effect" id={`${name}-effect`}>{communication || ask.kind === "sends-as-you" ? "Records your choice. Nothing is sent by the agent." : cluster || shellGrant ? "Records your choice; it does not run the command." : "Applies your choice and tells the Keeper."}</span>}
         {onFold && <>
           <button type="button" className="btn" aria-describedby={describeEffects ? `${name}-fold-effect` : undefined} onClick={onFold}>Not now</button>
           {describeEffects && <span className="ask-effect" id={`${name}-fold-effect`}>Hides the form without answering.</span>}

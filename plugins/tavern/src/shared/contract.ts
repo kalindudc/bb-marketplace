@@ -1,4 +1,4 @@
-import { delegationKindSchema, preapprovalInputSchema, questAuthorityViewSchema } from "./quest-authority";
+import { delegateRequestSchema, delegationKindSchema, preapprovalInputSchema, questAuthorityViewSchema } from "./quest-authority";
 import { attentionSchema, sinceVisitSchema } from "./attention";
 import { budgetCentsSchema, spendViewSchema } from "./spend";
 import { taleResultsSchema } from "./tale-results";
@@ -129,6 +129,7 @@ export const memberScopeSchema = z.object({
   shellGrants: z.array(shellGrantSchema.extend({ usable: z.boolean() })).optional(),
   restartNeeded: z.string().nullable().optional(),
   clusterGuard: z.enum(["armed", "ready", "restart", "not-prevented"]).optional(),
+  sendGuard: z.enum(["armed", "restart", "not-prevented"]).optional(),
   // added by Builder B: expose the configured mode and rejected class/project policy changes.
   mode: z.enum(["enforce", "watch", "off"]).optional(), problems: z.array(z.string()).optional(),
   guard: z.object({ installed: z.boolean(), stale: z.boolean(), sandbox: z.enum(["available", "missing", "not-applicable"]), claude: z.literal("phase-2-not-installed") }).optional(),
@@ -355,6 +356,7 @@ export type ClassEditInput = z.infer<typeof classEditSchema>;
 
 export const TELL_KEEPER_LIMIT = 50;
 
+const delegateContext = { boardQuestId: id, via: z.enum(["page", "banner", "phone", "chat"]) };
 export const rpcContract = defineContract({
   ...stopAllContract,
   ...placementContract,
@@ -470,7 +472,7 @@ export const rpcContract = defineContract({
     output: z.object({ checkerHandoffHold: checkerHandoffHoldSchema }),
   },
   questAuthority: { input: z.object({ boardQuestId: id }).strict(), output: questAuthorityViewSchema, tags: ({ boardQuestId }: { boardQuestId: string }) => [tags.boardQuest(boardQuestId), tags.room(), tags.registry()] },
-  delegateQuest: { input: z.object({ boardQuestId: id, kind: delegationKindSchema, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
+  delegateQuest: { input: z.discriminatedUnion("kind", [delegateRequestSchema.options[0].extend(delegateContext), delegateRequestSchema.options[1].extend(delegateContext)]), output: ok },
   preapproveQuest: { input: preapprovalInputSchema.extend({ boardQuestId: id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
   revokeQuestAuthority: { input: z.object({ boardQuestId: id, id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
   revokeShellGrant: { input: z.object({ threadId, id }).strict(), output: ok },

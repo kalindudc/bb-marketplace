@@ -39,6 +39,7 @@ export function assertUndoLane(store: KeeperStore, threadId: string, kind: Ask["
 export function undoAskProjection(store: KeeperStore) {
   const shifts = new Map<string, UndoLane[]>();
   return (ask: Ask): Ask => {
+    if (ask.kind === "sends-as-you" && ask.state === "open") return { ...ask, lane: "user", options: ask.options.filter(option => option.id !== "delegate") };
     if (ask.state !== "open" || ask.lane !== "keeper" && !ask.options.some(o => o.id === "delegate")) return ask;
     let rows = shifts.get(ask.keeperThreadId);
     if (!rows) { rows = readUndoLanes(store, ask.keeperThreadId); shifts.set(ask.keeperThreadId, rows); }

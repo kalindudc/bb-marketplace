@@ -17,6 +17,35 @@ async function section(id:string,view=structuredClone(settingsView),rpc:Record<s
  const slot=renderSlot(app.settingsSections.find(s=>s.id===id)!,{}, {pluginId:"tavern",experimental_rpcContract:{...rpcContract,...settingsContract,...backupContract},rpc:{settings:()=>view,registry:()=>registry,backupList:()=>({dir:"/fixture/backups",keep:14,backups:[],error:null,dataBytes:0,exportLimitBytes:8388608}),...rpc},providers:{status:"ready",providers:[{id:"codex",displayName:"Codex",available:true}] as never}});
  slots.push(slot);return slot;
 }
+it("lets people add a named tool rule without widening the default scope", async () => {
+ const update=vi.fn(()=>({code:"ok",revision:settingsView.revision+1,settings:settingsView,problems:[]}));
+ const s=await section("scopes",structuredClone(settingsView),{settingsUpdate:update});
+ fireEvent.click(await s.findByRole("button",{name:"Add tool rule"}));
+ fireEvent.change(s.getByLabelText("Tool name pattern"),{target:{value:"*_create_draft"}});
+ fireEvent.change(s.getByLabelText("Act"),{target:{value:"draft"}});
+ fireEvent.change(s.getByLabelText("Target key"),{target:{value:"recipient"}});
+ fireEvent.click(s.getByRole("button",{name:"Save tool rules"}));
+ await waitFor(()=>expect(update).toHaveBeenCalledWith(expect.objectContaining({patch:{scopes:{sendTools:[{pattern:"*_create_draft",act:"draft",targetKey:"recipient"}]}}})));
+});
+it("saves a literal shell prefix independently of tool patterns", async () => {
+ const update=vi.fn(()=>({code:"ok",revision:settingsView.revision+1,settings:settingsView,problems:[]}));
+ const s=await section("scopes",structuredClone(settingsView),{settingsUpdate:update});
+ fireEvent.click(await s.findByRole("button",{name:"Add shell rule"}));
+ fireEvent.change(s.getByLabelText("Shell command prefix"),{target:{value:"fixture-cli post"}});
+ expect(s.queryByLabelText("Target key")).toBeNull();
+ fireEvent.click(s.getByRole("button",{name:"Save tool rules"}));
+ await waitFor(()=>expect(update).toHaveBeenCalledWith(expect.objectContaining({patch:{scopes:{sendTools:[{shell:"fixture-cli post",act:"send"}]}}})));
+});
+it.runIf(!!process.env.TAVERN_SEND_SETTINGS_MARKUP)("renders named rules for browser measurements", async () => {
+ const view=structuredClone(settingsView);
+ view.effective.scopes.sendTools=[{pattern:"*_post_message",act:"send"},{pattern:"*_create_draft",act:"draft",targetKey:"recipient"},{shell:"fixture-cli post",act:"send"}];
+ const s=await section("scopes",view);
+ await s.findByRole("region",{name:"Sending and drafting"});
+ const controls = s.getAllByRole("combobox",{name:"Act"}) as HTMLSelectElement[];
+ expect(controls.map(control => control.value)).toEqual(["send","draft","send"]);
+ for (const control of controls) for (const option of control.options) option.toggleAttribute("selected", option.selected);
+ process.stdout.write("SEND_SETTINGS_MARKUP=" + JSON.stringify(s.container.innerHTML) + "\n");
+});
 it("registers Setup first, kit descriptions for each section, and history last",async()=>{
  const app=await loadPluginApp(async()=>({default:definePluginApp(registerPageSurfaces)}));
  expect(app.settingsSections.map(s=>s.id)).toEqual(["setup","tavern","attention","keepers","classes","scopes","machines","atmosphere","away","journal","tuning","data","settings-history"]);

@@ -1,3 +1,4 @@
+import { communicationHoldSchema } from "./shared/communication";
 import { actGrantSchema } from "./scope/act-grants";
 import { ACT_KINDS } from "./scope/acts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
@@ -64,7 +65,7 @@ const scopeCall = z.object({
   resolvedPaths: z.record(z.string(), z.string()).optional(), pushTargets: z.record(z.string(), z.array(z.string())).optional(),
   pushHeads: z.record(z.string(), z.string()).optional(), gitRoots: z.record(z.string(), z.string()).optional(),
   directories: z.array(path).optional(), ownedDraftPrs: z.array(z.string()).optional(),
-  ownedPrs: z.array(z.string()).optional(), questOwnedPrs: z.array(z.string()).optional(), observationId: id.optional(), clusterObservation: z.string().max(160).optional(),
+  ownedPrs: z.array(z.string()).optional(), questOwnedPrs: z.array(z.string()).optional(), observationId: id.optional(), clusterObservation: z.string().max(160).optional(), draftObservation: z.string().max(160).optional(),
 }).strict();
 export const scopeDecisionSchema = z.discriminatedUnion("allow", [
   z.object({ allow: z.literal(true), check: z.boolean().optional(), prGrant: id.optional(), acts: z.array(z.object({ kind: z.enum(ACT_KINDS), ruleId: id, why: text }).strict()).optional() }).strict(),
@@ -119,7 +120,15 @@ export const hostContract = defineRpcContract({
   },
   sessionStatus: {
     ...retryable, input: authoritySchema.extend({ revision: generation, scopeDigest: sha256Schema }).strict(),
-    output: z.object({ state: z.enum(["not-observed", "armed", "stale"]), revision: generation.nullable(), scopeDigest: sha256Schema.nullable(), clusterWrites: z.literal(true).optional() }).strict(),
+    output: z.object({ state: z.enum(["not-observed", "armed", "stale"]), revision: generation.nullable(), scopeDigest: sha256Schema.nullable(), clusterWrites: z.literal(true).optional(), sendGuard: z.literal(true).optional() }).strict(),
+  },
+  communicationHolds: {
+    input: authoritySchema.extend({ revision: generation, scopeDigest: sha256Schema, acknowledge: z.array(z.uuid()).max(8) }).strict(),
+    output: z.object({ holds: z.array(communicationHoldSchema).max(8), guard: z.enum(["armed", "restart", "not-prevented"]), problem: z.string().optional() }).strict(),
+  },
+  revokeDraftReceipts: {
+    input: authoritySchema.extend({ askIds: z.array(id.regex(/^[a-zA-Z0-9_-]+$/)).min(1).max(100) }).strict(),
+    output: z.object({ revoked: z.literal(true) }).strict(),
   },
   issueClusterGrant: {
     input: authoritySchema.extend({ revision: generation, scopeDigest: sha256Schema, grant: actGrantSchema }).strict(),

@@ -28,6 +28,7 @@ import type { Ask, Member } from "../shared/schema";
 import { publishShellGrants, readShellGrants, removeShellGrantProjection, scopeRestartReason, shellGrantCapable, shellGrantTarget, shellGrantUse } from "../scope/shell-grants";
 import { actAskKind } from "../scope/act-routing";
 import { prepareCall } from "../scope/prepare";
+import { shellCommunication } from "../scope/shell-communication";
 import { settleShellGrant } from "./shell-grants";
 import { isLiveKeeper, isLiveMember } from "./liveness";
 import { commitUserAct, type UserActReceipt } from "./authority";
@@ -35,6 +36,8 @@ import { DEFAULT_SETTINGS } from "../shared/settings";
 import { SCOPE_DENIAL_TEXT } from "../shared/text";
 import type { ScopeRequest } from "./keeper/store";
 import { readUndoLanes } from "./undo-record";
+import { acknowledgeCommunicationHolds, readCommunicationHolds, revokeCommunicationReceipt } from "../scope/communication-holds";
+import { approvedDrafts, communicationPolicy, recordCommunication } from "./communication";
 import type { TavernRuntime } from "./runtime";
 
 function scopeChanges(before: Scope, after: Scope) {
@@ -71,6 +74,7 @@ export class BackendScopes {
   private readonly cwd = new Map<string, string>();
   private readonly answering = new Map<string, Promise<void>>();
   private refreshingScopes = false;
+  private readonly hostSendGuard = new Map<string, { at: number; status: "armed" | "restart" | "not-prevented"; problem?: string }>();
   constructor(
     readonly runtime: TavernRuntime,
     private readonly options: BackendScopeOptions = {},
@@ -89,6 +93,7 @@ export class BackendScopes {
           ? { kind: "unavailable", reason: "Scope update pending; detection paused until the host acknowledges the effective scope." } : state;
       },
       onHostTemplateChanged: threadId => {
+        this.hostSendGuard.delete(threadId);
         void runtime.placements().ready.reconcileForThread(threadId).catch(error => runtime.bb.log.warn(`Tavern scope delivery ${threadId}: ${String(error)}`));
         runtime.keeper.changed(threadId);
       },
@@ -112,9 +117,54 @@ export class BackendScopes {
           .snapshot(this.resolvingProject)
           .classes.find((role) => role.id === classId)?.scope,
       onViolation: (violation) => this.violation(violation),
+      communicationPolicy: threadId => communicationPolicy(runtime.keeper, threadId, runtime.config().scopes.sendTools, this.api?.localScopeRecord(threadId)?.file, runtime.away.store.snapshot().status.closed),
+      drainCommunication: (threadId, idle) => this.drainCommunication(threadId, idle),
       onActObservation: (observation) => this.observeAct(observation),
       onShellGrantUsed: (threadId, id) => { this.recordGrantUse(threadId, id); this.syncGrants(threadId); },
     });
+  }
+  refreshCommunication(threadId?: string, keeperId?: string) {
+    if (threadId) { this.api.refreshCommunicationPolicy(threadId); return; }
+    for (const row of this.api.status().threads) {
+      const member = keeperId && this.runtime.keeper.member(row.threadId);
+      if (!keeperId || row.threadId === keeperId || member && member.keeperThreadId === keeperId) this.api.refreshCommunicationPolicy(row.threadId);
+    }
+  }
+  async drainCommunication(threadId: string, idle = false) {
+    const local = this.api.localScopeRecord(threadId), remote = local ? null : this.clusterHost(threadId);
+    if (!local && !remote) { this.hostSendGuard.delete(threadId); return; }
+    let holds;
+    if (local) holds = readCommunicationHolds(local.file);
+    else {
+      if (!idle && Date.now() - (this.hostSendGuard.get(threadId)?.at ?? 0) < 3000) return;
+      const result = await remote!.host.call(remote!.hostId, "communicationHolds", { ...remote!.input, acknowledge: [] });
+      this.hostSendGuard.set(threadId, { at: Date.now(), status: result.guard, problem: result.problem });
+      holds = result.holds;
+    }
+    if (!holds.length) return;
+    for (const hold of holds) if (hold.threadId === threadId && (!local || hold.scopeIssuedAt === local.scope.issuedAt)) recordCommunication(this.runtime.keeper, hold);
+    const ids = holds.map(hold => hold.id);
+    if (local) acknowledgeCommunicationHolds(local.file, ids);
+    else await remote!.host.call(remote!.hostId, "communicationHolds", { ...remote!.input, operationId: randomUUID(), acknowledge: ids });
+  }
+  async revokeDraftReceipts(questId: string, delegationId: string) {
+    const k = this.runtime.keeper;
+    await this.fenceDraftReceipts(approvedDrafts(k, questId).filter(({ id }) => k.store.get("asks", id)?.answer?.draftDelegationId === delegationId));
+  }
+  async fenceDraftReceipts(rows: ReturnType<typeof approvedDrafts>) {
+    const batches = new Map<string, string[]>();
+    for (const row of rows) batches.set(row.threadId, [...(batches.get(row.threadId) ?? []), row.id]);
+    await Promise.all([...batches].map(async ([threadId, askIds]) => {
+      const local = this.api.localScopeRecord(threadId);
+      if (local) { for (const askId of askIds) revokeCommunicationReceipt(local.file, askId); return; }
+      const { store, host, deliveries } = this.runtime.placements(), placement = store.byMember(threadId);
+      const record = placement && deliveries.get(placement.id);
+      if (!record || record.memberThreadId !== threadId) return;
+      const { placementId, endpointId, generation, hostId } = record.binding;
+      for (let i = 0; i < askIds.length; i += 100) await host.call(hostId, "revokeDraftReceipts", {
+        operationId: randomUUID(), placementId, endpointId, generation, askIds: askIds.slice(i, i + 100),
+      });
+    }));
   }
   private clusterHost(threadId: string) {
     const { deliveries, host } = this.runtime.placements();
@@ -226,8 +276,8 @@ export class BackendScopes {
           const { context, files } = project;
           const resolved = this.api.resolveForRefresh(member.classId, context, definition.scope, files, input?.initial);
           if (!input) {
-            const { threadId: _id, issuedAt: _issued, mode: _mode, checks: _checks, expectedWorktree: _root, assignedBranch: _branch, pullRequestPolicy: _prs, workspaceKind: _kind, enforceFrom: _from, env: priorEnv, ...prior } = template;
-            const { threadId: _nextId, issuedAt: _nextIssued, mode: _nextMode, checks: _nextChecks, expectedWorktree: _nextRoot, assignedBranch: _nextBranch, pullRequestPolicy: _nextPrs, workspaceKind: _nextKind, enforceFrom: _nextFrom, env: nextEnv, ...next } = resolved.scope;
+            const { threadId: _id, issuedAt: _issued, mode: _mode, checks: _checks, expectedWorktree: _root, assignedBranch: _branch, pullRequestPolicy: _prs, sendTools: _send, communicationAuthority: _communication, workspaceKind: _kind, enforceFrom: _from, env: priorEnv, ...prior } = template;
+            const { threadId: _nextId, issuedAt: _nextIssued, mode: _nextMode, checks: _nextChecks, expectedWorktree: _nextRoot, assignedBranch: _nextBranch, pullRequestPolicy: _nextPrs, sendTools: _nextSend, communicationAuthority: _nextCommunication, workspaceKind: _nextKind, enforceFrom: _nextFrom, env: nextEnv, ...next } = resolved.scope;
             if (!isDeepStrictEqual({ ...prior, variables: priorEnv.variables }, { ...next, variables: nextEnv.variables })) continue;
             k.store.put("scopeInputs", row.threadId, { changes: [] });
           }
@@ -822,7 +872,9 @@ export class BackendScopes {
     const cwd = held?.cwd ?? this.cwd.get(member.threadId) ?? status?.scope?.expectedWorktree;
     if (status?.binding || !cwd || !status?.scope || status.error || member.guardPosture?.mode === "detection-only") throw new Error("The member needs a local pre-execution scope for shell grants.");
     if (/^\s*(?:kubectl|terraform|helm|kapp)\s/.test(command)) throw new Error("Cluster writes use a separate user-only ask; ordinary shell grants cannot cover them.");
-    const target = shellGrantTarget(prepareCall({ kind: "bash", toolName: "bash", cwd, input: { command } }, { scope: status.scope }));
+    const call = prepareCall({ kind: "bash", toolName: "bash", cwd, input: { command } }, { scope: status.scope });
+    if (shellCommunication(status.scope, call)) throw new Error("Members do not send as you. Draft the message for the user to post instead.");
+    const target = shellGrantTarget(call);
     const kind = target && actAskKind(target.act);
     if (!target || !kind || held && target.act !== held.act) throw new Error("Give one literal shell act with its exact target, no wrappers or redirects.");
     return k.ask(keeperThreadId, {
@@ -971,6 +1023,8 @@ export class BackendScopes {
         !store.runtime(threadId).builtinKeeperFallback && !store.get("scopeInputs", threadId))
       problems.push("This older scope was kept as saved. Tavern cannot refresh it without its original inputs.");
     const local = this.api.localScopeRecord(threadId);
+    const messagePolicyProblem = this.api.messagePolicyProblem(threadId);
+    if (messagePolicyProblem) problems.unshift(messagePolicyProblem);
     const latestGrants = store.query("shellGrants", "memberThreadId", threadId, 100);
     const grants = [...new Map([...store.issuedShellGrants("memberThreadId", threadId), ...latestGrants].map(grant => [grant.id, grant])).values()];
     const available = grants.some(grant => grant.state === "issued") && status.mode === "enforce" && local && shellGrantCapable(local.file, local.scope)
@@ -982,6 +1036,11 @@ export class BackendScopes {
       this.runtime.keeper.store.runtime(threadId).clusterSessionPending === true &&
       (status.guard.installed && !status.guard.stale && !row.binding || placement && placement.posture.guard === "prepared");
     const clusterGuard = guarded ? "armed" as const : legacy ? "restart" as const : prepared ? "ready" as const : "not-prevented" as const;
+    const stamp = row.hostScope === "acknowledged" && this.hostSendGuard.get(threadId);
+    const sendStamp = stamp && Date.now() - stamp.at < 30_000 ? stamp : null;
+    if (sendStamp?.problem) problems.unshift(sendStamp.problem);
+    const sendGuard = messagePolicyProblem ? "not-prevented" as const : !row.error && this.api.sendGuardArmed(threadId) ? "armed" as const
+      : sendStamp ? sendStamp.status : legacy ? "restart" as const : "not-prevented" as const;
     return row
       ? {
           threadId,
@@ -997,6 +1056,7 @@ export class BackendScopes {
           error: row.error ?? null,
           armed: row.armed,
           clusterGuard,
+          sendGuard,
           pendingAskId:
             this.runtime.keeper.store.runtime(threadId).scopePending ?? null,
         }

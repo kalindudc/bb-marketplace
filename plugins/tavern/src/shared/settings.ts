@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { defineContract } from "./define-contract";
+import { sendToolsSchema } from "./communication";
 import { placementSettingsSchema, placementSettingsPatchSchema, placementPolicyReadSchema, settingsJsonValueSchema } from "./placement-settings";
 
 import { AWAY_STOP_LIST, PRODUCTION_WAKE_HOURS, awayQuestSchema, awayStopListSchema } from "./away";
-import { DELEGATABLE_KINDS, delegationKindSchema } from "./quest-authority";
+import { ALWAYS_ASK_KINDS } from "./quest-authority";
 
 export const KNOB_FIELDS = {
   tavern: {
@@ -50,7 +51,7 @@ function defaultNumbers<T extends Record<string, NumberBounds>>(fields: T) {
   const numbers = numberFields(fields);
   return Object.fromEntries(Object.keys(fields).map(key => [key, numbers[key]!.default(fields[key]!.default)])) as { [K in keyof T]: z.ZodDefault<z.ZodNumber> };
 }
-const alwaysAskSchema = z.array(delegationKindSchema).max(DELEGATABLE_KINDS.length)
+const alwaysAskSchema = z.array(z.enum(ALWAYS_ASK_KINDS)).max(ALWAYS_ASK_KINDS.length)
   .refine(items => new Set(items).size === items.length, "Include each kind only once");
 export const TUNABLES = {
   tickSeconds: { label: "Keeper tick interval", default: 60, min: 30, max: 300, unit: "s" },
@@ -116,7 +117,7 @@ const sections = {
     staleStrikes: z.number().int().min(1).max(4), alwaysAsk: alwaysAskSchema, ...numberFields(KNOB_FIELDS.keepers) }).strict(),
   classes: z.record(classId, z.object({ provider: z.string().trim().min(1).max(100).optional(), model: z.string().trim().min(1).max(200).optional(),
     reasoning: z.string().trim().min(1).max(40).nullable().optional() }).strict()),
-  scopes: z.object({ mode: z.enum(["enforce", "watch", "off"]) }).strict(),
+  scopes: z.object({ mode: z.enum(["enforce", "watch", "off"]), sendTools: sendToolsSchema }).strict(),
   journal: z.object({ journalReminders: z.boolean(), journalQuietMinutes: z.number().int().min(1).max(120), ...numberFields(KNOB_FIELDS.journal) }).strict(),
   data: z.object({ historyDays: z.number().int().min(0).max(3650).describe("Retains optional Insights samples only. Zero keeps them forever; orchestration records are never pruned."), autoArchiveDays: z.number().int().min(0).max(3650), backupKeep: z.number().int().min(0).max(365).describe("Saved backups to keep. Zero keeps every backup; this never prunes live Tavern records.") }).strict(),
   tuning: z.object({ mode: z.enum(["apply", "suggest", "off"]), ...numberFields(KNOB_FIELDS.tuning) }).strict(),
@@ -127,9 +128,9 @@ export const settingsSchema = z.object({
   away: sections.away.extend(defaultNumbers(KNOB_FIELDS.away)).prefault({ neverWhileClosed: [...AWAY_STOP_LIST],
     defaultEndState: "drafts-ready", defaultAllowWatched: false, defaultWakeBlockers: true, defaultWakeProduction: false }),
   attention: sections.attention.default({ reviewBudget: 3, notify: "consequential", quietHours: null }),
-  keepers: sections.keepers.extend({ ...defaultNumbers(KNOB_FIELDS.keepers), alwaysAsk: alwaysAskSchema.default([...DELEGATABLE_KINDS]) })
+  keepers: sections.keepers.extend({ ...defaultNumbers(KNOB_FIELDS.keepers), alwaysAsk: alwaysAskSchema.default([...ALWAYS_ASK_KINDS]) })
     .prefault({ greenlight: "explicit", decisionTimerMax: 10080, partyMax: 5, staleStrikes: 2, restMinutes: 30 }),
-  classes: sections.classes.default({}), scopes: sections.scopes.default({ mode: "enforce" }),
+  classes: sections.classes.default({}), scopes: sections.scopes.extend({ sendTools: sendToolsSchema.default([]) }).prefault({ mode: "enforce" }),
   machines: placementSettingsSchema.default({ maxMakers: 2, maxCheckers: 2, rules: [], forges: [] }),
   journal: sections.journal.extend(defaultNumbers(KNOB_FIELDS.journal)).prefault({ journalReminders: true, journalQuietMinutes: 10 }),
   data: sections.data.default({ historyDays: 0, autoArchiveDays: 0, backupKeep: 14 }),

@@ -41,7 +41,8 @@ it.each(commands)("recognises %s: %s for every class", (kind, command) => {
     const managed = ["ready", "close", "review"].includes(kind) || /\bpr (?:comment|edit)\b/.test(command);
     expect(decision.allow, role).toBe(kind !== "cluster-write" && !managed && role === "keeper");
     if (role === "keeper" && !managed && kind !== "cluster-write") expect(decision).toMatchObject({ acts: expect.arrayContaining([expect.objectContaining({ kind })]) });
-    if (managed && role === "keeper" && kind !== "ready") expect(decision).toMatchObject({ reason: expect.stringContaining("tavern_pull_request") });
+    if (kind === "review" || /\bpr comment\b/.test(command)) expect(decision).toMatchObject({ ruleId: "send-guard", reason: expect.stringContaining("Agents do not send as you") });
+    else if (managed && role === "keeper" && kind !== "ready") expect(decision).toMatchObject({ reason: expect.stringContaining("tavern_pull_request") });
   }
 });
 it.each(["kubectl --context x get pods", "kubectl describe pod web", "kubectl logs web", "kubectl events", "kubectl auth can-i get pods", "kubectl rollout status deployment/demo", "kubectl rollout history deployment/demo", "helm template release ./chart", "cortex update 1175 -m hi", "bb thread spawn --task hi"])("does not catalogue coordination or reads: %s", command => {

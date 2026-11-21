@@ -7,7 +7,7 @@ import { registerTools } from "../../src/server/tools";
 import type { Ask } from "../../src/shared/schema";
 import type { Ledger } from "../../src/shared/contract";
 import { ASK_KINDS } from "../../src/shared/schema";
-import { DELEGATABLE_KINDS, type DelegationKind } from "../../src/shared/quest-authority";
+import { DELEGATABLE_KINDS } from "../../src/shared/quest-authority";
 
 const dbs: ReturnType<typeof setup>["k"]["store"]["db"][] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); });
@@ -153,11 +153,11 @@ it("requires the user's reset and counts only undos after it, even at the same c
 
 it("leaves every existing ask lane unchanged without undos", async () => {
   const f = await fixture(1);
-  const lane = (kind: Ask["kind"], unsure = false) => f.k.authority.lane({ kind, boardQuestId: f.q.id, unsure });
+  const lane = (kind: Ask["kind"], unsure = false) => f.k.authority.lane({ kind, boardQuestId: f.q.id, unsure, sendTarget: "fixture-room" });
   for (const kind of ASK_KINDS) expect(lane(kind)).toBe("user");
-  for (const kind of DELEGATABLE_KINDS) await f.harness.invokeRpc("delegateQuest", { boardQuestId: f.q.id, kind, via: "page" }, client);
+  for (const kind of DELEGATABLE_KINDS) await f.harness.invokeRpc("delegateQuest", { boardQuestId: f.q.id, kind, via: "page", ...(kind === "drafts-as-you" ? { targets: ["fixture-room"] } : {}) }, client);
   for (const kind of ASK_KINDS) {
-    expect(lane(kind)).toBe(DELEGATABLE_KINDS.includes(kind as DelegationKind) ? "keeper" : "user");
+    expect(lane(kind)).toBe(DELEGATABLE_KINDS.some(delegatable => kind === delegatable) ? "keeper" : "user");
     expect(lane(kind, true)).toBe("user");
   }
 });

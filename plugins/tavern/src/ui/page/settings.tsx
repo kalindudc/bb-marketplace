@@ -11,7 +11,8 @@ import { PLACEMENT_RPC_LIVE } from "./machines-contract";
 import { formatValue, isUserKnob, knobLabel, knobValue } from "./insights";
 import { AwayStopChoices } from "./away-preferences";
 import { AWAY_STOP_LABELS } from "../../shared/away";
-import { DELEGATABLE_KINDS } from "../../shared/quest-authority";
+import { ALWAYS_ASK_KINDS } from "../../shared/quest-authority";
+import { sendToolsSchema, type SendTools } from "../../shared/communication";
 import { SetupSettings } from "./setup";
 import { settingLabel } from "./settings-label";
 import { SETUP_CALLER_NOTICE } from "../../shared/setup";
@@ -42,6 +43,7 @@ export function useTavernSettings() {
     if (out.code === "stale") setNote("Settings changed somewhere else, so nothing was saved. The latest values are shown; make the change again.");
     if (out.code === "invalid") setProblems(out.problems);
     void query.refetch();
+    return out.code === "ok";
   };
   return { data: query.data, error: query.error, refetch: query.refetch, save, reset: (key: ResettableSetting) => save({}, undefined, [key]), pending: update.isPending, problems, note };
 }
@@ -279,6 +281,7 @@ function defaultWords(key: SettingKey, value: unknown): string {
 function historyValue(key: string, value: unknown): string {
   if (value === null) return "Default";
   if (typeof value === "boolean") return value ? "On" : "Off";
+  if (Array.isArray(value) && key === "scopes.sendTools") return value.length ? plural(value.length, "tool rule") : "None";
   if (Array.isArray(value)) return value.length ? value.map(item => key === "away.neverWhileClosed" ? AWAY_STOP_LABELS[item as keyof typeof AWAY_STOP_LABELS] : ALWAYS_WORDS[item as keyof typeof ALWAYS_WORDS] ?? String(item)).join(", ") : "None";
   if (typeof value === "object") return Object.entries(value).map(([k,v]) => `${settingLabel(`${key}.${k}`)}: ${historyValue(`${key}.${k}`,v)}`).join(", ");
   if (key === "knobs.rangerTimeboxMaxMinutes") return `${value} min`;
@@ -401,7 +404,7 @@ export function AttentionSection() {
   </SettingsCard><AlertRouteCard /></>; }}</Shell>;
 }
 
-const ALWAYS_WORDS: Record<typeof DELEGATABLE_KINDS[number], string> = { production: "Production", merge: "Merge", credential: "Credentials", "sends-as-you": "Send as you", destructive: "Delete what the quest did not make" };
+const ALWAYS_WORDS: Record<typeof ALWAYS_ASK_KINDS[number], string> = { production: "Production", merge: "Merge", credential: "Credentials", "sends-as-you": "Pull request edits and closes", destructive: "Delete what the quest did not make" };
 export function KeepersSection() {
   const api = useTavernSettings();
   return <Shell api={api}>{(d) => { const k = d.effective.keepers; return <><SettingsCard title="Delegated decisions" hint="Set the decisions and staffing a Keeper may handle." glyph="you" guardrail>
@@ -413,8 +416,8 @@ export function KeepersSection() {
       <fieldset className="tv-grpbox tv-away-stops" disabled={api.pending}><legend>Always ask</legend>
         <p className="m small">Unchecked kinds go to the Keeper on every quest. It decides and records each one, or asks you when unsure. A merge or production change still needs a Warden’s check of the exact commit or command.</p>
         <p className="m small">Cluster writes always ask you and cannot be delegated.</p>
-        {DELEGATABLE_KINDS.map(kind => <label key={kind} className="tv-chk"><input type="checkbox" checked={k.alwaysAsk.includes(kind)}
-          onChange={e => void api.save({ keepers: { alwaysAsk: DELEGATABLE_KINDS.filter(item => item === kind ? e.target.checked : k.alwaysAsk.includes(item)) } })} /><span>{ALWAYS_WORDS[kind]}</span></label>)}
+        {ALWAYS_ASK_KINDS.map(kind => <label key={kind} className="tv-chk"><input type="checkbox" checked={k.alwaysAsk.includes(kind)}
+          onChange={e => void api.save({ keepers: { alwaysAsk: ALWAYS_ASK_KINDS.filter(item => item === kind ? e.target.checked : k.alwaysAsk.includes(item)) } })} /><span>{ALWAYS_WORDS[kind]}</span></label>)}
       </fieldset><SettingDefault setting="keepers.alwaysAsk" />
     </div>
     </SettingsCard><SettingsCard title="Check-ins and memory" hint="Set reminders and open the advanced limits to adjust Keeper pacing and memory." glyph="file">
@@ -518,20 +521,56 @@ export function ClassesSection() {
       return <div key={c.id} className="tv-set-row tv-set-class">
         <div className="tv-set-l"><span className="tv-set-lbl">{c.label} <span className="anc">{c.plain}</span></span></div>
         <div className="tv-set-c"><ClassExecution label={c.label} defaults={{ provider: c.provider, model: c.model, reasoning: c.reasoning }} override={override}
-          onSave={(next) => { const entry: ClassOverride = next ?? {}; return api.save({ classes: { [c.id]: entry } }); }} /></div>
+          onSave={async (next) => { const entry: ClassOverride = next ?? {}; await api.save({ classes: { [c.id]: entry } }); }} /></div>
         {c.id === "warden" && <WardenQualitySetting />}
       </div>;
     })}
   </SettingsCard>}</Shell>;
 }
 
+function SendToolsEditor({ rules, api }: { rules: SendTools; api: Api }) {
+  const [edit, setEdit] = useState<SendTools | null>(null);
+  const [error, setError] = useState<string>();
+  const draft = edit ?? rules;
+  function update(index: number, change: Partial<SendTools[number]>) {
+    setEdit(draft.map((rule, i) => i === index ? { ...rule, ...change } : rule));
+    setError(undefined);
+  }
+  async function save() {
+    const checked = sendToolsSchema.safeParse(draft.map(({ pattern, shell, act, targetKey }) => shell !== undefined ? { shell: shell.trim(), act } : { pattern: pattern?.trim(), act, ...(targetKey?.trim() ? { targetKey: targetKey.trim() } : {}) }));
+    if (!checked.success) { setError("Use a tool name with a literal part, or a shell prefix with literal words."); return; }
+    setError(undefined);
+    try { if (await api.save({ scopes: { sendTools: checked.data } })) setEdit(null); }
+    catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+  }
+  return <div className="tv-message-settings" data-setting-keys="scopes.sendTools">
+    <p className="m">Default: none</p>
+    {rules.length > 0 && <button type="button" className="btn" disabled={api.pending} onClick={() => void api.reset("scopes.sendTools")}>Reset to default</button>}
+    {!draft.length && <p>No send or draft rules are listed.</p>}
+    {draft.map((rule, index) => <fieldset key={index} className="tv-message-rule">
+      <legend>Tool rule {index + 1}</legend>
+      <label>{rule.shell === undefined ? "Tool name pattern" : "Shell command prefix"}<input className="tv-text" value={rule.shell ?? rule.pattern ?? ""} maxLength={200} disabled={api.pending} onChange={e => update(index, rule.shell === undefined ? { pattern: e.target.value } : { shell: e.target.value })} /></label>
+      <label>Act<select className="tv-select" value={rule.act} disabled={api.pending} onChange={e => update(index, { act: e.target.value === "draft" ? "draft" : "send" })}><option value="send">Send</option><option value="draft">Draft</option></select></label>
+      {rule.shell === undefined && <label>Target key<input className="tv-text" value={rule.targetKey ?? ""} maxLength={120} disabled={api.pending} onChange={e => update(index, { targetKey: e.target.value })} /></label>}
+      <button type="button" className="btn" aria-label={`Remove tool rule ${index + 1}`} disabled={api.pending} onClick={() => setEdit(draft.filter((_, i) => i !== index))}>Remove</button>
+    </fieldset>)}
+    {error && <p role="alert" className="tv-problem">{error}</p>}
+    <div className="tv-message-actions"><button type="button" className="btn" disabled={api.pending || draft.length >= 100} onClick={() => setEdit([...draft, { pattern: "", act: "send" }])}>Add tool rule</button><button type="button" className="btn" disabled={api.pending || draft.length >= 100} onClick={() => setEdit([...draft, { shell: "", act: "send" }])}>Add shell rule</button>
+      {edit && <><button type="button" className="btn pri" disabled={api.pending} onClick={() => void save()}>Save tool rules</button><button type="button" className="btn" disabled={api.pending} onClick={() => { setEdit(null); setError(undefined); }}>Cancel</button></>}
+    </div>
+  </div>;
+}
+
 export function ScopesSection() {
   const api = useTavernSettings();
-  return <Shell api={api}>{(d) => <SettingsCard title="Member guardrails" hint="Choose whether scope rules stop actions or only record them." glyph="lock" guardrail>
-    <Row label="Scopes" setting="scopes.mode" help={d.effective.scopes.mode === "enforce" ? "A turn that breaks its scope rules is stopped." : d.effective.scopes.mode === "watch" ? "Violations are recorded, not stopped." : "No guardrail."} control={() => <SegFilter label="Scopes" value={d.effective.scopes.mode} onChange={(v) => void api.save({ scopes: { mode: v } })} options={[{ id: "enforce", label: "Enforce" }, { id: "watch", label: "Watch" }, { id: "off", label: "Off" }]} />} />
-    <p className="tv-set-intro">Keepers and hired Wanderers use open access; only protected files are guarded. Rangers read, Wardens check, and Smiths build in their worktree. Settings guardrails and user approvals still apply.</p>
-    <p className="tv-set-intro">Running agents pick up the environment speed bumps (no GH_TOKEN, the git push block) only after their session restarts. Policy files live in <code>~/.agents/tavern/scopes.yml</code> and each project's <code>.agents/tavern/</code>.</p>
-  </SettingsCard>}</Shell>;
+  return <Shell api={api}>{(d) => <><SettingsCard title="Member guardrails" hint="Choose whether ordinary scope rules stop actions or only record them." glyph="lock" guardrail>
+    <Row label="Scopes" setting="scopes.mode" help={d.effective.scopes.mode === "enforce" ? "A turn that breaks its scope rules is stopped." : d.effective.scopes.mode === "watch" ? "Ordinary violations are recorded, not stopped." : "Ordinary scope rules are off."} control={() => <SegFilter label="Scopes" value={d.effective.scopes.mode} onChange={(v) => void api.save({ scopes: { mode: v } })} options={[{ id: "enforce", label: "Enforce" }, { id: "watch", label: "Watch" }, { id: "off", label: "Off" }]} />} />
+    <p className="tv-set-intro">Keepers and hired Wanderers use the open preset. Rangers read, Wardens check, and Smiths build in their worktree. Settings guardrails and user approvals still apply.</p>
+    <p className="tv-set-intro">Restart an older session to clear its old Git and GitHub environment blocks. Policy files live in <code>~/.agents/tavern/scopes.yml</code> and each project's <code>.agents/tavern/</code>.</p>
+  </SettingsCard><SettingsCard title="Sending and drafting" hint="Match a tool name with an asterisk, or enter the literal first words of a shell command. A tool rule can name the input key for its target." glyph="lock" guardrail>
+    <p className="tv-set-intro">Guarded agents cannot use listed send tools or commands, even in Watch or Off. Draft tools ask first. Restart sessions that still run an older guard; sessions without a working guard are not prevented.</p>
+    <SendToolsEditor key={d.revision} rules={d.effective.scopes.sendTools} api={api} />
+  </SettingsCard></>}</Shell>;
 }
 
 export function JournalSection() {

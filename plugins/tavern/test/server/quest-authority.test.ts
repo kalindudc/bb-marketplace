@@ -6,10 +6,41 @@ import { QuestAuthority } from "../../src/server/quest-authority";
 import { QUEST_LANES, requireUserAct } from "../../src/server/authority";
 import { SettingsStore } from "../../src/server/settings/store";
 import { InsightsReader } from "../../src/server/insights/index";
+import { recordCommunication } from "../../src/server/communication";
+import { randomUUID } from "node:crypto";
 const client = { experimental_caller: { kind: "client" } } as never;
 const receipt = () => requireUserAct(client, "delegateQuest");
 const request = (q: string, kind: "merge" | "credential" = "credential") => ({ boardQuestId: q, kind, effect: { type: "decision" } as const, question: "Allow this act?", why: "Your authority", options: [{ id: "approve", label: "Approve", detail: "", recommended: false }, { id: "deny", label: "Deny", detail: "", recommended: false }], meanwhile: "Other work continues", holds: [] });
 async function fixture() { const f = setup(); const q = await seedQuest(f.k, "lead", "Quest", "Quest"); const a = new QuestAuthority(f.k); return { ...f, q, a }; }
+it("never delegates sending and routes a draft only for a named target", async () => {
+  const f = await fixture();
+  expect(() => f.a.delegate(f.q.id, "sends-as-you", receipt())).toThrow(/cannot be delegated/i);
+  expect(() => f.a.delegate(f.q.id, "drafts-as-you", receipt())).toThrow();
+  const grant = f.a.delegate(f.q.id, "drafts-as-you", receipt(), ["room-1"]);
+  expect(grant).toMatchObject({ kind: "drafts-as-you", targets: ["room-1"] });
+  const lane = (sendTarget?: string) => f.a.lane({ kind: "drafts-as-you", boardQuestId: f.q.id, sendTarget });
+  expect(lane("room-1")).toBe("keeper");
+  expect(lane("room-2")).toBe("user");
+  expect(lane()).toBe("user");
+  f.a.revoke(f.q.id, grant.id, requireUserAct(client, "revokeQuestAuthority"));
+  expect(lane("room-1")).toBe("user");
+});
+it("records one send handoff, even when the target is unknown, with no executable answer", async () => {
+  const f = await fixture();
+  const hold = { id: randomUUID(), act: "send" as const, threadId: "lead", tool: "fixture_send", target: null, body: "First\n\nLast", callDigest: "1".repeat(64), rulesDigest: "2".repeat(64), scopeIssuedAt: 1, at: f.time() };
+  recordCommunication(f.k, hold);
+  recordCommunication(f.k, { ...hold, id: randomUUID() });
+  const asks = f.k.store.openAsks("lead").filter(ask => ask.kind === "sends-as-you");
+  expect(asks).toHaveLength(1);
+  const [ask] = asks;
+  expect(ask).toMatchObject({ lane: "user", proceedAt: null, effect: { hold: { body: hold.body, target: null } } });
+  expect(ask.options.map(option => option.id)).toEqual(["acknowledge", "deny"]);
+  expect(() => f.k.answerAsk(ask.id, "approve", null, "page", "user")).toThrow();
+  f.k.answerAsk(ask.id, "acknowledge", null, "page", "user", "client (unattested)", {}, requireUserAct(client, "answerAsk"));
+  expect(f.k.store.get("asks", ask.id)?.answer?.optionId).toBe("acknowledge");
+  expect(f.k.store.all("shellGrants")).toEqual([]);
+  expect(f.k.store.all("decisions")).toEqual([]);
+});
 it("offers a third answer and routes later asks on this quest only", async () => {
   const f = await fixture(); const ask = f.k.ask("lead", request(f.q.id));
   expect(ask.options).toHaveLength(3);

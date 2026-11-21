@@ -60,6 +60,8 @@ export function createTavernHostEntry(options: TavernHostEntryOptions) {
       bindScope: (input, context) => call(context, (native, signal) => native.scopes.bindScope(input, signal)),
       prepareCall: (input, context) => call(context, (native, signal) => native.scopes.prepareCall(input, signal)),
       sessionStatus: (input, context) => call(context, (native, signal) => native.scopes.sessionStatus(input, signal)),
+      communicationHolds: (input, context) => call(context, (native, signal) => native.scopes.communicationHolds(input, signal)),
+      revokeDraftReceipts: (input, context) => call(context, (native, signal) => native.scopes.revokeDraftReceipts(input, signal)),
       issueClusterGrant: (input, context) => call(context, (native, signal) => native.scopes.issueClusterGrant(input, signal)),
       revokeClusterGrant: (input, context) => call(context, (native, signal) => native.scopes.revokeClusterGrant(input, signal)),
       releaseScope: (input, context) => call(context, (native, signal) => native.scopes.releaseScope(input, signal)),

@@ -281,8 +281,41 @@ it("native session status distinguishes delivered policy from a real guard-loade
   expect(await f.service.sessionStatus(input)).toMatchObject({ state: "not-observed" });
   const pi = guarded(ack.scopeFile, f.repo); pi.emit("session_start");
   expect(pi.tools()).toContain("private_tool"); expect(pi.emit("tool_call", { toolName: "read", input: { path: "tracked" } })).toBeUndefined();
-  expect(await f.service.sessionStatus(input)).toEqual({ state: "armed", revision: 1, scopeDigest: ack.scopeDigest, clusterWrites: true });
+  expect(await f.service.sessionStatus(input)).toEqual({ state: "armed", revision: 1, scopeDigest: ack.scopeDigest, clusterWrites: true, sendGuard: true });
   const marker = JSON.parse(readFileSync(store.armedFile(ack.scopeFile), "utf8")); expect(marker).toMatchObject({ threadId: "member", pid: process.pid, hostBinding: { placementId: "placement", generation: 1, endpointId: "member-workspace", revision: 1, scopeDigest: ack.scopeDigest }, renderedDigest: digest(readFileSync(ack.scopeFile, "utf8")) });
+});
+it("relays a native held send through the acknowledged scope even in Off", async () => {
+  const f = await fixture();
+  const sendTools = [{ pattern: "*_post", act: "send" as const, targetKey: "to" }];
+  f.delivery.mode = f.delivery.bindingTemplate.mode = "off";
+  f.delivery.sendTools = f.delivery.bindingTemplate.sendTools = sendTools;
+  const ack = await f.service.bindScope(f.input());
+  const parsedScope = JSON.parse(readFileSync(ack.scopeFile, "utf8"));
+  expect(parsedScope).not.toHaveProperty("sendTools");
+  expect(parsedScope.bindingTemplate).not.toHaveProperty("sendTools");
+  const input = { ...f.authority, revision: 1, scopeDigest: ack.scopeDigest, acknowledge: [] as string[] };
+  expect(f.service.communicationHolds(input)).toEqual({ guard: "not-prevented", holds: [] });
+  const pi = guarded(ack.scopeFile, f.repo);
+  pi.emit("session_start");
+  expect(pi.emit("tool_call", { toolName: "fixture_post", input: { to: "room-1", text: "First\nLast" } })).toMatchObject({ block: true });
+  const result = f.service.communicationHolds(input);
+  expect(result).toMatchObject({ guard: "armed", holds: [{ act: "send", target: "room-1", body: "First\nLast" }] });
+  expect(() => f.service.communicationHolds({ ...input, revision: 2 })).toThrow(/scope|revision/i);
+  expect(f.service.communicationHolds({ ...input, acknowledge: result.holds.map(hold => hold.id) }).holds).toEqual([]);
+});
+it("inspects unrelated native tools when only the message policy is stale", async () => {
+  const f = await fixture();
+  f.delivery.sendTools = f.delivery.bindingTemplate.sendTools = [{ pattern: "*_post", act: "send" }];
+  const ack = await f.service.bindScope(f.input());
+  const sidecar = ack.scopeFile + ".message-policy";
+  const policy = JSON.parse(readFileSync(sidecar, "utf8"));
+  writeFileSync(sidecar, JSON.stringify({ ...policy, issuedAt: policy.issuedAt + 1 }));
+  const call = (toolName: string, input: Record<string, unknown>) => f.service.prepareCall({ ...f.authority, scopeRevision: 1,
+    call: { kind: "tool", toolName, input, cwd: f.repo } });
+  await expect(call("read", { path: "tracked" })).resolves.toMatchObject({ decision: { allow: true } });
+  await expect(call("fixture_post", { text: "fixture" })).resolves.toMatchObject({ decision: { allow: false, ruleId: "message-policy-mismatch" } });
+  expect(f.service.communicationHolds({ ...f.authority, revision: 1, scopeDigest: ack.scopeDigest, acknowledge: [] }))
+    .toMatchObject({ guard: "not-prevented", problem: expect.stringMatching(/does not match/) });
 });
 it.each(["placementId", "generation", "endpointId", "revision", "scopeDigest", "renderedDigest", "threadId", "issuedAt"])("native session rejects stale marker %s", async field => {
   const f = await fixture(), ack = await f.service.bindScope(f.input()); guarded(ack.scopeFile, f.repo).emit("session_start");

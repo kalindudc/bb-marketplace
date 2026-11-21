@@ -28,6 +28,7 @@ export const ASK_EFFECTS: Record<AskEffect["type"], { act: Act; handler: keyof E
   "release-hold": { act: "releaseCheckerHandoff", handler: "release-hold" },
   "settle-waypoint": { act: "answerAsk", handler: "settle-waypoint" },
   "soft-limit": { act: "answerAsk", handler: "soft-limit" },
+  "communication-hold": { act: "answerAsk", handler: "communication-hold", answerOnly: true },
   "pull-request-draft": { act: "answerAsk", handler: "pull-request-draft", answerOnly: true },
   "retry-stop": { act: "answerAsk", handler: "retry-stop" },
   "retry-brief": { act: "answerAsk", handler: "retry-brief" },
@@ -46,7 +47,7 @@ export function applyAskEffect(effect: AskEffect, handlers: Partial<EffectHandle
   const row = ASK_EFFECTS[effect.type];
   if (receipt.by === "preapproval" && effect.type === "close-early") throw new Error("Closing early requires your explicit answer");
   if (receipt.by === "preapproval" && effect.type === "grant-shell-act") throw new Error("Pre-approval cannot issue a shell grant");
-  if (receipt.by === "keeper" && effect.type !== "decision" && effect.type !== "pull-request-draft" && effect.type !== "grant-shell-act") throw new Error("Keeper answers cannot apply user-only transitions");
+  if (receipt.by === "keeper" && effect.type !== "decision" && !(effect.type === "communication-hold" && effect.hold.act === "draft") && effect.type !== "pull-request-draft" && effect.type !== "grant-shell-act") throw new Error("Keeper answers cannot apply user-only transitions");
   authorize(receipt.by === "default" || receipt.by === "keeper" ? "defaultDecision" : row.act, { level: receipt.by === "default" || receipt.by === "keeper" ? "keeper" : "user-explicit", receipt: receipt.id });
   const handler = handlers[row.handler];
   if (!handler) {

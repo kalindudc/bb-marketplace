@@ -1,9 +1,12 @@
 import { readFileSync, rmSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { authorityDecision, evaluate, blocked, toolAllowed, clusterWriteBlock, hasClusterWrite } from "../../src/scope/engine";
+import { authorityDecision, communicationAct, evaluate, blocked, toolAllowed, clusterWriteBlock, hasClusterWrite, type ScopeCall } from "../../src/scope/engine";
 import { scopeFileSchema, scopeRenderedFileSchema, type Scope } from "../../src/scope/schema";
-import { armedFile, armScope, type NativeScopeReceipt } from "../../src/scope/store";
+import { armedFile, armScope, MessagePolicyError, readMessagePolicy, type NativeScopeReceipt } from "../../src/scope/store";
 import { prepareCall } from "../../src/scope/prepare";
+import { communicationCallDigest, namedCommunication, sendRulesDigest } from "../../src/scope/communication";
+import { claimCommunicationReceipt, holdCommunication, usedCommunicationReceipt } from "../../src/scope/communication-holds";
+import { scopeForClass } from "../../src/scope/presets";
 import { claimPullRequestGrant, pullRequestGrantAvailable, pullRequestReceiptLine } from "../../src/scope/pr-grants";
 import { armShellGrantCapability, claimShellGrant, oldScopeEnvironment, readShellGrants } from "../../src/scope/shell-grants";
 import { actReceiptLine, availableActGrant, claimActGrant } from "../../src/scope/act-grants";
@@ -28,6 +31,7 @@ export default function tavernGuard(pi: PiGuardApi): void {
   let worktree: string | undefined;
   let worktreeKind: Scope["workspaceKind"];
   let nativeReceipt: NativeScopeReceipt | undefined;
+  let messagePolicyProblem: MessagePolicyError | undefined;
   const enforcementNotes = new Set<string>();
   const containmentNotes = new Map<string, string>();
   const pullRequestReceipts = new Map<string, string>();
@@ -35,19 +39,22 @@ export default function tavernGuard(pi: PiGuardApi): void {
   let localArm: { issuedAt: number; at: number } | undefined;
   const legacyEnv = oldScopeEnvironment(process.env);
   const arm = (scope: Scope) => {
-    if (nativeReceipt) return armScope(file, scope, nativeReceipt);
+    if (nativeReceipt) return armScope(file, scope, nativeReceipt, Date.now(), messagePolicyProblem?.message);
     if (localArm?.issuedAt !== scope.issuedAt) {
       const at = Date.now();
       armShellGrantCapability(file, scope, at, legacyEnv);
       localArm = { issuedAt: scope.issuedAt, at };
     }
-    armScope(file, scope, undefined, localArm.at);
+    armScope(file, scope, undefined, localArm.at, messagePolicyProblem?.message);
   };
   const clusterReceipts = new Map<string, string>();
+  const draftReceipts = new Map<string, string>();
+  let lastReadableScope: Scope | undefined;
   const modeNote = "[Tavern scope] Enforcement enabled; this call and subsequent calls use the current scope. Earlier calls made while off were not enforced.";
   let mode: Scope["mode"] = process.env.TAVERN_SCOPE_MODE === "off" ? "off" : process.env.TAVERN_SCOPE_MODE === "watch" ? "watch" : "enforce";
   const load = (): Scope => {
     nativeReceipt = undefined;
+    messagePolicyProblem = undefined;
     const json = readFileSync(file, "utf8"), raw = JSON.parse(json);
     if (["enforce", "watch", "off"].includes(raw?.mode)) mode = raw.mode;
     let scope: Scope;
@@ -62,6 +69,14 @@ export default function tavernGuard(pi: PiGuardApi): void {
     }
     mode = scope.mode;
     if (process.env.BB_THREAD_ID && scope.threadId !== process.env.BB_THREAD_ID) throw new Error("Scope belongs to another thread");
+    try {
+      scope = readMessagePolicy(file, scope, nativeReceipt?.hostBinding.scopeDigest);
+      lastReadableScope = scope;
+    } catch (error) {
+      if (!(error instanceof MessagePolicyError)) throw error;
+      messagePolicyProblem = error;
+      delete scope.communicationAuthority;
+    }
     if (mode === "off") return scope;
     if (needsWorktree(scope) || scope.writes.mode === "worktree") {
       if (worktreeKind !== scope.workspaceKind) { worktree = undefined; worktreeKind = scope.workspaceKind; }
@@ -103,23 +118,49 @@ export default function tavernGuard(pi: PiGuardApi): void {
   pi.on("tool_call", (event, ctx) => {
     const name = event.toolName ?? "unknown";
     const previousMode = mode;
+    const wasMismatched = !!messagePolicyProblem;
     let scope: Scope;
-    const source = event.input?.command ?? event.input?.cmd;
+    const input: ScopeCall = { kind: "tool", toolName: name, input: event.input ?? {}, cwd: ctx.cwd };
+    const source = input.input.command ?? input.input.cmd;
     try { scope = load(); } catch (error) {
       if (typeof source === "string" && hasClusterWrite(source, ctx.cwd)) return { block: true, reason: clusterWriteBlock(source).reason };
-      if (mode !== "enforce" || emergency.includes(name)) return;
+      const fallback = lastReadableScope ?? scopeForClass("keeper");
+      if (!communicationAct(fallback, input) && (mode !== "enforce" || emergency.includes(name))) return;
       const decision = blocked("tool " + name, "scope-invalid", "the scope file is missing, invalid or its worktree cannot be resolved: " + String(error) + "; ask the Keeper to repair it");
       return { block: true, reason: !decision.allow ? decision.reason : "" };
     }
     const switched = previousMode === "off";
     try {
-      const input = { kind: "tool" as const, toolName: name, input: event.input ?? {}, cwd: ctx.cwd };
-      const authority = authorityDecision(scope, input);
+      const contained = !nativeReceipt && process.platform === "darwin" && scope.sandbox && ["bash", "Bash"].includes(name);
+      const named = namedCommunication(scope.sendTools, input);
+      const initial = communicationAct(scope, input);
+      const inspected = !named && initial?.tool.endsWith(" pull request") && (scope.role === "smith" || scope.pullRequestPolicy?.owned.length)
+        ? prepareCall({ ...input, ...(contained ? { containment: "sandbox" } : {}) }, { scope }) : input;
+      const preview = inspected === input ? initial : communicationAct(scope, inspected);
+      const mismatch = messagePolicyProblem;
+      if (wasMismatched !== !!mismatch || mismatch) arm(scope);
+      if (mismatch && (preview || [mismatch.sendTools, lastReadableScope?.sendTools].some(sendTools =>
+        sendTools?.length && communicationAct({ ...scope, sendTools }, inspected))))
+        return { block: true, reason: mismatch.message + " Nothing was sent or drafted." };
+      const policy = scope.communicationAuthority;
+      const closing = scope.shell.deny.some(rule => rule.id.startsWith("away:")) || scope.shell.deny.some(rule => rule.id === "cluster-write-while-away");
+      const draftReceipt = preview?.act === "draft" && event.toolCallId && !closing && policy?.active
+        ? policy.receipts.find(receipt => receipt.scopeIssuedAt === scope.issuedAt && receipt.rulesDigest === sendRulesDigest(scope.sendTools) &&
+            receipt.callDigest === communicationCallDigest(input) && (!receipt.delegationId || policy.delegationIds.includes(receipt.delegationId)) && !usedCommunicationReceipt(file, receipt.askId))
+        : undefined;
+      const refuse = (reason: string) => {
+        if (!preview) return { block: true, reason };
+        try { holdCommunication(file, scope, input, preview); }
+        catch { return { block: true, reason: reason + " Tavern could not record the held call." }; }
+        return { block: true, reason: preview.act === "draft" ? reason + " Tavern asked for approval. Once approved, repeat the exact call." : reason };
+      };
+      const callAuthority = { ...inspected, draftApproved: !!draftReceipt };
+      const authority = authorityDecision(scope, callAuthority);
       const grant = authority && !authority.allow && authority.ruleId === "cluster-write" && name.toLowerCase() === "bash" && event.toolCallId
         ? availableActGrant(file, scope.threadId, "cluster-write", source) : undefined;
-      if (authority && !authority.allow && !grant) return { block: true, reason: authority.reason };
+      if (authority && !authority.allow && !grant) return authority.ruleId === "send-guard" || authority.ruleId === "draft-guard" ? refuse(authority.reason) : { block: true, reason: authority.reason };
       if (grant) {
-        const remaining = authorityDecision(scope, { ...input, clusterWriteApproved: true });
+        const remaining = authorityDecision(scope, { ...callAuthority, clusterWriteApproved: true });
         if (remaining && !remaining.allow) return { block: true, reason: remaining.reason };
       }
       const claim = () => {
@@ -129,16 +170,24 @@ export default function tavernGuard(pi: PiGuardApi): void {
         clusterReceipts.set(event.toolCallId!, actReceiptLine(grant.askId, observation));
         return true;
       };
+      const claimDraft = () => {
+        if (!draftReceipt) return true;
+        const observation = randomUUID();
+        if (!claimCommunicationReceipt(file, draftReceipt.askId, draftReceipt.callDigest, observation)) return false;
+        draftReceipts.set(event.toolCallId!, `Tavern draft receipt: ${draftReceipt.askId} ${observation}`);
+        return true;
+      };
+      const draftUsed = () => ({ block: true, reason: "[Tavern scope blocked] The draft approval was already used. Request a new approval. Nothing was drafted." });
       if (mode !== "enforce") {
+        if (!claimDraft()) return draftUsed();
         if (!claim()) return { block: true, reason: clusterWriteBlock(grant!.target, false, scope.role).reason };
         return;
       }
       arm(scope);
-      const contained = !nativeReceipt && process.platform === "darwin" && scope.sandbox && ["bash", "Bash"].includes(name);
-      const call = prepareCall({ kind: "tool", toolName: name, input: event.input ?? {}, cwd: ctx.cwd, containment: contained ? "sandbox" : undefined }, { scope });
+      const call = inspected === input ? prepareCall({ ...input, containment: contained ? "sandbox" : undefined }, { scope }) : inspected;
       const shellGrants = !nativeReceipt && !legacyEnv.length && event.toolCallId && ["bash", "Bash"].includes(name) ? readShellGrants(file, scope) : undefined;
-      const decision = evaluate(scope, { ...call, clusterWriteApproved: !!grant, shellGrants, prGrantAvailable: id => !!event.toolCallId && pullRequestGrantAvailable(file, id) });
-      if (!decision.allow) return { block: true, reason: decision.reason +
+      const decision = evaluate(scope, { ...call, draftApproved: !!draftReceipt, clusterWriteApproved: !!grant, shellGrants, prGrantAvailable: id => !!event.toolCallId && pullRequestGrantAvailable(file, id) });
+      if (!decision.allow) return decision.ruleId === "send-guard" || decision.ruleId === "draft-guard" ? refuse(decision.reason) : { block: true, reason: decision.reason +
         (decision.act ? "\nWorking directory: " + JSON.stringify(ctx.cwd) : "") + (switched ? "\n" + modeNote : "") };
       if (decision.prGrant) {
         const receipt = randomUUID();
@@ -153,6 +202,7 @@ export default function tavernGuard(pi: PiGuardApi): void {
         if (shellSource === undefined || wrapped === undefined || !claimShellGrant(file, scope, decision.shellGrant, receipt, [shellSource, wrapped])) return { block: true, reason: "[Tavern scope blocked] This shell grant has ended or was already used. Nothing was done." };
         shellReceipts.set(event.toolCallId!, `Tavern shell grant receipt: ${decision.shellGrant} ${receipt}`);
       }
+      if (!claimDraft()) return draftUsed();
       if (!claim()) return { block: true, reason: clusterWriteBlock(grant!.target, false, scope.role).reason };
       if (switched) enforcementNotes.add(event.toolCallId ?? name);
       if (event.input && wrapped !== undefined) event.input.command = wrapped;
@@ -173,6 +223,8 @@ export default function tavernGuard(pi: PiGuardApi): void {
     if (shellReceipt) notes.push(shellReceipt);
     const cluster = clusterReceipts.get(key); clusterReceipts.delete(key);
     if (cluster) notes.push(cluster);
+    const draft = draftReceipts.get(key); draftReceipts.delete(key);
+    if (draft) notes.push(draft);
     if (hint && (event.content ?? []).some(part => typeof part === "object" && part !== null && "text" in part && typeof part.text === "string" && part.text.includes("Operation not permitted"))) notes.push(hint);
     if (enforcementNotes.delete(key)) notes.push(modeNote);
     if (!notes.length) return;

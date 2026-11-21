@@ -17,7 +17,7 @@ import { useChangeCue, useTavernMotion } from "../kit/motion";
 import { ThreadPartyStrip } from "../engine/thread-party";
 import { takeArmedClass } from "../kit/remember";
 import { MemberPanel, memberFinished } from "./member-brief";
-import { clusterGuardWords, memberIdentityWords } from "../kit/member-identity";
+import { clusterGuardWords, memberIdentityWords, sendGuardWords } from "../kit/member-identity";
 import { HUE_CSS } from "../../shared/heraldry";
 import { PlacementFacts } from "../kit/placement";
 import { memberIdentityLabel } from "../../shared/identity";
@@ -416,8 +416,10 @@ function KeeperParts({ data, open, toggle, onLedger, onQuest, quiet }: { data: T
   const list = attentionView(keeper.attention), need = list.needYou;
   const decided = list.new;
   // A quiet Keeper moves no quest until resumed, so the notice takes the quests' place; the quest pages stay one click away in the Ledger.
+  const sends = sendGuardWords(data.scope);
   return <>
     {quiet}
+    {sends && <span className="tw-fact" title={sends}>{sends}</span>}
     {keeper.quietSince == null && <span className={`tw-quests ${keeper.boardQuests.reduce((n, q) => n + q.short.length, 0) > 18 ? "long" : ""}`} role="group" aria-label="Board quests (goals)">
       {keeper.boardQuests.map(q => {
         const unread = q.attention?.summaries ?? 0;
@@ -588,7 +590,7 @@ function HoldReceipt({ quest, hold }: { quest: HeldQuest; hold: CheckerHandoffHo
   const r = hold.release; if (!r) return null;
   return <div className="tw-ask k-hold"><div className="tavern receipt" role="status" aria-label={`Checker handoff released: ${quest.short}`}><Glyph name="check" /><b>Checker handoff released</b><span className="m">at {localTime(r.at, now)}, {releaseWords(r)}. The Keeper can hand the work to a Warden now.</span></div></div>;
 }
-const KIND_WORD: Record<Ask["kind"], string> = { greenlight: "Quest map (greenlight)", decision: "Decision", conclude: "Conclude", production: "Production", "cluster-write": "Cluster write", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
+const KIND_WORD: Record<Ask["kind"], string> = { greenlight: "Quest map (greenlight)", decision: "Decision", conclude: "Conclude", production: "Production", "cluster-write": "Cluster write", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", "drafts-as-you": "Draft as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
 
 function DecidedPanel({ threadId, data }: { threadId: string; data: ThreadDecor }) {
   const undo = experimental_useRpcMutation({ contract: rpcContract, method: "undoDecision" });

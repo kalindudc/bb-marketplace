@@ -1,6 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { hostContract, type HostOutput } from "../host-contract";
 import { BLOCK_MARKER, HELD_MARKER, blocked, evaluate, type Decision, type ScopeCall } from "./engine";
+import { matchedDraftReceipt, observedDraftReceipt } from "./communication-holds";
 import { ACT_KINDS, type ActKind } from "./acts";
 import { actAskKind } from "./act-routing";
 import { scopeObservationBindingSchema, ScopeStore, type ScopeObservationBinding, type ScopeObservationHold, type ScopeRecord, type Violation } from "./store";
@@ -21,6 +22,7 @@ export interface WatchDeps {
   onViolation(violation: Violation, binding?: ScopeObservationBinding): void | Promise<void>;
   onActObservation?(observation: ActObservation): void;
   onShellGrantUsed?(threadId: string, grantId: string): void;
+  drainCommunication?(threadId: string, idle?: boolean): Promise<void>;
   cwdForThread?(threadId: string): string | undefined;
   remoteForThread?(threadId: string): RemoteScopeObservation | undefined;
   onObservationHold?(hold: ScopeObservationHold): void | Promise<void>;
@@ -203,6 +205,8 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
         }
         if (record.scope?.enforceFrom !== undefined && beganAt < record.scope.enforceFrom) { advance(); continue; }
         const rawCalls = callsFromItem(item, "");
+        const draft = providerId === "pi" ? observedDraftReceipt(resultTexts(item)) : undefined;
+        const draftObservation = draft ? draft.askId + " " + draft.observation : undefined;
         const command = rawCalls.length === 1 && ["bash", "Bash"].includes(rawCalls[0].toolName) ? rawCalls[0].input.command ?? rawCalls[0].input.cmd : undefined;
         if (providerId === "pi" && row.type === "item/completed" && (item.status === "blocked" || guardBlocked(item))) {
           const act = modeFor(threadId) === "enforce" && item.approvalStatus !== "denied" && rawCalls.some(call => typeof (call.input.command ?? call.input.cmd) === "string") ? heldAct(item) : undefined;
@@ -229,7 +233,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
             const before = lookup(threadId);
             if (before?.kind !== "ready" || !sameBinding(identity(before), expected)) { await hold(threadId, providerId, row.id, row.seq, "The remote assignment changed before inspection; keep the event pending until the Keeper reconciles its current binding.", expected); return; }
             let reply: HostOutput<"prepareCall">;
-            try { reply = hostContract.prepareCall.output.parse(await before.prepare({ ...rawCall, cwd: rawCall.cwd || before.cwd, observationId: observedPullRequestReceipt(item) ?? row.id, ...(clusterObservation === undefined ? {} : { clusterObservation }) })); }
+            try { reply = hostContract.prepareCall.output.parse(await before.prepare({ ...rawCall, cwd: rawCall.cwd || before.cwd, observationId: observedPullRequestReceipt(item) ?? row.id, ...(clusterObservation === undefined ? {} : { clusterObservation }), ...(providerId !== "pi" || draftObservation === undefined ? {} : { draftObservation }) })); }
             catch { await hold(threadId, providerId, row.id, row.seq, "Remote scope inspection is unavailable or returned an invalid reply; reconnect or update the host worker before retrying this event.", expected); return; }
             const after = lookup(threadId);
             if (disposed || store.records.get(threadId) !== record || after?.kind !== "ready" || !sameBinding(identity(after), expected) || reply.scopeRevision !== expected.revision || reply.scopeDigest !== expected.scopeDigest) {
@@ -299,7 +303,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
             const prepared = prepareCall(local, { scope });
             const receipt = providerId === "pi" ? observedActReceipt(item) : undefined;
             const clusterWriteApproved = matchesActReceipt(record.file, threadId, "cluster-write", prepared.input.command ?? prepared.input.cmd, receipt);
-            decision = evaluate(scope, { ...prepared, clusterWriteApproved, ...(clusterWriteApproved ? { clusterObservation: receipt } : {}), shellGrants: modeFor(threadId) === "watch" && providerId === "pi" && !record.binding ? readShellGrants(record.file, scope) : undefined, prGrantAvailable: grant => pullRequestGrantAvailable(record.file, grant, id) },
+            decision = evaluate(scope, { ...prepared, draftApproved: matchedDraftReceipt(record.file, call, draftObservation), clusterWriteApproved, ...(clusterWriteApproved ? { clusterObservation: receipt } : {}), shellGrants: modeFor(threadId) === "watch" && providerId === "pi" && !record.binding ? readShellGrants(record.file, scope) : undefined, prGrantAvailable: grant => pullRequestGrantAvailable(record.file, grant, id) },
               providerId === "pi" && modeFor(threadId) === "enforce" && scope.role === "wanderer" && scope.preset === "open" && !hasShellGrantGuard(record.file, scope));
             if (decision.allow && decision.prGrant && !claimPullRequestGrant(record.file, decision.prGrant, id) && !pullRequestGrantAvailable(record.file, decision.prGrant, id))
               decision = blocked(call.toolName, "pr-sends-as-you", "the one-use pull request exception was already used");
@@ -314,12 +318,24 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
     }
   };
   bb.events.on("experimental_thread.events", ({ thread, sequence }) => {
-    if (disposed || !store.records.has(thread.id) || modeFor(thread.id) === "off") return;
+    if (disposed || !store.records.has(thread.id)) return;
+    if (modeFor(thread.id) === "off" && !deps.drainCommunication) return;
     if (modeFor(thread.id) !== "enforce") stopped.delete(thread.id);
     const previous = pending.get(thread.id) ?? Promise.resolve();
-    const work = previous.then(() => check(thread.id, thread.providerId, sequence)).catch(error => { bb.log.warn(`Tavern scope watcher failed for ${thread.id}: ${String(error)}`); });
+    const work = previous.then(async () => {
+      if (thread.providerId === "pi") {
+        try { await deps.drainCommunication?.(thread.id); }
+        catch (error) { bb.log.warn(`Tavern held communication ${thread.id}: ${String(error)}`); }
+      }
+      if (modeFor(thread.id) !== "off") await check(thread.id, thread.providerId, sequence);
+    }).catch(error => { bb.log.warn(`Tavern scope watcher failed for ${thread.id}: ${String(error)}`); });
     pending.set(thread.id, work);
     return work.finally(() => { if (pending.get(thread.id) === work) pending.delete(thread.id); });
+  });
+  bb.events.on("thread.idle", async ({ thread }) => {
+    if (disposed || thread.providerId !== "pi" || !store.records.has(thread.id)) return;
+    try { await deps.drainCommunication?.(thread.id, true); }
+    catch (error) { bb.log.warn(`Tavern held communication ${thread.id}: ${String(error)}`); }
   });
   bb.events.on("thread.active", ({ thread }) => { stopped.delete(thread.id); });
   bb.events.on("thread.archived", ({ thread }) => { stopped.delete(thread.id); worktrees.delete(thread.id); });
