@@ -25,6 +25,8 @@ import type { AskEffect } from "./ask-effects";
 import { closeAnsweredPullRequests, previewPullRequests, recordPullRequestChoices, StaleClosingCard } from "./conclude-pull-requests";
 import { tags } from "../shared/contract";
 import { Keeper, partyCounts, type PlanInput } from "./keeper/service";
+import { KeeperSuccessionCoordinator, SUCCESSION_METADATA } from "./keeper/succession";
+import { fenceMessage } from "./keeper/succession-store";
 import { checkerAssignments, validatePartyCharacters, validateCheckerMakers, makerForWaypoint } from "./assignments";
 import { Registry, type RegistrySnapshot } from "./registry";
 import { TickLoop } from "./tick";
@@ -110,6 +112,7 @@ export const KEEPER_TOOLS = [
   "tavern_pull_request",
   "tavern_wrap",
   "tavern_tune",
+  "tavern_refresh_keeper",
 ];
 const submissionSchema = z.object({
   classId: z.string().optional(),
@@ -139,6 +142,7 @@ import { storedPhase, transitionQuest } from "./keeper/quest-lifecycle";
 
 export class TavernRuntime {
   readonly stopAll = new StopAll(this);
+  readonly succession = new KeeperSuccessionCoordinator(this);
   readonly serviceRecords: ServiceRecords;
   readonly spend: SpendBudget;
   readonly toolNames = [...KEEPER_TOOLS, "tavern_report", "tavern_request_sources", "tavern_ready", "tavern_draft_pr", "tavern_act_verdict"];
@@ -309,6 +313,7 @@ export class TavernRuntime {
    * burst of events wakes once.
    */
   wakeKeeper(threadId: string, reason: string): Promise<void> {
+    if (this.succession.state.fence(threadId)) return Promise.resolve();
     const existing = this.wakes.get(threadId);
     if (existing) return existing;
     let wake: Promise<void>;
@@ -675,6 +680,17 @@ export class TavernRuntime {
     if (this.away.store.snapshot().status.closed && !clientAction && !preapproved) throw new Error("An away ask answer needs an explicit client action.");
     const ask = this.keeper.store.get("asks", askId);
     if (!ask) throw new Error("Unknown ask");
+    this.succession.state.assertMutable(ask.keeperThreadId);
+    const done = this.succession.track(ask.keeperThreadId);
+    try {
+      return await this.answerCurrentAsk(ask, optionId, note, via, clientAction, surface, receipt, preapproved, pullRequestChoices);
+    } finally { done(); }
+  }
+  private async answerCurrentAsk(
+    ask: Ask, optionId: string, note: string | null, via: NonNullable<Ask["answer"]>["via"],
+    clientAction: boolean, surface: string, receipt: UserActReceipt | undefined, preapproved: boolean, pullRequestChoices: PullRequestChoices,
+  ) {
+    const askId = ask.id;
     if (ask.effect?.type === "release-hold" && !clientAction) throw new Error("Releasing a checker-handoff hold requires an explicit client action; the Keeper cannot answer it.");
     if (isCloseEffect(ask.effect) && !clientAction && !(preapproved && ask.effect.type === "conclude")) throw new Error("Closing needs your explicit answer on the card.");
     if (pullRequestChoices.length && (!clientAction || !isCloseEffect(ask.effect) || optionId !== ask.effect.type)) throw new Error("Pull request choices need your explicit closing answer.");
@@ -1060,6 +1076,9 @@ export class TavernRuntime {
     return { tools: member.role === "member" ? ["tavern_report"] : [], skills: [] as string[], instructions: `${problem} Do no work. ${member.role === "member" ? "Use tavern_report with status blocked, naming this problem and the affected project. Resume only after its class files load." : "Explain the problem plainly to the user; class-specific work is unavailable until its files load."}` };
   }
   configure(ctx: PluginAgentConfigurationContext) {
+    const fence = this.succession.state.fence(ctx.thread.id);
+    if (fence) return { tools: [] as string[], skills: [] as string[], instructions: fenceMessage(fence) };
+    if (ctx.pluginMetadata[SUCCESSION_METADATA] && !this.keeper.member(ctx.thread.id)) return { tools: [] as string[], skills: [] as string[], instructions: "This Keeper does not own a Tavern charge. Do not act." };
     // Retired check threads can still have a queued turn from an older install.
     if (typeof ctx.pluginMetadata.voiceCheck === "string") return { tools: [] as string[], skills: [] as string[], instructions: "" };
     try {
@@ -1221,12 +1240,19 @@ export class TavernRuntime {
     return { action: "proceed" as const };
   }
   async dispatch(ctx: MessageDispatchHookContext) {
-    const stopped = this.stopAll.dispatch(ctx);
-    if (stopped) return stopped;
+    const done = this.succession.track(ctx.thread.id);
+    try { return await this.dispatchTracked(ctx); }
+    finally { done(); }
+  }
+  private async dispatchTracked(ctx: MessageDispatchHookContext) {
     const startedAt = this.keeper.now();
     let protectedThread = true;
     let binding: ReturnType<TavernRuntime["dispatchBinding"]> | undefined;
     try {
+      const succession = await this.succession.dispatch(ctx);
+      if (succession) return succession;
+      const stopped = this.stopAll.dispatch(ctx);
+      if (stopped) return stopped;
       binding = this.dispatchBinding(ctx);
       protectedThread = !!binding.member || !!binding.hireToken || !!binding.classId && binding.classId !== "none";
       const result = await this.dispatchChecked(ctx, binding);
@@ -2426,7 +2452,7 @@ export class TavernRuntime {
       const id = member.threadId;
       if (member.role === "keeper") {
         const rt = k.store.runtime(id);
-        if (!rt.archivePending) continue;
+        if (!rt.archivePending || this.succession.state.fence(id)?.kind === "retired") continue;
         if (rt.cellarArchiveRequested && this.keeperStayReason(id)) {
           k.store.patch(id, { archivePending: false, cellarArchiveRequested: false, archiveError: null });
           continue;
@@ -2654,23 +2680,34 @@ export class TavernRuntime {
     this.bb.rpc.experimental_invalidate([tags.room(), tags.thread(threadId)]);
   }
   private resetQuietQueue(threadId: string): Promise<void> {
+    if (this.succession.state.fence(threadId)) return Promise.resolve();
     const existing = this.queueResets.get(threadId);
     if (existing) return existing;
     const id = this.keeper.store.runtime(threadId).queuedTickResetId;
     if (!id) return Promise.resolve();
     let reset: Promise<void>;
+    const done = this.succession.track(threadId);
     reset = this.loop.discardQueued(threadId).then(() => {
       if (this.keeper.store.runtime(threadId).queuedTickResetId === id)
         this.keeper.store.patch(threadId, { queuedTickResetId: null, tickAt: null, heldAt: null });
-    }).finally(() => { if (this.queueResets.get(threadId) === reset) this.queueResets.delete(threadId); });
+    }).finally(() => {
+      done();
+      if (this.queueResets.get(threadId) === reset) this.queueResets.delete(threadId);
+    });
     this.queueResets.set(threadId, reset);
     return reset;
   }
   async tick(threadId: string, origin: "sweep" | "wake" = "sweep") {
-    if (this.stopAll.reason() || this.config().tavern.paused || !isLiveKeeper(this.keeper.store, this.keeper.member(threadId))) return;
-    this.remindResting(threadId);
-    while (this.keeper.store.runtime(threadId).queuedTickResetId) await this.resetQuietQueue(threadId);
-    await this.loop.tick(threadId, origin);
+    if (this.succession.state.fence(threadId) || this.stopAll.reason() || this.config().tavern.paused || !isLiveKeeper(this.keeper.store, this.keeper.member(threadId))) return;
+    const done = this.succession.track(threadId);
+    try {
+      this.remindResting(threadId);
+      while (this.keeper.store.runtime(threadId).queuedTickResetId) await this.resetQuietQueue(threadId);
+      await this.loop.tick(threadId, origin);
+    } finally { done(); }
+  }
+  checkSuccessionTick(threadId: string) {
+    return this.loop.checkSuccessionTick(threadId);
   }
   acknowledgeTick(id: string) {
     this.loop.acknowledge(id);
@@ -2683,6 +2720,7 @@ export class TavernRuntime {
     if (previous && this.keeper.now() - previous.startedAt < 3 * LIMITS.retryMs) return;
     if (previous) this.bb.log.warn(`Tavern expired stale maintenance flight ${key}`);
     let active = true;
+    const done = threadId ? this.succession.track(threadId) : undefined;
     let work: Promise<void>;
     work = Promise.resolve().then(async () => {
       for (const step of steps) {
@@ -2693,7 +2731,10 @@ export class TavernRuntime {
           this.bb.log.warn(`Tavern ${key} ${step.name}: ${String(error)}`);
         }
       }
-    }).finally(() => { if (this.maintenance.get(key)?.work === work) this.maintenance.delete(key); });
+    }).finally(() => {
+      done?.();
+      if (this.maintenance.get(key)?.work === work) this.maintenance.delete(key);
+    });
     this.maintenance.set(key, { work, startedAt: this.keeper.now() });
     try { await loopCall(work, key); }
     catch (error) { this.bb.log.warn(String(error)); }
@@ -2704,6 +2745,7 @@ export class TavernRuntime {
     try { this.settingsMaintenance(); }
     catch (error) { this.bb.log.warn(`Tavern settings maintenance: ${String(error)}`); }
     await this.maintain("Scope refresh", null, [{ name: "scopes", run: () => this.scopes?.refreshLiveScopes() }]);
+    await this.maintain("Keeper succession maintenance", null, [{ name: "sweep", run: () => this.succession.sweep() }]);
     await this.maintain("Closing time maintenance", null, [{ name: "sweep", run: () => this.away.sweep() }]);
     const keepers = this.keeper.store.all("members").filter(m => m.role === "keeper");
     try { this.reviewCache = this.readReview(); }
@@ -2717,6 +2759,7 @@ export class TavernRuntime {
       }
       await Promise.all(keepers.map(async member => {
         const id = member.threadId;
+        if (this.succession.state.fence(id)) return;
         const automatic = (run: () => unknown) => () => !this.config().tavern.paused && isLiveKeeper(this.keeper.store, this.keeper.member(id)) ? run() : undefined;
         await this.maintain(`Keeper ${id}`, id, [
           { name: "stops", run: () => this.retryStops(id) },
@@ -2994,6 +3037,8 @@ export class TavernRuntime {
     if (result.outcome === "failed") this.bb.log.info(`Tavern blocker push unavailable: ${result.error}`);
   }
   queued(entry: QueuedMessage) {
+    const fence = this.succession.state.fence(entry.threadId);
+    if (fence && fence.kind !== "preparing") return;
     if (isUser(entry))
       this.keeper.receiveUser(
         entry.threadId,
@@ -3007,7 +3052,10 @@ export class TavernRuntime {
       );
   }
   dispatched(entry: QueuedMessage) {
+    const fence = this.succession.state.fence(entry.threadId);
+    if (fence && fence.kind !== "preparing") return;
     if (entry.originPluginId === this.bb.pluginId) {
+      this.succession.bootstrapDispatched(entry.threadId, entry.originPluginId, inputText(entry.content));
       const id = tickId(inputText(entry.content));
       if (id) this.loop.acknowledge(id);
       const pending = memberDetails(this.keeper.store, entry.threadId).delivery;
@@ -3027,6 +3075,8 @@ export class TavernRuntime {
     }
   }
   cancelled(entry: QueuedMessage) {
+    const fence = this.succession.state.fence(entry.threadId);
+    if (fence && fence.kind !== "preparing") return;
     if (this.away.blocked(entry.threadId) && entry.originPluginId === this.bb.pluginId) return;
     if (entry.originPluginId === this.bb.pluginId) {
       const text = inputText(entry.content);
@@ -3107,6 +3157,7 @@ export class TavernRuntime {
   }
 
   async failed(threadId: string, error = "Provider turn failed", requestId?: string) {
+    if (this.succession.state.fence(threadId)) return;
     const member = this.keeper.member(threadId);
     if (member?.role !== "keeper") {
       try {
@@ -3395,6 +3446,7 @@ export class TavernRuntime {
     return work;
   }
   async observe(thread: Thread, sequence?: number) {
+    if (this.succession.state.fence(thread.id)) return;
     const m = this.keeper.member(thread.id);
     if (!m) return;
     this.captureThreadMetadata(thread);
@@ -3415,6 +3467,7 @@ export class TavernRuntime {
       limit: "100",
       order: "asc",
     });
+    if (this.succession.state.fence(thread.id)) return;
     const interrupted = new Map(events.flatMap(event =>
       event.type === "turn/completed" && event.data.status === "interrupted" && event.scope?.kind === "turn"
         ? [[event.scope.turnId, event.createdAt] as const] : [],
@@ -3594,6 +3647,7 @@ export class TavernRuntime {
       }
     }
     await this.maintain("name reconciliation", null, [{ name: "names", run: () => this.reconcileNames() }]);
+    await this.maintain("startup Keeper succession", null, [{ name: "recovery", run: () => this.succession.sweep() }]);
     await Promise.all(this.keeper.store.all("members").map(m => {
       let thread: Thread | null = null;
       return this.maintain(`reconcile ${m.threadId}`, m.threadId, [
@@ -3606,7 +3660,7 @@ export class TavernRuntime {
         { name: "worktree", run: () => thread && thread.archivedAt === null && thread.deletedAt === null ? this.scopes?.pinWorktree(thread.id) : undefined },
         { name: "stops", run: () => !this.stopAll.reason() && m.role === "keeper" ? this.retryStops(m.threadId) : undefined },
         { name: "cleanup", run: () => !this.stopAll.reason() && m.role === "keeper" ? this.finishMemberCleanup(m.threadId) : undefined },
-        { name: "tick recovery", run: () => isLiveKeeper(this.keeper.store, this.keeper.member(m.threadId), "present") ? this.loop.recover(m.threadId) : undefined },
+        { name: "tick recovery", run: () => !this.succession.state.fence(m.threadId) && isLiveKeeper(this.keeper.store, this.keeper.member(m.threadId), "present") ? this.loop.recover(m.threadId) : undefined },
       ]);
     }));
     if (this.scopes) {

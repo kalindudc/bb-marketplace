@@ -147,10 +147,18 @@ const decisionAttentionFields = {
   decidedThroughId: id.nullable().optional(),
 };
 
+export const successionViewSchema = z.object({
+  id, predecessor: threadId, successor: threadId.nullable(), current: threadId,
+  state: z.enum(["proposed", "preparing", "recovering", "done", "failed"]),
+  requestedAt: z.number(), cutoverAt: z.number().nullable(), reason: z.string(), problem: z.string().nullable(), followupsPending: z.boolean(), finishRequired: z.boolean(), requestedByKeeper: z.boolean(),
+});
+export type SuccessionView = z.infer<typeof successionViewSchema>;
+
 /** Everything a thread's decorations need in one read: the widget row, the crest, member headers. */
 export const threadDecorSchema = z.object({
   threadId,
   widgetRow: z.boolean().optional(),
+  succession: successionViewSchema.nullable().optional(),
   ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().optional(), characters: z.boolean().optional(),
   voice: voiceModeSchema.optional(), voiceBeforeOff: voiceBeforeOffSchema.optional(), characterQuietUntil: characterQuietUntilSchema.optional(),
   reportedPoseSeconds: z.number().int().positive().optional(), verifiedPoseMinutes: z.number().int().positive().optional(),
@@ -253,6 +261,7 @@ export const boardQuestDetailSchema = z.object({
 export type BoardQuestDetail = z.infer<typeof boardQuestDetailSchema>;
 
 export const ledgerSchema = z.object({
+  succession: successionViewSchema.nullable().optional(),
   asksNextCursor: z.string().nullable().optional(),
   attention: attentionSchema.optional(),
   // added by Builder B: durable facts/promises and gate contact are visible in the Ledger.
@@ -292,6 +301,7 @@ export const roomSchema = z.object({
     z.object({
       member: memberSchema,
       freeHands: z.number().int().nonnegative().optional(),
+      succession: successionViewSchema.nullable().optional(),
       attention: attentionSchema.optional(),
       // added by Builder B: archived Keepers remain available for folding and uncellared quests.
       archived: z.boolean().optional(),
@@ -417,6 +427,12 @@ export const rpcContract = defineContract({
     input: z.object({ noteId: id, how: z.enum(["done", "replied"]), reply: z.string().max(24000).optional() }).strict(),
     output: ok,
   },
+  refreshKeeper: {
+    input: z.object({ threadId }).strict(),
+    output: ok,
+  },
+  cancelKeeperRefresh: { input: z.object({ threadId, successionId: id }).strict(), output: ok },
+  finishKeeperHandover: { input: z.object({ threadId, successionId: id }).strict(), output: ok },
   resumeKeeper: {
     input: z.object({ threadId }).strict(),
     output: z.object({ ok: z.literal(true) }),

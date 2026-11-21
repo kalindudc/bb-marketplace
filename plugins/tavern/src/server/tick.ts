@@ -670,6 +670,19 @@ export class TickLoop {
     catch (error) { this.runtime.bb.log.warn(`Tavern tick ${batch.id} has uncertain delivery: ${String(error)}`); }
   }
 
+  async checkSuccessionTick(threadId: string) {
+    const batch = this.k.store.pendingTick(threadId);
+    if (!batch) return;
+    const rows = await loopCall(this.runtime.bb.sdk.threads.queuedMessages.list({ threadId }), "succession tick queue");
+    if (rows.some(row => row.originPluginId === this.runtime.bb.pluginId && tickId(inputText(row.content)) === batch.id)) return;
+    const events = await loopCall(this.runtime.bb.sdk.threads.events.list({ threadId,
+      ...(batch.hostAfterSeq !== undefined ? { afterSeq: String(batch.hostAfterSeq) } : {}),
+      types: ["client/turn/requested"], limit: "100", order: batch.hostAfterSeq !== undefined ? "asc" : "desc",
+    }), "succession tick acceptance history");
+    if (events.some(event => JSON.stringify(event.data).includes(batch.id))) this.acknowledge(batch.id);
+    else if (batch.sendPending || events.length === 100) throw new Error("The predecessor's last tick may have reached bb. Confirm its delivery before refreshing.");
+  }
+
   async recover(threadId: string, force = false) {
     if ((this.runtime.stopAll.reason() || this.runtime.config().tavern.paused) || !isLiveKeeper(this.k.store, this.k.member(threadId), "present")) return;
     const batch = this.k.store.pendingTick(threadId);

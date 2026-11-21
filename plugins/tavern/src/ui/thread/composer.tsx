@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSP
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_usePluginId, experimental_useAppPanel, useBbNavigate, useComposer, useRpc, UrlLink, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
 import { charactersPatch, settingsContract, type SettingsPatch } from "../../shared/settings";
 import { isSetupPrompt } from "../../shared/setup";
+import { RetiredKeeperNotice } from "../kit/succession";
 import { classDifferences, composerProjectId, fieldWords, rearmClassSettings, startRefusal, useClassStart } from "./class-start";
 import { rpcContract, type ThreadDecor } from "../../shared/contract";
 import type { Ask, CheckerHandoffHold, ClassDef, Phase as QuestPhase } from "../../shared/schema";
@@ -215,6 +216,12 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const [pageSince] = useState(Date.now);
   const data = decor.data;
   const keeper = data?.keeperView;
+  const retired = data?.succession?.state === "done" && data.succession.current !== threadId;
+  useEffect(() => {
+    if (!retired) return;
+    composer.setInputLock(true);
+    return () => composer.setInputLock(false);
+  }, [composer, retired]);
   // The row's skeleton shows only where this device last saw a row (2 a Keeper's, 1 a member's), so a plain thread never flashes one.
   const lastRow = useSkeletonCount(`skel:thread:widget:${threadId}`, data ? (!data.member || data.hidden || data.widgetRow === false ? 0 : data.keeperView ? 2 : 1) : undefined, 0);
   const skeletonShown = useSkeletonDelay(!data && decor.isLoading && lastRow > 0);
@@ -255,11 +262,12 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
     return () => { clearTimeout(timer); settle(c => c.el === el); };
   }, [characterReceipt, receiptFocused, cue, settle]);
   useEffect(() => {
-    if (!keeper || !composer.text.trim()) return;
+    if (!keeper || retired || !composer.text.trim()) return;
     const ping = () => { lastTyping.current = Date.now(); void typing.mutate({ threadId }).catch(setError); };
     const timer = setTimeout(ping, Math.max(500, 10000 - (Date.now() - lastTyping.current)));
     return () => clearTimeout(timer);
-  }, [composer.text, threadId, !!keeper, typing.mutate]);
+  }, [composer.text, threadId, !!keeper, retired, typing.mutate]);
+  if (retired) return <RetiredKeeperNotice view={data!.succession!} />;
   if (!data) return decor.error ? <div className="tavern twidget"><QueryState error={decor.error} retry={() => void decor.refetch()} /></div> : decor.isLoading && lastRow > 0 ? <SkWidget keeper={lastRow === 2} shown={skeletonShown} /> : null;
   // A thread without a member has only its journal, which lives in bb's context row (journal-segment.tsx), so it gets no Tavern row.
   const notice = data.classNotice ?? null;

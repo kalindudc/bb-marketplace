@@ -59,6 +59,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         if (ctx.signal.aborted)
           throw new Error(`${name} was cancelled or stopped before it began; no change was applied.`);
         k.require(ctx.threadId, role);
+        const done = runtime.succession.track(ctx.threadId);
         let result: unknown;
         try {
           result = await action(parameters.parse(input), ctx.threadId, ctx.projectId);
@@ -66,7 +67,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
           if (ctx.signal.aborted)
             throw new Error(`${name} failed while its turn was cancelled or stopped; its outcome is not confirmed. Read tavern_status before retrying. Cause: ${String(error)}`, { cause: error });
           throw error;
-        }
+        } finally { done(); }
         const visible = agentData(result);
         const text =
           typeof visible === "string" ? visible : JSON.stringify(visible);
@@ -76,6 +77,16 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       },
     });
   };
+  register(
+    "tavern_refresh_keeper",
+    "Requested Keeper refresh",
+    "Carry your charge into a fresh Keeper. Request this only as your last tool call, after outstanding effects settle.",
+    z.object({ why: z.string().trim().min(1).max(500) }).strict(),
+    ({ why }, threadId) => {
+      runtime.succession.request(threadId, { kind: "agent", threadId }, why);
+      return "Keeper refresh requested. This charge stays here until it can move safely. The Ledger will show the result. End this turn without more tool calls.";
+    },
+  );
   register(
     "tavern_tune",
     "Adjusted quest pacing",
@@ -168,7 +179,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_placements",
     "Read a repo's placement choices",
-    "Read the environment providers and input schemas bb offers for repo (a bb project id), New machine per thread information, earlier Tavern picks as rule ids, and the matching Settings rule as the recommendation. The placement choices are ready-to-pass rule ids that match this repo and class, or where the Keeper runs only for its own repo. Optional classId defaults to smith; boardQuestId includes that quest's rule matches. Consent, inputs, models and forge come only from the selected rule. Provider lists are information only. It allocates nothing.",
+    "For repo (a bb project id), read provider input schemas, New machine per thread information, earlier Tavern picks and the matching rule recommendation. Pass a matching rule id or the Keeper's location for its own repo only. classId defaults to smith; boardQuestId includes quest rules. Consent, inputs, models and forge come from that rule. This allocates nothing.",
     z.object({ repo: id, classId: id.optional(), boardQuestId: optionalQuest }).strict(),
     (input, threadId) => runtime.placementChoices(threadId, input.repo, input.classId, input.boardQuestId),
   );

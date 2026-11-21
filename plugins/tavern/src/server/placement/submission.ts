@@ -67,7 +67,7 @@ export class PlacementSubmissions {
       (member.engagement === "active" || member.engagement === "resting" || member.engagement === "briefing") &&
       memberHost(this.keepers, member).archivedAt === null;
     if (!record || record.slot !== "maker" || !["ready", "running"].includes(record.phase) || !record.hostId || !record.environmentId || !record.root ||
-        !record.workspaceKind || !maker || maker.role !== "member" || maker.keeperThreadId !== record.keeperThreadId ||
+        !record.workspaceKind || !maker || maker.role !== "member" || maker.keeperThreadId !== this.placements.currentKeeper(record) ||
         !record.questId || maker.boardQuestId !== record.questId || !canCapture(maker))
       throw new Error("Submission capture requires a content-ready active maker and its private placement");
     const busy = (): SubmissionResult => ({ state: "maker-busy", message: `Waiting for ${maker.displayName ?? maker.title ?? maker.threadId} to finish its turn before its work can be checked.` });

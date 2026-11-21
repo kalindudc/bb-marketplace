@@ -19,6 +19,11 @@ import { PlacementStore } from "../../src/server/placement/store";
 import { PlacementTransport } from "../../src/server/placement/transport";
 import { PlacementForge, MEMBER_PR_REFUSAL } from "../../src/server/placement/forge";
 import { KeeperStore } from "../../src/server/keeper/store";
+import { Keeper } from "../../src/server/keeper/service";
+import { ownershipSteps } from "../../src/server/keeper/succession-ownership";
+import { fakePort, putQuestFixture } from "./support";
+import { boardQuestSchema } from "../../src/shared/schema";
+import { managePullRequest } from "../../src/server/pull-request-rules";
 import { MIGRATIONS } from "../../src/server/migrations";
 import { placementRecord } from "./placement-fixture";
 import type { TavernRuntime } from "../../src/server/runtime";
@@ -72,12 +77,25 @@ it.each([[undefined, false, false], ["release", false, false], [undefined, true,
   const profile = { id: "forge", name: "Forge", enabled: true, kind: "command", open: `test "$GIT_OPTIONAL_LOCKS" = 0 && git status --porcelain >/dev/null && test "$(git rev-parse --show-toplevel)" = ${JSON.stringify(home)} && test "$(git remote get-url origin)" = ${JSON.stringify(network.url)} && test "$FORGE_HEAD" = member-work && test "$LOOM_DRAFT" = 1 && test "$(cat)" = description && echo https://forge.example/pr/12` };
   const runtime = { scopes: { api: { hostTemplate: () => ({ template: { github: "draft-pr-only", preset: "worktree" } }) } }, bb: host.bb, placements: () => ({ store, host: port, transport }), settings: { placementPolicy: () => ({ state: "valid", settings: { forges: [profile] } }) }, keeper: { member, now: () => 1, changed: vi.fn(), store: keepers } } as unknown as TavernRuntime;
   const forge = new PlacementForge(runtime);
+  const afterRefresh = emulate && (pushedOnly || baseOverride !== undefined);
+  const keeper = new Keeper(keepers, fakePort(), () => 2);
+  const cutover = () => {
+    keeper.bind("keeper", "keeper", null, "project");
+    putQuestFixture(keepers, "quest", boardQuestSchema.parse({ id: "quest", keeperThreadId: "keeper", title: "Draft", short: "Draft", phase: "scout", planVersion: 0, greenlitVersion: null, createdAt: 1, updatedAt: 1, endedAt: null }));
+    const op = keeper.succession.propose("keeper", { kind: "user" }, "New context");
+    keeper.succession.prepare(op.id, []);
+    keeper.succession.bindCandidate(op.id, "successor");
+    keeper.succession.cutover(op.id, ownershipSteps(keeper));
+  };
+  if (afterRefresh && pushedOnly) cutover();
   const result = await forge.forThread("member", { title: "Draft", body: "description", base: baseOverride });
   expect(result).toContain("Draft PR: https://forge.example/pr/12"); expect(result).toContain("untracked.txt"); expect(result).toContain("work.txt");
   expect(host.harness.inspection.experimental_hostRpcCalls).toContainEqual(expect.objectContaining({
     method: "registerEndpoint", input: expect.objectContaining({ endpointId: "draft-forge", git: "full" }),
   }));
   expect(member().draftPush!.memberHead).toBe(memberHead);
+  if (afterRefresh && !pushedOnly) cutover();
+  expect(keepers.all("pullRequests")[0]?.keeperThreadId).toBe(afterRefresh ? "successor" : "keeper");
   if (pushedOnly) {
     expect(git(home, "rev-parse", "HEAD")).toBe(userBefore.head); expect(git(home, "show-ref")).toBe(userBefore.refs);
     expect(git(home, "count-objects", "-v")).toBe(userBefore.objects); expect(readFileSync(join(home, ".git/index"))).toEqual(userBefore.index);
@@ -100,7 +118,14 @@ it.each([[undefined, false, false], ["release", false, false], [undefined, true,
   git(source, "add", "work.txt"); git(source, "commit", "-qm", "next");
   expect(await forge.forThread("member", { title: "Draft", body: "description", base: baseOverride })).toContain("https://forge.example/pr/13");
   expect(keepers.all("pullRequests")).toHaveLength(1);
-  expect(keepers.all("pullRequests")[0]?.url).toBe("https://forge.example/pr/13");
+  expect(keepers.all("pullRequests")[0]).toMatchObject({ url: "https://forge.example/pr/13", keeperThreadId: afterRefresh ? "successor" : "keeper" });
+  if (afterRefresh) {
+    const comment = vi.fn(async () => ({ state: "draft" as const }));
+    const successorRuntime = { keeper, away: { assertWork: () => {}, store: { snapshot: () => ({ window: null }) } },
+      placements: () => ({ forge: { inspect: async () => null, comment } }) } as unknown as TavernRuntime;
+    await expect(managePullRequest(successorRuntime, "successor", { action: "comment", pullRequestId: keepers.all("pullRequests")[0]!.id, body: "Local fixture reply" })).resolves.toMatchObject({ keeperThreadId: "successor" });
+    expect(comment).toHaveBeenCalledTimes(1);
+  }
   expect(calls.filter(name => name === "draftPush")).toHaveLength(2);
   const beforeDefaultRefusal = git(remote, "rev-parse", "refs/heads/member-work");
   git(remote, "symbolic-ref", "HEAD", "refs/heads/member-work");

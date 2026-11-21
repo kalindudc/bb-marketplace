@@ -13,7 +13,7 @@ export const AUTHORITY = {
   placementRetry: explicit, placementModelFailureClear: explicit,
   holdBoardQuest: explicit, resumeBoardQuest: explicit, allowReview: explicit, setSpendBudget: explicit,
   archiveBoardQuests: explicit, deleteBoardQuest: explicit, restoreDeletedQuest: explicit,
-  setTaleKept: explicit, journalEdit: explicit, resumeKeeper: explicit,
+  setTaleKept: explicit, journalEdit: explicit, resumeKeeper: explicit, refreshKeeper: explicit, cancelKeeperRefresh: explicit, finishKeeperHandover: explicit,
   saveCharacterVoice: explicit, saveCharacterAvatar: explicit, saveClass: explicit, removeClassOverride: explicit,
   applyClassExecution: explicit, dismissClassNotice: explicit,
   settingsAgentChange: { level: "keeper", proof: "recorded user grant and calling thread", grant: "tavern.agentsMayChangeSettings" },

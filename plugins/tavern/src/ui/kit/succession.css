@@ -1,0 +1,9 @@
+.tavern .tv-keeper-refresh { min-width: 0; display: flex; align-items: start; flex-wrap: wrap; gap: 6px; }
+.tavern .rm-notice > .tv-keeper-refresh { padding-inline: 12px; }
+.tavern .tv-keeper-refresh > p { flex-basis: 100%; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.tavern .tv-succession, .tavern.tv-succession { min-width: 0; display: grid; justify-items: start; gap: 6px; padding: 8px 10px; border: 1px solid var(--tavern-line); background: var(--card); font-size: 12px; }
+:is(.tavern .tv-succession, .tavern.tv-succession) :is(p, h3) { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+:is(.tavern .tv-succession, .tavern.tv-succession) h3 { font-size: 13px; }
+@media (max-width: 600px) {
+  :is(.tavern .tv-keeper-refresh, .tavern .tv-succession, .tavern.tv-succession) .btn { min-height: 44px; min-width: 44px; }
+}

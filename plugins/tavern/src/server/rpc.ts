@@ -196,6 +196,7 @@ export function rpcHandlers(
       return {
         threadId,
         widgetRow: runtime.config().tavern.widgetRow,
+        succession: runtime.succession.view(threadId),
         ambientMotion: runtime.config().tavern.hearthFlicker ? runtime.config().tavern.ambientMotion : "off",
         repeatSeconds: runtime.config().tavern.repeatSeconds,
         characters: runtime.config().tavern.characters,
@@ -259,7 +260,9 @@ export function rpcHandlers(
     identities: async ({ ids, viewer }) => ({ identities: await identities(ids, viewer) }),
     journal: ({ threadId }) => k.journal.get(threadId),
     journalEdit: async ({ threadId, edit }, _context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
+      k.succession.assertMutable(threadId);
       await k.journal.prepare(threadId);
+      k.succession.assertMutable(threadId);
       const result = commitUserAct(k.store, () => k.now(), receipt, () => k.journal.edit(threadId, edit, { kind: "user" }));
       k.changed(threadId, k.member(threadId)?.boardQuestId);
       return { ok: true, message: result.message };
@@ -267,6 +270,18 @@ export function rpcHandlers(
     resolveHandBack: ({ noteId, how, reply }, _context, receipt?: UserActReceipt) => {
       const result = k.memory.resolveByUser(noteId, how, reply);
       if (result.changed) { k.userAction(result.note.keeperThreadId); wake(result.note.keeperThreadId); }
+      return { ok: true as const };
+    },
+    refreshKeeper: ({ threadId }) => {
+      runtime.succession.request(threadId, { kind: "user" }, "You asked to refresh this Keeper.");
+      return { ok: true as const };
+    },
+    cancelKeeperRefresh: ({ threadId, successionId }) => {
+      runtime.succession.cancel(threadId, successionId);
+      return { ok: true as const };
+    },
+    finishKeeperHandover: async ({ threadId, successionId }, _context, receipt?: UserActReceipt) => {
+      await runtime.succession.finishHandover(threadId, successionId, receipt);
       return { ok: true as const };
     },
     resumeKeeper: ({ threadId }) => {
@@ -288,6 +303,7 @@ export function rpcHandlers(
         scopes: runtime.scopes?.views(partyIds(threadId)) ?? [],
         violations: runtime.scopes?.violations(partyIds(threadId)) ?? [],
         keeperThreadId: threadId,
+        succession: runtime.succession.view(threadId),
         undoLanes: readUndoLanes(k.store, threadId),
         quietSince: k.store.runtime(threadId).manualStopAt ?? null,
         olderPromises: k.memory.olderPromiseCount(threadId),
@@ -460,12 +476,13 @@ export function rpcHandlers(
       archivedCount: k.store.archivedQuestCount(),
       keepers: k.store
         .all("members")
-        .filter((m) => m.role === "keeper")
+        .filter((m) => m.role === "keeper" && runtime.succession.state.current(m.threadId) === m.threadId)
         .map((m) => {
           const thread = k.store.runtime(m.threadId);
           return {
             member: projectMember(m),
             freeHands: freeHands(k, m.threadId).length,
+            succession: runtime.succession.view(m.threadId),
             archived: !isLiveKeeper(k.store, m, "present"),
             threadTitle: thread.threadTitle ?? null,
             threadCreatedAt: thread.threadCreatedAt ?? null,

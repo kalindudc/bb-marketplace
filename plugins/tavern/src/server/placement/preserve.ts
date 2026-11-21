@@ -138,7 +138,7 @@ export class PlacementPreservation {
         this.placements.finishRelease(cancelled.id, cancelled.generation, true);
         const member = this.keepers.get("members", threadId);
         const outcome = source === "saved" ? record.preservation.artifacts === "unknown" ? "its source was saved; declared artifacts are unknown" : "its work was saved" : "its work was not saved";
-        this.keepers.event(Date.now(), record.keeperThreadId, record.questId, "member.work-lost", `Released ${member?.displayName ?? threadId}; ${outcome}: ${message.replace(/^Declared artifacts are unknown\. /, "")}`, { memberThreadId: threadId, placementId: record.id });
+        this.keepers.event(Date.now(), this.placements.currentKeeper(record), record.questId, "member.work-lost", `Released ${member?.displayName ?? threadId}; ${outcome}: ${message.replace(/^Declared artifacts are unknown\. /, "")}`, { memberThreadId: threadId, placementId: record.id });
       }).immediate();
       return { state: "lost", message };
     } catch (error) {

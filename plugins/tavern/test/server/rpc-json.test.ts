@@ -24,8 +24,9 @@ async function fixture() {
   vi.stubEnv("HOME", location.home);
   vi.stubEnv("PI_CODING_AGENT_DIR", join(location.home, "pi-agent"));
   const db = new Database(join(location.home, "data.db"));
+  const restored = new Map<string, string>();
   const f = createFakePluginHost({ pluginId: "tavern", sdk: {
-    threads: { get: async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, status: threadId === "lead" ? "active" : "idle" }), defaultExecutionOptions: async () => ({ model: "checked-model", reasoningLevel: "high" }), update: async () => ({}), getPluginMetadata: async () => ({}), updatePluginMetadata: async () => ({}), events: { list: async () => [] }, queuedMessages: { list: async () => [] }, stop: async () => ({}) },
+    threads: { get: async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, status: threadId === "lead" ? "active" : "idle", ...(restored.has(threadId) ? { createdAt: Date.now(), visibility: "visible", originPluginId: "tavern", sourceThreadId: null, lifecycleOwnerThreadId: null } : {}) }), defaultExecutionOptions: async () => ({ model: "checked-model", reasoningLevel: "high" }), update: async () => ({}), getPluginMetadata: async ({ threadId }: { threadId: string }) => restored.has(threadId) ? { keeperSuccession: restored.get(threadId)! } : ({}), updatePluginMetadata: async () => ({}), events: { list: async () => [] }, queuedMessages: { list: async () => [] }, stop: async () => ({}) },
     plugins: { list: async () => ({ plugins: [{ id: "push-notifications", enabled: true }] }), callRpc: async ({ pluginId }: { pluginId: string }) => pluginId === "burn" ? { report: null } : { ok: true, channels: ["fixture"] } }, projects: { list: async () => [], get: async () => ({ sources: [] }) }, system: { config: async () => ({ primaryHostId: "host" }) },
     environments: { listProviders: async () => [] }, hosts: { list: async () => [], experimental_listProviders: async () => [] },
   } });
@@ -66,7 +67,7 @@ async function fixture() {
       k.store.writeRecords("UPDATE tavern_records SET data=? WHERE kind=? AND id=?", JSON.stringify(value), kind, row.id);
     }
   }
-  return { ...f, k, q, ask, decision, rule, route, report };
+  return { ...f, k, q, ask, decision, rule, route, report, restored };
 }
 
 it("returns compact mood signals and the voice setting in the thread widget", async () => {
@@ -251,6 +252,18 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     backupRestore: () => call("backupRestore", { from: { name: "missing-backup.json" } }),
     registryFile: () => call("registryFile", { kind: "class", id: "smith" }),
     registryExportFolder: () => call("registryExportFolder", { kind: "class" }),
+    refreshKeeper: () => call("refreshKeeper", { threadId: "lead" }),
+    cancelKeeperRefresh: () => call("cancelKeeperRefresh", { threadId: "lead", successionId: f.k.succession.operationFor("lead")!.id }),
+    finishKeeperHandover: () => {
+      f.k.bind("restore-lead", "keeper", null, "project");
+      const op = f.k.succession.propose("restore-lead", { kind: "user" }, "Restore test");
+      f.k.succession.prepare(op.id, []);
+      f.k.succession.bindCandidate(op.id, "restore-successor");
+      const done = f.k.succession.cutover(op.id, [({ successor }) => { f.k.bind(successor, "keeper", null, "project"); }]);
+      f.k.store.put("keeperSuccessions", op.id, { ...done, restored: true });
+      f.restored.set("restore-successor", op.id);
+      return call("finishKeeperHandover", { threadId: "restore-successor", successionId: op.id });
+    },
   } satisfies Record<keyof typeof rpcContract, () => Promise<unknown>>;
   expect(f.harness.inspection.registrations.rpcMethods.sort()).toEqual(Object.keys(rpcContract).sort());
   expect(Object.keys(cases).sort()).toEqual(Object.keys(rpcContract).sort());

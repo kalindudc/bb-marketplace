@@ -14,6 +14,7 @@ import { SKEL } from "./skeletons";
 import { jumpTo } from "./rail";
 import { CellarStopReceiptView, StopKeeperGone } from "./stop-all";
 import { PlacementFacts } from "../kit/placement";
+import { RefreshKeeper } from "../kit/succession";
 
 
 type K = Room["keepers"][number];
@@ -92,6 +93,7 @@ export function KeeperNotice({ keeper, room, registry, api, lit, since }: { keep
       <span className="rm-nh-s"><StateMark tone={status.tone}>{status.label}</StateMark></span>
     </header>
     <QuietNotice threadId={id} since={keeper.quietSince} />
+    {!keeper.archived && <RefreshKeeper threadId={id} view={keeper.succession} />}
     {(keeper.freeHands ?? 0) > 0 && <p className="m small">{keeper.freeHands} free {keeper.freeHands === 1 ? "hand" : "hands"}</p>}
     {party.length > 0 && <NoticeParty party={party} registry={registry} id={id} />}
     <div className="rm-qs" ref={rows}>
@@ -184,7 +186,10 @@ export function Board({ room, registry, api, since }: { room: Room; registry: Re
       {returned.length > 1 && <button type="button" className="btn sm" onClick={() => void api.archive(returned.map(({ quest }) => quest))} disabled={api.pending}><PageGlyph name="archive" />Send all {returned.length} to the cellar</button>}
     </RoomFold>}
     {idle.length > 0 && <RoomFold name="idle" label="Keepers without a quest" count={idle.length}><div className="rm-idle">
-      {idle.map(keeper => <KeeperRow key={keeper.member.threadId} keeper={keeper} registry={registry} room={room} />)}
+      {idle.map(keeper => <div key={keeper.member.threadId}>
+        <KeeperRow keeper={keeper} registry={registry} room={room} />
+        {!keeper.archived && <RefreshKeeper threadId={keeper.member.threadId} view={keeper.succession} />}
+      </div>)}
     </div></RoomFold>}
     {!room.keepers.length && <p className="tv-empty" data-empty>No Keeper yet. Start a quest from the header to hire one.</p>}
   </section>;
