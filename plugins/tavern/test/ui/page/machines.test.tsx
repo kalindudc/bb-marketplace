@@ -412,24 +412,38 @@ describe("Where work runs page", () => {
   });
 
   it("keeps a failed save's draft without calling it changed elsewhere when the editor moves to the other column", async () => {
-    const observers = new Set<() => void>();
+    const observers = new Map<ResizeObserverCallback, Element>();
     let gridWidth = 700;
+    let setups = 0, reads = 0;
     const savedRO = globalThis.ResizeObserver, savedRect = Element.prototype.getBoundingClientRect;
-    globalThis.ResizeObserver = class { constructor(private cb: () => void) {} observe() { observers.add(this.cb); } unobserve() {} disconnect() { observers.delete(this.cb); } } as unknown as typeof ResizeObserver;
-    Element.prototype.getBoundingClientRect = function (this: Element) { return { width: this.classList.contains("mx-grid") ? gridWidth : 0, height: 0, top: 0, left: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect; };
+    globalThis.ResizeObserver = class {
+      constructor(private cb: ResizeObserverCallback) {}
+      observe(el: Element) { if (el.matches(".mx-grid")) { setups++; observers.set(this.cb, el); } }
+      unobserve() {}
+      disconnect() { observers.delete(this.cb); }
+    } as unknown as typeof ResizeObserver;
+    const resize = () => act(() => { for (const [cb, target] of [...observers]) cb(
+      [{ target, borderBoxSize: [{ inlineSize: gridWidth, blockSize: 480 }] } as unknown as ResizeObserverEntry], {} as ResizeObserver,
+    ); });
+    Element.prototype.getBoundingClientRect = function (this: Element) { if (this.classList.contains("mx-grid")) reads++; return { width: this.classList.contains("mx-grid") ? gridWidth : 0, height: 0, top: 0, left: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect; };
     try {
       const slot = await page("machines", { settingsUpdate: () => ({ code: "invalid" as const, revision: 12, problems: machineProblems, settings: null }) }, machineVolumes.many);
-      act(() => { for (const cb of [...observers]) cb(); });
+      resize();
+      const before = { setups, reads };
       fireEvent.click(within(ruleRow(slot, 2)).getByRole("button", { name: "Edit rule 2" }));
       const form = await slot.findByRole("form", { name: "Edit rule 2" });
       fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "Not saved yet" } });
       fireEvent.click(within(form).getByRole("button", { name: "Save rule" }));
       await slot.findByText(/Tavern didn't save/);
-      gridWidth = 1200; act(() => { for (const cb of [...observers]) cb(); });
+      const unrelated = { setups: setups - before.setups, reads: reads - before.reads };
+      gridWidth = 1200; resize();
       const moved = await slot.findByRole("form", { name: "Edit rule 2" });
       await waitFor(() => expect(moved.closest(".mx-side")).not.toBeNull());
       expect((within(moved).getByLabelText("Name") as HTMLInputElement).value).toBe("Not saved yet");
       expect(within(moved).queryByText(/This rule changed since you started editing/)).toBeNull();
+      console.log("L1 machines", JSON.stringify({ unrelated, resizeReads: reads - before.reads - unrelated.reads }));
+      expect(unrelated).toEqual({ setups: 0, reads: 0 });
+      expect(reads).toBe(0);
     } finally { globalThis.ResizeObserver = savedRO; Element.prototype.getBoundingClientRect = savedRect; }
   });
 

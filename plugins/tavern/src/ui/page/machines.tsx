@@ -1,5 +1,6 @@
 import { experimental_usePluginId, experimental_useRpcMutation, experimental_useRpcQuery, useEnvironmentProviders, UrlLink } from "@get-bb/plugin-sdk/app";
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type ReactNode } from "react";
+import { useBorderBoxWidth } from "../kit/border-box";
 import { rpcContract, type Room } from "../../shared/contract";
 import { memberName } from "../../shared/member-name";
 import type { PlacementSettings, PlacementSettingsPatch } from "../../shared/placement-settings";
@@ -476,14 +477,10 @@ function Verdict({ p, rules, n, keeperPlace, hire }: { p: PlacementPreview; rule
 
 // ---------- The page ----------
 /** Whether the grid is wide enough for two columns (the CSS switches at the same 900 px), so the editor renders once: beside the list, or under it. */
-function useWide(ref: RefObject<HTMLElement | null>) {
+function useWide() {
   const [wide, setWide] = useState(false);
-  useEffect(() => {
-    const el = ref.current; if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => setWide(el.getBoundingClientRect().width > 860));
-    ro.observe(el); return () => ro.disconnect();
-  });
-  return wide;
+  const ref = useBorderBoxWidth<HTMLDivElement>(useCallback(width => setWide(width > 860), []));
+  return [ref, wide] as const;
 }
 export function MachinesPage({ rule: ruleParam }: { rule?: string; hire?: string }) {
   const api = usePlacementSettings();
@@ -506,7 +503,7 @@ export function MachinesPage({ rule: ruleParam }: { rule?: string; hire?: string
   // The open editor survives a remount (the phone layout) and a move between columns: its rule id, or "new", is kept in the panel state.
   const [editKey, setEditKey] = usePanelState<string | null>(EDITING, null, (v) => v === null || typeof v === "string");
   const [, setDraft] = usePanelState<KeptDraft | null>(DRAFT, null, isKeptDraft);
-  const gridRef = useRef<HTMLDivElement>(null);
+  const [gridRef, wide] = useWide();
   const [consentFor, setConsentFor] = useState<number | null>(null);
   const [from, setFrom] = useState(!!ruleParam);
   const rawRules = useMemo(() => { if (!invalid || !data?.placementRawJson) return null; try { const v = JSON.parse(data.placementRawJson) as { rules?: unknown }; return Array.isArray(v.rules) ? v.rules as M.Rule[] : null; } catch { return null; } }, [invalid, data?.placementRawJson]);
@@ -531,7 +528,6 @@ export function MachinesPage({ rule: ruleParam }: { rule?: string; hire?: string
   const loose = M.placeProblems(api.saved.problems).filter((p) => p.rule === null && p.field !== "maxMakers" && p.field !== "maxCheckers");
 
   const placedMembers = [...new Map([...(room.data?.keepers.flatMap(k => [k.member, ...k.boardQuests.flatMap(q => q.members), ...k.errands]) ?? []), ...(room.data?.solos ?? [])].filter(m => m.placement && m.placement.phase !== "released").map(m => [m.threadId, m])).values()];
-  const wide = useWide(gridRef);
   const editor = editing !== null && data ? <div className="mx-edit-wrap"><Editor key={editKey!} api={api} rules={rules} saved={saved} index={editing} keptKey={editKey!} n={n} room={room.data} classes={classes} onDone={() => setEditing(null)} /></div> : null;
   return <div className="mx">
     <header className="mx-head">

@@ -112,6 +112,17 @@ describe("useReturnCue", () => {
     expect(motion.cues.size).toBe(0);
   });
 
+  it("does not schedule a layout read for a re-render with the same row markup", async () => {
+    const rows = [{ id: "a", v: "active", top: 0 }, { id: "b", v: "active", top: 30 }];
+    const v = render(<List rows={rows} />);
+    await drawn();
+    reads = 0;
+    v.rerender(<List rows={rows.map(row => ({ ...row }))} />);
+    await drawn();
+    console.log("L1 quest list unrelated reads", reads);
+    expect(reads).toBe(0);
+  });
+
   it("reads no layout while committing a change that returns nothing", async () => {
     const v = render(<List rows={[{ id: "a", v: "active", top: 0 }, { id: "b", v: "active", top: 30 }]} />);
     await drawn();

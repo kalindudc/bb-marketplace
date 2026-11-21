@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { experimental_ThreadContextCardRow as CardRow, experimental_useAppPanel, experimental_useRpcMutation, experimental_useRpcQuery, experimental_useThreadContextKind, type ExperimentalThreadContextCardProps, type ExperimentalThreadContextSegmentInput, type ExperimentalThreadContextSegmentProps } from "@get-bb/plugin-sdk/app";
 import { rpcContract } from "../../shared/contract";
 import type { JournalEntry, JournalProgress } from "../../shared/schema";
 import { Glyph, SkBlock, SkGlyph, SkLine, Skeleton, StatusMark, readRemembered, useSkeletonDelay, writeRemembered } from "../kit";
+import { useRememberedWidth } from "../kit/remember";
 import { JOURNAL_TAB } from "./tabs";
 import { useCardShown, useCardShownRef } from "./card-shown";
 import "./journal-segment.css";
@@ -46,14 +47,12 @@ export function useJournalSegmentVisible({ threadId }: ExperimentalThreadContext
 const segmentKey = (threadId: string) => `skel:thread:segment:${threadId}`;
 /** The summary's width when this device last drew it on this thread, 0 when it did not: the skeleton takes it, so git's segment beside it stays put. */
 function segmentSeenWidth(threadId: string) { const v = readRemembered<number>(segmentKey(threadId)); return typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(400, Math.round(v))) : 0; }
-function useRememberSegmentWidth(threadId: string, shown: boolean) {
-  const ref = useRef<HTMLButtonElement>(null);
-  const last = useRef<number | null>(null);
+function useRememberSegmentWidth(threadId: string, empty: boolean) {
+  const key = segmentKey(threadId);
+  const ref = useRememberedWidth<HTMLButtonElement>(key);
   useEffect(() => {
-    const w = shown ? Math.round(ref.current?.getBoundingClientRect().width ?? 0) : 0;
-    if (shown && w === 0) return; // not laid out (a hidden row): keep what was seen
-    if (w !== last.current) { last.current = w; writeRemembered(segmentKey(threadId), w); }
-  });
+    if (empty && readRemembered<number>(key) !== 0) writeRemembered(key, 0);
+  }, [key, empty]);
   return ref;
 }
 
@@ -82,7 +81,7 @@ export function JournalSegmentSummary({ threadId }: ExperimentalThreadContextSeg
   const [seenWidth] = useState(() => segmentSeenWidth(threadId));
   const loading = !decor.data && decor.isLoading && seenWidth > 0;
   const shown = useSkeletonDelay(loading);
-  const ref = useRememberSegmentWidth(threadId, !!progress && progress.total > 0);
+  const ref = useRememberSegmentWidth(threadId, progress?.total === 0);
   if (loading) return <SkJournalSegment width={seenWidth} shown={shown} />;
   if (!progress || progress.total === 0) return null;
   const label = journalSummaryLabel(progress);

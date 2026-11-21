@@ -64,6 +64,7 @@ export type Box = { x: number; y: number; w: number; h: number; lx: number; ay: 
 export function MapViewport({ width, height, label, children, bar, controls, status, note, nodes = 0, focus, focusKey = "", onBoxWidth }: { width: number; height: number; label: string; children: ReactNode; bar?: ReactNode; controls?: ReactNode; status?: string | null; note?: ReactNode; nodes?: number; focus?: Box | null; focusKey?: string; onBoxWidth?: (width: number) => void }) {
   const box = useRef<HTMLDivElement>(null);
   const noteBox = useRef<HTMLDivElement>(null);
+  const hasNote = !!note;
   const [noteHeight, setNoteHeight] = useState(0);
   const layer = useRef<HTMLDivElement>(null);
   const viewRef = useRef<View>({ x: 0, y: 0, k: 1 });
@@ -101,7 +102,7 @@ export function MapViewport({ width, height, label, children, bar, controls, sta
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [note]);
+  }, [hasNote]);
   const availableHeight = useCallback((el: HTMLElement) => Math.max(24, el.clientHeight - (noteHeight ? noteHeight + 12 : 0)), [noteHeight]);
 
   const paint = useCallback(() => {

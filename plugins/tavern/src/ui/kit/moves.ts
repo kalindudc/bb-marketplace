@@ -25,8 +25,8 @@ function placesOf(root: HTMLElement, rows: HTMLElement[], also?: string) {
  * never moves. `also` names other elements that move with the rows (a "+N more" fold), so nothing overlaps mid-flight.
  * Only a return moves anything; any other reflow lands without motion. A returned row is a new element in another list, so when focus
  * was inside it, focus follows it to its returned place, with or without motion.
- * A commit compares the rows' variants only. Their places are read after each frame is drawn, when layout is already clean, and again
- * after a scroll inside the list or a change in its size; the commit reads layout only when a row has just come back returned.
+ * A commit reads layout only when a row has just come back returned. Other position snapshots follow changes to the list's
+ * contents, size or scroll, after the frame is drawn.
  * Two commits in one frame, a reorder and then a return, slide from the places before the reorder. That is rare, and the crossing rule
  * usually turns such a move into a fade.
  */
@@ -55,10 +55,13 @@ export function useReturnCue(ref: RefObject<HTMLElement | null>, { surface = "pa
     // The list's own width, not the window's: bb's side panel narrows the page column with no window resize, and rows wrap to new places.
     const sized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(afterDraw);
     sized?.observe(root);
+    const changed = new MutationObserver(afterDraw);
+    changed.observe(root, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["data-quest", "data-variant", "class", "style", "hidden", "open"] });
+    afterDraw();
     const d = drawn.current;
     return () => {
       root.removeEventListener("focusin", on); root.removeEventListener("focusout", off);
-      root.removeEventListener("scroll", afterDraw, { capture: true }); sized?.disconnect();
+      root.removeEventListener("scroll", afterDraw, { capture: true }); sized?.disconnect(); changed.disconnect();
       cancelAnimationFrame(d.raf); clearTimeout(d.timer); d.raf = 0; d.timer = undefined;
     };
   }, [ref]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -79,7 +82,6 @@ export function useReturnCue(ref: RefObject<HTMLElement | null>, { surface = "pa
     const was = variants.current;
     variants.current = new Map(items.map((el, i) => [keyOf(el, i, also), el.dataset.variant ?? ""]));
     const prev = places.current;
-    afterDraw();
     if (!prev.size) return;
     const back = items.find(el => el.dataset.variant === "returned" && LIVE.has(was.get(el.dataset.quest ?? "") ?? ""));
     if (!back) return;

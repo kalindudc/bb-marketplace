@@ -196,6 +196,7 @@ export function PartyPicture({ members, registry, onOpen, mini = false, quests =
   const { cue, settle } = useTavernMotion(surface);
   const lively = ambientMotion === "lively";
   const onRoad = members.some(m => memberPlace(m) === "road");
+  const layout = JSON.stringify(members.map(m => [m.threadId, memberPlace(m), m.state === "failed"]));
   useEffect(() => {
     if (!lively || !onRoad) return;
     const timer = setInterval(() => {
@@ -207,24 +208,36 @@ export function PartyPicture({ members, registry, onOpen, mini = false, quests =
   useLayoutEffect(() => {
     const el = root.current;
     if (!el) return;
-    const next = new Map<string, { place: string; x: number; y: number }>();
-    for (const node of el.querySelectorAll<HTMLElement>("[data-member]")) {
-      const id = node.dataset.member!, place = node.dataset.place!, r = node.getBoundingClientRect();
-      const was = seen.current.get(id);
-      if (was && was.place !== "road" && place === "road" && !node.classList.contains("fail")) {
-        const dx = was.x - r.left, dy = was.y - r.top, slide = Math.hypot(dx, dy) <= MAX_TRAVEL_PX;
-        cue(node, "sets out", {
-          key: id, ms: 450,
-          run: n => [slide
-            ? n.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 450, easing: "cubic-bezier(.65, 0, .35, 1)" })
-            : n.animate([{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "none" }], { duration: 300, delay: 150, easing: "cubic-bezier(.2, .8, .2, 1)", fill: "backwards" })],
-          onDone: () => cue(node, "road step", { key: id, ms: 2800, className: "mo-walk", ambient: true }),
-        });
+    const nodes = [...el.querySelectorAll<HTMLElement>("[data-member]")];
+    const record = (animate: boolean) => {
+      if (!nodes.length) { seen.current.clear(); return; }
+      const origin = el.getBoundingClientRect();
+      const next = new Map<string, { place: string; x: number; y: number }>();
+      for (const node of nodes) {
+        const id = node.dataset.member!, place = node.dataset.place!, r = node.getBoundingClientRect();
+        const x = r.left - origin.left, y = r.top - origin.top;
+        const was = seen.current.get(id);
+        if (animate && was && was.place !== "road" && place === "road" && !node.classList.contains("fail")) {
+          const dx = was.x - x, dy = was.y - y, slide = Math.hypot(dx, dy) <= MAX_TRAVEL_PX;
+          cue(node, "sets out", {
+            key: id, ms: 450,
+            run: n => [slide
+              ? n.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 450, easing: "cubic-bezier(.65, 0, .35, 1)" })
+              : n.animate([{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "none" }], { duration: 300, delay: 150, easing: "cubic-bezier(.2, .8, .2, 1)", fill: "backwards" })],
+            onDone: () => cue(node, "road step", { key: id, ms: 2800, className: "mo-walk", ambient: true }),
+          });
+        }
+        next.set(id, { place, x, y });
       }
-      next.set(id, { place, x: r.left, y: r.top });
-    }
-    seen.current = next;
-  });
+      seen.current = next;
+    };
+    record(true);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => record(false));
+    observer.observe(el, { box: "border-box" });
+    for (const node of nodes) observer.observe(node, { box: "border-box" });
+    return () => observer.disconnect();
+  }, [layout, mini, cue]);
   return <div ref={root} className={`party ${mini ? "mini" : ""}`} role="group" aria-label="The party (team)">{(["road", "table", "rest"] as const).map(place => { const here = members.filter(m => memberPlace(m) === place); return <div className={`zone ${place}`} key={place}><div className="zh"><b><Vocabulary word={place} /></b><span className="num">{here.length}</span></div><div className="zm">{here.length === 0 ? <span className="m">Nobody</span> : here.map(m => { const summary = memberSummary(m, members, registry, quests); return <div className={`pm ${m.state === "failed" ? "fail" : ""}`} key={m.threadId} data-member={m.threadId} data-place={place}>{renderMember ? renderMember(m, summary) : <MemberChip member={m} registry={registry} onOpen={onOpen} compact={mini} summary={summary} />}{!mini && <CheckIndependence member={m} />}{!mini && <GuardPosture member={m} />}{!mini && <Clamp className="pm-s" text={summary} />}{!renderMember && <PlacementFacts placement={m.placement} memberName={memberName(m, registry)} variant={mini ? "compact" : "row"} />}</div>; })}</div></div>; })}</div>;
 }
 

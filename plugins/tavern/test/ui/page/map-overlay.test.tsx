@@ -57,6 +57,22 @@ it.each([false,true])("reframes for a resized note only while untouched (touched
   else expect(after).not.toBe(before);
   view.unmount();
 });
+it("does not re-read note height for the same note after unrelated renders", () => {
+  const getter = vi.mocked(Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight")!.get!);
+  const view = render(<MapViewport width={400} height={100} label="Map" note={<p>No active quests.</p>}><div>Node</div></MapViewport>);
+  const note = view.container.querySelector(".tv-mv-note");
+  const reads = () => getter.mock.contexts.filter(context => context === note).length;
+  const before = reads();
+  view.rerender(<MapViewport width={400} height={100} label="Map" note={<p>No active quests.</p>} status="Copied"><div>Node</div></MapViewport>);
+  const unrelated = reads() - before;
+  noteHeight = 140;
+  const prior = transform(view.container);
+  act(() => { for (const observer of observers) observer(); });
+  console.log("L1 map", JSON.stringify({ unrelated, resizeReads: reads() - before - unrelated }));
+  expect(unrelated).toBe(0);
+  expect(transform(view.container)).not.toEqual(prior);
+  view.unmount();
+});
 it("does not reserve card space when there is no note", () => {
   const view = render(<MapViewport width={400} height={300} label="Map"><div>Node</div></MapViewport>);
   expect(transform(view.container)).toEqual({ y: 50, k: 1 });

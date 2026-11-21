@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useBorderBoxWidth } from "./border-box";
 
 /** Per-device view memory (scroll, folds, filters), in local storage under Tavern's plugin id. Display state only; nothing here reaches the server. */
 /** A store: its key prefix, the index that orders its keys by last write, and how many keys it keeps. */
@@ -31,6 +32,13 @@ export function writeRemembered(key: string, value: unknown) {
     for (const old of index.splice(0, Math.max(0, index.length - space.max))) s.removeItem(space.prefix + old);
     s.setItem(space.index, JSON.stringify(index));
   } catch { /* storage full or blocked: the view simply is not remembered */ }
+}
+
+export function useRememberedWidth<T extends HTMLElement>(key: string) {
+  return useBorderBoxWidth<T>(useCallback((width: number) => {
+    const rounded = Math.round(width);
+    if (rounded > 0 && rounded !== readRemembered<number>(key)) writeRemembered(key, rounded);
+  }, [key]));
 }
 
 /** useState that survives leaving the panel. `accept` rejects stale or malformed values, which fall back to `initial`. */

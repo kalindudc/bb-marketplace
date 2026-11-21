@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
@@ -37,6 +37,43 @@ describe("PartyPicture", () => {
     fx.tick(2800); await flush();
     await waitFor(() => expect(slot.container.querySelector(".pm.mo-walk")).toBeNull());
     slot.lifecycle.unmount();
+  });
+
+  it("does not re-read party geometry for equivalent member data but measures a road transition", async () => {
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect");
+    try {
+      const slot = await mount();
+      try {
+        rect.mockClear();
+        act(() => move!("idle"));
+        const unrelated = rect.mock.calls.length;
+        rect.mockClear();
+        act(() => move!("working"));
+        const transition = rect.mock.calls.length;
+        console.log("L1 party reads", JSON.stringify({ unrelated, transition }));
+        expect(unrelated).toBe(0);
+        expect(transition).toBeGreaterThan(0);
+        expect([...motion.cues].map(c => c.kind)).toEqual(["sets out"]);
+      } finally { slot.lifecycle.unmount(); }
+    } finally { rect.mockRestore(); }
+  });
+
+  it("slides a member onto the road after the page scrolls without a layout change", async () => {
+    let scroll = 0;
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const row = (this as HTMLElement).dataset.place;
+      const top = 100 - scroll + (row === "table" ? 100 : 0);
+      return { left: 0, top, width: 100, height: 24, right: 100, bottom: top + 24, x: 0, y: top, toJSON: () => ({}) };
+    });
+    const slot = await mount();
+    try {
+      scroll = 400;
+      act(() => move!("idle"));
+      act(() => move!("working"));
+      const frame = fx.all.find(animation => animation.target.matches('[data-place="road"]'))?.keyframes[0];
+      console.log("L1 party after scroll", JSON.stringify(frame));
+      expect(frame).toEqual({ transform: "translate(0px, 100px)" });
+    } finally { slot.lifecycle.unmount(); rect.mockRestore(); }
   });
 
   it("never moves a failed member, who waits at the table", async () => {

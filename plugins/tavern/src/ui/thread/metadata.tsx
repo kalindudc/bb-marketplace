@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { experimental_useRpcQuery, experimental_useRpcMutation, type ExperimentalMessageMetadataProps, type ExperimentalThreadTabProps, type JsonValue, experimental_useAppPanel, useSdk, useBbContext } from "@get-bb/plugin-sdk/app";
 import { rpcContract } from "../../shared/contract";
 import { ROUTE_KINDS, type Route, type Rule } from "../../shared/schema";
 import { messageKey } from "../../shared/text";
-import { Glyph, QueryState, RULE_SCOPE, SkGlyph, SkLine, Skeleton, TimeAgo, readRemembered, rememberCount, writeRemembered, ruleScopeLabel, useSkeletonCount, useSkeletonDelay, useWidenRule } from "../kit";
+import { Glyph, QueryState, RULE_SCOPE, SkGlyph, SkLine, Skeleton, TimeAgo, readRemembered, rememberCount, ruleScopeLabel, useSkeletonCount, useSkeletonDelay, useWidenRule } from "../kit";
+import { useRememberedWidth } from "../kit/remember";
 export function routeForMetadata(routes: Route[], at: number, text?: string) { const exact = routes.filter(r => r.messageAt === at); if (exact.length === 1)
     return exact[0]!; const matches = text === undefined ? [] : routes.filter(r => r.messageKey === messageKey(text)); return matches.length === 1 ? matches[0]! : null; }
 type Sdk = ReturnType<typeof useSdk>;
@@ -84,8 +85,7 @@ function UserReadAs({ threadId, at, messageId }: {
     // The line's width last time: the user's bubble is as wide as its widest line, so a wider stand-in would move the bubble sideways.
     const widthKey = `skel:thread:readas-w:${messageId}`;
     const [seenWidth] = useState(() => { const v = readRemembered<number>(widthKey); return typeof v === "number" && v > 0 ? Math.round(v) : null; });
-    const line = useRef<HTMLDivElement>(null);
-    useEffect(() => { const w = Math.round(line.current?.getBoundingClientRect().width ?? 0); if (w > 0 && w !== seenWidth) writeRemembered(widthKey, w); });
+    const line = useRememberedWidth<HTMLDivElement>(widthKey);
     if (loading) return seen > 0 ? <SkReadAs member={seen === 2} shown={late} width={seenWidth} /> : null;
     if (decor.data?.member?.role === "member")
         return <div ref={line} className="tavern readas member"><Glyph name="route" size={12} /><span>The Keeper hears this in its next tick</span></div>;
