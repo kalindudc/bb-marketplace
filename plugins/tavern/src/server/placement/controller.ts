@@ -179,7 +179,7 @@ export class PlacementController {
     const message = error instanceof Error ? error.message : String(error);
     this.runtime.keeper.store.event(this.runtime.keeper.now(), record.keeperThreadId, record.questId, "hire.waiting", `Hire waiting: ${message}`,
       { classId: record.classId, message }, { kind: "tavern" });
-    this.runtime.keeper.changed(record.keeperThreadId, record.questId);
+    this.runtime.keeper.changed(this.services.store.currentKeeper(record), record.questId);
     return new PlacementHireBlocked(message);
   }
 
@@ -309,7 +309,7 @@ export class PlacementController {
     const members = [];
     for (let after: string | null = null; ;) {
       const page = this.services.store.activePage(after, 1000);
-      for (const record of page) if (record.keeperThreadId === keeperThreadId && (!questId || record.questId === questId))
+      for (const record of page) if (this.services.store.currentKeeper(record) === keeperThreadId && (!questId || record.questId === questId))
         members.push({ memberThreadId: record.memberThreadId, placement: this.view(record), line: this.line(record) });
       if (page.length < 1000) break;
       after = page[page.length - 1].id;
@@ -386,7 +386,7 @@ export class PlacementController {
     if (!member) throw new Error("This placement has no live member to retry setup.");
     record = this.services.store.retry(placementId, generation);
     if (!record.memberThreadId) throw new Error("This placement has no dispatched member; retry the original hire rather than allocating again.");
-    await this.runtime.tell(record.keeperThreadId, record.memberThreadId, "Setup can continue: call tavern_ready {} again before other work.");
+    await this.runtime.tell(this.services.store.currentKeeper(record), record.memberThreadId, "Setup can continue: call tavern_ready {} again before other work.");
     this.services.store.assertCurrent(placementId, generation);
     return this.view(record);
   }

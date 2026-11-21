@@ -413,11 +413,9 @@ export class KeeperMemory {
       return (
         this.k.store.messageText(route.sourceMessageId) ?? route.summary
       ).slice(0, 200);
-    const messages = this.k.store.db
-      .prepare(
-        "SELECT text FROM tavern_messages WHERE thread_id=? AND at=? ORDER BY rowid LIMIT 20",
-      )
-      .all(route.keeperThreadId, route.messageAt) as { text: string }[];
+    const owners = this.k.store.keeperEventOwners(route.keeperThreadId);
+    const messages = this.k.store.db.prepare(`SELECT text FROM tavern_messages WHERE thread_id IN (${owners.map(() => "?").join(",")}) AND at=? ORDER BY rowid LIMIT 20`)
+      .all(...owners, route.messageAt) as { text: string }[];
     return (
       messages.find((row) => messageKey(row.text) === route.messageKey)?.text ??
       route.summary

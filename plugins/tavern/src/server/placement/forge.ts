@@ -72,7 +72,7 @@ export class PlacementForge {
       const live = services.store.assertCurrent(record.id, record.generation);
       if (live.memberThreadId !== threadId || live.hostId !== record.hostId || live.environmentId !== record.environmentId || live.root !== record.root || live.memberBranch !== record.memberBranch || !isDeepStrictEqual(runtime.scopes!.api.hostTemplate(threadId).template, scope) || !isDeepStrictEqual(live.pullRequests, record.pullRequests)) throw new Error("The member's placement changed during the draft call.");
     };
-    const event = (type: string, text: string, data: Record<string, unknown>) => runtime.keeper.store.event(runtime.keeper.now(), record.keeperThreadId, member.boardQuestId, type, text, { memberThreadId: threadId, profile: profile.id, ...data });
+    const event = (type: string, text: string, data: Record<string, unknown>) => runtime.keeper.store.event(runtime.keeper.now(), services.store.currentKeeper(record), member.boardQuestId, type, text, { memberThreadId: threadId, profile: profile.id, ...data });
     try {
       current();
       const source = await readSourceIdentity(runtime.bb, threadId, record.projectId, signal);
@@ -135,11 +135,11 @@ export class PlacementForge {
         event("member.draft-pr-failed", `Draft PR: ${profile.name}, ${opened.failureClass}`, opened);
         return `Forge ${profile.name}: ${opened.failureClass}.\n${opened.lines}`;
       }
-      const pr = runtime.keeper.store.recordPullRequest({ keeperThreadId: record.keeperThreadId, boardQuestId: member.boardQuestId, projectId: record.projectId,
+      const pr = runtime.keeper.store.recordPullRequest({ keeperThreadId: services.store.currentKeeper(record), boardQuestId: member.boardQuestId, projectId: record.projectId,
         url: opened.url, forge: profile.kind === "github" ? "gh" : profile.id, head: branch, base, owner: threadId,
         memberHead: inspection.head, pushedHead: pinned.homeCommit, verifiedCommit: null, state: opened.state === "merged" || opened.state === "closed" ? opened.state : "draft" }, runtime.keeper.now());
       event("member.draft-pr-opened", pullRequestLine(pr), { ...draftPush, url: opened.url });
-      runtime.keeper.changed(threadId);
+      runtime.keeper.changed(threadId, pr.boardQuestId);
       return `${pullRequestLine(pr)}\nMember head: ${inspection.head}\nPushed home commit: ${pinned.homeCommit}\n${worktree.changed.length ? `Uncommitted files not included:\n${worktree.changed.join("\n")}` : "No uncommitted files were included."}`;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -173,9 +173,11 @@ export class PlacementForge {
     if (!base || base === env.branchName) throw new Error("Name a base branch distinct from the member's own branch.");
     const existing = runtime.keeper.store.all("pullRequests").find(pr => pr.projectId === projectId && pr.head === env.branchName);
     if (existing && existing.base !== base) return `This branch's draft targets ${existing.base}; moving it comes later`;
-    const pr = runtime.keeper.store.recordPullRequest({ keeperThreadId: member.keeperThreadId, boardQuestId: member.boardQuestId, projectId,
+    const current = runtime.keeper.member(threadId);
+    if (!current?.keeperThreadId || current.boardQuestId !== member.boardQuestId) throw new Error("The member's pull request assignment changed.");
+    const pr = runtime.keeper.store.recordPullRequest({ keeperThreadId: current.keeperThreadId, boardQuestId: current.boardQuestId, projectId,
       url: input.url, forge: input.forge ?? (new URL(input.url).hostname === "github.com" ? "gh" : null), head: env.branchName, base, owner: threadId, memberHead: inspection.head, pushedHead: null, verifiedCommit: null, state: "draft" }, runtime.keeper.now());
-    runtime.keeper.changed(threadId);
+    runtime.keeper.changed(threadId, pr.boardQuestId);
     return pullRequestLine(pr);
   }
 }

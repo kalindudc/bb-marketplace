@@ -4,6 +4,7 @@ import { changeSpendBudget } from "../spend-budget";
 import { DELEGATABLE_KINDS, preapprovalWords, type DelegationKind } from "../../shared/quest-authority";
 import { clusterCommandTarget, fallbackActs } from "../../scope/acts";
 import { clusterWriteCommands } from "../../scope/engine";
+import { KeeperSuccessionStore } from "./succession-store";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { KeeperCallKind } from "../../shared/undo-lane";
@@ -107,13 +108,14 @@ export class Keeper {
   routineAskOpened: (ask: Ask) => Promise<void> = async () => {};
   readonly authority = new QuestAuthority(this);
   readonly memory = new KeeperMemory(this);
+  readonly succession: KeeperSuccessionStore;
   private readonly syncing = new Set<string>();
   constructor(
     readonly store: KeeperStore,
     readonly journal: JournalPort,
     readonly now = Date.now,
     private readonly invalidate: (tags: string[]) => void = () => {},
-  ) {}
+  ) { this.succession = new KeeperSuccessionStore(store, now); }
   changed(threadId?: string | null, questId?: string | null) {
     this.invalidate(this.changedTags(threadId, questId));
   }
@@ -171,6 +173,7 @@ export class Keeper {
     return this.store.get("members", threadId);
   }
   require(threadId: string, role: "keeper" | "member") {
+    this.succession.assertMutable(threadId);
     const member = this.member(threadId);
     if (!member || member.role !== role)
       throw new Error(`Only a Tavern ${role} may call this tool`);
@@ -263,7 +266,7 @@ export class Keeper {
     this.owned(actor.threadId, quest.id);
     const route = this.store.db.prepare("SELECT data FROM tavern_records WHERE kind='routes' AND json_extract(data,'$.keeperThreadId')=? AND json_extract(data,'$.sourceMessageId')=?").all(actor.threadId, messageId) as { data: string }[];
     const routed = route.map(row => JSON.parse(row.data) as Route).some(route => routeQuestIds(route).includes(quest.id) && !route.classSelectionOnly);
-    const message = this.store.db.prepare("SELECT text,at FROM tavern_messages WHERE id=? AND thread_id=? AND accepted=2 AND length(trim(text))>0").get(messageId, actor.threadId) as { text: string; at: number } | undefined;
+    const message = this.store.messageReceipt(actor.threadId, messageId, true);
     if (!routed || !message) throw new Error("Cite the user's own routed message for this quest");
     if (this.store.db.prepare("SELECT 1 FROM tavern_events WHERE json_extract(data,'$.receipt.kind')='user-message' AND json_extract(data,'$.receipt.id')=?").get(messageId)) throw new Error("This message is already a lifecycle receipt");
     if (this.store.db.prepare("SELECT 1 FROM tavern_events WHERE type='route.cancelled' AND json_extract(data,'$.receiptId')=?").get(messageId)) throw new Error("This message was cancelled");
@@ -408,6 +411,7 @@ export class Keeper {
     });
   }
   guard(threadId: string, questId: string | null) {
+    this.succession.assertMutable(threadId);
     const runtime = this.store.runtime(threadId);
     const routes = this.applicableRoutes(threadId);
     if (
@@ -634,7 +638,7 @@ export class Keeper {
       .at(-1)?.id;
     if (!route) throw new Error("Opening a board quest requires an unbound new-quest route from an accepted user message. Ask for the goal; never open a placeholder.");
     const source = this.store.get("routes", route)!;
-    const receipt = source.sourceMessageId && this.store.db.prepare("SELECT id FROM tavern_messages WHERE id=? AND thread_id=? AND accepted=2 AND length(trim(text))>0").get(source.sourceMessageId, threadId);
+    const receipt = source.sourceMessageId && this.store.messageReceipt(threadId, source.sourceMessageId, true);
     if (!receipt || source.classSelectionOnly) throw new Error("The new-quest route needs its genuine accepted user receipt containing a goal; class selection is not a goal.");
     authorize("openQuest", { level: "user-in-words", receipt: source.sourceMessageId! });
     const q: BoardQuest = {
@@ -943,7 +947,7 @@ export class Keeper {
     return { routeId, ...this.steerMessage(q, route) };
   }
   private steerMessage(q: BoardQuest, route: Route) {
-    const message = this.store.db.prepare("SELECT text,at FROM tavern_messages WHERE id=? AND thread_id=? AND accepted=2 AND length(trim(text))>0").get(route.sourceMessageId ?? "", q.keeperThreadId) as { text: string; at: number } | undefined;
+    const message = this.store.messageReceipt(q.keeperThreadId, route.sourceMessageId ?? "", true);
     if (!message || route.classSelectionOnly) throw new Error("Cite the user's own routed steer for this quest");
     return message;
   }
@@ -1160,7 +1164,8 @@ export class Keeper {
     eventData: Record<string, unknown> = {},
     trusted = false,
   ) {
-    this.require(threadId, "keeper");
+    if (!trusted) this.require(threadId, "keeper");
+    else if (this.member(threadId)?.role !== "keeper" || this.succession.current(threadId) !== threadId) throw new Error("A Tavern ask needs the current Keeper.");
     const questId = input.boardQuestId ?? null;
     if (input.releaseCheckerHandoff) {
       if (!questId) throw new Error("A checker-handoff release ask needs its quest");
@@ -1181,9 +1186,14 @@ export class Keeper {
         holds: [], meanwhile: "Maker work and the Keeper conversation can continue; checker handoff stays held." };
     }
     if (questId) {
-      if (trusted && input.effect.type === "retry-stop") this.owned(threadId, questId);
-      else this.liveQuest(threadId, questId);
-      if (!trusted && !input.releaseHoldId) this.guard(threadId, questId);
+      if (trusted) {
+        const quest = this.quest(questId);
+        if (quest.keeperThreadId !== threadId) throw new Error("A Keeper may change only its own board quests");
+        if (input.effect.type !== "retry-stop" && !isOpenQuest(quest)) throw new Error("This board quest has ended or is stopping");
+      } else {
+        this.liveQuest(threadId, questId);
+        if (!input.releaseHoldId) this.guard(threadId, questId);
+      }
     }
     if (input.kind !== "decision" && input.proceedInMinutes != null)
       throw new Error(
@@ -1276,7 +1286,7 @@ export class Keeper {
         questId,
         "ask.opened",
         ask.question,
-        { askId: ask.id, lane: projected.lane, keeperName: this.name(this.require(threadId, "keeper")), ...eventData },
+        { askId: ask.id, lane: projected.lane, keeperName: this.name(this.member(threadId)!), ...eventData },
         { kind: "agent", threadId },
       );
     });

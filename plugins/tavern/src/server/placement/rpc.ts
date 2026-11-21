@@ -185,7 +185,7 @@ export function placementHandlers(runtime: TavernRuntime): OptionalRpcContext<Ex
       } catch (error) {
         return { ok: false, message: error instanceof Error ? error.message : String(error) };
       } finally {
-        runtime.bb.rpc.experimental_invalidate([tags.room(), tags.rows(), ...(record.questId ? [tags.boardQuest(record.questId)] : []), ...(record.memberThreadId ? [tags.thread(record.memberThreadId)] : []), tags.thread(record.keeperThreadId)]);
+        runtime.bb.rpc.experimental_invalidate([tags.room(), tags.rows(), ...(record.questId ? [tags.boardQuest(record.questId)] : []), ...(record.memberThreadId ? [tags.thread(record.memberThreadId)] : []), tags.thread(runtime.placements().store.currentKeeper(record))]);
       }
     },
     placementCatalog: (input, context?: ExperimentalPluginRpcHandlerContext) => catalog(runtime, input, context?.experimental_signal),

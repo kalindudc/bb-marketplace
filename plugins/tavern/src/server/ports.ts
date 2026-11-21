@@ -38,6 +38,8 @@ export interface JournalPort {
 export type JournalReview = { before: JournalEntry; after: JournalEntry; sequence: number; undone?: boolean };
 
 export interface JournalDeps {
+  assertWritable?(threadId: string): void;
+  isRetired?(threadId: string): boolean;
   beforeVerdict?(callerThreadId: string, targetThreadId: string, entryIds: string[]): Promise<(() => string | void) | void>;
   /** Private proof receipt, inside the review transaction; never an agent-visible event. */
   reviewed?(review: JournalReview): void;

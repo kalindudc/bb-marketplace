@@ -31,14 +31,18 @@ import { actorSchema, readStoredActor } from "../../shared/schema";
 const eventQuestSql = `coalesce(tavern_events.board_quest_id, CASE tavern_events.type
   WHEN 'route.recorded' THEN (SELECT json_extract(opening.data,'$.boardQuestId') FROM tavern_records opening
     WHERE opening.kind='routes' AND opening.id=json_extract(tavern_events.data,'$.routeId')
-    AND json_extract(opening.data,'$.keeperThreadId')=tavern_events.keeper_thread_id AND json_extract(opening.data,'$.kind')='new-quest')
+    AND json_extract(opening.data,'$.kind')='new-quest')
   WHEN 'user.message' THEN (SELECT json_extract(opening.data,'$.boardQuestId') FROM tavern_records opening
     WHERE opening.kind='routes' AND json_extract(opening.data,'$.sourceMessageId')=json_extract(tavern_events.data,'$.receiptId')
-    AND json_extract(opening.data,'$.keeperThreadId')=tavern_events.keeper_thread_id AND json_extract(opening.data,'$.kind')='new-quest'
+    AND json_extract(opening.data,'$.kind')='new-quest'
     ORDER BY opening.rowid DESC LIMIT 1) END)`;
 const visibleEventSql = `${nonAlertEventSql} AND NOT EXISTS (SELECT 1 FROM tavern_records q WHERE q.kind='quests' AND q.id=${eventQuestSql} AND q.archived_at IS NOT NULL)`;
 
 export interface Records {
+  keeperCharges: import("./succession-store").KeeperCharge;
+  keeperSpendIntervals: { chargeId: string; threadId: string; from: number | null; until: number | null; activityAt?: number };
+  keeperSuccessions: import("./succession-store").KeeperSuccession;
+  successionThreads: import("./succession-store").SuccessionThread;
   stopAll: import("../../shared/stop-all").StopAllState;
   pullRequests: PullRequest;
   taleDeliveries: import("zod").infer<typeof import("../tale").taleDeliverySchema>;
@@ -378,9 +382,12 @@ export class KeeperStore {
   get<K extends keyof Records>(kind: K, id: string): Records[K] | null {
     if (kind === "members" && this.view.members) return (this.view.members.get(id) ?? null) as Records[K] | null;
     const cached = this.view.records.get(kind)?.get(id);
-    if (cached !== undefined) return cached as Records[K];
+    if (cached !== undefined && !(kind === "successionThreads" && this.db.inTransaction)) return cached as Records[K] | null;
     const row = this.db.prepare("SELECT data FROM tavern_records WHERE kind=? AND id=?").get(kind, id) as { data: string } | undefined;
-    if (row === undefined) return null;
+    if (row === undefined) {
+      if (kind === "successionThreads" && !this.db.inTransaction) this.rememberRecord(kind, id, null);
+      return null;
+    }
     const value = JSON.parse(row.data) as Records[K];
     // Legacy asks derive an effect from other rows that can change independently.
     if (kind === "asks" && (!(value as Ask).effect || (value as Ask).reversible === undefined)) return freezeJson(this.decode(kind, row.data));
@@ -694,6 +701,23 @@ export class KeeperStore {
       .reverse()
       .map((row) => this.decode(kind, row.data));
   }
+  keeperEventOwners(threadId: string): string[] {
+    const chargeId = this.get("successionThreads", threadId)?.chargeId;
+    if (!chargeId || this.get("keeperCharges", chargeId)?.current !== threadId) return [threadId];
+    const prior = this.db.prepare(`SELECT json_extract(data,'$.predecessor') AS id FROM tavern_records
+      WHERE kind='keeperSuccessions' AND json_extract(data,'$.chargeId')=? AND json_extract(data,'$.state')='done'`).all(chargeId) as { id: string }[];
+    return [threadId, ...prior.map(row => row.id)];
+  }
+  spendIntervals(threadId: string): Records["keeperSpendIntervals"][] {
+    const current = this.get("keeperSpendIntervals", threadId);
+    if (!current) return [{ chargeId: threadId, threadId, from: null, until: null }];
+    const rows = this.db.prepare("SELECT data FROM tavern_records WHERE kind='keeperSpendIntervals' AND json_extract(data,'$.chargeId')=? ORDER BY json_extract(data,'$.from')").all(current.chargeId) as { data: string }[];
+    return rows.map(row => JSON.parse(row.data) as Records["keeperSpendIntervals"]);
+  }
+  messageReceipt(keeperId: string, id: string, settled = false) {
+    const row = this.db.prepare("SELECT thread_id, text, at, accepted FROM tavern_messages WHERE id=?").get(id) as { thread_id: string; text: string; at: number; accepted: number } | undefined;
+    return row && (!settled || row.accepted === 2 && row.text.trim()) && this.keeperEventOwners(keeperId).includes(row.thread_id) ? row : undefined;
+  }
   messageText(receiptId: string) {
     return (
       this.db
@@ -934,7 +958,8 @@ export class KeeperStore {
     return this.readEvents("WHERE board_quest_id=? AND type=? ORDER BY id DESC LIMIT 1", [questId, type])[0] ?? null;
   }
   eventSequence(keeperId: string): number {
-    return (this.db.prepare("SELECT COALESCE(MAX(id),0) AS id FROM tavern_events WHERE keeper_thread_id=?").get(keeperId) as { id: number }).id;
+    const owners = this.keeperEventOwners(keeperId);
+    return (this.db.prepare(`SELECT COALESCE(MAX(id),0) AS id FROM tavern_events WHERE keeper_thread_id IN (${owners.map(() => "?").join(",")})`).get(...owners) as { id: number }).id;
   }
   heldNews(questId: string, cursor: number, through: number, limit = 100): TavernEvent[] {
     return this.readEvents(`WHERE board_quest_id=? AND id>? AND id<=? AND ${visibleEventSql} AND type NOT IN ('user.message','route.recorded','route.corrected','journal.changed','questlog.changed') ORDER BY id ASC LIMIT ?`, [questId, cursor, through, limit]);
@@ -964,9 +989,10 @@ export class KeeperStore {
     limit = 100,
     visibleOnly = false,
   ): TavernEvent[] {
+    const owners = this.keeperEventOwners(keeperThreadId);
     return this.readEvents(
-      `WHERE keeper_thread_id=? AND id>? ${visibleOnly ? `AND ${visibleEventSql}` : ""} ORDER BY id ASC LIMIT ?`,
-      [keeperThreadId, after, limit],
+      `WHERE keeper_thread_id IN (${owners.map(() => "?").join(",")}) AND id>? ${visibleOnly ? `AND ${visibleEventSql}` : ""} ORDER BY id ASC LIMIT ?`,
+      [...owners, after, limit],
     );
   }
   momentEvents(keeperThreadId: string, ids: number[]) {
@@ -974,12 +1000,13 @@ export class KeeperStore {
     return this.readEvents(`WHERE keeper_thread_id=? AND id IN (SELECT value FROM json_each(?)) AND ${visibleEventSql} ORDER BY id ASC`, [keeperThreadId, JSON.stringify(ids)]);
   }
   eventCount(keeperThreadId: string, after: number, visibleOnly = false) {
+    const owners = this.keeperEventOwners(keeperThreadId);
     return (
       this.db
         .prepare(
-          `SELECT count(*) AS n FROM tavern_events WHERE keeper_thread_id=? AND id>? ${visibleOnly ? `AND ${visibleEventSql}` : ""}`,
+          `SELECT count(*) AS n FROM tavern_events WHERE keeper_thread_id IN (${owners.map(() => "?").join(",")}) AND id>? ${visibleOnly ? `AND ${visibleEventSql}` : ""}`,
         )
-        .get(keeperThreadId, after) as { n: number }
+        .get(...owners, after) as { n: number }
     ).n;
   }
   private readEvents(clause: string, args: (string | number)[]): TavernEvent[] {
@@ -1008,15 +1035,12 @@ export class KeeperStore {
     }));
   }
   events(keeperThreadId?: string, after = 0, limit = 200): TavernEvent[] {
+    const owners = keeperThreadId === undefined ? [] : this.keeperEventOwners(keeperThreadId);
     const rows = this.db
       .prepare(
-        `SELECT * FROM tavern_events WHERE id > ? ${keeperThreadId === undefined ? "" : "AND keeper_thread_id = ?"} ORDER BY id DESC LIMIT ?`,
+        `SELECT * FROM tavern_events WHERE id > ? ${owners.length ? `AND keeper_thread_id IN (${owners.map(() => "?").join(",")})` : ""} ORDER BY id DESC LIMIT ?`,
       )
-      .all(
-        ...(keeperThreadId === undefined
-          ? [after, limit]
-          : [after, keeperThreadId, limit]),
-      ) as {
+      .all(after, ...owners, limit) as {
       id: number;
       at: number;
       keeper_thread_id: string | null;

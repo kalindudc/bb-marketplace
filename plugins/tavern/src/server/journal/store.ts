@@ -207,6 +207,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     return validateEntries(JSON.parse(raw)).map(e => ({ ...e, threadId, owner: e.owner ? threadId : null, link: null, boardQuestId: null, status: e.status === "verified" ? "done" : e.status, review: null }));
   }
   async function ready(threadId: string, force = true): Promise<void> {
+    if (deps.isRetired?.(threadId)) return;
     initialize(threadId);
     const existing = hydration.get(threadId);
     if (existing) return existing;
@@ -215,7 +216,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     const task = (async () => {
       await refreshOwnership(force);
       const metadata = await bb.sdk.threads.getPluginMetadata({ threadId, pluginId: "quests" });
-      if (disposed || deleted.has(threadId)) return;
+      if (disposed || deleted.has(threadId) || deps.isRetired?.(threadId)) return;
       const wasHydrated = !!journalRow(threadId)!.hydrated;
       let imported: ReturnType<typeof normalizeLegacy> | null = null;
       let legacyProblem = false;
@@ -322,7 +323,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     if (!disposed && !deleted.has(threadId) && (errors.get(threadId)?.retryAt ?? 0) <= Date.now()) void ready(threadId, false).catch(() => {});
   }
   function syncBoardQuests(threadId: string): void {
-    if (!deps.boardQuestsOf || !journalRow(threadId) || disposed || deleted.has(threadId)) return;
+    if (!deps.boardQuestsOf || !journalRow(threadId) || disposed || deleted.has(threadId) || deps.isRetired?.(threadId)) return;
     const before = localEntries(threadId);
     const after = boardMirrors(before, deps.boardQuestsOf(threadId), Date.now());
     if (JSON.stringify(before) === JSON.stringify(after)) return;
@@ -371,6 +372,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     quietTimers.set(threadId, timer);
   }
   function safeProgress(threadId: string) {
+    if (deps.isRetired?.(threadId)) return progress([]);
     try {
       initialize(threadId); scheduleRead(threadId); syncBoardQuests(threadId);
       const entries = ownedElsewhere && readOnly.has(threadId) ? readOnly.get(threadId)! : localEntries(threadId);
@@ -379,6 +381,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     } catch (error) { reportReadError(threadId, error); return progress([]); }
   }
   function get(threadId: string): Journal {
+    if (deps.isRetired?.(threadId)) return minimal(threadId);
     try {
       initialize(threadId); scheduleRead(threadId); syncBoardQuests(threadId);
       const entries = ownedElsewhere && readOnly.has(threadId) ? readOnly.get(threadId)! : localEntries(threadId);
@@ -388,6 +391,8 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
   }
   const trusted = (actor: Actor) => canManageLinks(actor, deps.roleOf);
   function mutate(threadId: string, input: JournalAction, actor: Actor): { message: string } {
+    if (actor.kind === "agent") deps.assertWritable?.(actor.threadId);
+    deps.assertWritable?.(threadId);
     initialize(threadId);
     if (!trusted(actor) && !ownershipKnown) throw new Error("Journal metadata ownership is being checked. Retry after the view refreshes.");
     if (!trusted(actor) && ownedElsewhere) throw new Error("pi-quests is enabled. Disable it before editing Tavern's journal so there is only one checklist writer.");
@@ -462,6 +467,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     return { message: result.message };
   }
   function edit(threadId: string, edit: JournalEdit, actor: Actor): { message: string } {
+    deps.assertWritable?.(threadId);
     get(threadId);
     if (!trusted(actor) && !journalRow(threadId)!.hydrated) throw new Error("The old journal is being imported. Retry this edit after the view refreshes.");
     if (edit.op === "status" && (edit.status === "verified" || edit.status === "rejected")) throw new Error("Only the assigned Warden can verify or reject through the journal tool.");
@@ -490,7 +496,9 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     try {
       const action = actionSchema.parse(input);
       const threadId = action.threadId ?? callerThreadId;
+      deps.assertWritable?.(callerThreadId);
       await ready(threadId, false);
+      deps.assertWritable?.(callerThreadId);
       syncBoardQuests(threadId);
       const actor: Actor = { kind: "agent", threadId: callerThreadId };
       const entries = localEntries(threadId);

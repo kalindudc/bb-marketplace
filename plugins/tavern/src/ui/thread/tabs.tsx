@@ -8,11 +8,13 @@ import { QuestAuthority, activeHold, heldQuests, CheckIndependence, GuardPosture
 import { revealAsk } from "./state";
 import { BriefSteerLine } from "../kit/brief-steer";
 import { summaryPath } from "../kit/summary-card";
+import { KeeperSuccessionRecord } from "../kit/succession";
 import "./skeletons.css";
 export { JournalTab } from "./journal";
 
 export const JOURNAL_TAB: ExperimentalTabReference & { availability: "action"; context: { kind: "thread" } } = { id: "journal", context: { kind: "thread" }, availability: "action" };
 export const LEDGER_TAB: ExperimentalTabReference & { availability: "action"; context: { kind: "thread" } } = { id: "ledger", context: { kind: "thread" }, availability: "action" };
+
 export function useKeeperVisible({ threadId }: ExperimentalThreadTabProps) { const { data } = experimental_useRpcQuery({ contract: rpcContract, method: "decor", input: { threadId } }); return data?.member?.role === "keeper"; }
 
 /** One standing rule: its scope line with the actions, then the rule in full, since it is what the actions act on. */
@@ -112,6 +114,7 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
         {data?.lastReanchorAt != null && <p className="m small">Re-anchored {clockTime(data.lastReanchorAt)} · <TimeAgo at={data.lastReanchorAt} /> · survives compaction</p>}
       </header>
       <QueryState error={query.error ?? registry.error ?? error} loading={query.isLoading} retry={() => void query.refetch()} label="the ledger" skeleton={<SkLedger quests={skeletonQuests} />} />
+      {data?.succession && <KeeperSuccessionRecord view={data.succession} threadId={threadId} />}
       {data && <QuietNotice threadId={threadId} since={data.quietSince} />}
       {data && (() => {
         const live = data.boardQuests.filter(q => q.archivedAt === null && q.phase !== "done" && q.phase !== "stopped");

@@ -11,7 +11,7 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 
 function receipt(k: Keeper, keeperId: string, sourceId: string | null): string | undefined {
   if (sourceId === null) return undefined;
-  return (k.store.db.prepare("SELECT text FROM tavern_messages WHERE id=? AND thread_id=?").get(sourceId, keeperId) as { text: string } | undefined)?.text;
+  return k.store.messageReceipt(keeperId, sourceId)?.text;
 }
 function questRequestRoutes(k: Keeper, keeperId: string, questId: string) {
   return (k.store.db.prepare(`SELECT data FROM tavern_records WHERE kind='routes' AND json_extract(data,'$.keeperThreadId')=?
@@ -110,7 +110,7 @@ export function readRequestSources(k: Keeper, actorId: string, input: { manifest
   const manifests = [memberDetails(k.store, member.threadId).delivery?.requestSources, state.requestSources].filter(value => value != null).map(value => requestSourcesSchema.parse(value));
   const manifest = input.manifestId ? manifests.find(value => value.id === input.manifestId) : manifests[0];
   if (!manifest) throw new Error("Unknown frozen request manifest for this member.");
-  if (manifest.keeperThreadId !== member.keeperThreadId || manifest.boardQuestId !== member.boardQuestId) throw new Error("The request manifest belongs to another quest.");
+  if (k.succession.current(manifest.keeperThreadId) !== member.keeperThreadId || manifest.boardQuestId !== member.boardQuestId) throw new Error("The request manifest belongs to another quest.");
   const sourceIndex = input.sourceIndex ?? 0, offset = input.offset ?? 0;
   if (!Number.isSafeInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= manifest.sources.length && (sourceIndex !== 0 || manifest.sources.length !== 0)) throw new Error("Source index is outside the manifest.");
   const source = manifest.sources[sourceIndex] ?? null;

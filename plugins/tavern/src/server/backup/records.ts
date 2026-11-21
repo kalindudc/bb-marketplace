@@ -1,4 +1,5 @@
 import { KeeperStore } from "../keeper/store";
+import { portableSuccession, type KeeperSuccession } from "../keeper/succession-store";
 import { JOURNAL_ACTION_PHRASES } from "../journal/action-phrases";
 import { SEED_QUEST_CHANGE_SEEN } from "../quest-change-attention";
 import { transitionQuest } from "../keeper/quest-lifecycle";
@@ -100,6 +101,7 @@ export class BackupRecords {
         if (grant.state === "issued") row.data = JSON.stringify({ ...grant, state: "expired", changedAt: restoredAt ?? grant.changedAt });
         continue;
       }
+      if (row.kind === "keeperSuccessions") row.data = JSON.stringify(portableSuccession(JSON.parse(String(row.data)) as KeeperSuccession));
       if (row.kind !== "asks") continue;
       const { clusterGrantExpiresAt, ...ask } = askSchema.parse(JSON.parse(String(row.data)));
       if (clusterGrantExpiresAt !== undefined) row.data = JSON.stringify(ask);

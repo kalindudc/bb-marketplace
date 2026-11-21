@@ -132,17 +132,23 @@ export class SpendBudget {
     const now = this.k.now(), to = q.endedAt ?? now;
     const members = this.k.store.query("members", "boardQuestId", q.id, 501).filter(member => member.role === "member");
     const others = this.k.store.query("quests", "keeperThreadId", q.keeperThreadId, 500).filter(other => other.id !== q.id && other.createdAt <= to && (other.endedAt === null || other.endedAt >= q.createdAt));
-    const targets = [{ threadId: q.keeperThreadId, from: q.createdAt }, ...members.slice(0, 500).map(member => ({ threadId: member.threadId, from: Math.max(q.createdAt, member.createdAt) }))];
+    const targets = [
+      ...this.k.store.spendIntervals(q.keeperThreadId).map(interval => ({ threadId: interval.threadId, shared: true,
+        from: Math.max(q.createdAt, interval.from ?? q.createdAt), through: interval.until === null ? to : Math.min(to, interval.until - 1),
+        closed: interval.until !== null, activityAt: interval.activityAt })),
+      ...members.slice(0, 500).map(member => ({ threadId: member.threadId, shared: false,
+        from: Math.max(q.createdAt, member.createdAt), through: to, closed: false, activityAt: undefined })),
+    ].filter(target => target.from <= target.through);
     const sources = new Map<string, number>();
     const signal = AbortSignal.timeout(1_000);
     let subtotal: number | null = null, missing = Number(members.length > 500);
     for (let i = 0; i < targets.length; i += 8) {
-      const data = await Promise.all(targets.slice(i, i + 8).map(async ({ threadId, from }) => {
-        const local = this.ledger.read(threadId, from, to);
+      const data = await Promise.all(targets.slice(i, i + 8).map(async ({ threadId, from, through, closed, activityAt }) => {
+        const local = this.ledger.read(threadId, from, through);
         const usable = local.rows.filter(row => row.usdNanos !== null);
         const runtime = this.k.store.runtime(threadId);
-        const activity = runtime.lastSpendActivityAt ?? runtime.lastReply?.at;
-        const activeInWindow = activity !== undefined && activity >= from && activity <= to;
+        const activity = closed ? activityAt : runtime.lastSpendActivityAt ?? runtime.lastReply?.at;
+        const activeInWindow = activity !== undefined && activity >= from && activity <= through;
         const uncovered = activeInWindow && (local.rows.at(-1)?.at ?? -1) < activity;
         const complete = !uncovered && !local.partial && usable.length === local.rows.length && usable.length > 0;
         if (complete) return { rows: usable, missing: false, readAt: now };
@@ -150,9 +156,9 @@ export class SpendBudget {
         const localResult = { rows: usable, missing: !noWork, readAt: now };
         if (localOnly) return localResult;
         const { report, readAt, stale } = await this.burn(threadId, signal);
-        const turns = report?.turns.filter(turn => turn.at >= from && turn.at <= to) ?? [];
-        const through = q.endedAt ?? Math.max(from, activity ?? from, local.rows.at(-1)?.at ?? from);
-        const covered = !stale && !!report && turns.length > 0 && report.turns.reduce((calls, turn) => calls + turn.calls, 0) >= report.calls && report.updatedAt >= through;
+        const turns = report?.turns.filter(turn => turn.at >= from && turn.at <= through) ?? [];
+        const observedThrough = Math.min(through, q.endedAt ?? Math.max(from, activity ?? from, local.rows.at(-1)?.at ?? from));
+        const covered = !stale && !!report && turns.length > 0 && report.turns.reduce((calls, turn) => calls + turn.calls, 0) >= report.calls && report.updatedAt >= observedThrough;
         const rows = turns.map(turn => ({ ...turn, source: "Burn", usdNanos: Math.round(turn.cost * NANOS_PER_DOLLAR) })).filter(row => Number.isSafeInteger(row.usdNanos));
         if (rows.length > 0 && (!usable.length || covered && rows.length === turns.length)) return { rows, missing: !covered || rows.length !== turns.length, readAt };
         return localResult;
@@ -161,7 +167,7 @@ export class SpendBudget {
         if (read.missing) missing++;
         for (const row of read.rows) {
           if (row.usdNanos === null) continue;
-          const share = i + index === 0 ? 1 + others.filter(other => other.createdAt <= row.at && (other.endedAt === null || other.endedAt >= row.at)).length : 1;
+          const share = targets[i + index]!.shared ? 1 + others.filter(other => other.createdAt <= row.at && (other.endedAt === null || other.endedAt >= row.at)).length : 1;
           subtotal = (subtotal ?? 0) + Math.floor(row.usdNanos / share);
           sources.set(row.source, Math.max(sources.get(row.source) ?? 0, read.readAt));
         }

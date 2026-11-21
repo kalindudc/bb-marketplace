@@ -66,6 +66,8 @@ export default async function tavern(bb: BbPluginApi) {
   const register: RegisterJournal = registerJournal;
   const journal = register(bb, db, {
     verdictSubmitted: (actor, entries) => keeper.recordWardenRound(actor, entries),
+    assertWritable: threadId => keeper.succession.assertMutable(threadId),
+    isRetired: threadId => keeper.succession.fence(threadId)?.kind === "retired",
     reviewed: review => {
       if (!runtime) throw new Error("Tavern is still starting");
       runtime.serviceRecords.reviewed(review);
@@ -192,7 +194,7 @@ export default async function tavern(bb: BbPluginApi) {
   bb.events.on("thread.idle", ({ thread, lastAssistantText }) => {
     runtime.taleRenderer?.idle(thread.id, lastAssistantText);
     runtime.updateThread(thread);
-    runtime.keeper.memory.lastReply(thread.id, lastAssistantText);
+    if (!runtime.succession.state.fence(thread.id)) runtime.keeper.memory.lastReply(thread.id, lastAssistantText);
     runtime.memberEnded(thread, lastAssistantText);
     runtime.spend.refreshForThread(thread.id).catch(error => bb.log.warn(`Tavern quest spend: ${String(error)}`));
   });

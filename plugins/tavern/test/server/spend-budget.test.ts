@@ -12,6 +12,7 @@ import { attention } from "../../src/server/attention";
 import { rpcHandlers } from "../../src/server/rpc";
 import { planInput, seedQuest } from "./support";
 import { setup } from "./runtime-fixture";
+import { ownershipSteps } from "../../src/server/keeper/succession-ownership";
 
 const client = { experimental_caller: { kind: "client" } } as never;
 const plugin = { experimental_caller: { kind: "plugin", pluginId: "tavern" } } as never;
@@ -74,6 +75,26 @@ describe("quest spend", () => {
     await f.runtime.sweep();
 
     expect(f.k.quest(f.q.id).spendBudget?.reached).toEqual({ at: f.time(), usdNanos: 260_000_000 });
+  });
+
+  it("keeps a tripped cap and measures both Keeper generations without charging outside their intervals", async () => {
+    const f = await fixture();
+    await f.rpc.setSpendBudget({ id: f.q.id, budgetCents: 25 }, client);
+    f.entry("before", 250_000_000);
+    const reachedAt = (await f.spend.refresh(f.q.id)).reachedAt;
+    expect(reachedAt).toBe(f.time());
+    f.advance(10);
+    const boundary = f.time();
+    const op = f.k.succession.propose("lead", { kind: "user" }, "Refresh");
+    f.k.succession.prepare(op.id, []);
+    f.k.succession.bindCandidate(op.id, "successor");
+    f.k.succession.cutover(op.id, ownershipSteps(f.k));
+    f.entry("ignored-predecessor", 100_000_000, boundary, "lead");
+    f.entry("ignored-successor", 100_000_000, boundary - 1, "successor");
+    f.entry("after", 50_000_000, boundary, "successor");
+    expect(await f.spend.refresh(f.q.id)).toMatchObject({ budgetCents: 25, usdNanos: 300_000_000, reachedAt });
+    expect(await f.spend.allows(f.q.id)).toBe(false);
+    expect(f.k.store.events().filter(event => event.type === "spend-budget.reached")).toHaveLength(1);
   });
 
   it("applies a proposed cap only when the user approves the exact plan", async () => {

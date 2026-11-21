@@ -5,6 +5,8 @@ import {
   type ObjectFormat, type PlacementRecord, type SourceSnapshot,
 } from "../../shared/placement";
 import type { Database } from "../ports";
+import { KeeperStore } from "../keeper/store";
+import { KeeperSuccessionStore } from "../keeper/succession-store";
 import { SnapshotStore, snapshotDescriptorId } from "./snapshot-store";
 
 const limitsSchema = z.object({
@@ -45,11 +47,16 @@ export class PlacementStore {
     return rows.length === 0 ? null : placementRecordSchema.parse(JSON.parse(rows[0]!.data));
   }
 
+  currentKeeper(record: Pick<PlacementRecord, "keeperThreadId">): string {
+    return new KeeperSuccessionStore(new KeeperStore(this.db), this.now).current(record.keeperThreadId);
+  }
+
   counts(keeperThreadId: string): { makers: number; checkers: number } {
+    const keepers = new KeeperStore(this.db).keeperEventOwners(keeperThreadId);
     const rows = this.db.prepare(`SELECT json_extract(data,'$.slot') AS slot, count(*) AS count
-      FROM tavern_placements WHERE json_extract(data,'$.keeperThreadId')=?
+      FROM tavern_placements WHERE json_extract(data,'$.keeperThreadId') IN (${keepers.map(() => "?").join(",")})
       AND json_extract(data,'$.rule') IS NOT NULL AND json_extract(data,'$.phase')<>'released'
-      GROUP BY json_extract(data,'$.slot')`).all(keeperThreadId) as Array<{ slot: string; count: number }>;
+      GROUP BY json_extract(data,'$.slot')`).all(...keepers) as Array<{ slot: string; count: number }>;
     const counts = { makers: 0, checkers: 0 };
     for (const row of rows) {
       if (row.slot === "maker") counts.makers = row.count;
