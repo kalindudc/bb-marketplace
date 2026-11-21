@@ -176,7 +176,7 @@ describe("Tavern settings sections", () => {
     expect(choices.map((b) => b.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
     expect(atmosphere.getByText(VOICE_HELP.full)).toBeTruthy();
     fireEvent.click(within(group).getByRole("button", { name: "Off" }));
-    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ patch: { tavern: { voice: "off" } } })));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ patch: { tavern: { voice: "off", voiceBeforeOff: "full" } } })));
   });
   it("explains the bubble and report effects of all three voice choices", () => {
     expect(VOICE_HELP).toEqual({

@@ -451,7 +451,7 @@ describe("TavernCharacter", () => {
     slot.lifecycle.unmount();
   });
 
-  it("sends mood, hover and hop cues through the coordinator and keeps speech in the strip", () => {
+  it("sends strip cues through the coordinator and keeps held clicks free of speech", () => {
     const cue = vi.spyOn(motion, "cue");
     const onActorClick = vi.fn();
     const props = { character: wren, classId: "keeper", classLabel: "Keeper", keeper: true, surface: "thread:t1", region: "widget", onActorClick } as const;
@@ -475,8 +475,13 @@ describe("TavernCharacter", () => {
     expect(strip.querySelector('[role="status"]')?.textContent).toBe("Clear skies.");
     v.rerender(<PartyStrip {...props} mood="working" speech={speech} held />);
     expect(strip.querySelector('[role="status"]')).toBeNull();
-    act(() => { fireEvent.pointerOver(actor); fireEvent.click(actor); });
+    act(() => { fireEvent.pointerOver(actor); });
     expect(cue).toHaveBeenCalledTimes(3);
+    act(() => { fireEvent.click(actor); });
+    expect(cue).toHaveBeenCalledTimes(4);
+    expect(cue.mock.lastCall?.[2]).toBe("character reaction");
+    expect(cue.mock.lastCall?.[3]).toMatchObject({ auto: false });
+    expect(onActorClick).toHaveBeenCalledTimes(1);
   });
 
   it("keeps drawing while its surface is held, so a held sprite never reads dead", () => {

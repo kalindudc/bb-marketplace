@@ -76,6 +76,8 @@ These are user preferences, not tuner knobs; the switches default to on and Ambi
 
 The RPC fields are optional for older servers and fixtures; absent means the existing on behavior. The current backend always emits a boolean. These fields are added only to UI RPC responses, never to the registry snapshot used by agents, their configuration, briefs or restatements. Each read subscribes to the existing `tavern:settings` invalidation, so changes reach already-mounted views and untyped-thread decor without polling or reloading. TOML uses `levels`, `widget_row`, `characters` and `hearth_flicker` in `[tavern]`.
 
+The thread overlay reads Lantern light, Strength and Light bb's surfaces from `settings`, which uses the same invalidation. They are display-only preferences and do not change the work. TOML writes `lantern_light` (default true), `lantern_strength` (low, medium or high; default medium) and `lantern_light_bb` (default true) in `[tavern]`.
+
 ## TOML and dotfiles
 
 Export writes only explicit user settings and pins by default. `--with-tuned` also includes saved tuned values. Quest-scoped overrides and change history are not dotfile settings.

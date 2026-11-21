@@ -13,12 +13,17 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `tavern.default_class` | Starts new eligible threads as this class. None starts a plain thread. | `"none"` | User; Granted |
 | `tavern.widget_row` | Shows the Tavern widget above the composer. | `true` | User; Granted |
 | `tavern.voice` | Sets full, light or off voice for Tavern's character presentation. | `"full"` | User; Granted |
+| `tavern.voice_before_off` | Remembers the last speech level when you turn speech off from the character menu or Atmosphere. Turning speech back on from the menu restores this level. | `"full"` | User; Granted |
 | `tavern.levels` | Shows character levels. | `true` | User; Granted |
 | `tavern.characters` | Shows the animated character strip without changing class membership. | `true` | User; Granted |
 | `tavern.hearth_flicker` | Keeps the legacy hearth motion preference. Saving ambient motion also updates this value. | `true` | User; Granted |
 | `tavern.agents_may_change_settings` | Lets an agent preview and then apply allowed CLI settings edits when asked. Turning this off leaves previews available. | `true` | User; Plain while the grant is on |
 | `tavern.ambient_motion` | Chooses calm motion, lively motion or still characters. | `"calm"` | User; Granted |
+| `tavern.character_quiet_until` | Holds characters still and silent until this Unix time in milliseconds. Right-click a character for an hour of Quiet, or edit its end time in Settings, Atmosphere. `0` turns Quiet off; an elapsed time does not hold characters. | `0` | User; Granted |
 | `tavern.repeat_seconds` | Sets the gap between ambient motion repeats. | `20` | User; Granted |
+| `tavern.lantern_light` | Draws a pixel halo and a pool of light near the flame, plus nearby rim light. Off removes the light, not the character. | `true` | User; Granted |
+| `tavern.lantern_strength` | Sets how strongly the light tints nearby surfaces: low, medium or high. | `"medium"` | User; Granted |
+| `tavern.lantern_light_bb` | Lights nearby edges on the composer box and message bubbles. Off keeps the light on Tavern's surfaces only. | `true` | User; Granted |
 | `tavern.batch_wake_events` | Lets wake-delivered Keeper ticks briefly gather more events; does not affect regular sweeps. | `false` | User; Granted |
 | `tavern.reported_pose_seconds` | Sets how long a character holds the reported pose. | `60` | User; Granted |
 | `tavern.verified_pose_minutes` | Sets how long a character holds the verified pose. | `10` | User; Granted |

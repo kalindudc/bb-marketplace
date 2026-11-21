@@ -1,8 +1,8 @@
 import { useHandBackReply } from "./handback-reply";
 import { attentionView, attentionTitle } from "../../shared/attention";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from "react";
-import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_usePluginId, experimental_useAppPanel, useBbNavigate, useComposer, UrlLink, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
-import { settingsContract } from "../../shared/settings";
+import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_usePluginId, experimental_useAppPanel, useBbNavigate, useComposer, useRpc, UrlLink, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
+import { charactersPatch, settingsContract, type SettingsPatch } from "../../shared/settings";
 import { isSetupPrompt } from "../../shared/setup";
 import { classDifferences, composerProjectId, fieldWords, rearmClassSettings, startRefusal, useClassStart } from "./class-start";
 import { rpcContract, type ThreadDecor } from "../../shared/contract";
@@ -199,6 +199,14 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const decor = experimental_useRpcQuery({ contract: rpcContract, method: "decor", input: { threadId } });
   const hide = experimental_useRpcMutation({ contract: rpcContract, method: "setHidden", optimistic: (input, cache) => cache.update("decor", { threadId: input.threadId }, d => ({ ...d, hidden: input.hidden })) });
   const typing = experimental_useRpcMutation({ contract: rpcContract, method: "typing" });
+  const readSettings = useRpc<typeof settingsContract>();
+  const updateSettings = experimental_useRpcMutation({ contract: settingsContract, method: "settingsUpdate" });
+  const savingCharacter = useRef(false);
+  const focusAfterCharacterChange = useRef<"actor" | "restore" | null>(null);
+  const stack = useRef<HTMLDivElement>(null);
+  const receiptEl = useRef<HTMLDivElement>(null);
+  const [characterReceipt, setCharacterReceipt] = useState<{ text: string; show: boolean } | null>(null);
+  const [receiptFocused, setReceiptFocused] = useState(false);
   const [open, setOpen] = useWidgetPanel(threadId);
   const [error, setError] = useState<unknown>(null);
   useHandBackReply(threadId, composer, setError);
@@ -230,6 +238,22 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
     const timer = setInterval(() => cue(dot.current, "busy repeat", { key: "dot", ms: 3200, className: "mo-pulse", ambient: true, repeat: true, region: "widget" }), (data.repeatSeconds ?? 20) * 1000);
     return () => { clearInterval(timer); settle(c => c.kind === "busy repeat"); };
   }, [pulsing, data?.ambientMotion, data?.repeatSeconds, cue, settle]);
+  useLayoutEffect(() => {
+    const target = focusAfterCharacterChange.current;
+    if (!target || data?.characters !== (target === "actor")) return;
+    focusAfterCharacterChange.current = null;
+    if (document.activeElement === document.body)
+      stack.current?.querySelector<HTMLElement>(target === "actor" ? "button[data-actor]" : ".tw-show-characters")?.focus({ preventScroll: true });
+  }, [data?.characters]);
+  useEffect(() => {
+    const el = receiptEl.current;
+    if (!characterReceipt || !el || receiptFocused) return;
+    const timer = setTimeout(() => cue(el, "character receipt", {
+      key: "character-receipt", auto: false, ms: 120, className: "mo-character-receipt",
+      onDone: () => setCharacterReceipt(current => current === characterReceipt ? null : current),
+    }), 3_800);
+    return () => { clearTimeout(timer); settle(c => c.el === el); };
+  }, [characterReceipt, receiptFocused, cue, settle]);
   useEffect(() => {
     if (!keeper || !composer.text.trim()) return;
     const ping = () => { lastTyping.current = Date.now(); void typing.mutate({ threadId }).catch(setError); };
@@ -252,14 +276,43 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const lit = !!identity && !identity.character.plain;
   const surface: CSSProperties & { "--widget-edge": string } = { ...(lit ? glowVars(data.boardQuest ? `quest:${data.boardQuest.id}` : `keeper:${threadId}`) : {}), "--widget-edge": lit ? HUE_CSS[identity.character.hue] : "var(--tavern-line)" };
   const hideBtn = <IconButton glyph="close" className="tw-hide" label="Hide Tavern in this thread (⌥⌘T). The crest in the composer brings it back" onClick={() => void hide.mutate({ threadId, hidden: true }).catch(setError)} />;
+  const changeCharacter = async (patch: SettingsPatch, text: string) => {
+    if (savingCharacter.current) return;
+    savingCharacter.current = true;
+    setError(null);
+    try {
+      const { revision } = await readSettings.call("settings", null);
+      const characters = patch.tavern?.characters;
+      if (characters !== undefined && stack.current?.contains(document.activeElement))
+        focusAfterCharacterChange.current = characters ? "actor" : "restore";
+      const out = await updateSettings.mutate({ revision, patch, why: "Changed from the composer’s character controls" });
+      if (out.code === "stale") throw new Error("Settings changed elsewhere. Nothing was saved; try again.");
+      if (out.code === "invalid") throw new Error(out.problems.map(problem => problem.message).join("; "));
+      setReceiptFocused(false);
+      setCharacterReceipt({ text: characters === false ? `${text} Settings → Atmosphere.` : `${text} Also in Settings, Atmosphere.`, show: characters === false });
+    } catch (error) {
+      focusAfterCharacterChange.current = null;
+      setError(error);
+    } finally {
+      savingCharacter.current = false;
+    }
+  };
+  const restoreCharacters = () => void changeCharacter(charactersPatch(true), "Characters shown.");
+  const showCharacters = data.characters === false && <IconButton glyph="party" className="tw-show-characters" label="Show characters"
+    disabled={updateSettings.isPending} onClick={restoreCharacters} />;
   const walker = data.characters !== false && identity && !identity.character.plain
     ? <ThreadPartyStrip key={`${threadId}:${identity.character.id}`} data={data} character={identity.character}
-        classLabel={identity.cls.label} voice={data.voice ?? registry.data?.voice ?? "full"} pageSince={pageSince}
+        classLabel={identity.cls.label} voice={data.voice ?? registry.data?.voice ?? "full"} pageSince={pageSince} change={changeCharacter}
         held={need.asks + need.holds > 0 || (!keeper && scopeAlerts(data) > 0)} />
     : null;
 
   return (
-    <div className="tavern-thread-stack">
+    <div className="tavern-thread-stack" ref={stack}>
+    {characterReceipt && <div ref={receiptEl} className="tavern twalk-receipt">
+      <p className="receipt-inline" role="status"><Glyph name="check" size={12} /><small className="twalk-receipt-text" title={characterReceipt.text}>{characterReceipt.text}</small></p>
+      {characterReceipt.show && data.characters === false && <button type="button" className="lnk twalk-show-receipt" title="Show characters"
+        onClick={restoreCharacters} onFocus={() => setReceiptFocused(true)} onBlur={() => setReceiptFocused(false)} disabled={updateSettings.isPending}>Show</button>}
+    </div>}
     {walker}
     <section className={`tavern twidget v-${variant} ${lit ? "glow" : ""} ${open ? "is-open" : ""} ${keeper?.quietSince != null ? "is-quiet" : ""}`} style={surface} aria-label="Tavern widget" data-part="TavernWidget">
       <div className="tw-row">
@@ -270,7 +323,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
         </button>}
         {keeper && <KeeperParts quiet={<QuietNotice threadId={threadId} since={keeper.quietSince} compact />} data={data} open={open} toggle={toggle} onLedger={group => panel.openTab({ tab: LEDGER_TAB, ...(group ? { params: { attentionGroup: group } } : {}) })} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} />}
         {variant === "member" && <MemberParts data={data} registry={registry.data ?? null} open={open} toggle={toggle} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} onThread={id => navigate.toThread(id)} />}
-        {hideBtn}
+        {showCharacters}{hideBtn}
       </div>
       {variant === "member" && data.boardQuest && <WidgetWaypoints member={data.member} reported={data.lastReportedWaypointId} />}
       {open !== "brief" && <PlacementFacts placement={data.member.placement} memberName={name} />}

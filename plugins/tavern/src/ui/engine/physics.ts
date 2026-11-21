@@ -14,6 +14,10 @@ export function hop(body: Body) {
   if (body.lift === 0) body.vy = 120;
 }
 
+export function settled(body: Body) {
+  return body.vx === 0 && body.vy === 0 && body.lift === 0 && body.swing === 0 && body.angularVelocity === 0;
+}
+
 export function stepBody(body: Body, target: number | null, dt: number) {
   const previous = body.vx;
   if (target === null) {

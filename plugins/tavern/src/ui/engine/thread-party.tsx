@@ -1,3 +1,4 @@
+import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ThreadDecor } from "../../shared/contract";
 import { characterMood, REPORTED_MS, VERIFIED_MS, widgetMoodFacts } from "../../shared/mood";
@@ -5,6 +6,8 @@ import { pickLine, type LineFacts } from "../../shared/says";
 import type { CharacterDef } from "../../shared/schema";
 import type { VoiceMode } from "../../shared/settings";
 import { motion, STUCK_IN_VIEW, stuckInView, type Surface } from "../kit/motion";
+import type { ChangeCharacterSetting } from "./character-menu";
+import { useCharacterQuiet } from "./character-quiet";
 import { REPORT_READING, reportReading } from "./report-reading";
 import { BUBBLE_MS, planSpeech, reportSpeechHeld, speechDecision, speechSlot } from "./speech";
 import { PartyStrip, type StripSpeech } from "./strip";
@@ -61,9 +64,14 @@ type Props = {
   voice: VoiceMode;
   held: boolean;
   pageSince: number;
+  change: ChangeCharacterSetting;
 };
 
-export function ThreadPartyStrip({ data, character, classLabel, voice, held, pageSince }: Props) {
+export function ThreadPartyStrip({ data, character, classLabel, voice, held, pageSince, change }: Props) {
+  const navigate = useBbNavigate();
+  const quiet = useCharacterQuiet(data.characterQuietUntil);
+  const speechMode = quiet ? "off" : voice;
+  const motionMode = data.ambientMotion ?? "calm";
   const member = data.member!;
   const mood = useWidgetMood(data);
   const surface: Surface = `thread:${data.threadId}`;
@@ -89,10 +97,10 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
     waypoint: verdict?.waypointTitle ?? data.moodSignals?.waypointTitle,
     checker: verdict?.checkerName,
   };
-  const visible = bubble?.transition === transition && voice !== "off" && !held && speechSlot(mood) ? bubble : null;
+  const visible = bubble?.transition === transition && speechMode !== "off" && !held && speechSlot(mood) ? bubble : null;
   const cueEndsAt = cueEnd?.transition === transition ? cueEnd.at : undefined;
   const input = {
-    actorId, voice, mood, moodSince: transition.since, pageSince, cueEndsAt,
+    actorId, voice: speechMode, mood, moodSince: transition.since, pageSince, cueEndsAt,
     milestone: transition.order > 0 && cueEndsAt !== undefined,
     arrivedAt: member.createdAt, wrappedAt: wrapped?.endedAt ?? undefined,
     lastLineAt: last?.at ?? null, lastEventAttemptAt: tried.event, lastAmbientAttemptAt: tried.ambient,
@@ -134,8 +142,9 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
   if (mood === "released") return null;
   return <PartyStrip
     character={character} classId={member.classId} classLabel={classLabel} mood={mood}
-    keeper={!!data.keeperView} surface={surface} region="widget" mode={data.ambientMotion ?? "calm"} held={held}
-    speech={visible?.line ?? null} canClickSpeak={voice !== "off" && speechSlot(mood) && !!character.says?.[mood]?.length}
+    keeper={!!data.keeperView} surface={surface} region="widget" mode={motionMode} held={held} quiet={quiet}
+    actorMenu={{ mode: motionMode, voice, voiceBeforeOff: data.voiceBeforeOff, quietUntil: quiet ? data.characterQuietUntil : undefined, change, openSheet: () => navigate.toPluginPanel("tavern", { subPath: `character/${character.id}` }) }}
+    speech={visible?.line ?? null} canClickSpeak={speechMode !== "off" && speechSlot(mood) && !!character.says?.[mood]?.length}
     onActorClick={() => live.current(true)} onMoodCueEnd={() => {
       const at = Date.now();
       setCueEnd(previous => previous && previous.transition.order > transition.order ? previous : { transition, at });

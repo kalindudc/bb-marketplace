@@ -201,7 +201,9 @@ export function rpcHandlers(
         ambientMotion: runtime.config().tavern.hearthFlicker ? runtime.config().tavern.ambientMotion : "off",
         repeatSeconds: runtime.config().tavern.repeatSeconds,
         characters: runtime.config().tavern.characters,
+        characterQuietUntil: runtime.config().tavern.characterQuietUntil,
         voice: runtime.config().tavern.voice,
+        voiceBeforeOff: runtime.config().tavern.voiceBeforeOff,
         reportedPoseSeconds: runtime.config().tavern.reportedPoseSeconds,
         verifiedPoseMinutes: runtime.config().tavern.verifiedPoseMinutes,
         ...(m ? { moodSignals: {
@@ -446,6 +448,7 @@ export function rpcHandlers(
       sinceVisit: snapshot.sinceVisit(),
       away: runtime.away.status(),
       hearthFlicker: runtime.config().tavern.hearthFlicker,
+      characterQuietUntil: runtime.config().tavern.characterQuietUntil,
       ambientMotion: runtime.config().tavern.hearthFlicker ? runtime.config().tavern.ambientMotion : "off",
       repeatSeconds: runtime.config().tavern.repeatSeconds,
       archivedCount: k.store.archivedQuestCount(),

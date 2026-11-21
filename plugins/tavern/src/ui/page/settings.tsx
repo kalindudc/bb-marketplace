@@ -1,7 +1,8 @@
 import { experimental_ProviderModelPicker as ProviderModelPicker, experimental_copyToClipboard, experimental_useProviders, experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate, type ExperimentalProviderModelPickerValue } from "@get-bb/plugin-sdk/app";
 import { createContext, useContext, useCallback, useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
-import { DEFAULT_SETTINGS, KNOB_FIELDS, importSummary, isGuardrailSetting, settingsContract, type TavernSettings, type SettingsChange, type SettingsPatch, type ResettableSetting, type SettingsView, type TunableKey } from "../../shared/settings";
+import { ambientMotionPatch, characterQuietPatch, charactersPatch, CHARACTER_QUIET_HOUR_MS, DEFAULT_SETTINGS, KNOB_FIELDS, importSummary, isGuardrailSetting, settingsContract, voicePatch, type TavernSettings, type SettingsChange, type SettingsPatch, type ResettableSetting, type SettingsView, type TunableKey } from "../../shared/settings";
 import { Glyph, OpensMark, TimeAgo, plural, useRegistry, useSidebarActorNames, useRemembered, ExpandsMark } from "../kit";
+import { useCharacterQuiet } from "../engine/character-quiet";
 import { ReadState, SegFilter } from "./common";
 import { BACKUP_INTRO, BackupSection } from "./backup";
 import { PageGlyph, type PageGlyphName } from "./glyphs";
@@ -177,19 +178,52 @@ export function TavernSection() {
   </>; }}</Shell>;
 }
 
+function CharacterQuietRow({ until, api }: { until: number; api: Api }) {
+  const quiet = useCharacterQuiet(until);
+  const local = new Date(until);
+  const two = (n: number) => String(n).padStart(2, "0");
+  const saved = quiet ? `${String(local.getFullYear()).padStart(4, "0")}-${two(local.getMonth() + 1)}-${two(local.getDate())}T${two(local.getHours())}:${two(local.getMinutes())}` : "";
+  const [draft, setDraft] = useState(saved);
+  useEffect(() => setDraft(saved), [saved]);
+  const save = (end: number) => void api.save(characterQuietPatch(end));
+  const commit = () => {
+    if (draft === saved) return;
+    const end = new Date(draft).getTime();
+    if (end > Date.now()) save(end);
+    else setDraft(saved);
+  };
+  return <Row label={quiet ? "Quiet until" : "Character quiet"} setting="tavern.characterQuietUntil"
+    help="Keeps characters still and silent until this time, without changing their motion or speech settings."
+    control={id => <span className="tv-quiet">
+      <input id={id} aria-label="Quiet until" type="datetime-local" className="tv-text" value={draft} disabled={api.pending}
+        onChange={e => setDraft(e.target.value)} onBlur={commit} onKeyDown={e => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") setDraft(saved);
+        }} />
+      {quiet ? <button type="button" className="btn sm" onClick={() => save(0)} disabled={api.pending}>End now</button>
+        : <button type="button" className="btn sm" onClick={() => save(Date.now() + CHARACTER_QUIET_HOUR_MS)} disabled={api.pending}>Quiet for an hour</button>}
+    </span>} />;
+}
+
 export function AtmosphereSection() {
   const api = useTavernSettings();
   const navigate = useBbNavigate();
   return <Shell api={api} className="tv-set-atmosphere">{d => { const t = d.effective.tavern; return <>
     <SettingsCard title="The party" hint="Choose how characters appear and open their sheets to roll new avatars." glyph="shield">
-      <Row label="Show characters" setting="tavern.characters" help="Draws the pixel-art characters above the composer. Off leaves the class crest in the widget row." control={id => <Toggle id={id} checked={t.characters} disabled={api.pending} onChange={v => void api.save({ tavern: { characters: v } })} />} />
-      <Row label="Speech bubbles" setting="tavern.voice" help={VOICE_HELP[t.voice]} control={() => <SegFilter label="Speech bubbles" value={t.voice} onChange={v => void api.save({ tavern: { voice: v } })} options={[{ id: "full", label: "Full" }, { id: "light", label: "Light" }, { id: "off", label: "Off" }]} />} />
+      <Row label="Show characters" setting="tavern.characters" help="Draws the pixel-art characters above the composer. Off leaves the class crest in the widget row." control={id => <Toggle id={id} checked={t.characters} disabled={api.pending} onChange={v => void api.save(charactersPatch(v))} />} />
+      <Row label="Speech bubbles" setting="tavern.voice" coveredBy={["tavern.voiceBeforeOff"]} help={VOICE_HELP[t.voice]} control={() => <SegFilter label="Speech bubbles" value={t.voice} onChange={v => void api.save(voicePatch(v, t.voice))} options={[{ id: "full", label: "Full" }, { id: "light", label: "Light" }, { id: "off", label: "Off" }]} />} />
       <Row label="Levels and crest notches" setting="tavern.levels" help="Shows levels and crest notches earned from verified work. Off hides them without changing what characters have earned." control={id => <Toggle id={id} checked={t.levels} disabled={api.pending} onChange={v => void api.save({ tavern: { levels: v } })} />} />
       <div className="tv-set-links"><button type="button" className="tv-ilink act" onClick={() => navigate.toPluginPanel("tavern", { subPath: "characters" })}><span>Character sheets</span><OpensMark /></button></div>
     </SettingsCard>
     <SettingsCard title="Motion" hint="Choose how the tavern moves while work runs." glyph="lantern">
-      <Row label="Ambient motion" setting="tavern.ambientMotion" coveredBy={["tavern.hearthFlicker"]} help="Calm uses brief cues and keeps characters in place. Lively lets characters walk and repeats ambient cues. Off keeps the characters and hearth still and stops ambient repeats." control={() => <SegFilter label="Ambient motion" value={t.hearthFlicker ? t.ambientMotion : "off"} onChange={v => void api.save({ tavern: { ambientMotion: v, hearthFlicker: v !== "off" } })} options={[{ id: "calm", label: "Calm" }, { id: "lively", label: "Lively" }, { id: "off", label: "Off" }]} />} />
+      <Row label="Ambient motion" setting="tavern.ambientMotion" coveredBy={["tavern.hearthFlicker"]} help="Calm uses brief cues and keeps characters in place. Lively lets characters walk and repeats ambient cues. Off keeps the characters and hearth still and stops ambient repeats." control={() => <SegFilter label="Ambient motion" value={t.hearthFlicker ? t.ambientMotion : "off"} onChange={v => void api.save(ambientMotionPatch(v))} options={[{ id: "calm", label: "Calm" }, { id: "lively", label: "Lively" }, { id: "off", label: "Off" }]} />} />
+      <CharacterQuietRow until={t.characterQuietUntil} api={api} />
       <Row label="Repeat every" setting="tavern.repeatSeconds" help="In Lively, sets how often the hearth flickers, the party takes steps on the board and the widget pulses." control={id => <NumberField id={id} value={t.repeatSeconds} min={3} max={60} unit="seconds" disabled={api.pending} onSave={v => void api.save({ tavern: { repeatSeconds: v } })} />} />
+    </SettingsCard>
+    <SettingsCard title="Lantern" hint="Choose how carried lanterns and hearth-lights warm the thread." glyph="lantern">
+      <Row label="Lantern light" setting="tavern.lanternLight" help="Adds a pixel halo around the flame and a warm pool below it. Off removes the light without hiding the character." control={id => <Toggle id={id} checked={t.lanternLight} disabled={api.pending} onChange={v => void api.save({ tavern: { lanternLight: v } })} />} />
+      <Row label="Strength" setting="tavern.lanternStrength" help="Changes how strongly the halo, pool and nearby edges glow." control={id => <select id={id} className="tv-select" value={t.lanternStrength} disabled={api.pending} onChange={e => void api.save({ tavern: { lanternStrength: e.target.value as typeof t.lanternStrength } })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>} />
+      <Row label="Light bb's surfaces" setting="tavern.lanternLightBb" help="Lights the nearby edges of the composer box and message bubbles, never the text. Off keeps the light on Tavern's own surfaces." control={id => <Toggle id={id} checked={t.lanternLightBb} disabled={api.pending} onChange={v => void api.save({ tavern: { lanternLightBb: v } })} />} />
     </SettingsCard>
     <SettingsCard title="Character cues and checks" hint="Choose how long poses last and how often a voice check can run." glyph="shield"><NumberKnobRows group="tavern" /></SettingsCard>
   </>; }}</Shell>;
@@ -223,7 +257,7 @@ export function SettingAuthor({ threadId, by, label = "another thread", sentence
 function historySection(key: string) {
   const path = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
   if (path === "knobs.rangerTimeboxMaxMinutes") return "Keepers and decisions";
-  if (/^tavern\.(characters|voice|levels|ambientMotion|hearthFlicker|repeatSeconds|reportedPoseSeconds|verifiedPoseMinutes|voiceChecksPerHour)$/.test(path)) return "Atmosphere";
+  if (/^tavern\.(characters|voice|voiceBeforeOff|levels|ambientMotion|hearthFlicker|characterQuietUntil|repeatSeconds|lanternLight|lanternStrength|lanternLightBb|reportedPoseSeconds|verifiedPoseMinutes|voiceChecksPerHour)$/.test(path)) return "Atmosphere";
   if (/^(knobs|tuned|overrides|tuning\.pinned)\./.test(path)) return "Tuning";
   return ({tavern:"Tavern",away:"Closing time",attention:"Your attention",keepers:"Keepers and decisions",classes:"Classes and models",scopes:"Scopes",machines:"Where work runs",journal:"Journal",tuning:"Tuning",data:"Data and backups",backup:"Data and backups"} as Record<string,string>)[path.split(".")[0]!] ?? "Settings";
 }
@@ -247,6 +281,7 @@ function historyValue(key: string, value: unknown): string {
   if (typeof value === "object") return Object.entries(value).map(([k,v]) => `${settingLabel(`${key}.${k}`)}: ${historyValue(`${key}.${k}`,v)}`).join(", ");
   if (key === "knobs.rangerTimeboxMaxMinutes") return `${value} min`;
   if (key === "tavern.repeatSeconds") return `${value} s`;
+  if (key === "tavern.characterQuietUntil" && typeof value === "number") return value === 0 ? "Off" : new Date(value).toLocaleString();
   if (key.startsWith("data.") || key === "backup.keep") return `${value} ${key === "backup.keep" || key === "data.backupKeep" ? "backups" : "days"}`;
   if (/^(knobs|tuned|tuning\.pinned)\./.test(key)) return knobValue(key.replace(/^(?:tuning\.pinned|tuned)\./,"knobs."),value);
   return typeof value === "string" && ["full","light","off","all","none","calm","lively","apply","suggest","enforce","watch","consequential"].includes(value) ? value.charAt(0).toUpperCase() + value.slice(1) : String(value);

@@ -100,9 +100,9 @@ html.dark .tavern { --tavern-lantern: color-mix(in oklab, var(--attention) 13%, 
 .tavern .tavern-menu { max-width: min(340px, calc(100vw - 24px)); }
 .tavern .tavern-menu [role=menuitem].rich { white-space: normal; min-width: 0; width: 100%; padding: 6px 8px; }
 .tavern .tavern-menu .menu-sep { height: 1px; margin: 4px 0; background: var(--tavern-line); }
-.tavern .tavern-menu [role=menuitem] { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 8px; border: 0; background: none; text-align: left; font-size: 12px; cursor: pointer; color: inherit; white-space: nowrap; }
+.tavern .tavern-menu [role^=menuitem] { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 8px; border: 0; background: none; text-align: left; font-size: 12px; cursor: pointer; color: inherit; white-space: nowrap; }
 .tavern .tavern-menu [role=menuitem] .gap { width: 14px; }
-.tavern .tavern-menu [role=menuitem]:is(:hover, :focus-visible) { background: var(--tavern-hover); outline: none; }
+.tavern .tavern-menu [role^=menuitem]:is(:hover, :focus-visible) { background: var(--tavern-hover); outline: none; }
 .tavern .tavern-menu [role=menuitem].danger { color: var(--tavern-bad); }
 .tavern .tavern-menu [role=menuitem]:disabled { opacity: .45; cursor: not-allowed; }
 
@@ -204,7 +204,7 @@ html.dark .tavern { --tavern-lantern: color-mix(in oklab, var(--attention) 13%, 
   .tavern .ibtn { width: 44px; height: 44px; }
   .tavern .btn, .tavern .btn.sm { min-height: 44px; }
   .tavern :is(input, select) { min-height: 44px; font-size: 16px; }
-  .tavern .tavern-menu [role=menuitem] { min-height: 44px; font-size: 14px; }
+  .tavern .tavern-menu [role^=menuitem] { min-height: 44px; font-size: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { .tavern, .tavern::before, .tavern::after, .tavern *, .tavern *::before, .tavern *::after { animation: none !important; transition: none !important; } }
 /* bb follows the OS setting only; data-motion="reduced" is the harness's and the mock's switch, kept so the reduced state can be checked without emulation. */

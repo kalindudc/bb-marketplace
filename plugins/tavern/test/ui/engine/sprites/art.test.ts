@@ -192,14 +192,36 @@ describe("seeded character art", () => {
     }
   });
 
-  it("draws attention moods the same at rest, during typing, and with swinging light inputs", () => {
+  it("keeps the same small idle during typing and ignores stray swing or flame inputs", () => {
     const art = createArt(input);
     for (const mood of ["waiting", "blocked", "error"] as const) {
       const base = hash(art, { ...rest, mood });
-      for (const activity of ["stand", "quiet"] as const) for (const t of [0, 1250, 5000]) {
-        expect(hash(art, { ...rest, activity, still: false, mood, t, swing: 1, flame: 1.2 })).toBe(base);
+      for (const t of [0, 1250, 5000]) {
+        const frame = { ...rest, still: false, mood, t };
+        expect(hash(art, { ...frame, activity: "quiet", swing: 1, flame: 1.2 })).toBe(hash(art, frame));
       }
       expect(hash(art, { ...rest, activity: "cue", still: false, mood, cue: "hop", progress: 0.5 })).not.toBe(base);
+    }
+  });
+
+  it("reports the next idle pixel change for every mood and keeps the rain pixels fixed", () => {
+    for (const classId of Object.keys(KITS)) for (const mood of MOODS) {
+      const art = createArt({ ...input, classId });
+      expect(art.nextChange({ ...rest, mood })).toBeNull();
+      const timed = { ...rest, still: false, mood, t: 0 };
+      const until = art.nextChange(timed)!;
+      expect(until).toBeGreaterThan(0);
+      expect(hash(art, { ...timed, t: until - 0.01 })).toBe(hash(art, timed));
+      expect(hash(art, { ...timed, t: until + 0.01 })).not.toBe(hash(art, timed));
+      if (mood !== "error") continue;
+      const rain = (frame: ArtFrame) => {
+        const { ctx, pixels } = recorder();
+        art.draw(ctx, frame, palette);
+        return pixels.flatMap((pixel, i) => pixel === palette.cloud || pixel === palette.drop ? [i] : []);
+      };
+      expect(rain(timed)).not.toHaveLength(0);
+      for (const t of [250, 750, 2000, 5000]) expect(rain({ ...timed, t })).toEqual(rain(timed));
+      expect(rain({ ...timed, facing: -1 })).toEqual(rain(timed));
     }
   });
 
@@ -217,6 +239,25 @@ describe("seeded character art", () => {
       hats.add(pixels[(art.ground - hills[i]!.height - 3) * art.width + 11]!);
     }
     expect(hats.size).toBeGreaterThanOrEqual(4);
+  });
+
+  it("makes every class's tip and signature readable at art scale", () => {
+    for (const classId of Object.keys(KITS)) {
+      const art = createArt({ ...input, classId });
+      const record = (frame: ArtFrame) => {
+        const { ctx, pixels } = recorder();
+        art.draw(ctx, frame, palette);
+        return pixels;
+      };
+      const base = record(rest);
+      for (const cue of ["tip", "signature"] as const) {
+        const frame = { ...rest, cue, still: false, activity: "cue", progress: 0.5 } as const;
+        const peak = record(frame);
+        expect(peak.filter((pixel, i) => pixel !== base[i]).length, `${classId} ${cue}`).toBeGreaterThanOrEqual(12);
+        expect(record({ ...frame, progress: 0.31 })).toEqual(peak);
+        expect(record({ ...frame, progress: 0.65 })).toEqual(peak);
+      }
+    }
   });
 
   it("holds the Smith's hammer visibly higher in the verified rest pose", () => {
@@ -253,6 +294,23 @@ describe("seeded character art", () => {
     expect(hash(art, { ...a, swing: -0.6 })).not.toBe(first);
   });
 
+  it("anchors the lantern to its painted flame as it swings, in both directions", () => {
+    const wanderer = { ...input, classId: "wanderer" };
+    const art = createArt(wanderer);
+    const colours = spriteColours(wanderer.hue, seedTraits(wanderer), palette);
+    const { ctx, pixels } = recorder();
+    for (const facing of [1, -1] as const) for (const swing of [-1.1, 0, 1.1]) {
+      const frame = { ...rest, facing, swing, cue: "signature", activity: "cue", still: false } as const;
+      art.draw(ctx, frame, palette);
+      const anchor = art.lightAnchor(frame)!;
+      expect(anchor.kind).toBe("lantern");
+      expect([colours[Ink.Cream], colours[Ink.Flame]]).toContain(pixels[anchor.y * art.width + anchor.x]);
+    }
+    const neutral = { ...rest, activity: "cue", cue: "signature", still: false } as const;
+    expect(art.lightAnchor({ ...neutral, swing: -1.1 })!.x).toBeLessThan(art.lightAnchor(neutral)!.x);
+    expect(art.lightAnchor({ ...neutral, swing: 1.1 })!.x).toBeGreaterThan(art.lightAnchor(neutral)!.x);
+  });
+
   it("draws distinct cue, walk and mood poses, with rain only on errors", () => {
     const art = createArt(input);
     const pose = { ...rest, still: false, t: 500 };
@@ -264,7 +322,8 @@ describe("seeded character art", () => {
       art.draw(ctx, { ...rest, mood }, palette);
       expect(pixels.includes(palette.drop)).toBe(mood === "error");
     }
-    expect(hash(art, { ...pose, mood: "resting", t: 3300 })).toBe(hash(art, { ...pose, mood: "resting" }));
+    const resting = { ...pose, mood: "resting" } as const;
+    expect(hash(art, { ...resting, t: resting.t + art.nextChange(resting)! + 0.01 })).not.toBe(hash(art, resting));
     expect(hash(art, { ...pose, mood: "resting" })).not.toBe(hash(art, pose));
     expect(createArt({ ...input, classId: "smith" }).quietIdle("waiting")).toBe("leans on the hammer");
     expect(createArt({ ...input, classId: "ranger" }).quietIdle("working")).toBe("reads a map");

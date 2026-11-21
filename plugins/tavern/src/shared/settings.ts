@@ -84,6 +84,11 @@ export function isGuardrailSetting(key: string) {
 
 export const voiceModeSchema = z.enum(["full", "light", "off"]);
 export type VoiceMode = z.infer<typeof voiceModeSchema>;
+export const voiceBeforeOffSchema = voiceModeSchema.exclude(["off"]);
+export type VoiceBeforeOff = z.infer<typeof voiceBeforeOffSchema>;
+export const DEFAULT_VOICE: VoiceBeforeOff = "full";
+export const characterQuietUntilSchema = z.number().int().min(0).max(8_640_000_000_000_000);
+export const CHARACTER_QUIET_HOUR_MS = 3_600_000;
 const classId = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
 const clock = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
 const quietHoursSchema = z.object({
@@ -93,10 +98,13 @@ const quietHoursSchema = z.object({
   }, "Use an IANA time zone"),
 }).strict().refine(value => value.start !== value.end, "Start and end must differ");
 
+const lanternStrengthSchema = z.enum(["low", "medium", "high"]);
+
 const sections = {
   tavern: z.object({ paused: z.boolean(), defaultClass: z.union([z.literal("none"), classId]),
-    widgetRow: z.boolean(), voice: voiceModeSchema, levels: z.boolean(), characters: z.boolean().default(true), hearthFlicker: z.boolean(), agentsMayChangeSettings: z.boolean().default(true),
-    ambientMotion: z.enum(["calm", "lively", "off"]).default("calm"), repeatSeconds: z.number().int().min(3).max(60).default(20),
+    widgetRow: z.boolean(), voice: voiceModeSchema, voiceBeforeOff: voiceBeforeOffSchema, levels: z.boolean(), characters: z.boolean().default(true), hearthFlicker: z.boolean(), agentsMayChangeSettings: z.boolean().default(true),
+    ambientMotion: z.enum(["calm", "lively", "off"]).default("calm"), characterQuietUntil: characterQuietUntilSchema, repeatSeconds: z.number().int().min(3).max(60).default(20),
+    lanternLight: z.boolean().default(true), lanternStrength: lanternStrengthSchema.default("medium"), lanternLightBb: z.boolean().default(true),
     // Wake-delivered ticks may hold briefly to gather more events; regular sweep ticks ignore it. Off by default.
     batchWakeEvents: z.boolean().default(false), ...numberFields(KNOB_FIELDS.tavern) }).strict(),
   away: z.object({ neverWhileClosed: awayStopListSchema, defaultEndState: awayQuestSchema.shape.endState,
@@ -115,7 +123,7 @@ const sections = {
   knobs: tunablesSchema.extend({ rangerTimeboxMaxMinutes: z.number().int().min(3).max(30), ...numberFields(KNOB_FIELDS.knobs) }),
 };
 export const settingsSchema = z.object({
-  tavern: sections.tavern.extend(defaultNumbers(KNOB_FIELDS.tavern)).prefault({ paused: false, defaultClass: "none", widgetRow: true, voice: "full", levels: true, characters: true, hearthFlicker: true, agentsMayChangeSettings: true, ambientMotion: "calm", repeatSeconds: 20, batchWakeEvents: false }),
+  tavern: sections.tavern.extend({ ...defaultNumbers(KNOB_FIELDS.tavern), characterQuietUntil: characterQuietUntilSchema.default(0), voiceBeforeOff: voiceBeforeOffSchema.default(DEFAULT_VOICE) }).prefault({ paused: false, defaultClass: "none", widgetRow: true, voice: DEFAULT_VOICE, levels: true, characters: true, hearthFlicker: true, agentsMayChangeSettings: true, ambientMotion: "calm", repeatSeconds: 20, batchWakeEvents: false }),
   away: sections.away.extend(defaultNumbers(KNOB_FIELDS.away)).prefault({ neverWhileClosed: [...AWAY_STOP_LIST],
     defaultEndState: "drafts-ready", defaultAllowWatched: false, defaultWakeBlockers: true, defaultWakeProduction: false }),
   attention: sections.attention.default({ reviewBudget: 3, notify: "consequential", quietHours: null }),
@@ -130,7 +138,9 @@ export const settingsSchema = z.object({
 }).strict();
 export const DEFAULT_SETTINGS = settingsSchema.parse({});
 export const settingsPatchSchema = z.object({
-  tavern: sections.tavern.partial().extend({ agentsMayChangeSettings: z.boolean().optional(), characters: z.boolean().optional(), ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().int().min(3).max(60).optional(), batchWakeEvents: z.boolean().optional() }).optional(), attention: sections.attention.partial().optional(),
+  tavern: sections.tavern.partial().extend({ agentsMayChangeSettings: z.boolean().optional(), characters: z.boolean().optional(), ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().int().min(3).max(60).optional(), batchWakeEvents: z.boolean().optional(),
+    lanternLight: z.boolean().optional(), lanternStrength: lanternStrengthSchema.optional(), lanternLightBb: z.boolean().optional(),
+  }).optional(), attention: sections.attention.partial().optional(),
   away: sections.away.partial().optional(),
   keepers: sections.keepers.partial().extend({ restMinutes: sections.keepers.shape.restMinutes.removeDefault().optional() }).optional(), classes: sections.classes.optional(),
   scopes: sections.scopes.partial().optional(), journal: sections.journal.partial().optional(),
@@ -139,6 +149,13 @@ export const settingsPatchSchema = z.object({
 }).strict();
 export type TavernSettings = z.infer<typeof settingsSchema>;
 export type SettingsPatch = z.infer<typeof settingsPatchSchema>;
+
+export const ambientMotionPatch = (ambientMotion: TavernSettings["tavern"]["ambientMotion"]): SettingsPatch =>
+  ({ tavern: { ambientMotion, hearthFlicker: ambientMotion !== "off" } });
+export const voicePatch = (voice: VoiceMode, prior: VoiceMode): SettingsPatch =>
+  ({ tavern: { voice, ...(voice === "off" && prior !== "off" ? { voiceBeforeOff: prior } : {}) } });
+export const charactersPatch = (characters: boolean): SettingsPatch => ({ tavern: { characters } });
+export const characterQuietPatch = (characterQuietUntil: number): SettingsPatch => ({ tavern: { characterQuietUntil } });
 type EditableGroup = Exclude<keyof TavernSettings, "classes">;
 type SettingPath = { [G in EditableGroup]: `${G}.${Extract<keyof TavernSettings[G], string>}` }[EditableGroup];
 export type ResettableSetting = Exclude<SettingPath, "machines.rules" | "machines.forges">;

@@ -3,6 +3,8 @@ import { knobLabel } from "./insights";
 
 const LABELS: Record<string, string> = {
   "tavern.ambientMotion": "Ambient motion", "tavern.repeatSeconds": "Repeat every", "tavern.agentsMayChangeSettings": "Agents may change settings", "tavern.paused": "Pause every Keeper", "tavern.defaultClass": "New threads start as", "tavern.voice": "Speech bubbles", "tavern.widgetRow": "Widget row", "tavern.batchWakeEvents": "Batch wake events", "tavern.levels": "Levels and crest notches", "tavern.characters": "Show characters", "tavern.hearthFlicker": "Hearth flicker while work runs",
+  "tavern.lanternLight": "Lantern light", "tavern.lanternStrength": "Strength", "tavern.lanternLightBb": "Light bb's surfaces",
+  "tavern.characterQuietUntil": "Character quiet", "tavern.voiceBeforeOff": "Previous speech level",
   "attention.reviewBudget": "Review budget", "attention.notify": "Push to your devices", "attention.quietHours": "Quiet hours",
   "keepers.restMinutes": "Rest before reminder", "keepers.greenlight": "Greenlight", "keepers.decisionTimerMax": "Longest decision timer", "keepers.partyMax": "Party ceiling", "keepers.staleStrikes": "Strikes before release advice", "keepers.restatementBytes": "Keeper restatement limit", "keepers.tickFactChars": "Tick facts limit",
   "scopes.mode": "Scopes", "journal.journalReminders": "Journal reminders", "journal.journalQuietMinutes": "Quiet before a reminder",

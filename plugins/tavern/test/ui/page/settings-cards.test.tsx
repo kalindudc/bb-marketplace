@@ -96,15 +96,16 @@ it("groups Tavern controls in named cards with guardrail hints",async()=>{
  expect(s.container.textContent).toContain("Agents in Tavern threads can't change these; only you can.");
  for(const c of s.container.querySelectorAll(".tv-settings-card")){expect(c.querySelector("h3")).toBeTruthy();expect(c.querySelector("svg")).toBeTruthy();expect(c.querySelector(".tv-settings-hint")?.textContent).toMatch(/\w+/);}
 });
-it("puts the five Atmosphere controls in two cards and links to the character sheets",async()=>{
+it("groups Atmosphere controls and links to the character sheets",async()=>{
  const s=await section("atmosphere");
  const party=await s.findByRole("region",{name:"The party"});
  const motion=s.getByRole("region",{name:"Motion"});
  expect(s.getByText("How the tavern looks and feels: its characters, their speech and its motion.")).toBeTruthy();
- expect(s.getAllByRole("heading",{level:3}).map(h=>h.textContent)).toEqual(["The party","Motion","Character cues and checks"]);
+ expect(s.getAllByRole("heading",{level:3}).map(h=>h.textContent)).toEqual(["The party","Motion","Lantern","Character cues and checks"]);
  const labels=(el:HTMLElement)=>[...el.querySelectorAll(".tv-set-row label")].map(l=>l.textContent);
  expect(labels(party)).toEqual(["Show characters","Speech bubbles","Levels and crest notches"]);
- expect(labels(motion)).toEqual(["Ambient motion","Repeat every"]);
+ expect(labels(motion)).toEqual(["Ambient motion","Character quiet","Repeat every"]);
+ expect(labels(s.getByRole("region",{name:"Lantern"}))).toEqual(["Lantern light","Strength","Light bb's surfaces"]);
  expect(s.container.querySelector("#tavern-settings-atmosphere")).toBeTruthy();
  expect(s.container.querySelector("#motion")?.closest("#tavern-settings-atmosphere")).toBeTruthy();
  for(const text of s.container.querySelectorAll("p")){
@@ -131,11 +132,38 @@ it.each(["#tavern-settings-atmosphere","#motion"])("lands in Atmosphere from %s"
 });
 it.each([
  ["Show characters","characters"],["Levels and crest notches","levels"],
+ ["Lantern light","lanternLight"],["Light bb's surfaces","lanternLightBb"],
 ] as const)("saves %s on its existing key",async(name,key)=>{
  const update=vi.fn(()=>({code:"ok",revision:settingsView.revision+1,settings:settingsView,problems:[]}));
  const s=await section("atmosphere",structuredClone(settingsView),{settingsUpdate:update});
  fireEvent.click(await s.findByRole("switch",{name}));
  await waitFor(()=>expect(update).toHaveBeenCalledWith(expect.objectContaining({patch:{tavern:{[key]:false}}})));
+});
+it("saves the lantern's strength separately",async()=>{
+ const update=vi.fn(()=>({code:"ok",revision:settingsView.revision+1,settings:settingsView,problems:[]}));
+ const s=await section("atmosphere",structuredClone(settingsView),{settingsUpdate:update});
+ const strength=await s.findByRole("combobox",{name:"Strength"});
+ expect((strength as HTMLSelectElement).value).toBe("medium");
+ fireEvent.change(strength,{target:{value:"high"}});
+ await waitFor(()=>expect(update).toHaveBeenCalledWith(expect.objectContaining({patch:{tavern:{lanternStrength:"high"}}})));
+});
+it("shows the active character Quiet end time, lets you edit it, and ends it early", async () => {
+ const view = structuredClone(settingsView);
+ const local = (hours: number, minutes: number) => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(hours, minutes, 0, 0); return d; };
+ const until = local(20, 45);
+ Object.assign(view.effective.tavern, { characterQuietUntil: +until });
+ const update = vi.fn(() => ({ code: "ok", revision: view.revision + 1, settings: view, problems: [] }));
+ const s = await section("atmosphere", view, { settingsUpdate: update });
+ const input = await s.findByLabelText("Quiet until");
+ expect(s.getByText("Quiet until", { selector: "label" })).toBeTruthy();
+ expect(s.queryByText(/Quiet until .*20:45/)).toBeNull();
+ const edited = local(21, 15);
+ const date = new Date(+edited - edited.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+ fireEvent.change(input, { target: { value: date } });
+ fireEvent.blur(input);
+ await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ patch: { tavern: { characterQuietUntil: +edited } } })));
+ fireEvent.click(s.getByRole("button", { name: "End now" }));
+ await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ patch: { tavern: { characterQuietUntil: 0 } } })));
 });
 it("saves Repeat every in seconds on its existing key",async()=>{
  const update=vi.fn(()=>({code:"ok",revision:settingsView.revision+1,settings:settingsView,problems:[]}));

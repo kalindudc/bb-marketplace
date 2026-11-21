@@ -8,6 +8,7 @@ import { motion } from "../../../src/ui/kit/motion";
 
 const art: CharacterArt = {
   width: 24, height: 28, ground: 24, draw: () => {}, lightAnchor: () => null,
+  nextChange: () => null, pixelKey: () => 0, signature: "nod",
   quietIdle: mood => ({ working: "reads a scroll", waiting: "tends the lantern", resting: "leans on the tool" })[mood as "working"] ?? "breathes",
 };
 const clear = { mode: "lively", typing: false, held: false } as const;
@@ -60,7 +61,7 @@ it("never travels in Calm, walks in Lively at work, and stands when waiting", ()
   expect(a.body.x).toBe(at);
 });
 
-it("holds the rest pose without automatic motion, but accepts deliberate cues", () => {
+it("keeps the smaller idle without automatic cues, but accepts deliberate cues", () => {
   const a = actor();
   step(a);
   const at = a.body.x;
@@ -69,11 +70,11 @@ it("holds the rest pose without automatic motion, but accepts deliberate cues", 
   const held = { ...clear, held: true };
   step(a, held, 1);
   const frame = a.frame(false);
-  expect(frame).toMatchObject({ activity: "stand", cue: null, still: true, t: 0, swing: 0, flame: 1 });
+  expect(frame).toMatchObject({ activity: "stand", cue: null, still: false, small: true, swing: 0, flame: 1 });
   expect(a.body.lift).toBe(0);
   expect(a.playCue("tap", true, held)).toBeNull();
   step(a, held);
-  expect(a.frame(false)).toEqual(frame);
+  expect(a.frame(false)).toEqual({ ...frame, t: frame.t + 1000 });
   expect(a.body.x).toBe(at);
   for (const cue of ["notice", "hop"] as const) {
     const end = a.playCue(cue, false, held);
@@ -81,14 +82,23 @@ it("holds the rest pose without automatic motion, but accepts deliberate cues", 
     expect(a.frame(true)).toMatchObject({ still: true, t: 0, activity: "stand", swing: 0, flame: 1 });
     end?.();
   }
-  expect(a.frame(false)).toEqual(frame);
+  expect(a.frame(false)).toEqual({ ...frame, t: frame.t + 1000 });
+});
+
+it("changes facing but does not start a reaction clock when motion is off or reduced", () => {
+  const a = actor();
+  const reaction = a.nextReaction();
+  expect(a.react(reaction, clear, true)).toBeNull();
+  expect(a.lastReaction).toBe(reaction);
+  expect(a.nextReaction()).not.toBe(reaction);
+  expect(a.frame(true)).toMatchObject({ facing: -1, still: true, t: 0, cue: null });
 });
 
 it("clears an automatic cue when an attention mood arrives, without swallowing a direct interaction", () => {
   const a = actor();
   a.playCue("tap", true, clear);
   expect(a.setMood("waiting")).toBeNull();
-  expect(a.frame(false)).toMatchObject({ still: true, cue: null, flame: 1 });
+  expect(a.frame(false)).toMatchObject({ still: false, small: true, cue: null, flame: 1 });
   expect(a.playCue("notice", true, clear)).toBeNull();
   a.playCue("notice", false, clear);
   step(a, clear, 10);

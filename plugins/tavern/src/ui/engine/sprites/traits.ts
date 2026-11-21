@@ -1,5 +1,5 @@
 import { LOOK_HAIR_COLOURS, LOOK_SKINS, type LookFields } from "../../../shared/look";
-import type { ArtInput, LightAnchor, Mood } from "../art";
+import type { ArtInput, LightAnchor, Mood, Signature } from "../art";
 
 export const HAIR = ["fringe-crop", "tousled-crop", "bob", "shoulder-length", "long-straight", "braid", "tied-tail", "bun", "curls"] as const;
 const MATERIALS = ["linen", "undyed-wool", "moss", "wine", "slate", "ochre"] as const;
@@ -37,15 +37,16 @@ type Kit = {
   light: LightAnchor["kind"] | null;
   idle: Handwork;
   quiet: Partial<Record<Mood, Handwork>>;
+  signature: Signature;
 };
 
 export const KITS = {
-  keeper: { outfits: ["long-coat", "tabard"], hats: ["soft-cap", "coif", null], tool: "ledger-quill", light: "hearth", idle: "ledger", quiet: { resting: "hands" } },
-  wanderer: { outfits: ["travel-cloak"], hats: ["wide-brim", "round-brim"], tool: "staff-lantern", light: "lantern", idle: "satchel", quiet: { working: "lantern", waiting: "lantern", resting: "lantern" } },
-  ranger: { outfits: ["short-cape"], hats: ["hood", "tall-hood"], tool: "spyglass", light: null, idle: "spyglass", quiet: { working: "map", resting: "hands" } },
-  smith: { outfits: ["leather-apron"], hats: ["kerchief"], tool: "hammer", light: null, idle: "apron", quiet: { waiting: "hammer", resting: "hammer" } },
-  warden: { outfits: ["robe"], hats: ["warden-felt", null], tool: "crystal-staff", light: null, idle: "scroll", quiet: { waiting: "staff", resting: "staff" } },
-  none: { outfits: ["tunic"], hats: [null], tool: null, light: null, idle: "hands", quiet: {} },
+  keeper: { outfits: ["long-coat", "tabard"], hats: ["soft-cap", "coif", null], tool: "ledger-quill", light: "hearth", idle: "ledger", signature: "quill", quiet: { resting: "hands" } },
+  wanderer: { outfits: ["travel-cloak"], hats: ["wide-brim", "round-brim"], tool: "staff-lantern", light: "lantern", idle: "satchel", signature: "lantern", quiet: { working: "lantern", waiting: "lantern", resting: "lantern" } },
+  ranger: { outfits: ["short-cape"], hats: ["hood", "tall-hood"], tool: "spyglass", light: null, idle: "spyglass", signature: "spyglass", quiet: { working: "map", resting: "hands" } },
+  smith: { outfits: ["leather-apron"], hats: ["kerchief"], tool: "hammer", light: null, idle: "apron", signature: "hammer", quiet: { waiting: "hammer", resting: "hammer" } },
+  warden: { outfits: ["robe"], hats: ["warden-felt", null], tool: "crystal-staff", light: null, idle: "scroll", signature: "staff", quiet: { waiting: "staff", resting: "staff" } },
+  none: { outfits: ["tunic"], hats: [null], tool: null, light: null, idle: "hands", signature: "nod", quiet: {} },
 } as const satisfies Record<string, Kit>;
 
 type Traits = {
