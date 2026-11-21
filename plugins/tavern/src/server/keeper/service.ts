@@ -1,5 +1,6 @@
 import { authorize, commitUserAct, type UserActReceipt } from "../authority";
 import { QuestAuthority } from "../quest-authority";
+import { changeSpendBudget } from "../spend-budget";
 import { DELEGATABLE_KINDS, preapprovalWords, type DelegationKind } from "../../shared/quest-authority";
 import { clusterCommandTarget, fallbackActs } from "../../scope/acts";
 import { clusterWriteCommands } from "../../scope/engine";
@@ -862,7 +863,12 @@ export class Keeper {
       return previousWaypoints.some(w => w.id === waypointId && settled(w));
     });
     const steer = weakensChecks && r ? this.checkSteer(q, r) : null;
-    const needsGreenlight = approved === null || !partyFits(plan, approved) || weakensChecks && !steer;
+    const previousBudget = this.store.get("plans", `${q.id}:${q.planVersion}`)?.spendBudgetCents;
+    const carriesPendingBudget = q.phase === "greenlight" && q.spendProposal?.planVersion === q.planVersion && q.spendProposal.cents === plan.spendBudgetCents;
+    const proposesBudget = plan.spendBudgetCents !== undefined && (plan.spendBudgetCents !== previousBudget || carriesPendingBudget) && plan.spendBudgetCents !== q.spendBudget?.cents && !q.spendBudget?.reached;
+    const spendProposal = proposesBudget ? { planVersion: plan.version, cents: plan.spendBudgetCents! }
+      : plan.spendBudgetCents !== undefined && plan.spendBudgetCents === previousBudget ? q.spendProposal : null;
+    const needsGreenlight = approved === null || !partyFits(plan, approved) || weakensChecks && !steer || proposesBudget;
     const automatic =
       needsGreenlight && !weakensChecks &&
       this.settings().keepers.greenlight === "by-size" &&
@@ -873,7 +879,7 @@ export class Keeper {
       !this.store.openAsks(threadId).length;
     this.store.atomic(() => {
       this.store.put("plans", `${q.id}:${plan.version}`, plan);
-      const updated = { ...q, planVersion: plan.version, ...(!needsGreenlight ? { checkPlanVersion: plan.version } : {}), updatedAt: this.now() };
+      const updated = { ...q, planVersion: plan.version, ...(spendProposal || q.spendProposal ? { spendProposal: spendProposal ?? null } : {}), ...(!needsGreenlight ? { checkPlanVersion: plan.version } : {}), updatedAt: this.now() };
       const data = { version: plan.version, routeId: r?.id ?? null };
       if (needsGreenlight && storedPhase(q.phase) !== "greenlight") {
         transitionQuest(this.store, q, "greenlight", "plan", { kind: "agent", threadId }, { kind: "plan", id: `${q.id}:${plan.version}` }, this.now(), { patch: updated, text: `Plan v${plan.version}`, data });
@@ -893,6 +899,7 @@ export class Keeper {
       ))
         this.withdrawAsk(ask.id, "plan-superseded");
       if (automatic) {
+        if (proposesBudget && spendProposal) this.store.event(this.now(), threadId, q.id, "spend-budget.proposal-not-set", "The plan was greenlit automatically. Its proposed spend budget was not set.", spendProposal, { kind: "tavern" });
         const decision = this.decide(threadId, {
           boardQuestId: q.id,
           text: `Automatically greenlit reversible plan v${plan.version}`,
@@ -1350,6 +1357,11 @@ export class Keeper {
           if (q.phase !== "greenlight") throw new Error("This plan is no longer waiting for greenlight");
           if (effect.planVersion !== q.planVersion) throw new Error("This greenlight belongs to an old plan version");
           transitionQuest(this.store, q, "build", "approve", { kind: "user" }, { kind: "ask-answer", id: askId }, this.now(), { patch: { greenlitVersion: q.planVersion, checkPlanVersion: q.planVersion }, text: standing ? `Party approved: ${preapprovalWords(standing.grant)}. Hire it now, critical path first.` : "Party approved: hire it now, critical path first.", data: answerData });
+          const proposal = q.spendProposal;
+          if (proposal?.planVersion !== effect.planVersion) return;
+          if (by === "user" && via !== "timer" && receipt?.act === "answerAsk" && !q.spendBudget?.reached)
+            changeSpendBudget(this, q.id, proposal.cents, receipt, null, effect.planVersion);
+          else this.store.event(this.now(), q.keeperThreadId, q.id, "spend-budget.proposal-not-set", "The plan was greenlit without setting its proposed spend budget.", proposal, { kind: "tavern" });
         },
         "release-hold": effect => {
           if (effect.type !== "release-hold" || optionId !== "release") return;

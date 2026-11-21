@@ -167,6 +167,18 @@ describe("Tavern records snapshots", () => {
     expect(snapshot.tables).not.toHaveProperty("tavern_settings");
     expect(snapshot.tables).not.toHaveProperty("tavern_insight_meta");
   });
+  it("round trips spend receipts and Burn measurements, not host-local cursors", () => {
+    const source = setup(), target = setup();
+    source.db.prepare("INSERT INTO tavern_spend_receipts VALUES(?,?,?,?,?,?)").run("lead", "Guarded local session", "s1", "e1", 123, 1000);
+    source.db.prepare("INSERT INTO tavern_spend_burn VALUES(?,?,?)").run("lead", 124, '{"turns":[]}');
+    source.db.prepare("INSERT INTO tavern_spend_inputs VALUES(?,?,?,?)").run("lead", "1:2", 300, 0);
+    const backup = source.records.capture();
+    expect(backup.tables).not.toHaveProperty("tavern_spend_inputs");
+    target.records.restore(backup);
+    expect(target.db.prepare("SELECT usd_nanos FROM tavern_spend_receipts").get()).toEqual({ usd_nanos: 1000 });
+    expect(target.db.prepare("SELECT read_at,data FROM tavern_spend_burn").get()).toEqual({ read_at: 124, data: '{"turns":[]}' });
+    expect(target.db.prepare("SELECT * FROM tavern_spend_inputs").all()).toEqual([]);
+  });
   it("preserves the SQLite id high-water mark after redo history was pruned", () => {
     const source = setup(); populate(source);
     source.db.prepare("INSERT INTO questlog_history(id,thread_id,before_data,after_data,action,actor,state) VALUES(100,'thread','{}','{}','old',?,'redo')").run('{"kind":"user"}');

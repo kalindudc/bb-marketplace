@@ -21,7 +21,7 @@ it("groups live cards in order, then folds stopped Keepers with its server count
   const extra = { ...attention.items.find(item => item.kind === "rule")!, id: "stopped", who: { state: "archived" as const, startedAt: 0, questTitle: "A stopped quest" } };
   const data = { ...room, attention: { ...attention, needYou: 7, counts: { ask: 1, hold: 1, "hand-back": 1, rule: 1, stopped: 3 }, items: [extra, ...attention.items.slice().reverse()] } };
   const slot = renderSlot({ component: NeedsYouQueue }, { room: data, registry: fixtureRegistry });
-  expect([...slot.container.querySelectorAll("#tv-needs-you h3")].map(el => el.textContent)).toEqual(["Asks", "Checker holds", "Handed back to you", "Rules to confirm", "From stopped Keepers"]);
+  expect([...slot.container.querySelectorAll("#tv-needs-you h3")].map(el => el.textContent)).toEqual(["Asks", "Holds", "Handed back to you", "Rules to confirm", "From stopped Keepers"]);
   const fold = slot.getByRole("heading", { name: "From stopped Keepers" }).closest("details")!;
   expect(fold.open).toBe(false);
   expect(fold.querySelector("summary")?.textContent).toContain("3");

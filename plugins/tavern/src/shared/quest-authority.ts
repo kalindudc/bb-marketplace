@@ -21,5 +21,5 @@ export function preapprovalWords(receipt: { at: number; surface: string }) {
 export const questAuthorityViewSchema = z.object({
   keeperName: z.string(), rows: z.array(z.object({ kind: z.string(), lane: z.enum(["user", "keeper", "tavern"]) })),
   delegations: z.array(delegationSchema), preapprovals: z.array(preapprovalSchema),
-  review: z.object({ used: z.number(), total: z.number() }), spendBudget: z.number().nullable(),
+  review: z.object({ used: z.number(), total: z.number() }), spendBudget: z.number().nullable(), spendProposal: z.number().int().positive().optional(),
 });

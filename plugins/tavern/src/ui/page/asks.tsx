@@ -27,7 +27,7 @@ function useWide(query: string) {
 }
 
 const GROUPS = [
-  ["ask", "Asks"], ["hold", "Checker holds"], ["hand-back", "Handed back to you"], ["rule", "Rules to confirm"],
+  ["ask", "Asks"], ["hold", "Holds"], ["hand-back", "Handed back to you"], ["rule", "Rules to confirm"],
 ] as const;
 const SHOWN = 3;
 const isNeed = (item: AttentionItem) => GROUPS.some(([kind]) => kind === item.kind);
@@ -68,7 +68,7 @@ export function NeedsYouQueue({ room, registry }: { room: Room; registry: Regist
     return <NeedCard key={`${item.kind}:${item.id}`} item={item} keeper={keeper} questTitle={quest?.title} registry={registry}
       facts={ask && <><span>Ask: {KIND[ask.kind]}</span>{held.length > 0 ? <span>Holds: {held.join(", ")}</span> : ask.why && <span>Consequence: {ask.why}</span>}</>}>
       {ask && <AskForm ask={ask} first={index === 0} />}
-      {item.kind === "hold" && quest && <CheckerHold quest={quest} asks={room.asks} queue card />}
+      {item.kind === "hold" && quest?.checkerHandoffHold?.id === item.id && <CheckerHold quest={quest} asks={room.asks} queue card />}
       {item.kind === "held" && <HeldByYou id={item.id} />}
     </NeedCard>;
   };

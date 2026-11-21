@@ -39,6 +39,7 @@ import {
   ledgerHeading,
 } from "./instructions";
 import { reserveStaffing, settleStaffing } from "./staffing";
+import { SpendBudget } from "./spend-budget";
 import type { HireIntent, PendingBrief, ReviewTarget } from "./keeper/store";
 import { resolveHireExecution } from "./execution";
 import { ServiceRecords } from "./service-record";
@@ -138,6 +139,7 @@ import { storedPhase, transitionQuest } from "./keeper/quest-lifecycle";
 export class TavernRuntime {
   readonly stopAll = new StopAll(this);
   readonly serviceRecords: ServiceRecords;
+  readonly spend: SpendBudget;
   readonly toolNames = [...KEEPER_TOOLS, "tavern_report", "tavern_request_sources", "tavern_ready", "tavern_draft_pr", "tavern_act_verdict"];
   private readonly loop = new TickLoop(this);
   private readonly releaseLocks = new Map<string, Promise<boolean>>();
@@ -370,7 +372,7 @@ export class TavernRuntime {
   spawnBriefDelivered(threadId: string): void {
     const member = this.keeper.member(threadId);
     if (member?.role !== "member") throw new Error("Spawn briefs require a bound party member");
-    if (this.keeper.checkerHandoffProblem(member.classId, member.boardQuestId)) return;
+    if (this.spend.held(member.boardQuestId) || this.keeper.checkerHandoffProblem(member.classId, member.boardQuestId)) return;
     this.finishInitialBrief(threadId, null);
   }
   private requireBriefableMember(threadId: string): Member {
@@ -399,7 +401,11 @@ export class TavernRuntime {
   }
   async sendRebrief(threadId: string, text: string): Promise<{ briefPending: boolean }> {
     this.stopAll.assertRunning();
-    const member = this.requireBriefableMember(threadId);
+    let member = this.requireBriefableMember(threadId);
+    if (member.boardQuestId && this.keeper.quest(member.boardQuestId).spendBudget) {
+      await this.spend.assert(member.boardQuestId);
+      member = this.requireBriefableMember(threadId);
+    }
     if (member.boardQuestId) this.keeper.assertQuestNotHeld(member.boardQuestId);
     if (this.config().tavern.paused) throw new Error("Tavern is paused; no new brief was queued. Resume it before sending new work.");
     if (this.scopes?.pending(threadId)) throw new Error("The member is waiting for a scope decision; no new brief was queued.");
@@ -522,6 +528,7 @@ export class TavernRuntime {
           return { briefPending: true };
         }
       }
+      if (member.boardQuestId && this.keeper.quest(member.boardQuestId).spendBudget && !(await this.spend.allows(member.boardQuestId))) return { briefPending: true };
       if (pending.attempts >= this.config().keepers.briefRetryAttempts) {
         patchMemberDetails(this.keeper.store, threadId, { delivery: { ...pending, nextAttemptAt: this.keeper.now() + LIMITS.briefRetryMaxMs } });
         this.ensureBriefBlocker(threadId);
@@ -536,7 +543,7 @@ export class TavernRuntime {
         this.threadGone(threadId);
       }
       this.requireBriefableMember(threadId);
-      if (this.away.blocked(threadId) || this.keeper.checkerHandoffProblem(member.classId, member.boardQuestId) || member.boardQuestId && this.keeper.quest(member.boardQuestId).phase === "held") return { briefPending: true };
+      if (this.spend.held(member.boardQuestId) || this.away.blocked(threadId) || this.keeper.checkerHandoffProblem(member.classId, member.boardQuestId) || member.boardQuestId && this.keeper.quest(member.boardQuestId).phase === "held") return { briefPending: true };
       attempt.hostAfterSeq = latest[0]?.seq ?? 0;
       attempt.attemptedAt = this.keeper.now();
       patchMemberDetails(this.keeper.store, threadId, { delivery: attempt });
@@ -768,6 +775,7 @@ export class TavernRuntime {
     this.alerts = new AlertRoute(bb, keeper);
     keeper.routineAskOpened = async ask => { if (ask.boardQuestId) await this.applyStandingAnswers(ask.boardQuestId); };
     this.serviceRecords = new ServiceRecords(keeper, stale => bb.rpc.experimental_invalidate(stale));
+    this.spend = new SpendBudget(bb, keeper);
     PlacementPreservation.observe(bb, () => this.placements());
     keeper.store.log = (level, message) => this.bb.log[level](message);
     // Actionable news wakes the Keeper it belongs to through the same gates as the sweep.
@@ -1230,6 +1238,16 @@ export class TavernRuntime {
       ? this.keeper.checkerHandoffProblem(member.classId, member.boardQuestId)
       : hire ? this.keeper.checkerHandoffProblem(hire.classId, hire.owner.boardQuestId) : null;
     if (checkerHold) return { action: "wait" as const, reason: checkerHold };
+    const questId = member?.boardQuestId ?? hire?.owner.boardQuestId;
+    const state = this.keeper.store.runtime(ctx.thread.id);
+    const pendingBrief = member?.role === "member" ? memberDetails(this.keeper.store, member.threadId).delivery : null;
+    const text = ctx.input.blocks.length ? inputText(ctx.input.blocks) : ctx.input.text;
+    const isRebrief = (body: string) => !!pendingBrief && body.startsWith(`[Tavern brief] id=${pendingBrief.id}\n`);
+    const tavernBrief = !!hire && (state.initialBriefAt === undefined || text === hire.initialInput)
+      || ctx.originPluginId === this.bb.pluginId && isRebrief(text)
+      || ctx.queuedMessages.some(row => row.originPluginId === this.bb.pluginId && isRebrief(inputText(row.content)));
+    if (tavernBrief && questId && this.keeper.quest(questId).spendBudget && !(await this.spend.allows(questId)))
+      return { action: "wait" as const, reason: "The quest reached its measured spend budget; only you can raise or remove it." };
     const keeperStart = !hireToken && (member?.role === "keeper" || classId === "keeper");
     const soloStart = !keeperStart && this.humanThread(ctx, binding);
     const boundedRegistry = keeperStart || soloStart;
@@ -1348,6 +1366,7 @@ export class TavernRuntime {
       if (lateCheckerHold) return { action: "wait" as const, reason: lateCheckerHold };
       const admission = this.loop.admit(ctx);
       if (admission) return admission;
+      if (tavernBrief && this.spend.held(questId)) return { action: "wait" as const, reason: "The quest reached its measured spend budget; only you can raise or remove it." };
       if (hire?.initialInput) this.spawnBriefDelivered(member.threadId);
       for (const input of this.userInputs(ctx, member, data)) this.keeper.receiveUser(...input);
       // Identity is already durable before SDK I/O, so the first configure pass cannot race the mirror.
@@ -1478,8 +1497,9 @@ export class TavernRuntime {
     projectId = input.repo ?? makerRepo ?? projectId;
     if (projectId !== keeperProjectId) await readSourceIdentity(this.bb, threadId, projectId);
     if (input.boardQuestId) {
-      this.keeper.owned(threadId, input.boardQuestId);
-      this.keeper.assertQuestNotHeld(input.boardQuestId);
+      const quest = this.keeper.owned(threadId, input.boardQuestId);
+      this.keeper.assertQuestNotHeld(quest.id);
+      if (quest.spendBudget) await this.spend.assert(quest.id);
     }
     await this.reconcileNames();
     if (this.config().tavern.paused) throw new Error("Tavern is paused; resume it before hiring.");
@@ -1757,7 +1777,9 @@ export class TavernRuntime {
         throw new Error("Machine placement settings changed before this hire was reserved; retry.");
     }
     this.keeper.assertCheckerHandoff(role.id, questId);
+    if (questId && this.keeper.quest(questId).spendBudget) await this.spend.assert(questId);
     const displayName = this.keeper.store.atomic(() => {
+      if (this.spend.held(questId)) throw new Error("The quest reached its spend budget. Only you can raise or remove it on the quest page.");
       limitDecisionIds.push(...checkStaffing().permits);
       if (reviewAllowance && questId) limits.claimReview(questId, token);
       for (const id of limitDecisionIds) limits.claimSoft(id, token);
@@ -2484,7 +2506,10 @@ export class TavernRuntime {
     if (member.boardQuestId) this.keeper.assertQuestNotHeld(member.boardQuestId);
     this.requireBriefableMember(memberThreadId);
     this.keeper.assertCheckerHandoff(member.classId, member.boardQuestId);
-    if (member.boardQuestId) this.keeper.guard(threadId, member.boardQuestId);
+    if (member.boardQuestId) {
+      this.keeper.guard(threadId, member.boardQuestId);
+      if (this.keeper.quest(member.boardQuestId).spendBudget) await this.spend.assert(member.boardQuestId);
+    }
     if (this.scopes?.pending(memberThreadId))
       throw new Error(
         "The member is waiting for a scope decision; do not send a brief requiring unapproved grants",
@@ -2638,6 +2663,12 @@ export class TavernRuntime {
     try { this.reviewCache = this.readReview(); }
     catch (error) { this.bb.log.warn(`Tavern review cache: ${String(error)}`); }
     try {
+      const spendByKeeper = new Map<string, string[]>();
+      for (const { id, keeperThreadId } of this.keeper.store.questsAwaitingSpendCheck()) {
+        const ids = spendByKeeper.get(keeperThreadId);
+        if (ids) ids.push(id);
+        else spendByKeeper.set(keeperThreadId, [id]);
+      }
       await Promise.all(keepers.map(async member => {
         const id = member.threadId;
         const automatic = (run: () => unknown) => () => !this.config().tavern.paused && isLiveKeeper(this.keeper.store, this.keeper.member(id)) ? run() : undefined;
@@ -2648,6 +2679,9 @@ export class TavernRuntime {
           { name: "thread", run: automatic(async () => this.updateThread(await loopCall(this.bb.sdk.threads.get({ threadId: id }), `Keeper thread ${id}`))) },
           { name: "hold display", run: automatic(() => this.expireHoldingDisplay(id)) },
           { name: "scopes", run: automatic(() => this.scopes?.resume(id)) },
+          { name: "quest spend", run: async () => {
+            for (const questId of spendByKeeper.get(id) ?? []) await this.spend.refresh(questId);
+          } },
           { name: "briefs", run: automatic(() => this.retryInitialBriefs(id)) },
           { name: "failure blocker", run: automatic(() => this.ensureFailureBlocker(id)) },
           { name: "defaults", run: automatic(() => this.keeper.defaults(id, error => this.bb.log.warn(String(error)))) },
@@ -3075,6 +3109,7 @@ export class TavernRuntime {
   async threadStarted(thread: Thread) {
     if (this.keeper.store.runtime(thread.id).clusterSessionPending) this.keeper.store.patch(thread.id, { clusterSessionPending: false });
     this.updateThread(thread);
+    if (this.keeper.member(thread.id)) this.keeper.store.patch(thread.id, { lastSpendActivityAt: this.keeper.now() });
     if (this.scopes) await this.scopes.pinWorktree(thread.id);
   }
   async threadLifecycle(

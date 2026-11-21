@@ -26,7 +26,7 @@ async function fixture() {
   const db = new Database(join(location.home, "data.db"));
   const f = createFakePluginHost({ pluginId: "tavern", sdk: {
     threads: { get: async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, status: threadId === "lead" ? "active" : "idle" }), defaultExecutionOptions: async () => ({ model: "checked-model", reasoningLevel: "high" }), update: async () => ({}), getPluginMetadata: async () => ({}), updatePluginMetadata: async () => ({}), events: { list: async () => [] }, queuedMessages: { list: async () => [] }, stop: async () => ({}) },
-    plugins: { list: async () => ({ plugins: [{ id: "push-notifications", enabled: true }] }), callRpc: async () => ({ ok: true, channels: ["fixture"] }) }, projects: { list: async () => [], get: async () => ({ sources: [] }) }, system: { config: async () => ({ primaryHostId: "host" }) },
+    plugins: { list: async () => ({ plugins: [{ id: "push-notifications", enabled: true }] }), callRpc: async ({ pluginId }: { pluginId: string }) => pluginId === "burn" ? { report: null } : { ok: true, channels: ["fixture"] } }, projects: { list: async () => [], get: async () => ({ sources: [] }) }, system: { config: async () => ({ primaryHostId: "host" }) },
     environments: { listProviders: async () => [] }, hosts: { list: async () => [], experimental_listProviders: async () => [] },
   } });
   const disposals: (() => unknown)[] = [];
@@ -200,6 +200,8 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     confirmRule: () => call("confirmRule", { ruleId: f.rule.id, active: true }),
     widenRule: () => call("widenRule", { ruleId: f.rule.id, scope: "global" }),
     allowReview: () => call("allowReview", { id: f.q.id }),
+    questSpend: () => call("questSpend", { id: f.q.id }),
+    setSpendBudget: () => call("setSpendBudget", { id: f.q.id, budgetCents: 500 }),
     holdBoardQuest: () => call("holdBoardQuest", { id: f.q.id }),
     resumeBoardQuest: () => call("resumeBoardQuest", { id: f.q.id }),
     stopBoardQuest: () => call("stopBoardQuest", { id: f.q.id }),
