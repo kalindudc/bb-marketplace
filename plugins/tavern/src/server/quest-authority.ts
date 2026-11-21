@@ -130,9 +130,9 @@ export class QuestAuthority {
     let optionId: string | null = null;
     if (ask.kind === "greenlight" && ask.effect?.type === "greenlight" && !ask.effect.requiresExplicit && grant.greenlight) {
       const plan = k.store.get("plans", `${q.id}:${ask.effect.planVersion}`), envelope = grant.greenlight;
-      if (plan && plan.version === q.planVersion && plan.reversible && !(plan.alwaysAskKinds?.length ?? 0) && !plan.questions.length && this.routinePlan(plan) && plan.party.length <= envelope.maxMembers && plan.party.every(s => envelope.classes.includes(s.classId))) optionId = "approve";
+      if (plan && !plan.party.some(slot => slot.leadEnvelope) && !k.store.leadLinksBy("childQuestId", q.id).length && plan.version === q.planVersion && plan.reversible && !(plan.alwaysAskKinds?.length ?? 0) && !plan.questions.length && this.routinePlan(plan) && plan.party.length <= envelope.maxMembers && plan.party.every(s => envelope.classes.includes(s.classId))) optionId = "approve";
     } else if (ask.kind === "blocker" && ask.effect?.type === "placement-blocker" && grant.placement) optionId = grant.retriesUsed === 0 ? "retry" : "stop";
-    else if (ask.kind === "conclude" && ask.effect?.type === "conclude" && grant.conclude && !ask.effect.draft.skipped?.length && !ask.effect.draft.pullRequests?.length && !k.store.openPullRequests(q.id).length) {
+    else if (ask.kind === "conclude" && ask.effect?.type === "conclude" && !ask.effect.draft.lead && grant.conclude && !ask.effect.draft.skipped?.length && !ask.effect.draft.pullRequests?.length && !k.store.openPullRequests(q.id).length) {
       const summary = k.summary(q.id);
       if (summary.plan && summary.waypoints.length && summary.waypoints.every(verifiedWaypoint)) optionId = "conclude";
     }
@@ -172,7 +172,9 @@ export class QuestAuthority {
   view(questId: string) {
     const k = this.keeper, q = k.quest(questId);
     const shifted = new Set(q.delegations?.some(g => this.active(g)) ? readUndoLanes(k.store, q.keeperThreadId).map(row => row.kind) : []);
+    const keeper = k.member(q.keeperThreadId);
+    if (!keeper) throw new Error("The quest's Keeper record is missing.");
     const proposal = q.phase === "greenlight" && !q.spendBudget?.reached && q.spendProposal?.planVersion === q.planVersion ? q.spendProposal.cents : undefined;
-    return { keeperName: k.name(k.require(q.keeperThreadId, "keeper")), rows: [...DELEGATABLE_KINDS.map(kind => ({ kind, lane: shifted.has(kind) ? "user" as const : this.baseLane({ kind, boardQuestId: q.id }) })), { kind: "cluster-write", lane: QUEST_LANES["cluster-write"].lane }, { kind: "sends-as-you", lane: "user" as const }, ...["greenlight", "conclude"].map(kind => ({ kind, lane: q.preapprovals?.some(g => this.active(g) && (kind === "greenlight" ? g.greenlight : g.conclude)) ? "tavern" as const : "user" as const })), ...Object.entries(QUEST_LANES).filter(([, row]) => row.lane === "keeper").map(([kind, row]) => ({ kind, lane: row.lane }))], delegations: q.delegations ?? [], preapprovals: q.preapprovals ?? [], review: { used: k.store.query("members", "boardQuestId", q.id, 500).filter(m => m.classId === "warden").length, total: k.settings(q.id).attention.reviewBudget }, spendBudget: q.spendBudget?.cents ?? null, ...(proposal !== undefined && proposal !== q.spendBudget?.cents ? { spendProposal: proposal } : {}) };
+    return { keeperName: k.name(keeper), rows: [...DELEGATABLE_KINDS.map(kind => ({ kind, lane: shifted.has(kind) ? "user" as const : this.baseLane({ kind, boardQuestId: q.id }) })), { kind: "cluster-write", lane: QUEST_LANES["cluster-write"].lane }, { kind: "sends-as-you", lane: "user" as const }, ...["greenlight", "conclude"].map(kind => ({ kind, lane: q.preapprovals?.some(g => this.active(g) && (kind === "greenlight" ? g.greenlight : g.conclude)) ? "tavern" as const : "user" as const })), ...Object.entries(QUEST_LANES).filter(([, row]) => row.lane === "keeper").map(([kind, row]) => ({ kind, lane: row.lane }))], delegations: q.delegations ?? [], preapprovals: q.preapprovals ?? [], review: { used: k.store.query("members", "boardQuestId", q.id, 500).filter(m => m.classId === "warden").length, total: k.settings(q.id).attention.reviewBudget }, spendBudget: q.spendBudget?.cents ?? null, ...(proposal !== undefined && proposal !== q.spendBudget?.cents ? { spendProposal: proposal } : {}) };
   }
 }

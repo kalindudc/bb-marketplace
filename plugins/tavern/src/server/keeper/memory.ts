@@ -11,7 +11,7 @@ import {
 } from "../../shared/schema";
 import type { Keeper } from "./service";
 import { messageKey } from "../../shared/text";
-import { isLiveMember, isOpenQuest } from "../liveness";
+import { isKeeperIdentity, isLiveMember, isOpenQuest } from "../liveness";
 import { settled } from "../../shared/waypoint";
 
 export class KeeperMemory {
@@ -36,7 +36,7 @@ export class KeeperMemory {
     ).n;
   }
   lastReply(threadId: string, text?: string | null) {
-    if (this.k.member(threadId)?.role !== "keeper" || !text?.trim()) return;
+    if (!isKeeperIdentity(this.k.store, this.k.member(threadId)) || !text?.trim()) return;
     this.k.store.patch(threadId, {
       lastReply: { text: text.trim().slice(0, 400), at: this.k.now() },
     });

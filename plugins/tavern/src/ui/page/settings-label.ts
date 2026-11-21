@@ -6,7 +6,7 @@ const LABELS: Record<string, string> = {
   "tavern.lanternLight": "Lantern light", "tavern.lanternStrength": "Strength", "tavern.lanternLightBb": "Light bb's surfaces",
   "tavern.characterQuietUntil": "Character quiet", "tavern.voiceBeforeOff": "Previous speech level",
   "attention.reviewBudget": "Review budget", "attention.notify": "Push to your devices", "attention.quietHours": "Quiet hours",
-  "keepers.restMinutes": "Rest before reminder", "keepers.greenlight": "Greenlight", "keepers.decisionTimerMax": "Longest decision timer", "keepers.partyMax": "Party ceiling", "keepers.staleStrikes": "Strikes before release advice", "keepers.restatementBytes": "Keeper restatement limit", "keepers.tickFactChars": "Tick facts limit",
+  "keepers.restMinutes": "Rest before reminder", "keepers.greenlight": "Greenlight", "keepers.decisionTimerMax": "Longest decision timer", "keepers.partyMax": "Party ceiling", "keepers.chainDepth": "Lead chain depth", "keepers.chainMembers": "Lead chain ceiling", "keepers.staleStrikes": "Strikes before release advice", "keepers.restatementBytes": "Keeper restatement limit", "keepers.tickFactChars": "Tick facts limit",
   "scopes.mode": "Scopes", "scopes.sendTools": "Sending and drafting", "journal.journalReminders": "Journal reminders", "journal.journalQuietMinutes": "Quiet before a reminder",
   "data.historyDays": "Keep history", "data.autoArchiveDays": "Send returned quests to the cellar after", "tuning.mode": "Tuning",
 };

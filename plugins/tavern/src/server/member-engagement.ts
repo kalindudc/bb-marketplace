@@ -28,6 +28,8 @@ const rows = <F extends Engagement | null, T extends Engagement, C extends strin
 export const MEMBER_TRANSITIONS = [
   ...rows([null], ["briefing"], "bind-hire", ["agent"], "hire", "member.bound"),
   ...rows([null], ["active"], "bind-solo", ["user"], "class-start", "member.bound"),
+  ...rows([null], ["active"], "lead-seat-bound", ["tavern"], "lead-succession", "member.lead-seat-bound"),
+  ...rows(["active"], ["released"], "lead-seat-moved", ["tavern"], "lead-succession", "member.lead-seat-moved"),
   ...rows(["briefing"], ["active"], "brief-accepted", ["tavern"], "brief-acceptance", "member.briefed"),
   ...rows(["resting"], ["briefing"], "rebrief", ["agent"], "brief", "member.rebrief-requested"),
   ...rows(["briefing"], ["resting"], "rebrief-cancelled", ["tavern"], "brief-cancelled", "member.brief-cancelled"),
@@ -37,7 +39,7 @@ export const MEMBER_TRANSITIONS = [
   ...rows(available, ["releasing"], "greenlight-undone", ["user"], "undo", "member.release-requested"),
   ...rows(available, ["releasing"], "model-failure", ["tavern"], "host-failure", "member.release-requested"),
   ...rows(["releasing"], ["released"], "release-confirmed", ["tavern"], "host-stop", "member.released"),
-  ...rows([...available, "releasing"], ["stopping"], "quest-stop", ["user"], "quest-stop", "member.stop-requested"),
+  ...rows([...available, "releasing"], ["stopping"], "quest-stop", ["user", "tavern"], "quest-stop", "member.stop-requested"),
   ...rows([...available, "releasing"], ["stopping"], "hire-cancelled", ["tavern"], "cancelled-hire", "member.stop-requested"),
   ...rows(["stopping"], ["stopped"], "stop-confirmed", ["tavern"], "host-stop", "member.stopped"),
   ...rows(archiveSources, ["archiving"], "archive-requested", ["tavern", "user"], "archive-authority", "member.archive-requested"),
@@ -94,6 +96,11 @@ function hasArchiveAuthority(store: KeeperStore, member: Member, receipt: Engage
     const hire = store.get("hires", receipt.id);
     return hire?.memberThreadId === member.threadId && hire.cancelledAt != null;
   }
+  if (cause === "lead-cleanup") {
+    const link = store.get("leadLinks", receipt.id);
+    return !!link && link.id === member.leadLinkId && link.childKeeperThreadId === member.threadId &&
+      link.state === "retiring" && (link.forcedStop ? link.forcedStop.hostStopped === true : link.retirement?.confirmedBy === member.threadId);
+  }
   if (cause === "legacy-archive")
     return receipt.id === memberDetails(store, member.threadId).archiveAfter?.receipt.id;
   if (!member.boardQuestId) return false;
@@ -105,7 +112,7 @@ function hasArchiveAuthority(store: KeeperStore, member: Member, receipt: Engage
     const ask = store.get("asks", receipt.id);
     return ask?.boardQuestId === member.boardQuestId && ask.keeperThreadId === member.keeperThreadId &&
       ask.effect?.type === cause && ask.state === "answered" && ask.answer?.optionId === cause &&
-      ["user", "preapproval"].includes(ask.answer.by);
+      (["user", "preapproval"].includes(ask.answer.by) || ask.answer.by === "keeper" && ask.effect.type === "conclude" && !!ask.effect.draft.lead);
   }
   return (cause === "quest.archived" || cause === "quest.deleted" || cause === "quest.stopped") &&
     String(store.latestQuestEvent(member.boardQuestId, cause)?.id) === receipt.id;
@@ -126,6 +133,12 @@ export function transitionMember(store: KeeperStore, member: Member, to: Engagem
       if (!hire || hire.owner.keeperThreadId !== bound.keeperThreadId || hire.owner.boardQuestId !== bound.boardQuestId || hire.classId !== bound.classId || hire.memberThreadId && hire.memberThreadId !== bound.threadId) refuse("hire binding does not match");
     }
     if (cause === "bind-solo" && bound.role !== "solo") refuse("not a solo class start");
+    if (cause === "lead-seat-bound" || cause === "lead-seat-moved") {
+      const link = store.get("leadLinks", receipt.id);
+      const predecessor = receipt.evidence?.predecessor, successor = receipt.evidence?.successor;
+      if (!link || link.state !== "linked" || link.id !== bound.leadLinkId || link.childKeeperThreadId !== predecessor ||
+          bound.threadId !== (cause === "lead-seat-bound" ? successor : predecessor)) refuse("lead cutover receipt does not match");
+    }
     if (cause === "done-report") {
       const report = store.get("reports", receipt.id);
       if (actor.kind !== "agent" || actor.threadId !== bound.threadId || report?.memberThreadId !== bound.threadId || report.status !== "done" || report.deliveredAt !== null) refuse("report does not authorize this member to rest");
@@ -211,7 +224,7 @@ export function transitionMember(store: KeeperStore, member: Member, to: Engagem
     if (to !== "stopping") { delete updated.stopError; delete updated.lastStopAttemptAt; }
     writes.add(updated);
     store.put("members", bound.threadId, updated);
-    if (cause !== "legacy-import" && (to === "released" || to === "archived")) store.transferPullRequests(bound.threadId, at);
+    if (cause !== "legacy-import" && cause !== "lead-seat-moved" && (to === "released" || to === "archived")) store.transferPullRequests(bound.threadId, at);
     store.patch(bound.threadId, { memberEngagement: details });
     const event = cause === "archive-confirmed" && details.host?.deletedAt != null ? "thread.deleted" : row!.event;
     store.event(at, bound.keeperThreadId, bound.boardQuestId, event, options.text ?? `${bound.displayName ?? bound.classId}: ${from ?? "new"} to ${to}`, {

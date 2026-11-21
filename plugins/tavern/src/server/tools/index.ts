@@ -48,7 +48,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       threadId: string,
       projectId: string,
     ) => unknown | Promise<unknown>,
-    role: "keeper" | "member" = "keeper",
+    role: "keeper" | "member" | ((input: z.output<S>, threadId: string) => void) = "keeper",
   ) => {
     bb.agents.registerTool({
       name,
@@ -58,11 +58,13 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       async execute(input, ctx) {
         if (ctx.signal.aborted)
           throw new Error(`${name} was cancelled or stopped before it began; no change was applied.`);
-        k.require(ctx.threadId, role);
+        if (typeof role === "string") k.require(ctx.threadId, role);
         const done = runtime.succession.track(ctx.threadId);
         let result: unknown;
         try {
-          result = await action(parameters.parse(input), ctx.threadId, ctx.projectId);
+          const parsed = parameters.parse(input);
+          if (typeof role === "function") role(parsed, ctx.threadId);
+          result = await action(parsed, ctx.threadId, ctx.projectId);
         } catch (error) {
           if (ctx.signal.aborted)
             throw new Error(`${name} failed while its turn was cancelled or stopped; its outcome is not confirmed. Read tavern_status before retrying. Cause: ${String(error)}`, { cause: error });
@@ -239,10 +241,18 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_release",
     "Released a party member",
-    "Stop a member of your own party and free its allocation once stopping is confirmed. memberThreadId accepts its unique live display name or thread id. Give the reason. The reversible release appears under Decided for you; replacements still obey their per-slot budget. Treat stale strikes as advice, not an order to release. Released members retain history and credit for verified work; unfinished entries no longer own or hold open the waypoint.",
-    z.object({ memberThreadId: id, reason: z.string().trim().min(1).max(500) }),
+    "Stop a member of your own party, using its name or thread id and a reason. A reversible release appears under Decided for you. Slot budgets still apply. Verified work keeps credit. For a lead this requests retirement; the lead calls confirmRetirement:true after releasing its party and resolving pull request ownership, then ends its turn.",
+    z.union([z.object({ memberThreadId: id, reason: z.string().trim().min(1).max(500) }).strict(), z.object({ confirmRetirement: z.literal(true) }).strict()]),
     async (input, threadId) => {
+      if ("confirmRetirement" in input) {
+        runtime.confirmLeadRetirement(threadId);
+        return "Retirement confirmed. End your turn; Tavern will free the seat after cleanup.";
+      }
       const member = k.resolvePartyMember(threadId, input.memberThreadId);
+      if (member.leadLinkId) {
+        const state = runtime.requestLeadRetirement(threadId, member, input.reason);
+        return state === "retired" ? "This lead has retired." : "Retirement requested. Tavern waits for the lead's own confirmation.";
+      }
       if (await runtime.release(threadId, member.threadId, input.reason)) {
         const placement = runtime.placements().store.byMember(member.threadId);
         if (placement && ["lost", "unknown", "unpreserved"].includes(placement.preservation.source))
@@ -256,6 +266,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         ? `Release pending for ${input.memberThreadId}: ${blocker} The thread and its allocation stay held. Retry release after resolving the blocker.`
         : `Stop requested for ${input.memberThreadId}; its allocation stays held until the stop is confirmed. Tavern will retry confirmation.`;
     },
+    (input, threadId) => { if ("memberThreadId" in input) k.require(threadId, "keeper"); },
   );
   register(
     "tavern_scope",
@@ -306,7 +317,9 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       const plan = await runtime.plan(threadId, input);
       const quest = k.quest(plan.boardQuestId);
       const standing = k.store.query("asks", "boardQuestId", quest.id, 500).find(ask => ask.effect?.type === "greenlight" && ask.effect.planVersion === plan.version && ask.answer?.preapproval)?.answer?.preapproval;
-      const approval = standing ? ` ${preapprovalWords(standing)}.` :
+      const lead = k.store.get("leadPlans", `${quest.id}:${plan.version}`);
+      const approval = lead ? lead.lane === "keeper" ? " The hiring Keeper decides on this exact version. Do not staff it yet." : " This exact plan waits for the user's answer." :
+        standing ? ` ${preapprovalWords(standing)}.` :
         quest.phase === "greenlight"
           ? " Await the user's explicit greenlight for this plan."
           : quest.greenlitVersion === plan.version
@@ -380,15 +393,22 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_decide",
     "Recorded a decision",
-    "Record a reversible decision with Undo. For a plain call give coveredBy, options, consequence and unsure:false. For your lane's ask give askId, optionId, consequence and unsure:false; Tavern gets the citation and options from the ask. If unsure, ask the user. Never claim the user's consent without an answered ask; give its sourceRef. exceeds: party or rangers allows one extra hire within hard limits.",
+    "Record a reversible decision with Undo. Give coveredBy, options, consequence and unsure:false; use leadPlan for a linked plan. For your lane's ask give askId, optionId, consequence and unsure:false; Tavern gets the citation and options from the ask. If unsure, ask the user. Never claim the user's consent without an answered ask; give its sourceRef. exceeds: party or rangers allows one extra hire within hard limits.",
     z.union([
       decisionInput.extend(decisionSchema.pick({ coveredBy: true, options: true }).required().shape)
-        .extend(decisionSchema.pick({ exceeds: true }).shape).strict(),
+        .extend(decisionSchema.pick({ exceeds: true, leadPlan: true }).shape).strict(),
       decisionInput.extend(decisionSchema.pick({ askId: true, optionId: true }).required().shape)
         .extend(decisionSchema.pick({ kind: true }).shape).strict(),
     ]).meta({ type: "object" }),
     async (input, threadId) => {
-      if ("askId" in input && !input.unsure) await runtime.prepareActDecision(input.askId);
+      if ("askId" in input) {
+        const effect = k.store.get("asks", input.askId)?.effect;
+        if (effect?.type === "conclude" && effect.draft.lead) {
+          if (input.source !== "keeper") throw new Error("The hiring Keeper receives the child outcome as its own call.");
+          return runtime.answerLeadConclude(threadId, input.askId, input.boardQuestId, input.optionId, input.why, input.consequence, input.unsure);
+        }
+        if (!input.unsure) await runtime.prepareActDecision(input.askId);
+      }
       const result = k.decideOrAsk(threadId, input);
       return "question" in result ? keeperCallAsk(result.id) : result;
     },
@@ -489,6 +509,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       );
       if (!result.askId)
         return `Retold the returned quest.${result.pendingArchives.length ? ` Archiving ${result.pendingArchives.length} member(s) remains pending and will retry automatically.` : ""} Keep results.figures and results.chart as the short summary. Rich visuals are welcome in the final message: check each renderer block with its check tool when available (for example check_ui), and fix every error before sending. If the check tool is absent, keep the block simple; do not ask the user for it. Your final message is only the tale: lead with the answer, use Markdown lists or tables if useful. Do not repeat the next list; Tavern shows What to do now. Include no notes about your process or tools, and end on its own line:\n::tavern-tale{quest="${input.boardQuestId}"}`;
+      if ("hiringKeeper" in result && result.hiringKeeper) return "Summary recorded. The hiring Keeper has the child’s conclusion request. Do not tell the tale or archive the party before it answers.";
       return `Summary recorded. The quest has NOT concluded.\nReport that summary and let the returned Conclude or Close early card carry the decision. Keep results.figures and results.chart as the short summary. Do not say the quest returned, do not archive the party and do not write the tale directive until the user answers the ask. Rich visuals are welcome: check each renderer block with its check tool when available (for example check_ui), and fix every error before sending. Lead with the answer, use Markdown lists or tables if useful, and end on its own line:\n::tavern-ask{id="${result.askId}"}`;
     },
   );

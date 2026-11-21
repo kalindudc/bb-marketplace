@@ -6,6 +6,8 @@ import { authorize, type UserActReceipt } from "./authority";
 import type { Keeper } from "./keeper/service";
 import { isOpenQuest } from "./liveness";
 import { SpendLedger } from "./spend-ledger";
+import { leadAncestors } from "./keeper/leads";
+import { projectLeadSpendSubtree } from "./keeper/lead-spend";
 
 const amount = z.number().finite().nonnegative();
 const burnReport = z.object({ startedAt: amount, updatedAt: amount, calls: amount, turns: z.array(z.object({ at: amount, calls: amount, cost: amount })) }).nullable();
@@ -43,19 +45,27 @@ export class SpendBudget {
 
   constructor(private readonly bb: BbPluginApi, private readonly k: Keeper) { this.ledger = new SpendLedger(k.store); }
 
-  held(id: string | null | undefined) { return !!id && !!this.k.store.get("quests", id)?.spendBudget?.reached; }
+  private budgetQuests(id: string | null | undefined) {
+    const { store } = this.k;
+    if (!id) return [];
+    return [id, ...leadAncestors(store, id).map(link => link.parentQuestId)]
+      .flatMap(id => { const q = store.get("quests", id); return q?.spendBudget ? [q] : []; });
+  }
+
+  held(id: string | null | undefined) { return this.budgetQuests(id).some(q => q.spendBudget?.reached); }
 
   async refreshForThread(threadId: string) {
     const member = this.k.member(threadId);
     if (!member) return;
-    const quests = member.role === "keeper" ? this.k.store.query("quests", "keeperThreadId", threadId, 500)
-      : member.boardQuestId ? [this.k.quest(member.boardQuestId)] : [];
-    for (const q of quests) if (q.spendBudget && !q.spendBudget.reached && isOpenQuest(q)) await this.refresh(q.id);
+    const quests = this.k.store.query("quests", "keeperThreadId", threadId, 500).map(q => q.id);
+    if (member.boardQuestId) quests.push(member.boardQuestId);
+    const budgets = new Map(quests.flatMap(id => this.budgetQuests(id).map(q => [q.id, q] as const)));
+    for (const q of budgets.values()) if (!q.spendBudget?.reached && isOpenQuest(q)) await this.refresh(q.id);
   }
 
   async allows(id: string | null | undefined) {
-    if (!id || !this.k.quest(id).spendBudget) return true;
-    if (!this.held(id)) await this.refresh(id);
+    if (this.held(id)) return false;
+    for (const q of this.budgetQuests(id)) await this.refresh(q.id);
     return !this.held(id);
   }
 
@@ -129,7 +139,26 @@ export class SpendBudget {
   }
 
   private async measure(q: BoardQuest, localOnly: boolean): Promise<SpendView> {
-    const now = this.k.now(), to = q.endedAt ?? now;
+    const now = this.k.now(), signal = AbortSignal.timeout(1_000);
+    const sources = new Map<string, number>();
+    let subtotal = 0, known = false, missing = 0;
+    for (const id of projectLeadSpendSubtree(this.k.store, q.id)) {
+      const part = await this.measureQuest(id === q.id ? q : this.k.quest(id), localOnly, now, signal);
+      if (part.usdNanos !== null) { subtotal += part.usdNanos; known = true; }
+      missing += part.missing;
+      for (const { name, readAt } of part.sources) sources.set(name, Math.max(sources.get(name) ?? 0, readAt));
+    }
+    return { budgetCents: q.spendBudget?.cents ?? null, reachedAt: q.spendBudget?.reached?.at ?? null,
+      usdNanos: known || missing === 0 ? subtotal : null, missing, sources: [...sources].map(([name, readAt]) => ({ name, readAt })) };
+  }
+
+  private async measureQuest(q: BoardQuest, localOnly: boolean, now: number, signal: AbortSignal): Promise<Pick<SpendView, "usdNanos" | "missing" | "sources">> {
+    const to = q.endedAt ?? now;
+    const leadStarts = new Map(this.k.store.leadLinksBy("parentQuestId", q.id).flatMap(link => {
+      if (!link.childQuestId) return [];
+      const child = this.k.quest(link.childQuestId);
+      return this.k.store.spendIntervals(child.keeperThreadId).map(interval => [interval.threadId, child.createdAt] as const);
+    }));
     const members = this.k.store.query("members", "boardQuestId", q.id, 501).filter(member => member.role === "member");
     const others = this.k.store.query("quests", "keeperThreadId", q.keeperThreadId, 500).filter(other => other.id !== q.id && other.createdAt <= to && (other.endedAt === null || other.endedAt >= q.createdAt));
     const targets = [
@@ -137,10 +166,9 @@ export class SpendBudget {
         from: Math.max(q.createdAt, interval.from ?? q.createdAt), through: interval.until === null ? to : Math.min(to, interval.until - 1),
         closed: interval.until !== null, activityAt: interval.activityAt })),
       ...members.slice(0, 500).map(member => ({ threadId: member.threadId, shared: false,
-        from: Math.max(q.createdAt, member.createdAt), through: to, closed: false, activityAt: undefined })),
+        from: Math.max(q.createdAt, member.createdAt), through: Math.min(to, (leadStarts.get(member.threadId) ?? Infinity) - 1), closed: false, activityAt: undefined })),
     ].filter(target => target.from <= target.through);
     const sources = new Map<string, number>();
-    const signal = AbortSignal.timeout(1_000);
     let subtotal: number | null = null, missing = Number(members.length > 500);
     for (let i = 0; i < targets.length; i += 8) {
       const data = await Promise.all(targets.slice(i, i + 8).map(async ({ threadId, from, through, closed, activityAt }) => {
@@ -173,6 +201,6 @@ export class SpendBudget {
         }
       }
     }
-    return { budgetCents: q.spendBudget?.cents ?? null, reachedAt: q.spendBudget?.reached?.at ?? null, usdNanos: subtotal ?? (missing === 0 ? 0 : null), missing, sources: [...sources].map(([name, readAt]) => ({ name, readAt })) };
+    return { usdNanos: subtotal, missing, sources: [...sources].map(([name, readAt]) => ({ name, readAt })) };
   }
 }

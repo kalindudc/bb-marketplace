@@ -5,6 +5,7 @@ import { restingParty } from "./resting";
 import { agentData } from "./agent-data";
 import type { TavernRuntime } from "./runtime";
 import { readRequestSources } from "./request-sources";
+import { planDiff } from "./keeper/plan-diff";
 
 export const statusInput = z.object({
   boardQuestId: z.string().min(1).max(120).nullish(),
@@ -25,6 +26,7 @@ export const statusInput = z.object({
       "errands",
       "requests",
       "placement",
+      "lead-plan",
     ])
     .default("summary"),
   reportId: z.string().min(1).max(120).nullish(),
@@ -47,6 +49,18 @@ function statusData(
   input: z.output<typeof statusInput>,
 ) {
   const k = runtime.keeper;
+  if (input.section === "lead-plan") {
+    if (!input.boardQuestId) throw new Error("Name the child board quest id.");
+    const child = k.quest(input.boardQuestId);
+    const [link] = k.store.leadLinksBy("childQuestId", child.id);
+    const parent = link && k.quest(link.parentQuestId);
+    if (!link || !parent || parent.keeperThreadId !== threadId && child.keeperThreadId !== threadId)
+      throw new Error("Only the lead and its current hiring Keeper can read this lead-plan decision.");
+    const record = k.store.get("leadPlans", `${child.id}:${child.planVersion}`);
+    const plan = k.store.get("plans", `${child.id}:${child.planVersion}`);
+    const previous = child.planVersion > 1 ? k.store.get("plans", `${child.id}:${child.planVersion - 1}`) : null;
+    return { record, change: previous && plan ? planDiff(previous, plan) : "First plan", plan };
+  }
   if (input.section === "requests") return readRequestSources(k, threadId, { memberThreadId: input.memberThreadId ?? undefined, manifestId: input.manifestId ?? undefined, sourceIndex: input.sourceIndex, offset: input.offset });
   const archivedRows = k.store.all("members").filter(member => member.keeperThreadId === threadId && memberHost(k.store, member).archivedAt !== null).map(member => {
     const state = k.store.runtime(member.threadId);

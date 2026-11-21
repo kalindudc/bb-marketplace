@@ -4,6 +4,7 @@ import type { HireIntent } from "./keeper/store";
 import { settleStaffing } from "./staffing";
 import { LIMITS } from "./limits";
 import { isOpenQuest } from "./liveness";
+import { cancelLead } from "./keeper/leads";
 import { isNotFound } from "./host-errors";
 import { loopCall } from "./loop-call";
 import { LimitPolicy } from "./limit-policy";
@@ -32,6 +33,7 @@ export function releaseHire(k: Keeper, token: string, intent: HireIntent) {
         k.store.put("asks", ask.id, { ...ask, effect: { type: "detection-hire", binding } });
       }
     }
+    cancelLead(k, token, intent);
     k.store.remove("hires", token);
   });
 }
@@ -137,12 +139,13 @@ export async function recoverHires(
               const member = k.member(child.id);
               if (
                 metadata.hireToken === row.id ||
-                (!metadata.hireToken &&
+                (!intent.leadLinkId && !metadata.hireToken &&
                   metadata.classId === intent.classId &&
                   metadata.characterId === intent.characterId)
-              )
+              ) {
+                if (intent.leadLinkId && found && found !== child.id) throw new Error("Multiple children claim the same lead reservation; no child was bound.");
                 found = child.id;
-              else if (!metadata.hireToken && !member && !metadata.classId)
+              } else if (!metadata.hireToken && !member && !metadata.classId)
                 uncertain = true;
             }
             if (children.length < 200) break;

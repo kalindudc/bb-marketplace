@@ -15,6 +15,10 @@ export function readUndoLanes(store: KeeperStore, threadId: string): UndoLane[] 
     WHERE kind='decisions' AND json_extract(data,'$.keeperThreadId')=?
       AND json_extract(data,'$.source')='keeper' AND json_extract(data,'$.reversible')=1 AND json_extract(data,'$.askId') IS NULL
       AND (json_extract(data,'$.waypointCall.as') IS NOT NULL OR json_extract(data,'$.exceeds') IS NOT NULL)
+    UNION ALL
+    SELECT id, rowid, 'lead-plan', json_extract(data,'$.undone')
+    FROM tavern_records WHERE kind='decisions' AND json_extract(data,'$.keeperThreadId')=?
+      AND json_extract(data,'$.source')='keeper' AND json_extract(data,'$.reversible')=1 AND json_type(data,'$.leadPlan')='object'
   ), recent AS (
     SELECT *, row_number() OVER (PARTITION BY kind ORDER BY ordering DESC) AS position
     FROM calls WHERE kind IN (${undoKindSchema.options.map(() => "?").join(",")})
@@ -27,7 +31,7 @@ export function readUndoLanes(store: KeeperStore, threadId: string): UndoLane[] 
       AND json_extract(u.actor,'$.kind')='user' AND json_extract(u.data,'$.decisionId')=c.id
   ))) AS undone
   FROM recent c LEFT JOIN resets r ON r.kind=c.kind WHERE c.position<=10 GROUP BY c.kind HAVING undone>=2 ORDER BY c.kind`)
-    .all(threadId, threadId, ...undoKindSchema.options, threadId, threadId) as UndoLane[];
+    .all(threadId, threadId, threadId, ...undoKindSchema.options, threadId, threadId) as UndoLane[];
 }
 
 export function assertUndoLane(store: KeeperStore, threadId: string, kind: Ask["kind"] | UndoKind) {

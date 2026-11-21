@@ -10,6 +10,7 @@ import { loopCall } from "../loop-call";
 import type { TavernRuntime } from "../runtime";
 import { fenceMessage, followedUp, type KeeperSuccession, type SuccessionMember } from "./succession-store";
 import { ownershipSteps } from "./succession-ownership";
+import { currentLead } from "./leads";
 
 export const SUCCESSION_METADATA = "keeperSuccession";
 const bootstrap = (id: string) => `[Tavern handover ${id}]\nResume this charge from the Tavern ledger and journal. Review the open quests and outstanding commitments. This is not a new user request.`;
@@ -48,10 +49,12 @@ export class KeeperSuccessionCoordinator {
     if (!op.restored || op.state !== "done" || op.candidate !== threadId || this.state.current(threadId) !== threadId)
       throw new Error("Only the current restored Keeper has a handover to finish.");
     const thread = await loopCall(this.runtime.bb.sdk.threads.get({ threadId }), "restored successor identity");
-    if (thread.id !== threadId || !this.k.member(threadId) || thread.projectId !== this.k.store.runtime(threadId).projectId ||
+    const member = this.k.member(threadId);
+    const hiringKeeper = member && currentLead(this.k.store, member)?.parentKeeperThreadId;
+    if (thread.id !== threadId || !member || thread.projectId !== this.k.store.runtime(threadId).projectId ||
         thread.archivedAt !== null || thread.deletedAt !== null || thread.createdAt < op.requestedAt ||
         thread.originPluginId !== this.runtime.bb.pluginId || thread.originKind === "fork" || thread.sourceThreadId !== null ||
-        thread.parentThreadId !== null || thread.lifecycleOwnerThreadId !== null || (await this.metadata(threadId))[SUCCESSION_METADATA] !== id)
+        (thread.parentThreadId !== null && thread.parentThreadId !== hiringKeeper) || thread.lifecycleOwnerThreadId !== null || (await this.metadata(threadId))[SUCCESSION_METADATA] !== id)
       throw new Error("bb could not verify the original successor for this backup. Tavern did not change any threads.");
     this.runtime.stopAll.assertRunning();
     this.signal(commitUserAct(this.k.store, () => this.k.now(), receipt, () => this.state.finishRestored(id, threadId)));
@@ -170,9 +173,23 @@ export class KeeperSuccessionCoordinator {
       }
       if (!current()) return this.state.get(op.id);
       if (!this.state.get(op.id).followups.visible) {
-        const thread = await loopCall(this.runtime.bb.sdk.threads.get({ threadId: successor }), "Keeper succession visibility read");
+        let thread = await loopCall(this.runtime.bb.sdk.threads.get({ threadId: successor }), "Keeper succession visibility read");
         if (!current()) return this.state.get(op.id);
         if (thread.archivedAt !== null || thread.deletedAt !== null) throw new Error("The successor is archived or deleted.");
+        const member = this.k.member(successor);
+        const hiringKeeper = member && currentLead(this.k.store, member)?.parentKeeperThreadId;
+        if (hiringKeeper && thread.parentThreadId !== hiringKeeper) {
+          if (thread.parentThreadId !== null) throw new Error("The lead successor has an unexpected parent in bb.");
+          const before = await loopCall(this.runtime.bb.sdk.threads.get({ threadId: op.predecessor }), "Lead succession notification preference");
+          if (!current()) return this.state.get(op.id);
+          if (!before.parentThreadId || this.state.current(before.parentThreadId) !== hiringKeeper || !["auto", "off", "stuck"].includes(before.parentNotifications))
+            throw new Error("The hiring Keeper or the predecessor's notification preference could not be confirmed.");
+          await loopCall(this.runtime.bb.sdk.threads.update({ threadId: successor, parentThreadId: hiringKeeper, parentNotifications: before.parentNotifications }), "Lead succession attach");
+          thread = await loopCall(this.runtime.bb.sdk.threads.get({ threadId: successor }), "Lead succession parent confirmation");
+          if (thread.parentThreadId !== hiringKeeper || thread.parentNotifications !== before.parentNotifications)
+            throw new Error("bb did not confirm the lead successor's parent and notification preference.");
+          if (!current()) return this.state.get(op.id);
+        }
         if (thread.visibility !== "visible") {
           await loopCall(this.runtime.bb.sdk.threads.update({ threadId: successor, visibility: "visible" }), "Keeper succession unhide");
           const confirmed = await loopCall(this.runtime.bb.sdk.threads.get({ threadId: successor }), "Keeper succession visibility confirmation");

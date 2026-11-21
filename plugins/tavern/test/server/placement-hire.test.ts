@@ -59,12 +59,12 @@ function fixture() {
 
 async function leadFixture() {
   const f = fixture(), registry = await f.runtime.prepareRegistry("project");
-  const classes = registry.classes.map(role => role.id === "keeper" ? { ...role, hireable: true, hires: [...role.hires, "keeper"], environment: "worktree" as const, model: "anthropic/claude-sonnet-5-5" } : role);
+  const classes = registry.classes.map(role => role.id === "keeper" ? { ...role, hireable: true, environment: "worktree" as const, model: "anthropic/claude-sonnet-5-5" } : role);
   vi.spyOn(f.runtime, "prepareRegistry").mockResolvedValue({ ...registry, classes });
   const quest = await seedQuest(f.k, "lead", "Hire a lead", "LEAD");
-  f.k.plan("lead", { ...planInput(quest.id), party: [{ classId: "keeper", characterId: null, model: null, purpose: "Lead", waypointIds: [] }] });
+  f.k.plan("lead", { ...planInput(quest.id), waypoints: [{ ...planInput(quest.id).waypoints[0]!, owner: "keeper" }], party: [{ classId: "keeper", characterId: null, model: null, purpose: "Lead", waypointIds: ["w1"], leadEnvelope: { members: 2, rangers: 1, depth: 1 } }] });
   f.k.answerAsk(f.k.asks("lead").find(ask => ask.state === "open" && ask.kind === "greenlight")!.id, "approve", null, "page", "user");
-  return { ...f, leadHire: { ...hire, classId: "keeper", errand: false, boardQuestId: quest.id } };
+  return { ...f, leadHire: { ...hire, classId: "keeper", errand: false, boardQuestId: quest.id, waypointId: "w1" } };
 }
 
 async function blocked(promise: Promise<unknown>) {
@@ -411,6 +411,7 @@ describe("rule-driven member hires", () => {
     const member = await f.runtime.hire("lead", "project", { ...f.leadHire, placementRuleId: "shop" });
     expect(spawn).toHaveBeenCalledOnce();
     expect(member.placement).toMatchObject({ rule: { id: "shop" }, phase: "bootstrapping" });
+    await expect(f.k.openQuest(member.threadId, "Placed lead", "Lead")).rejects.toThrow("Call tavern_ready");
     expect(member.placementSummary).toContain("placementRuleId=shop");
     expect(f.services.store.byMember(member.threadId)?.matchEvidence).toEqual([
       { field: "projectIds", value: "project", pattern: "project" }, { field: "placementRuleId", value: "shop", pattern: "shop" },

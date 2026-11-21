@@ -62,7 +62,9 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
   const sealed = isSealed;
   const quest = current ? detail.quest : { ...detail.quest, plan, waypoints: plan.waypoints.map(w => ({ ...w, state: "planned" as const, ownerMember: null, evidenceCount: 0, verifiedBy: null, rejectedReason: null })) };
   const decided = detail.decisions.filter(d => d.source === "keeper" || d.checkChange);
-  const formOption = greenlight?.options.find(o => o.recommended) ?? greenlight?.options[0];
+  const reviewLead = greenlight?.effect?.type === "lead-plan" ? greenlight : null;
+  const waitsForParent = detail.quest.leadPlanLane === "keeper";
+  const formOption = reviewLead ? null : greenlight?.options.find(o => o.recommended) ?? greenlight?.options[0];
   const unknownLead = plan.waypoints.filter(w => w.leadTime === null).length;
   const redirect = () => { composer.insert(`About ${detail.quest.title}, plan v${plan.version}: `); composer.focus(); };
   return (
@@ -71,7 +73,7 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
         <span className="qm-t"><b><Vocabulary word="map" /></b><span className="qm-q">{detail.quest.title} · plan v{plan.version}</span></span>
         {plan.fromSteer && <span className="qm-steer" title={`From your steer: ${plan.fromSteer.text}`}><Glyph name="route" size={12} /><span>from your steer, {clockTime(plan.fromSteer.at)}</span></span>}
         <span className="tc-sp" />
-        {sealed ? <span className="sealmark"><Glyph name="wax-seal" size={16} /><span>Sealed · party formed</span></span> : current ? <span className="qm-wait">Waits for your seal</span> : <StatusPill status="superseded">superseded</StatusPill>}
+        {sealed ? <span className="sealmark"><Glyph name="wax-seal" size={16} /><span>Sealed · party formed</span></span> : current ? <span className="qm-wait">{waitsForParent ? "Hiring Keeper decides" : "Waits for your seal"}</span> : <StatusPill status="superseded">superseded</StatusPill>}
       </header>
       <p className="qm-goal"><b>{plan.goal}</b><span className="m"> · done when {plan.doneWhen.charAt(0).toLowerCase() + plan.doneWhen.slice(1)}</span></p>
       <QuestMap quest={quest} mode={sealed ? "live" : "plan"} dealt={sealed} stretch={!sealed} showChecks />
@@ -95,9 +97,9 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
       <QueryState error={error} />
       {current && !sealed && (
         <footer className="qm-f">
-          {greenlight && formOption ? <button type="button" className="btn pri seal" disabled={answer.isPending} onClick={() => void answer.mutate({ askId: greenlight.id, optionId: formOption.id, note: null, via: "chat" }).catch(setError)}><Glyph name="wax-seal" />{answer.isPending ? "Sealing…" : greenlight.effect?.type === "greenlight" && greenlight.effect.requiresExplicit ? "Approve the updated plan" : "Form the party (greenlight)"}</button> : <span className="m small">The greenlight ask is not open yet.</span>}
+          {reviewLead && detail.quest.keeperThreadId ? <button type="button" className="btn" onClick={() => revealAsk(detail.quest.keeperThreadId, reviewLead.id)}>Review lead plan and limits</button> : greenlight && formOption ? <button type="button" className="btn pri seal" disabled={answer.isPending} onClick={() => void answer.mutate({ askId: greenlight.id, optionId: formOption.id, note: null, via: "chat" }).catch(setError)}><Glyph name="wax-seal" />{answer.isPending ? "Sealing…" : greenlight.effect?.type === "greenlight" && greenlight.effect.requiresExplicit ? "Approve the updated plan" : "Form the party (greenlight)"}</button> : waitsForParent ? <span className="m small">Staffing waits for the hiring Keeper’s decision.</span> : <span className="m small">The greenlight ask is not open yet.</span>}
           <button type="button" className="btn" onClick={redirect}>Redirect in chat</button>
-          <span className="qm-scope m">Approves the party and these checks. Production steps and anything sent as you still ask you. Or reply in chat, e.g. “seal, 1 Monday”.</span>
+          {!reviewLead && !waitsForParent && <span className="qm-scope m">Approves the party and these checks. Production steps and anything sent as you still ask you. Or reply in chat, e.g. “seal, 1 Monday”.</span>}
         </footer>
       )}
       {!sealed && !current && <p className="m small qm-old">This plan was superseded; it cannot be greenlit here.</p>}

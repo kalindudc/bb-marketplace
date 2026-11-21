@@ -34,6 +34,10 @@ it("keeps the normal-reply limit and per-quest re-anchor instructions", () => {
   expect(sections.get("Check the work")).toContain("A pending Warden check is a follow-up.");
   expect(sections.get("Reference")).toContain("Only the user restores archived quests.");
 });
+it("starts with the smallest party before considering a lead", () => {
+  expect(sections.get("Size the party")).toMatch(/Start with the smallest party.*critical path/);
+  expect(sections.get("Size the party")).toMatch(/never for one job/);
+});
 it("keeps the hand-back tool within the original 354-byte description budget", () => {
   expect(Buffer.byteLength(tools.get("tavern_note")!)).toBeLessThanOrEqual(354);
 });

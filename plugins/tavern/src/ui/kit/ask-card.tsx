@@ -1,7 +1,7 @@
 import { Fragment, useId, useState } from "react";
 import { experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { rpcContract } from "../../shared/contract";
-import type { Ask } from "../../shared/schema";
+import type { Ask, LeadPlanReview } from "../../shared/schema";
 import { Glyph } from "./glyphs";
 import { MemberChip, QueryState, TimeAgo, clockTime } from "./primitives";
 import { CONSEQUENTIAL_ASK_KINDS, preapprovalWords } from "../../shared/quest-authority";
@@ -47,6 +47,33 @@ function ScopeGrant({ change }: { change: NonNullable<Ask["scopeChange"]> }) {
   );
 }
 
+const CHECK_WORDS = { warden: "Warden check", keeper: "Keeper check", you: "your check", none: "no required check" };
+function PlanBounds({ bounds, before }: { bounds: LeadPlanReview["approved"]; before?: LeadPlanReview["approved"] }) {
+  const was = (next: number | string, old?: number | string) => old !== undefined && old !== next ? ` (was ${old})` : "";
+  return <>{bounds.members} {bounds.members === 1 ? "member" : "members"}{was(bounds.members, before?.members)}, {bounds.rangers} {bounds.rangers === 1 ? "Ranger" : "Rangers"}{was(bounds.rangers, before?.rangers)}, depth {bounds.depth}{was(bounds.depth, before?.depth)}, {CHECK_WORDS[bounds.check]}{was(CHECK_WORDS[bounds.check], before && CHECK_WORDS[before.check])}
+    {bounds.acts.length ? <ul className="grants">{bounds.acts.map(act => <li key={JSON.stringify(act)}>
+      <span>{before && !before.acts.some(previous => previous.kind === act.kind && previous.path === act.path && previous.command === act.command) ? "New scope act: " : ""}{act.kind}</span>{act.path && <code>{act.path}</code>}{act.command && <code>{act.command}</code>}
+    </li>)}</ul> : <span> · no listed scope acts</span>}</>;
+}
+function LeadPlanBounds({ request }: { request: LeadPlanReview }) {
+  const limits = request.changes.length ? request.changes : [{ linkId: request.parentQuestId, questTitle: request.parentTitle, approved: request.approved, requested: request.requested }];
+  const diff = request.planChanges;
+  const changes = diff ? [
+    ...diff.fields.map(field => `Changed ${field.replace(/[A-Z]/g, letter => ` ${letter.toLowerCase()}`)}`),
+    ...diff.addedWaypoints.map(title => `Added waypoint: ${title}`),
+    ...diff.removedWaypoints.map(title => `Removed waypoint: ${title}`),
+    ...diff.changedWaypoints.map(title => `Changed waypoint: ${title}`),
+    ...(diff.orderChanged ? ["Waypoint order changed"] : []),
+  ] : [];
+  return <>{limits.map(change => <dl className="sendbox grant" aria-label="Lead plan limits" key={change.linkId}>
+    <dt>From</dt><dd data-content>{change.questTitle}</dd>
+    <dt>Approved</dt><dd><PlanBounds bounds={change.approved} /></dd>
+    <dt>Requested</dt><dd><PlanBounds bounds={change.requested} before={change.approved} /></dd>
+  </dl>)}{diff && changes.length > 0 && <dl className="sendbox grant" aria-label="Lead plan changes">
+    <dt>Changes since plan v{diff.fromVersion}</dt><dd><ul className="grants">{changes.map((change, index) => <li key={index}>{change}</li>)}</ul></dd>
+  </dl>}</>;
+}
+
 /** One ask, answered in place. Consequential kinds start with nothing selected; sends-as-you shows sender, recipient and the full draft. */
 export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, headless = false, describeEffects = false }: { ask: Ask; via?: "banner" | "page" | "phone" | "chat"; onFold?: () => void; onAnswered?: (answered: Ask) => void; headless?: boolean; describeEffects?: boolean }) {
   const name = useId();
@@ -63,6 +90,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
   const [choices, setChoices] = useState<Record<string, PullRequestChoices[number]["action"]>>({});
   const closing = isCloseEffect(ask.effect) ? ask.effect : null;
   const early = closing?.type === "close-early" ? closing : null;
+  const lead = ask.effect?.type === "lead-plan" ? ask.effect.request : null;
   const answer = experimental_useRpcMutation({ contract: rpcContract, method: "answerAsk" });
   if (ask.state !== "open" || receipt) {
     const label = receipt?.label ?? ask.options.find(o => o.id === ask.answer?.optionId)?.label ?? ask.answer?.optionId ?? "";
@@ -87,7 +115,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
   const missingGrant = ask.kind === "scope" && !ask.scopeChange;
   const clusterReady = !cluster || optionId === "deny" || readiness.data?.guarded === true;
   const canSend = clusterReady && (ask.kind !== "sends-as-you" || ask.draft !== null || communication !== null) && !(missingGrant && optionId !== null && GRANTING(optionId));
-  const action = shellGrant && (optionId === "once" || optionId === "quest") ? "Grant this command" : shellGrant ? "Send answer" : early && optionId === "close-early" ? "Close early" : communication || ask.effect?.type === "pull-request-draft" ? "Record answer" : ask.kind === "sends-as-you" ? "Record answer" : ask.kind === "greenlight" ? "Form the party (greenlight)" : ask.kind === "scope" && optionId !== null && GRANTING(optionId) ? "Grant this scope" : cluster && optionId === "approve" ? "Approve" : cluster && optionId === "confirm-run" ? "Run it now" : "Send answer";
+  const action = shellGrant && (optionId === "once" || optionId === "quest") ? "Grant this command" : shellGrant ? "Send answer" : early && optionId === "close-early" ? "Close early" : communication || ask.effect?.type === "pull-request-draft" ? "Record answer" : ask.kind === "sends-as-you" ? "Record answer" : lead ? (ask.options.find(option => option.id === optionId)?.label ?? "Send answer") : ask.kind === "greenlight" ? "Form the party (greenlight)" : ask.kind === "scope" && optionId !== null && GRANTING(optionId) ? "Grant this scope" : cluster && optionId === "approve" ? "Approve" : cluster && optionId === "confirm-run" ? "Run it now" : "Send answer";
   async function submit() {
     if (!optionId || !canSend) return;
     setError(null);
@@ -104,9 +132,10 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
   }
   return (
     <section className={`tavern ask k-${ask.kind}`} aria-label={`Ask: ${ask.question}`} data-ask>
-      {headless ? ask.why && <p className="ask-why">Yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</p> : <><div className="ask-h"><span className="kind">{early ? "Close early" : KIND[ask.kind]}</span><span>asked <TimeAgo at={ask.createdAt} /></span>{ask.why && <span>· yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</span>}</div><h3 className="ask-q">{ask.question}</h3></>}
+      {headless ? ask.why && <p className="ask-why">Yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</p> : <><div className="ask-h"><span className="kind">{early ? "Close early" : KIND[ask.kind]}</span>{ask.createdAt > 0 && <span>asked <TimeAgo at={ask.createdAt} /></span>}{ask.why && <span>· yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</span>}</div><h3 className="ask-q">{ask.question}</h3></>}
       {ask.kind === "greenlight" && <p className="m small">Cluster writes always ask you, even after you approve the quest map.</p>}
-      {ask.kind === "greenlight" && ask.boardQuestId && <QuestAuthority questId={ask.boardQuestId} via={via} />}
+      {lead && <><LeadPlanBounds request={lead} /><p className="m small">This answer approves the plan, not any separate permission or consequential act.</p></>}
+      {!lead && ask.kind === "greenlight" && ask.boardQuestId && <QuestAuthority questId={ask.boardQuestId} via={via} />}
       {cluster && ask.clusterApproval && <h3>Run it now?</h3>}
       {cluster && !readiness.isLoading && readiness.data?.guarded !== true && <p role="status">This thread cannot be guarded. Run the command yourself or ask a guarded thread to run it.</p>}
       {cluster && ask.target?.command && <dl className="sendbox" aria-label="Exactly what would change">
@@ -145,7 +174,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
       {closing?.draft.fromSteer && <blockquote className="close-quote"><b>You said, {clockTime(closing.draft.fromSteer.at)}:</b> <span data-content>“{closing.draft.fromSteer.text}”</span></blockquote>}
       {early?.draft.noPlan && early.draft.reason && <p className="m" data-content>Reason for closing early: {early.draft.reason}</p>}
       {early && <WaiverRows items={early.draft.unsettled} />}
-      {closing?.draft.pullRequests?.length ? <fieldset className="close-prs">
+      {closing?.draft.pullRequests?.length && !(closing.type === "conclude" && closing.draft.lead) ? <fieldset className="close-prs">
         <legend>Open pull requests</legend>
         <p className="m">These choices apply only if you close the quest. Pull requests stay open unless you choose Close pull request.</p>
         <ul>{closing.draft.pullRequests.map(pr => <li key={pr.id}>

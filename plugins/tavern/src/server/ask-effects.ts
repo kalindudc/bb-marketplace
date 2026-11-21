@@ -23,6 +23,7 @@ export function legacyAskEffect(ask: Ask, meta: Records["askMeta"] | null, runti
 export type EffectHandlers = { [K in AskEffect["type"]]: (effect: AskEffect) => void };
 export const ASK_EFFECTS: Record<AskEffect["type"], { act: Act; handler: keyof EffectHandlers; answerOnly?: true }> = {
   greenlight: { act: "greenlight", handler: "greenlight" },
+  "lead-plan": { act: "greenlight", handler: "lead-plan" },
   conclude: { act: "conclude", handler: "conclude" },
   "close-early": { act: "closeEarly", handler: "close-early" },
   "release-hold": { act: "releaseCheckerHandoff", handler: "release-hold" },
@@ -46,6 +47,7 @@ export function applyAskEffect(effect: AskEffect, handlers: Partial<EffectHandle
   if (receipt.by === "default" && effect.type !== "decision") throw new Error("Only a reversible plain decision may default");
   const row = ASK_EFFECTS[effect.type];
   if (receipt.by === "preapproval" && effect.type === "close-early") throw new Error("Closing early requires your explicit answer");
+  if (effect.type === "lead-plan" && receipt.by !== "user") throw new Error("This lead plan needs your explicit answer.");
   if (receipt.by === "preapproval" && effect.type === "grant-shell-act") throw new Error("Pre-approval cannot issue a shell grant");
   if (receipt.by === "keeper" && effect.type !== "decision" && !(effect.type === "communication-hold" && effect.hold.act === "draft") && effect.type !== "pull-request-draft" && effect.type !== "grant-shell-act") throw new Error("Keeper answers cannot apply user-only transitions");
   authorize(receipt.by === "default" || receipt.by === "keeper" ? "defaultDecision" : row.act, { level: receipt.by === "default" || receipt.by === "keeper" ? "keeper" : "user-explicit", receipt: receipt.id });

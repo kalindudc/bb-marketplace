@@ -23,6 +23,8 @@ import type {
   TavernEvent,
   KeeperNote,
   GateRecord,
+  LeadLink,
+  LeadPlanRecord,
 } from "../../shared/schema";
 import { actorSchema, readStoredActor } from "../../shared/schema";
 
@@ -52,6 +54,8 @@ export interface Records {
   serviceRecordState: import("../../shared/service-record").ServiceRecordState;
   taleKeeps: import("../../shared/service-record").TaleKeep;
   members: Member;
+  leadLinks: LeadLink;
+  leadPlans: LeadPlanRecord;
   quests: BoardQuest;
   plans: Plan;
   asks: Ask;
@@ -131,6 +135,7 @@ export interface ReviewTarget {
 export interface HireIntent {
   placementExecution?: { target: import("../../shared/placement-settings").PlacementRule["target"]; providerId: string; model?: string };
   classDefinition?: import("../../shared/schema").ClassDef;
+  leadLinkId?: string;
   cancelledAt?: number;
   initialInput?: string;
   scopeResolution?: ScopeResolution | null;
@@ -397,7 +402,7 @@ export class KeeperStore {
   }
   query<K extends keyof Records>(
     kind: K,
-    field: "keeperThreadId" | "boardQuestId" | "memberThreadId",
+    field: "keeperThreadId" | "boardQuestId" | "memberThreadId" | "parentKeeperThreadId" | "owner",
     value: string,
     limit = 200,
   ): Records[K][] {
@@ -411,6 +416,25 @@ export class KeeperStore {
   issuedShellGrants(field: "memberThreadId" | "boardQuestId", value: string) {
     const rows = this.db.prepare(`SELECT data FROM tavern_records WHERE kind='shellGrants' AND json_extract(data,'$.state')='issued' AND json_extract(data,'$.${field}')=? ORDER BY rowid`).all(value) as { data: string }[];
     return rows.map(row => this.decode("shellGrants", row.data));
+  }
+  retiringLeadLinks(): LeadLink[] {
+    const rows = this.db.prepare("SELECT data FROM tavern_records WHERE kind='leadLinks' AND json_extract(data,'$.state')='retiring' ORDER BY rowid DESC").all() as { data: string }[];
+    return rows.map(row => this.decode("leadLinks", row.data));
+  }
+  leadLinksBy(field: "parentQuestId" | "childQuestId", questId: string): LeadLink[] {
+    const rows = this.db.prepare(`SELECT data FROM tavern_records WHERE kind='leadLinks' AND json_extract(data,'$.${field}')=?`).all(questId) as { data: string }[];
+    return rows.map(row => this.decode("leadLinks", row.data));
+  }
+  chainSeats(questId: string): { members: number; rangers: number } {
+    return this.db.prepare(`SELECT count(*) AS members, count(CASE WHEN classId='ranger' THEN 1 END) AS rangers FROM (
+      SELECT json_extract(data,'$.classId') AS classId FROM tavern_records
+      WHERE kind='members' AND json_extract(data,'$.boardQuestId')=?
+        AND json_extract(data,'$.engagement') IN ('briefing','active','resting','releasing','stopping','archiving')
+      UNION ALL
+      SELECT json_extract(data,'$.classId') FROM tavern_records
+      WHERE kind='hires' AND json_extract(data,'$.owner.boardQuestId')=?
+        AND json_extract(data,'$.memberThreadId') IS NULL
+    )`).get(questId, questId) as { members: number; rangers: number };
   }
   hireForMember(memberThreadId: string): (HireIntent & { id: string }) | null {
     const row = this.db.prepare(

@@ -16,7 +16,7 @@ import { awayHoldSchema, type AwayHold } from "../away/holds";
 import { awayCompletedWindowSchema, awayStateSchema, type AwayState, type AwayWindow } from "../../shared/away";
 import { isCloseEffect } from "../../shared/closing";
 import { migrateMemberEngagement } from "../member-engagement-migration";
-import { actorSchema, readStoredActor, askSchema, boardQuestSchema, decisionSchema, gateRecordSchema, journalEntrySchema, keeperNoteSchema, memberSchema, planSchema, reportSchema, routeSchema, ruleSchema, summarySchema } from "../../shared/schema";
+import { actorSchema, readStoredActor, askSchema, boardQuestSchema, decisionSchema, gateRecordSchema, journalEntrySchema, keeperNoteSchema, leadLinkSchema, leadPlanRecordSchema, memberSchema, planSchema, reportSchema, routeSchema, ruleSchema, summarySchema } from "../../shared/schema";
 
 import { taleDeliverySchema, taleDeliveryAttemptSchema } from "../tale";
 
@@ -26,7 +26,7 @@ export const recordsSnapshotSchema = z.object({ format: z.literal("tavern-record
 export type RecordsSnapshot = z.infer<typeof recordsSnapshotSchema>;
 type Column = { name: string; type: string; notnull: number; pk: number; dflt_value: unknown };
 const legacyMemberSchema = memberSchema.extend({ state: z.union([memberSchema.shape.state, z.literal("done"), z.literal("stopped")]) });
-const recordSchemas: Record<string, z.ZodType> = { pullRequests: pullRequestSchema, taleDeliveries: taleDeliverySchema, taleDeliveryAttempts: taleDeliveryAttemptSchema, taleKeeps: taleKeepSchema, serviceRecords: serviceQuestRecordSchema, serviceVerdicts: serviceVerdictSchema, serviceRecordState: serviceRecordStateSchema, members: memberSchema, quests: boardQuestSchema, plans: planSchema, asks: askSchema, decisions: decisionSchema, rules: ruleSchema, reports: reportSchema, summaries: summarySchema, routes: routeSchema, notes: keeperNoteSchema, gates: gateRecordSchema };
+const recordSchemas: Record<string, z.ZodType> = { pullRequests: pullRequestSchema, taleDeliveries: taleDeliverySchema, taleDeliveryAttempts: taleDeliveryAttemptSchema, taleKeeps: taleKeepSchema, serviceRecords: serviceQuestRecordSchema, serviceVerdicts: serviceVerdictSchema, serviceRecordState: serviceRecordStateSchema, members: memberSchema, leadLinks: leadLinkSchema, leadPlans: leadPlanRecordSchema, quests: boardQuestSchema, plans: planSchema, asks: askSchema, decisions: decisionSchema, rules: ruleSchema, reports: reportSchema, summaries: summarySchema, routes: routeSchema, notes: keeperNoteSchema, gates: gateRecordSchema };
 const jsonColumns = new Set(["data", "actor", "entry_ids", "before_data", "after_data", "snapshot", "changes", "undo_data", "evidence"]);
 const privateRecordKinds = new Set(["placementArtifactManifests", "stopAll", "scopeInputs"]);
 const privateAuthorityTables = ["tavern_placements", "tavern_source_snapshots", "tavern_placement_discoveries", "tavern_snapshot_owners"];

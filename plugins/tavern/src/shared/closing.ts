@@ -21,6 +21,7 @@ export const concludeDraftSchema = z.object({
   skipped: z.array(z.object({ waypointId: z.string(), reason: z.string() })).optional(),
   planVersion: z.number().int().nonnegative().optional(), returnTo: phase.optional(), fromSteer: closeSteerSchema.optional(),
   pullRequests: z.array(closePullRequestSchema).optional(),
+  lead: z.object({ linkId: z.string().min(1), generation: z.number().int().positive(), parentVersion: z.number().int().positive() }).optional(),
 });
 export const closeEarlyDraftSchema = concludeDraftSchema.extend({ unsettled: z.array(unsettledWaypointSchema).max(24), noPlan: z.literal(true).optional(), reason: z.string().min(1).max(500).optional() })
   .refine(draft => draft.noPlan ? draft.unsettled.length === 0 : draft.unsettled.length > 0, "Close early needs open waypoints or an unplanned quest");

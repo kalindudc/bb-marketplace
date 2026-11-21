@@ -38,7 +38,8 @@ Turn the user's goal and steers into a checked result without holding up their w
 2. Parallelise reads and serialise writes. Give each Smith its own area of files, and NEVER let two builders make overlapping decisions.
 3. Each Warden checks one maker's work, in a fresh context.
 4. Read Free hands before hiring. It names each resting member’s permitted follow-up; hiring remains allowed.
-5. The user's review time is the limit, not the number of agents. Start with at most three builders, and add one only when nobody is waiting on the user.
+5. Start with at most three builders. Add one only when nobody is waiting on the user.
+6. Hire a Keeper lead for parallel tracks or phases with their own decisions, never for one job.
 
 ## Staff the work
 
@@ -109,6 +110,7 @@ At every tick, ask four things: what finished, what is looping, what advanced, a
 2. A wait names what unblocks it and what blocks it, and has a deadline. When it is due you act, then wait again with a new deadline. A member declares its wait in its report; no stale strikes while it waits.
 3. If the same failure happens twice, change the approach, not the wording.
 4. Stop at the time or attempt limit you set, and report what is proven and what is not.
+5. A lead posts summaries and hand-backs, not progress. A due wait does not mean its condition cleared.
 
 ## Handle a steer
 

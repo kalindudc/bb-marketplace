@@ -16,6 +16,7 @@ import { matchPlacementRule } from "../placement/match";
 import { PlacementStore } from "../placement/store";
 import { summariesToday } from "../summaries";
 import { actAskKind, watchActWords } from "../../scope/act-routing";
+import { leadDescendants } from "./leads";
 
 export const clock = localClock;
 const quoted = (value: string) => JSON.stringify(value);
@@ -199,7 +200,8 @@ export function renderRestatement(
     .visibleRecords("quests", threadId, 100)
     .filter((q) => !["done", "stopped"].includes(q.phase));
   const summaries = quests.map((q) => k.summary(q.id));
-  const delegated = k.store.openAsks(threadId).filter(a => k.authority.lane(a) === "keeper" && (!a.boardQuestId || k.quest(a.boardQuestId).archivedAt === null));
+  const delegated = k.store.openAsks(threadId).filter(a => k.authority.lane(a) === "keeper" &&
+    !(a.effect?.type === "conclude" && a.effect.draft.lead) && (!a.boardQuestId || k.quest(a.boardQuestId).archivedAt === null));
   const asks = k.store
     .openAsks(threadId, undefined, true)
     .sort((a, b) => (a.proceedAt ?? Infinity) - (b.proceedAt ?? Infinity));
@@ -240,6 +242,28 @@ export function renderRestatement(
   const guidance = !enabledRules.length ? null : enabledRules.some(rule => !rule.match.projectIds || projectId !== null && rule.match.projectIds.includes(projectId))
     ? placementGuidance(placementLines, new PlacementStore(k.store.db).counts(threadId), machines)
     : "Where your party runs: where you run; no machine rule matches this project (tavern_status section=placement).";
+  const leadPlans = summaries.flatMap(parent => k.store.leadLinksBy("parentQuestId", parent.id).flatMap(link => {
+    if (parent.phase === "held" || !link.childQuestId || link.state !== "linked") return [];
+    const child = k.store.get("quests", link.childQuestId);
+    const record = child && k.store.get("leadPlans", `${child.id}:${child.planVersion}`);
+    if (!child || child.phase !== "greenlight" || record?.state !== "pending" || record.lane !== "keeper") return [];
+    return [`${quoted(boundedData(child.title, 72, "…"))} ${child.id} v${child.planVersion}; parent ${parent.id} ${link.parentWaypointId}. Read tavern_status section=lead-plan for the child, then decide with leadPlan.`];
+  }));
+  const descendants = summaries.flatMap(parent => leadDescendants(k.store, parent.id).flatMap(link => {
+    const child = k.store.get("quests", link.childQuestId!);
+    return child && !child.archivedAt ? [{ child, link }] : [];
+  }));
+  const childAsks = descendants.flatMap(({ child }) => k.store.openAsks(child.keeperThreadId, child.id)
+    .filter(a => k.authority.lane(a) === "user")
+    .map(a => `${a.id} (${quoted(short(child.title, 60))}): ${quoted(short(a.question, 160))}`));
+  const conclusions = descendants.flatMap(({ child, link }) => link.parentKeeperThreadId !== threadId ? [] :
+    k.store.openAsks(child.keeperThreadId, child.id).flatMap(a => a.effect?.type === "conclude" && a.effect.draft.lead
+      ? [`${a.id} (${quoted(short(child.title, 60))}): use tavern_decide with the parent quest ${link.parentQuestId} and optionId conclude.`] : []));
+  const childUpdates = descendants.flatMap(({ child }) => [
+    ...k.store.query("summaries", "boardQuestId", child.id, 1).map(s => `${s.id} (${quoted(short(child.title, 60))}): ${quoted(short(s.title, 100))}`),
+    ...k.memory.notes(child.keeperThreadId, 5, 0, child.id).filter(note => note.kind === "waiting-on-user" && note.state === "open")
+      .map(note => `${note.id} (${quoted(short(child.title, 60))}): read-only user hand-back, ${quoted(short(note.action ?? note.text, 100))}`),
+  ]);
   const undoLanes = readUndoLanes(k.store, threadId);
   const today = summaries.length ? summariesToday(k.store, threadId, k.now()) : new Map<string, number>();
   const todayLines = summaries.flatMap(quest => {
@@ -285,6 +309,9 @@ export function renderRestatement(
     ),
     ...(guidance ? [guidance] : []),
     questSection(k, summaries, priorities),
+    ...(leadPlans.length || conclusions.length ? [section("Hiring Keeper decides", [...leadPlans, ...conclusions], 1200, "more child decisions; read the child quest")] : []),
+    ...(childAsks.length ? [section("Read-only child asks (the user answers on the original card)", childAsks, 1300, "more child asks; see the child quest")] : []),
+    ...(childUpdates.length ? [section("Child summaries and hand-backs", childUpdates, 1000, "more child updates; see the child quest")] : []),
     ...(summaries.length ? ["Summary reminder: aim for at most 6 summaries per quest per day."] : []),
     ...(todayLines.length ? [section("Summaries today", todayLines, 450, "more quests have at least 4 summaries today")] : []),
     ...(delegated.length ? [section(delegated.every(a => k.settings(a.boardQuestId).keepers.alwaysAsk.includes(a.kind as never)) ? "Yours to decide (delegated)" : "Yours to decide", delegated.map(a => `${a.id} [${a.kind}]: ${quoted(short(a.question, 160))}; holds ${a.holds.join(",") || "none"}; answer with tavern_decide askId and optionId, or tavern_ask unsure:true`), priorities ? 1200 : 2400, "more delegated asks; call tavern_status section=asks", delegated.length)] : []),

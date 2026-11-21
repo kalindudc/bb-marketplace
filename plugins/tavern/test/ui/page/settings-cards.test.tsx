@@ -94,6 +94,12 @@ it("lets the user confirm a test alert and shows the last real failure separatel
  expect(await s.findByText("You confirmed it arrived.")).toBeTruthy();
  expect(s.queryByRole("button", { name: "It arrived" })).toBeNull();
 });
+it.runIf(process.env.TAVERN_LAYOUT_HARNESS === "1")("renders the lead settings for measured layout", async () => {
+ const s = await section("keepers");
+ await s.findByRole("spinbutton", { name: "Lead chain depth" });
+ const rows = Array.from(s.container.querySelectorAll('[data-setting-keys="keepers.chainDepth"],[data-setting-keys="keepers.chainMembers"]'));
+ process.stdout.write("CH5_SETTINGS=" + JSON.stringify(rows.map(row => row.outerHTML).join("")) + "\n");
+});
 it("resets using the same recorded save path",async()=>{
  const view=structuredClone(settingsView);view.effective.tavern.repeatSeconds=42;
  const update=vi.fn(()=>({code:"ok",revision:view.revision+1,settings:view,problems:[]}));

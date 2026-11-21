@@ -83,9 +83,8 @@ describe("additional dispatch and policy coverage", () => {
   it("enforces the live member budget, Ranger budget, class policy and errand policy", async () => {
     const { k, runtime } = setup();
     const input = { classId: "ranger", errand: true, title: "Scout", brief };
-    await expect(runtime.hire("lead", "project", { ...input, classId: "keeper" })).rejects.toThrow(
-      /policy/,
-    );
+    await expect(runtime.hire("lead", "project", { ...input, classId: "missing-class" })).rejects.toThrow(/policy/);
+    await expect(runtime.hire("lead", "project", { ...input, classId: "keeper" })).rejects.toThrow(/Only Ranger and Wanderer helpers run errands/);
     await expect(runtime.hire("lead", "project", { ...input, classId: "smith" })).rejects.toThrow(
       /Only Ranger/,
     );

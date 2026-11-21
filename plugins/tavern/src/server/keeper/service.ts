@@ -13,7 +13,10 @@ import { issueShellGrant, settleShellGrant } from "../shell-grants";
 import type { RequestSources } from "../../shared/request-source";
 import { briefSteers } from "../request-sources";
 import { LIMITS } from "../limits";
-import { hasLiveName, isLiveKeeper, isLiveMember, isOpenQuest } from "../liveness";
+import { hasLiveName, isKeeperIdentity, isLiveKeeper, isLiveMember, isOpenQuest } from "../liveness";
+import { assertChainPlan, assertLeadPathOpen, bindLead, currentLead, holdsLeadSeat, leadAncestors, saveLead } from "./leads";
+import { answerLeadPlan, decideLeadPlan, proposeLeadPlan, undoLeadPlan } from "./lead-plans";
+import { leadChainView } from "./lead-chain-view";
 import { memberDetails, memberHost, outstandingArchivedPlacement, transitionMember } from "../member-engagement";
 import { PlacementStore } from "../placement/store";
 import { wasReleased } from "../../shared/member-engagement";
@@ -123,16 +126,14 @@ export class Keeper {
   changedTags(threadId?: string | null, questId?: string | null): string[] {
     const member = threadId ? this.member(threadId) : null;
     const keeperId = member?.keeperThreadId ?? threadId;
-    if (
-      keeperId &&
-      this.member(keeperId)?.role === "keeper" &&
-      !this.syncing.has(keeperId)
-    ) {
-      this.syncing.add(keeperId);
+    const keepers = new Set([keeperId, ...(member?.leadLinkId ? [threadId] : [])]);
+    for (const id of keepers) {
+      if (!id || !isKeeperIdentity(this.store, this.member(id)) || this.syncing.has(id)) continue;
+      this.syncing.add(id);
       try {
-        this.journal.syncBoardQuests(keeperId);
+        this.journal.syncBoardQuests(id);
       } finally {
-        this.syncing.delete(keeperId);
+        this.syncing.delete(id);
       }
     }
     return [
@@ -140,7 +141,7 @@ export class Keeper {
         tags.room(),
         tags.rows(),
         ...(threadId ? [tags.thread(threadId), tags.journal(threadId)] : []),
-        ...(keeperId ? [tags.thread(keeperId)] : []),
+        ...[...keepers].flatMap(id => id ? [tags.thread(id)] : []),
         ...(questId
           ? [
               tags.boardQuest(questId),
@@ -175,8 +176,16 @@ export class Keeper {
   require(threadId: string, role: "keeper" | "member") {
     this.succession.assertMutable(threadId);
     const member = this.member(threadId);
-    if (!member || member.role !== role)
+    const keeper = isKeeperIdentity(this.store, member);
+    if (!member || (role === "keeper" ? !keeper : member.role !== "member" || !!member.leadLinkId))
       throw new Error(`Only a Tavern ${role} may call this tool`);
+    if (role === "keeper" && member.leadLinkId) {
+      if (!isLiveKeeper(this.store, member)) throw new Error("This lead is not active.");
+      assertLeadPathOpen(this.store, currentLead(this.store, member)!);
+      const placement = new PlacementStore(this.store.db).byMember(threadId);
+      if (placement && placement.phase !== "ready" && placement.phase !== "running")
+        throw new Error("Call tavern_ready and finish placement before working on the lead's quest.");
+    }
     return member;
   }
   resolveMemberName?: (member: Member) => string;
@@ -212,9 +221,15 @@ export class Keeper {
       brief: Brief;
     },
     bindingId?: string,
+    kind = classId === "keeper" ? "keeper" : "member",
   ) {
+    const hire = owner && bindingId ? this.store.get("hires", bindingId) : null;
     const existing = this.member(threadId);
-    if (existing) return existing;
+    if (existing) {
+      if (hire?.leadLinkId && (existing.leadLinkId !== hire.leadLinkId || hire.memberThreadId !== threadId))
+        throw new Error("The lead hire is already bound or the thread has another identity.");
+      return existing;
+    }
     const state = "idle";
     const m: Member = {
       threadId,
@@ -223,7 +238,8 @@ export class Keeper {
       ...(owner?.displayName ? { displayName: owner.displayName } : {}),
       ...(owner?.checkIndependence ? { checkIndependence: owner.checkIndependence } : {}),
       ...(owner?.guardPosture ? { guardPosture: owner.guardPosture } : {}),
-      role: owner ? "member" : classId === "keeper" ? "keeper" : "solo",
+      role: owner ? "member" : kind === "keeper" ? "keeper" : "solo",
+      ...(hire?.leadLinkId ? { leadLinkId: hire.leadLinkId } : {}),
       keeperThreadId: owner?.keeperThreadId ?? null,
       boardQuestId: owner?.boardQuestId ?? null,
       waypointId: owner?.waypointId ?? null,
@@ -246,6 +262,10 @@ export class Keeper {
         if (!bindingId) throw new Error("Binding a member requires its hire or class-start receipt");
         if (owner) transitionMember(this.store, m, "briefing", "bind-hire", { kind: "agent", threadId: owner.keeperThreadId }, { kind: "hire", id: bindingId }, this.now());
         else transitionMember(this.store, m, "active", "bind-solo", { kind: "user" }, { kind: "class-start", id: bindingId }, this.now());
+      }
+      if (hire?.leadLinkId) {
+        bindLead(this, bindingId!, hire.leadLinkId, m);
+        this.store.put("hires", bindingId!, { ...hire, memberThreadId: threadId });
       }
       this.store.patch(threadId, { projectId, brief: owner?.brief ?? null, reviewTarget: owner?.reviewTarget ?? null, requestSources: owner?.requestSources ?? null, assignmentText: owner?.assignmentText ?? null, ...(owner ? { clusterSessionPending: true } : {}) });
     });
@@ -442,12 +462,13 @@ export class Keeper {
   ) {
     const member = this.member(threadId);
     if (!member || !text.trim()) return;
+    const keeper = isKeeperIdentity(this.store, member);
     this.store.atomic(() => {
-      if (openingGoal && !classSelectionOnly && member.role === "keeper" && !this.store.runtime(threadId).openingGoal)
+      if (openingGoal && !classSelectionOnly && keeper && !this.store.runtime(threadId).openingGoal)
         this.store.patch(threadId, { openingGoal: { text, at } });
       const receipt = this.store.receipt(threadId, text, at, rowId, accepted);
       const runtime = this.store.runtime(threadId);
-      if (accepted && member.role === "keeper") {
+      if (accepted && keeper) {
         const clearFailureAsk = (runtime.failureCount ?? 0) < 2;
         if (clearFailureAsk && runtime.failureAskId) this.withdrawAsk(runtime.failureAskId, "turn-recovered");
         this.store.patch(threadId, { tickRefusalCount: 0, tickRetryAt: null, ...(clearFailureAsk ? { failureAskId: null } : {}) });
@@ -507,16 +528,16 @@ export class Keeper {
       this.store.patch(threadId, {
         userAt: this.now(),
         typingAt: null,
-        ...(member.role === "keeper"
+        ...(keeper
           ? { pending: [...runtime.pending, pending] }
           : {}),
       });
       this.store.event(
         at,
-        member.keeperThreadId ?? threadId,
-        member.boardQuestId,
-        member.role === "member" ? "user.told-member" : "user.message",
-        member.role === "member"
+        keeper ? threadId : member.keeperThreadId ?? threadId,
+        keeper ? null : member.boardQuestId,
+        !keeper && member.role === "member" ? "user.told-member" : "user.message",
+        !keeper && member.role === "member"
           ? `You told ${this.name(member)}: ${text}`
           : text,
         { receiptId: receipt.id, rowId, hint },
@@ -629,18 +650,23 @@ export class Keeper {
     return released;
   }
   async openQuest(threadId: string, title: string, short: string) {
-    this.require(threadId, "keeper");
+    const member = this.require(threadId, "keeper");
     await this.journal.prepare(threadId);
-    const route = this.applicableRoutes(threadId)
+    this.require(threadId, "keeper");
+    const link = currentLead(this.store, member);
+    if (link?.childQuestId) return this.quest(link.childQuestId);
+    const route = link ? null : this.applicableRoutes(threadId)
       .filter(
         (route) => route.kind === "new-quest" && route.boardQuestId === null,
       )
       .at(-1)?.id;
-    if (!route) throw new Error("Opening a board quest requires an unbound new-quest route from an accepted user message. Ask for the goal; never open a placeholder.");
-    const source = this.store.get("routes", route)!;
-    const receipt = source.sourceMessageId && this.store.messageReceipt(threadId, source.sourceMessageId, true);
-    if (!receipt || source.classSelectionOnly) throw new Error("The new-quest route needs its genuine accepted user receipt containing a goal; class selection is not a goal.");
-    authorize("openQuest", { level: "user-in-words", receipt: source.sourceMessageId! });
+    const source = route ? this.store.get("routes", route) : null;
+    if (!link) {
+      if (!source) throw new Error("Opening a board quest requires an unbound new-quest route from an accepted user message. Ask for the goal; never open a placeholder.");
+      const receipt = source.sourceMessageId && this.store.messageReceipt(threadId, source.sourceMessageId, true);
+      if (!receipt || source.classSelectionOnly) throw new Error("The new-quest route needs its genuine accepted user receipt containing a goal; class selection is not a goal.");
+      authorize("openQuest", { level: "user-in-words", receipt: source.sourceMessageId! });
+    }
     const q: BoardQuest = {
       id: this.store.id("quest"),
       keeperThreadId: threadId,
@@ -656,7 +682,9 @@ export class Keeper {
       ...(route && this.store.get("routes", route)?.checkerHandoffHold ? { checkerHandoffHold: this.checkerHoldFromRoute(this.store.get("routes", route)!) } : {}),
     };
     this.store.atomic(() => {
-      transitionQuest(this.store, q, "scout", "open", { kind: "agent", threadId }, { kind: "user-message", id: source.sourceMessageId! }, this.now(), { text: `Opened ${title}` });
+      transitionQuest(this.store, q, "scout", link ? "open-lead" : "open", { kind: "agent", threadId },
+        link ? { kind: "hire", id: link.hireToken } : { kind: "user-message", id: source!.sourceMessageId! }, this.now(), { text: `Opened ${title}` });
+      if (link) saveLead(this, { ...link, childQuestId: q.id }, "lead.opened", { kind: "agent", threadId });
       const routed = route ? this.store.get("routes", route) : null;
       if (routed?.kind === "new-quest" && routed.boardQuestId === null)
         this.store.put("routes", routed.id, {
@@ -843,6 +871,7 @@ export class Keeper {
       createdAt: this.now(),
       fromSteer: r ? { routeId: r.id, at: r.messageAt, text: (r.sourceMessageId && this.store.messageText(r.sourceMessageId) || r.userText || r.summary).slice(0, 300) } : null,
     });
+    assertChainPlan(this, q, plan);
     const ids = new Set(plan.waypoints.map((w) => w.id));
     if (
       ids.size !== plan.waypoints.length ||
@@ -873,14 +902,15 @@ export class Keeper {
       return previousWaypoints.some(w => w.id === waypointId && settled(w));
     });
     const steer = weakensChecks && r ? this.checkSteer(q, r) : null;
+    const leadPath = leadAncestors(this.store, q.id);
     const previousBudget = this.store.get("plans", `${q.id}:${q.planVersion}`)?.spendBudgetCents;
     const carriesPendingBudget = q.phase === "greenlight" && q.spendProposal?.planVersion === q.planVersion && q.spendProposal.cents === plan.spendBudgetCents;
     const proposesBudget = plan.spendBudgetCents !== undefined && (plan.spendBudgetCents !== previousBudget || carriesPendingBudget) && plan.spendBudgetCents !== q.spendBudget?.cents && !q.spendBudget?.reached;
     const spendProposal = proposesBudget ? { planVersion: plan.version, cents: plan.spendBudgetCents! }
       : plan.spendBudgetCents !== undefined && plan.spendBudgetCents === previousBudget ? q.spendProposal : null;
-    const needsGreenlight = approved === null || !partyFits(plan, approved) || weakensChecks && !steer || proposesBudget;
+    const needsGreenlight = leadPath.length > 0 || approved === null || !partyFits(plan, approved) || weakensChecks && !steer || proposesBudget;
     const automatic =
-      needsGreenlight && !weakensChecks &&
+      needsGreenlight && !weakensChecks && !leadPath.length && !plan.party.some(slot => slot.leadEnvelope) &&
       this.settings().keepers.greenlight === "by-size" &&
       plan.reversible &&
       plan.party.length === 1 &&
@@ -889,7 +919,7 @@ export class Keeper {
       !this.store.openAsks(threadId).length;
     this.store.atomic(() => {
       this.store.put("plans", `${q.id}:${plan.version}`, plan);
-      const updated = { ...q, planVersion: plan.version, ...(spendProposal || q.spendProposal ? { spendProposal: spendProposal ?? null } : {}), ...(!needsGreenlight ? { checkPlanVersion: plan.version } : {}), updatedAt: this.now() };
+      const updated = { ...q, planVersion: plan.version, ...(spendProposal || q.spendProposal ? { spendProposal: spendProposal ?? null } : {}), ...(leadPath.length ? { greenlitVersion: null, checkPlanVersion: undefined } : !needsGreenlight ? { checkPlanVersion: plan.version } : {}), updatedAt: this.now() };
       const data = { version: plan.version, routeId: r?.id ?? null };
       if (needsGreenlight && storedPhase(q.phase) !== "greenlight") {
         transitionQuest(this.store, q, "greenlight", "plan", { kind: "agent", threadId }, { kind: "plan", id: `${q.id}:${plan.version}` }, this.now(), { patch: updated, text: `Plan v${plan.version}`, data });
@@ -926,7 +956,8 @@ export class Keeper {
           planVersion: plan.version,
         });
       }
-      if (needsGreenlight && !automatic) this.askGreenlight(q, plan, weakensChecks ? "This plan reduces the checks you approved. Review its checks before it can proceed." : "Staffing requires your explicit greenlight.", weakensChecks);
+      if (leadPath.length) proposeLeadPlan(this, q, plan, leadPath);
+      else if (needsGreenlight && !automatic) this.askGreenlight(q, plan, weakensChecks ? "This plan reduces the checks you approved. Review its checks before it can proceed." : "Staffing requires your explicit greenlight.", weakensChecks);
       if (!needsGreenlight) {
         this.decide(threadId, {
           boardQuestId: q.id,
@@ -1036,6 +1067,10 @@ export class Keeper {
         throw new Error("A Keeper answer needs its own exact quest ask, kind and option");
       return this.decide(threadId, { ...input, coveredBy: { kind: "answer", id: ask.id }, options: ask.options.map(option => option.label) });
     }
+    if (input.leadPlan) {
+      if (input.unsure !== true) this.checkDecision(threadId, quest, input);
+      return decideLeadPlan(this, threadId, input);
+    }
     if (input.source !== "user") this.checkDecision(threadId, quest, input);
     if (!input.exceeds || input.source === "user" || !input.reversible || input.kind) return this.decide(threadId, input);
     this.assertUnusedSoftLimitAnswer(input.sourceRef);
@@ -1127,7 +1162,7 @@ export class Keeper {
   pendingQuestHires(id: string) {
     return this.pendingStopHires(id).length;
   }
-  recordStop(id: string, reason: string | null = null, surface = "stopBoardQuest"): BoardQuest {
+  recordStop(id: string, reason: string | null = null, surface = "stopBoardQuest", chainReceipt?: string): BoardQuest {
     const stopReason = boardQuestSchema.shape.stopReason.parse(reason) || null;
     const quest = this.quest(id);
     if (quest.phase === "done") throw new Error("This board quest has already returned");
@@ -1142,13 +1177,16 @@ export class Keeper {
         stopReason,
       };
       const withdrawnAskIds = (this.store.db.prepare("SELECT id FROM tavern_records WHERE kind='asks' AND json_extract(data,'$.keeperThreadId')=? AND json_extract(data,'$.boardQuestId')=? AND json_extract(data,'$.state')='open'").all(quest.keeperThreadId, id) as { id: string }[]).map(ask => ask.id);
-      const stopped = transitionQuest(this.store, quest, "stopping", "stop", { kind: "user" }, { kind: "user-act", id: this.store.id("act"), surface, at }, at, { patch: stopPatch, text: "Stop requested for every party member", data: { reason: stopReason, withdrawnAskIds } });
+      const actor: Actor = chainReceipt ? { kind: "tavern" } : { kind: "user" };
+      const stopped = transitionQuest(this.store, quest, "stopping", chainReceipt ? "stop-chain" : "stop", actor,
+        { kind: chainReceipt ? "chain-stop" : "user-act", id: chainReceipt ?? this.store.id("act"), surface, at }, at,
+        { patch: stopPatch, text: "Stop requested for every party member", data: { reason: stopReason, withdrawnAskIds } });
       this.store.cancelQuestHires(id, at);
       const request = this.store.latestQuestEvent(id, "quest.stopping")!;
       for (const member of this.store.query("members", "boardQuestId", id, 500)) {
-        if (!["briefing", "active", "resting", "releasing"].includes(member.engagement ?? "")) continue;
+        if (member.leadLinkId || !["briefing", "active", "resting", "releasing"].includes(member.engagement ?? "")) continue;
         const receipt = { kind: "quest-stop", id: String(request.id) };
-        transitionMember(this.store, member, "stopping", "quest-stop", { kind: "user" }, receipt, at,
+        transitionMember(this.store, member, "stopping", "quest-stop", actor, receipt, at,
           { details: { operation: { id: this.store.id("stop"), reason: stopReason ?? "Quest stop", receipt,
             skipStopIfQuiet: member.engagement === "resting", placementRequired: this.store.runtime(member.threadId).placementExecution != null || new PlacementStore(this.store.db).byMember(member.threadId) !== null }, release: null },
             data: { previouslyResting: member.engagement === "resting" } });
@@ -1164,9 +1202,11 @@ export class Keeper {
     eventData: Record<string, unknown> = {},
     trusted = false,
   ) {
-    if (!trusted) this.require(threadId, "keeper");
-    else if (this.member(threadId)?.role !== "keeper" || this.succession.current(threadId) !== threadId) throw new Error("A Tavern ask needs the current Keeper.");
     const questId = input.boardQuestId ?? null;
+    const stopRetry = trusted && input.effect.type === "retry-stop" && questId !== null;
+    const callingKeeper = stopRetry ? this.member(threadId) : this.require(threadId, "keeper");
+    if (!callingKeeper || stopRetry && (this.quest(questId).phase !== "stopping" || this.quest(questId).keeperThreadId !== threadId))
+      throw new Error("A retry requires this Keeper's stopping quest.");
     if (input.releaseCheckerHandoff) {
       if (!questId) throw new Error("A checker-handoff release ask needs its quest");
       const hold = this.liveQuest(threadId, questId).checkerHandoffHold;
@@ -1186,14 +1226,8 @@ export class Keeper {
         holds: [], meanwhile: "Maker work and the Keeper conversation can continue; checker handoff stays held." };
     }
     if (questId) {
-      if (trusted) {
-        const quest = this.quest(questId);
-        if (quest.keeperThreadId !== threadId) throw new Error("A Keeper may change only its own board quests");
-        if (input.effect.type !== "retry-stop" && !isOpenQuest(quest)) throw new Error("This board quest has ended or is stopping");
-      } else {
-        this.liveQuest(threadId, questId);
-        if (!input.releaseHoldId) this.guard(threadId, questId);
-      }
+      if (!stopRetry) this.liveQuest(threadId, questId);
+      if (!trusted && !input.releaseHoldId) this.guard(threadId, questId);
     }
     if (input.kind !== "decision" && input.proceedInMinutes != null)
       throw new Error(
@@ -1219,7 +1253,8 @@ export class Keeper {
       throw new Error(
         "A timed default needs one recommendation and a time within seven days",
       );
-    if (input.kind === "greenlight" && input.effect.type !== "greenlight") throw new Error("A greenlight ask needs its typed plan version; propose the plan instead.");
+    if (input.kind === "greenlight" && input.effect.type !== "greenlight" && (input.effect.type !== "lead-plan" || !trusted))
+      throw new Error("A greenlight ask needs its typed plan version; propose the plan instead.");
     if (input.kind === "conclude" && !isCloseEffect(input.effect)) throw new Error("A conclude ask needs its typed draft; tell the quest result instead.");
     if ((input.effect.type === "placement-blocker" || input.effect.type === "communication-hold") && !trusted) throw new Error("Only Tavern may open this typed ask");
     if (input.kind === "drafts-as-you" && input.effect.type !== "communication-hold") throw new Error("Call the draft tool first so Tavern can record the exact arguments.");
@@ -1252,6 +1287,12 @@ export class Keeper {
       input = { ...input, options: [{ id: "approve", label: runner ? "Approve" : "Approve the act", detail, recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], effect: { type: "decision", outcomes: [{ optionId: runner ? "confirm-run" : "approve", outcome: "approve" }, { optionId: "deny", outcome: "decline" }] } };
     }
     const lane = this.authority.baseLane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure, effect: input.effect, sendTarget: input.sendTarget });
+    const childLink = questId ? this.store.leadLinksBy("childQuestId", questId)[0] : undefined;
+    if (lane === "user" && childLink?.childKeeperThreadId === threadId) {
+      const parent = this.quest(childLink.parentQuestId), parentKeeper = this.member(parent.keeperThreadId);
+      const prefix = `${this.name(callingKeeper)} asks, for ${parentKeeper ? this.name(parentKeeper) + "’s " : ""}${parent.short.slice(0, 80)}: `;
+      input = { ...input, question: (prefix + input.question).slice(0, 400) };
+    }
     if (questId && lane === "user" && input.kind !== "drafts-as-you" && DELEGATABLE_KINDS.some(kind => kind === input.kind)) {
       input = { ...input, options: [...input.options, this.authority.delegationOption(threadId)] };
     }
@@ -1286,7 +1327,7 @@ export class Keeper {
         questId,
         "ask.opened",
         ask.question,
-        { askId: ask.id, lane: projected.lane, keeperName: this.name(this.member(threadId)!), ...eventData },
+        { askId: ask.id, lane: projected.lane, keeperName: this.name(callingKeeper), ...eventData },
         { kind: "agent", threadId },
       );
     });
@@ -1358,7 +1399,13 @@ export class Keeper {
       if (outcome !== "decline" && !(ask.effect?.type === "grant-shell-act" && optionId === "deny")) this.authority.assertVerdict(ask);
     }
     const effect = ask.effect!;
-    if (ask.kind === "greenlight" && effect.type !== "greenlight") throw new Error("This old ask has no plan version; ask the Keeper to propose the plan again.");
+    if (ask.kind === "greenlight" && effect.type !== "greenlight" && effect.type !== "lead-plan")
+      throw new Error("This old ask has no plan version; ask the Keeper to propose the plan again.");
+    if (effect.type === "conclude" && effect.draft.lead && (by !== "user" || via === "timer" || receipt?.act !== "answerAsk"))
+      throw new Error("This child conclusion needs your explicit answer or the current hiring Keeper.");
+    if (effect.type === "lead-plan" && (by !== "user" || via === "timer")) throw new Error("This lead plan needs your explicit answer.");
+    if (effect.type === "greenlight" && ask.boardQuestId && this.store.leadLinksBy("childQuestId", ask.boardQuestId).length)
+      throw new Error("An ordinary greenlight cannot approve a lead plan.");
     if (ask.kind === "conclude" && !isCloseEffect(effect)) throw new Error("This old ask has no conclusion draft; ask the Keeper to tell the result again.");
     if (ask.boardQuestId && (isCloseEffect(effect) || effect.type === "greenlight" && optionId === "approve")) {
       const quest = this.quest(ask.boardQuestId);
@@ -1432,6 +1479,9 @@ export class Keeper {
           this.decide(ask.keeperThreadId, { boardQuestId: ask.boardQuestId, text: effect.text, why: effect.reason,
             reversible: true, source: "ask", sourceRef: ask.id, exceeds: effect.limit }, undefined, { answerReceipt: ask.id });
         },
+        "lead-plan": effect => {
+          if (effect.type === "lead-plan") answerLeadPlan(this, effect.request, ask.id, optionId);
+        },
         greenlight: effect => {
           if (effect.type !== "greenlight" || optionId !== "approve") return;
           if (!ask.boardQuestId) throw new Error("A greenlight needs its quest");
@@ -1456,7 +1506,9 @@ export class Keeper {
         ask.keeperThreadId,
         ask.boardQuestId,
         by === "default" ? "ask.defaulted" : "ask.answered",
-        ask.kind === "greenlight" && optionId === "approve"
+        effect.type === "lead-plan" && optionId === "approve"
+          ? "You approved this exact lead plan."
+          : ask.kind === "greenlight" && optionId === "approve"
           ? "Party approved: hire it now, critical path first."
           : ask.kind === "scope" && optionId === "deny"
             ? `${SCOPE_DENIAL_TEXT}${note ? ` User note: ${note}` : ""}`
@@ -1476,13 +1528,22 @@ export class Keeper {
     if (quest.keeperThreadId !== threadId) throw new Error("A Keeper can only post a summary to its own quest.");
     if (!isOpenQuest(quest)) throw new Error("Only an active quest can receive a summary.");
     this.guard(threadId, quest.id);
-    const summary = appendSummary(this.store, threadId, draft, this.now());
+    const summary = this.store.atomic(() => {
+      const summary = appendSummary(this.store, threadId, draft, this.now());
+      const [link] = this.store.leadLinksBy("childQuestId", quest.id);
+      if (link?.childKeeperThreadId === threadId && link.state === "linked") {
+        this.store.event(this.now(), link.parentKeeperThreadId, link.parentQuestId, "lead.summary", summary.title,
+          { summaryId: summary.id, childQuestId: quest.id, leadLinkId: link.id }, { kind: "agent", threadId });
+        this.changed(link.parentKeeperThreadId, link.parentQuestId);
+      }
+      return summary;
+    });
     this.invalidate([tags.room(), tags.thread(threadId), tags.boardQuest(quest.id)]);
     return summary;
   }
   decide(
     threadId: string,
-    input: Pick<Decision, "coveredBy" | "options" | "consequence" | "unsure"> & {
+    input: Pick<Decision, "coveredBy" | "options" | "consequence" | "unsure" | "leadPlan"> & {
       askId?: string; optionId?: string; kind?: import("../../shared/quest-authority").DelegationKind;
       boardQuestId?: string | null;
       text: string;
@@ -1493,7 +1554,7 @@ export class Keeper {
       sourceRef?: string | null;
     },
     autoApproval?: { questId: string; planVersion: number },
-    effect?: Pick<Decision, "waypointCall" | "checkChange" | "answerReceipt" | "pullRequestReady" | "pullRequestGrant">,
+    effect?: Pick<Decision, "waypointCall" | "checkChange" | "answerReceipt" | "pullRequestReady" | "pullRequestGrant" | "leadPlan">,
   ) {
     this.require(threadId, "keeper");
     const questId = input.boardQuestId ?? null;
@@ -1550,6 +1611,7 @@ export class Keeper {
     authorize(input.source === "steer" ? "steerDecision" : input.source === "ask" ? "answerAsk" : "defaultDecision", { level: input.source === "steer" ? "user-in-words" : input.source === "ask" ? "user-explicit" : "keeper", receipt: input.sourceRef ?? input.text });
     const decision = decisionSchema.parse({
       ...input,
+      leadPlan: undefined,
       ...effect,
       id: this.store.id("decision"),
       keeperThreadId: threadId,
@@ -1598,8 +1660,8 @@ export class Keeper {
     if ((approval || d.checkChange) && q?.phase === "held") throw new Error("This quest is held; resume it first");
     if ((d.waypointCall || d.checkChange) && q && !isOpenQuest(q)) throw new Error("This quest has ended; its waypoint record is fixed");
     this.store.atomic(() => {
-      let phaseChanged = false;
       this.store.put("decisions", id, { ...d, undone: true });
+      let phaseChanged = undoLeadPlan(this, d);
       const grantAtUndo = shellGrant && this.store.get("shellGrants", shellGrant.id);
       if (grantAtUndo?.state === "issued") settleShellGrant(this.store, grantAtUndo.id, "revoked", this.now(), "Undo revoked the Keeper’s shell grant.");
       if (d.askId && !shellGrant) {
@@ -1810,13 +1872,14 @@ export class Keeper {
   }
   rules(threadId: string, questId?: string | null, includeInactive = false) {
     const m = this.member(threadId);
-    const keeperId = m?.keeperThreadId ?? threadId;
+    const keeper = isKeeperIdentity(this.store, m);
+    const keeperId = keeper ? threadId : m?.keeperThreadId ?? threadId;
     const projectId = this.store.runtime(threadId).projectId;
     return this.store.activeRules(
       keeperId,
       projectId,
       questId ?? null,
-      m?.role === "keeper",
+      keeper,
       includeInactive,
     );
   }
@@ -2006,11 +2069,10 @@ export class Keeper {
     const members = this.store
       .query("members", "boardQuestId", quest.id, 500)
       .filter((member) => !wasReleased(member));
-    return (
-      checkerAssignments(plan, members).find(
-        (assignment) => assignment.memberThreadId === threadId,
-      )?.waypointIds ?? []
-    );
+    const waitingLeads = new Set(this.store.leadLinksBy("parentQuestId", quest.id)
+      .filter(link => link.state === "linked" && !link.result).map(link => link.parentWaypointId));
+    return checkerAssignments(plan, members).find(assignment => assignment.memberThreadId === threadId)
+      ?.waypointIds.filter(id => !waitingLeads.has(id)) ?? [];
   }
   summary(id: string, planVersion?: number): BoardQuestSummary {
     const current = this.quest(id);
@@ -2042,16 +2104,19 @@ export class Keeper {
       const decision = JSON.parse(row.data) as Decision;
       calls.set(decision.waypointCall!.waypointId, decision);
     }
+    const leadSeats = this.store.leadLinksBy("parentQuestId", q.id);
     const waypoints: BoardQuestSummary["waypoints"] = (
       plan?.waypoints ?? []
     ).map((w) => {
       const call = calls.get(w.id);
       const waiver = q.waivers?.find(waiver => waiver.waypointId === w.id && waiver.planVersion === q.planVersion);
+      const isLeadResult = (e: JournalEntry) => leadSeats.some(link => link.parentWaypointId === w.id && link.result?.entryId === e.id && link.result.makerThreadId === e.threadId);
       const linked = entries.filter(e =>
         e.link?.boardQuestId === id && e.link.waypointId === w.id &&
         (w.actor === "user" ? e.threadId === q.keeperThreadId : w.actor === "agent" && e.owner !== "You") &&
         this.member(e.threadId)?.classId !== "warden" &&
-        (!released.has(e.threadId) || e.status === "verified" || e.status === "done" && (w.check === "none" || call?.waypointCall?.as === "accepted")),
+        (!this.member(e.threadId)?.leadLinkId || isLeadResult(e)) &&
+        (isLeadResult(e) || !released.has(e.threadId) || e.status === "verified" || e.status === "done" && (w.check === "none" || call?.waypointCall?.as === "accepted")),
       );
       const ownerMember =
         (w.actor === "agent" && members.find(
@@ -2062,7 +2127,7 @@ export class Keeper {
               linked.some(
                 (entry) =>
                   entry.threadId === m.threadId && entry.status === "verified",
-              )),
+              ) || leadSeats.some(link => link.parentWaypointId === w.id && link.result?.makerThreadId === m.threadId)),
         )) || null;
       const legacySkip = w.optional && !call && this.store.get("skips", `${id}:${q.planVersion}:${w.id}`);
       const gate = this.memory.gateFor(q.id, q.planVersion, w.id);
@@ -2159,11 +2224,17 @@ export class Keeper {
       const record = outstandingArchivedPlacement(placements, member);
       return record ? [[member.threadId, record.blocked?.message ?? record.preservation.reason ?? "Machine cleanup is not confirmed."] as const] : [];
     }) : []);
+    const childPlan = q.phase === "greenlight" ? this.store.get("leadPlans", `${q.id}:${q.planVersion}`) : null;
+    const leadPlanLane = childPlan?.state === "pending" ? childPlan.lane : undefined;
+    const leadChain = leadChainView(this, q, leadSeats, waypoints, asks);
     return {
       ...q,
       phase,
+      ...(leadPlanLane ? { leadPlanLane } : {}),
+      ...(leadChain ? { leadChain } : {}),
       nextNewsBy: newsBy,
-      stopUnconfirmed: members.filter(member => member.engagement === "stopping" || pendingMachines.has(member.threadId)).length + this.pendingQuestHires(id),
+      stopUnconfirmed: members.filter(member => !member.leadLinkId && (member.engagement === "stopping" || pendingMachines.has(member.threadId))).length + this.pendingQuestHires(id) +
+        (q.phase === "stopping" ? this.store.leadLinksBy("parentQuestId", id).filter(link => link.childKeeperThreadId && holdsLeadSeat(link)).length : 0),
       stopPendingHires: q.phase === "stopping" ? this.pendingStopHires(id) : [],
       plan,
       waypoints,
@@ -2176,6 +2247,7 @@ export class Keeper {
           q.phase === "held" || !isOpenQuest(q)
             ? "nobody"
             : closing ? "you"
+            : leadPlanLane === "keeper" ? "keeper"
             : phase === "wrap" || !plan
               ? "keeper"
               : asks.some(a => this.authority.lane(a) === "user")
@@ -2191,6 +2263,7 @@ export class Keeper {
                       : "keeper",
         text:
           outcome ?? closing?.question ??
+          (leadPlanLane === "keeper" ? "The hiring Keeper decides on this child plan." : null) ??
           (asks.some(a => this.authority.lane(a) === "keeper") && !asks.some(a => this.authority.lane(a) === "user")
             ? `Waiting on ${this.name(this.require(q.keeperThreadId, "keeper"))}: ${asks.find(a => this.authority.lane(a) === "keeper")!.question}`
             : !plan
@@ -2294,7 +2367,7 @@ export class Keeper {
   }
   reanchor(threadId: string, reason: string) {
     const m = this.member(threadId);
-    if (m?.role !== "keeper") return;
+    if (!isKeeperIdentity(this.store, m)) return;
     this.store.patch(threadId, {
       reanchor: reason,
       reanchorVersion: (this.store.runtime(threadId).reanchorVersion ?? 0) + 1,

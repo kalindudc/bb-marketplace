@@ -1,3 +1,4 @@
+import { isKeeperIdentity } from "../liveness";
 import type { Actor } from "../../shared/schema";
 import type { KeeperStore } from "./store";
 
@@ -101,7 +102,7 @@ export class KeeperSuccessionStore {
     if (!reason.trim()) throw new Error("Keeper succession requires a reason");
     return this.store.atomic(() => {
       const { chargeId, head } = this.charge(threadId);
-      if ((head?.current ?? chargeId) !== threadId || this.store.get("members", threadId)?.role !== "keeper") throw new Error("Only the current Keeper can be refreshed");
+      if ((head?.current ?? chargeId) !== threadId || !isKeeperIdentity(this.store, this.store.get("members", threadId))) throw new Error("Only the current Keeper can be refreshed");
       const previous = head && this.get(head.operationId);
       if (previous && pending(previous)) return previous;
       if (previous?.state === "done" && !followedUp(previous)) throw new Error("Keeper succession follow-ups must finish before refreshing again");
@@ -155,7 +156,7 @@ export class KeeperSuccessionStore {
       if (op.state !== "preparing" || !op.candidate || op.restored) throw new Error("Keeper succession needs a confirmed candidate");
       const at = this.now();
       this.rebindOwnership({ chargeId: op.chargeId, expectedGeneration: op.generation - 1, predecessor: op.predecessor, successor: op.candidate, at }, steps);
-      if (this.store.get("members", op.candidate)?.role !== "keeper") throw new Error("A succession must bind the successor as Keeper before cutover");
+      if (!isKeeperIdentity(this.store, this.store.get("members", op.candidate))) throw new Error("A succession must bind the successor as Keeper before cutover");
       this.store.put("keeperCharges", op.chargeId, { current: op.candidate, generation: op.generation, operationId: id });
       const followups = members ? { ...op.followups, members: this.followupMembers(members) } : op.followups;
       return this.save({ ...op, state: "done", cutoverAt: at, followups }, "The successor now owns the Keeper charge. Wake-ups set by other plugins on the old Keeper do not move.");

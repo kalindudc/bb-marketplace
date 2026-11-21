@@ -28,6 +28,7 @@ import { QuestSpend } from "./quest-spend";
 import { QuestSummaries } from "./summaries";
 import { recordedStop } from "./quest-road";
 import { PlacementFacts } from "../kit/placement";
+import { LeadChainRows } from "../thread/lead-chain-rows";
 
 
 
@@ -231,6 +232,7 @@ export function QuestPage({ detail, registry, room, summaryId }: { detail: Board
         <RecordFold id="quest.history" title="History" count={plural(history.length, "event")} open><History detail={detail} registry={registry} room={room} bare /></RecordFold>
       </div>
       <aside className="tv-col" aria-label="Party and ledger">
+        <LeadChainRows chain={quest.leadChain} onOpenQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} />
         <RecordFold id="quest.party" title={<Vocabulary word="party" />} count={plural(quest.members.length, "member")} open={!finished}>
           {finished ? <div className="tv-credits-w"><ol className="tv-credits n-1">{quest.members.map((member, i) => <CreditCard identity key={member.threadId} member={member} index={i} detail={detail} registry={registry} />)}</ol></div> : <KitPartyPicture members={quest.members} registry={registry} quests={[quest]} renderMember={(member, summary) => <div className="tv-party-identity"><CrestOf member={member} registry={registry} size={20} /><MemberIdentity member={member} registry={registry} compact briefSteer={briefSteers.get(member.threadId)} scope={detail.scopes?.find(s => s.threadId === member.threadId)} violations={detail.violations?.filter(v => v.threadId === member.threadId)} /><button type="button" className="lnk-btn act" onClick={() => navigate.toThread(member.threadId)} aria-label={`Open ${characterName(registry, member)}’s thread`} title={summary}><OpensMark /></button></div>} />}
         </RecordFold>

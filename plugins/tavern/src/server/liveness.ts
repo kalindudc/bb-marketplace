@@ -1,6 +1,7 @@
 import type { BoardQuest, Member } from "../shared/schema";
 import type { KeeperStore } from "./keeper/store";
 import { wasReleased, type Engagement } from "../shared/member-engagement";
+import { currentLead } from "./keeper/leads";
 
 type Store = Pick<KeeperStore, "get" | "runtime">;
 export type MemberPurpose = "work" | "brief" | "occupy";
@@ -19,8 +20,16 @@ export function isLiveMember(store: Store, member: Member | null, purpose: Membe
   return member.engagement !== undefined && purposes[purpose].includes(member.engagement) &&
     (member.boardQuestId === null || isOpenQuest(store.get("quests", member.boardQuestId)));
 }
+export function isKeeperIdentity(store: Pick<Store, "get">, member: Member | null): boolean {
+  if (!member) return false;
+  if (member.role === "keeper") return true;
+  const link = currentLead(store, member);
+  return link?.state === "linked" || link?.state === "retirement-requested";
+}
 export function isLiveKeeper(store: Store, member: Member | null, purpose: "present" | "automatic" = "automatic"): member is Member {
-  if (member?.role !== "keeper") return false;
+  if (!member || !isKeeperIdentity(store, member)) return false;
+  if (member.leadLinkId && (member.engagement === "archived" || purpose === "automatic" &&
+      !isLiveMember(store, member, "work") && currentLead(store, member)?.state !== "retirement-requested")) return false;
   const state = store.runtime(member.threadId);
   return state.archivedAt == null && state.deletedAt == null && (purpose === "present" || state.manualStopAt == null);
 }

@@ -17,7 +17,7 @@ function fixture(phase: BoardQuest["phase"] = "scout") {
 
 describe("quest lifecycle", () => {
   it("pins the allowed rows and records each cause atomically", () => {
-    expect([...new Set(QUEST_TRANSITIONS.map(row => row.cause))].sort()).toEqual(["approve", "auto-approve", "close", "close-early", "conclude", "conclude-open-at-upgrade", "conclude-withdrawn", "extensions", "hold", "keep-open", "open", "plan", "reopen", "replacement-plan", "resume", "stop", "stopped", "undo"]);
+    expect([...new Set(QUEST_TRANSITIONS.map(row => row.cause))].sort()).toEqual(["approve", "approve-lead", "approve-lead-user", "auto-approve", "close", "close-early", "conclude", "conclude-lead", "conclude-open-at-upgrade", "conclude-withdrawn", "extensions", "hold", "keep-open", "open", "open-lead", "plan", "reopen", "replacement-plan", "resume", "stop", "stop-chain", "stopped", "undo"]);
     for (const row of QUEST_TRANSITIONS) {
       const { store, quest } = fixture(row.from ?? "scout");
       if (row.from === null) store.remove("quests", quest.id);
@@ -33,6 +33,18 @@ describe("quest lifecycle", () => {
       const receipt = { kind: row.receipt, id: "receipt" };
       if (row.cause === "replacement-plan") {
         expect(() => transitionQuest(store, quest, row.to, row.cause, actor, receipt, 2)).toThrow(/earlier party approval/);
+        continue;
+      }
+      const leadReceiptErrors: Record<string, RegExp> = {
+        "open-lead": /recorded lead hire receipt/,
+        "approve-lead": /exact lead-plan approval/,
+        "approve-lead-user": /exact lead-plan approval/,
+        "conclude-lead": /exact child request/,
+      };
+      const missingLeadReceipt = leadReceiptErrors[row.cause];
+      if (missingLeadReceipt) {
+        expect(() => transitionQuest(store, quest, row.to, row.cause, actor, receipt, 2)).toThrow(missingLeadReceipt);
+        expect(store.events("k")).toEqual([]);
         continue;
       }
       const result = transitionQuest(store, quest, row.to, row.cause, actor, receipt, 2);

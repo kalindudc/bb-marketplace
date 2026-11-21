@@ -119,6 +119,13 @@ const APPENDED: string[] = [
    CREATE INDEX tavern_spend_receipts_time ON tavern_spend_receipts(thread_id, at);
    CREATE TABLE tavern_spend_inputs (thread_id TEXT PRIMARY KEY, file_id TEXT NOT NULL, offset INTEGER NOT NULL, invalid INTEGER NOT NULL);
    CREATE TABLE tavern_spend_burn (thread_id TEXT PRIMARY KEY, read_at INTEGER NOT NULL, data TEXT NOT NULL);`,
+  // Keep the chain indexes together when appending after earlier releases.
+  `CREATE UNIQUE INDEX tavern_lead_token ON tavern_records(json_extract(data,'$.hireToken')) WHERE kind='leadLinks';
+   CREATE UNIQUE INDEX tavern_lead_child ON tavern_records(json_extract(data,'$.childQuestId')) WHERE kind='leadLinks';
+   CREATE UNIQUE INDEX tavern_lead_parent_seat ON tavern_records(json_extract(data,'$.parentQuestId'),json_extract(data,'$.parentWaypointId'))
+     WHERE kind='leadLinks' AND json_extract(data,'$.state') IN ('reserved','linked','retirement-requested','retiring');
+   CREATE INDEX tavern_lead_parent ON tavern_records(json_extract(data,'$.parentQuestId')) WHERE kind='leadLinks';
+   CREATE INDEX tavern_hire_quest ON tavern_records(json_extract(data,'$.owner.boardQuestId')) WHERE kind='hires';`,
 ];
 
 export const MIGRATIONS: string[] = [

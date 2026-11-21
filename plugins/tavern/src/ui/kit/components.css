@@ -482,6 +482,11 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern button.lg-row { cursor: pointer; }
 .tavern button.lg-row:hover { background: var(--tavern-hover); }
 .tavern .lg-row .t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .lg-chain { min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.tavern .lg-chain .lg-row { padding-block: 5px; }
+.tavern .lg-chain .lg-row > span:first-child { flex: 1; min-width: 0; }
+.tavern .lg-chain .lg-chain-detail { margin: 0 4px 6px; color: var(--tavern-muted); }
+@media (max-width: 560px) { .tavern .lg-chain button.lg-row { min-height: 44px; } }
 .tavern .lg-row .lg-q { flex: none; font-size: 11px; padding: 1px 5px; background: var(--tavern-recessed); }
 .tavern .lg-row .lg-go { flex: none; display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--tavern-muted); }
 .tavern .lg-rows .src { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--tavern-muted); white-space: nowrap; }

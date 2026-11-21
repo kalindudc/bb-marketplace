@@ -89,15 +89,14 @@ describe("a class page's What it gets", () => {
     expect(within(card).getByRole("button", { name: "On hire" }).getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("says the Keeper isn't hired on its On hire tab, even when the hire facts say nothing of it", async () => {
+  it("shows the Keeper's lead hire facts and still offers start facts", async () => {
     const slot = await page("class/keeper");
     const card = await factsCard(slot);
-    // A startable, unhireable class opens on start; its hire tab is the one line.
+    expect(within(card).getByRole("button", { name: "On hire" }).getAttribute("aria-pressed")).toBe("true");
+    expect(card.querySelector("[data-cannot]")).toBeNull();
+    expect(rowOf(card, "party cap").textContent).toContain("6");
+    fireEvent.click(within(card).getByRole("button", { name: "When you start it" }));
     expect(within(card).getByRole("button", { name: "When you start it" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(within(card).getByRole("button", { name: "On hire" }));
-    expect(card.querySelector("[data-cannot] p")!.textContent).toBe("Keepers aren't hired; they're started.");
-    expect(within(card.querySelector<HTMLElement>("[data-cannot]")!).getByRole("button", { name: "See When you start it" })).toBeTruthy();
-    expect(card.querySelector("[data-field]")).toBeNull();
   });
 
   it("says a class that can be neither started nor hired once on both tabs, with no pointer", async () => {
@@ -225,9 +224,8 @@ describe("readable model names with no label from the server", () => {
   });
   it("names the list's models the same way, never as a raw id, from the mode the class runs in", async () => {
     const raw = facts([{ field: "model", value: "anthropic/claude-opus-5-5", source: "settings", dependsOnProject: true }, { field: "reasoning", value: "xhigh", source: "settings" }], { execution: null });
-    // The Keeper is started, not hired: its hire facts (here another model, with an error) never reach the list.
-    const hire = facts([{ field: "model", value: "openai/gpt-6.1-sol", source: "settings" }], { errors: ["The Keeper class cannot be hired here."] });
-    const slot = await page("classes", { classExecutions: () => ({ classes: entries.map((e) => e.classId === "keeper" ? { ...e, hire, start: raw } : e) }) });
+    const otherMode = facts([{ field: "model", value: "openai/gpt-6.1-sol", source: "settings" }]);
+    const slot = await page("classes", { classExecutions: () => ({ classes: entries.map((e) => e.classId === "keeper" ? { ...e, hire: raw, start: otherMode } : e) }) });
     const cell = (await slot.findByTitle("Open the Keeper class", {}, LOADED)).querySelector<HTMLElement>(".tv-ct-model")!;
     await waitFor(() => expect(cell.textContent).toBe("Claude Opus 5.5 · xhigh · depends on the project"), LOADED);
     expect(cell.title).toContain("anthropic/claude-opus-5-5");

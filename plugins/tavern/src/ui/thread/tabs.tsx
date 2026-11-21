@@ -9,6 +9,7 @@ import { revealAsk } from "./state";
 import { BriefSteerLine } from "../kit/brief-steer";
 import { summaryPath } from "../kit/summary-card";
 import { KeeperSuccessionRecord } from "../kit/succession";
+import { LeadChainRows } from "./lead-chain-rows";
 import "./skeletons.css";
 export { JournalTab } from "./journal";
 
@@ -161,6 +162,7 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
                 : <p className={`lg-move who-${q.move.who}`} title={q.move.text}><span className="lbl">{q.move.who === "you" ? "Your move" : q.move.who === "outside" ? "Waiting outside" : "Next"}</span><span className="mt">{q.move.text}</span></p>}
               {q.plan?.fromSteer && <Clamp className="lg-steer" lines={1} text={`From your steer, ${clockTime(q.plan.fromSteer.at)}: “${q.plan.fromSteer.text}”`} />}
               <GateRows waypoints={q.waypoints} />
+              <LeadChainRows chain={q.leadChain} onOpenQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} />
               {registry.data && q.members.length > 0 && <PartyPicture ambientMotion={decor.data?.ambientMotion} repeatSeconds={decor.data?.repeatSeconds} members={q.members} quests={[q]} registry={registry.data} mini onOpen={id => navigate.toThread(id)} />}
               {q.briefSteers?.map(steer => {
                 const member = q.members.find(m => m.threadId === steer.memberThreadId);

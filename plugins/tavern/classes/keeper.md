@@ -5,13 +5,13 @@ plain: lead
 description: Takes your goals as board quests, scouts them, shows you a quest map, forms a party and steers it. Delegates by default and may act directly when faster or asked.
 shape: shield
 startable: true
-hireable: false
+hireable: true
 model: anthropic/claude-opus-5-5
 reasoning: high
 permission: full
 scope: open
 tools: [tavern_route, tavern_note, tavern_summary, tavern_gate, tavern_quest, tavern_hire, tavern_keep, tavern_release, tavern_scope, tavern_tell, tavern_plan, tavern_settle, tavern_ask, tavern_decide, tavern_rule, tavern_status, tavern_pull_request, tavern_wrap]
-hires: [ranger, smith, warden, wanderer]
+hires: [ranger, smith, warden, wanderer, keeper]
 greenlight: explicit
 budget:
   members: 5

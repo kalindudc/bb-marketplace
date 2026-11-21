@@ -1,3 +1,5 @@
+import { rebindLeadSeat } from "./lead-seat-rebind";
+import { isKeeperIdentity } from "../liveness";
 import type { JournalEntry } from "../../shared/schema";
 import type { Keeper } from "./service";
 import type { Cutover, RebindStep } from "./succession-store";
@@ -7,8 +9,8 @@ export function ownershipSteps(k: Keeper): readonly RebindStep[] {
   const { db } = store;
   function chargeAssignments({ predecessor, successor, at }: Cutover) {
     const keeper = k.member(predecessor);
-    if (keeper?.role !== "keeper" || k.member(successor)) throw new Error("The successor cannot take this Keeper identity.");
-    store.put("members", successor, { ...keeper, threadId: successor, state: "idle", createdAt: at, lastActiveAt: at });
+    if (!keeper || !isKeeperIdentity(store, keeper) || k.member(successor)) throw new Error("The successor cannot take this Keeper identity.");
+    if (!keeper.leadLinkId) store.put("members", successor, { ...keeper, threadId: successor, state: "idle", createdAt: at, lastActiveAt: at });
     store.patch(successor, { projectId: store.runtime(predecessor).projectId, threadTitle: store.runtime(predecessor).threadTitle, threadCreatedAt: at });
     const quests = db.prepare("SELECT id FROM tavern_records WHERE kind='quests' AND json_extract(data,'$.keeperThreadId')=?").all(predecessor) as { id: string }[];
     for (const { id } of quests) store.put("quests", id, { ...store.get("quests", id)!, keeperThreadId: successor });
@@ -67,10 +69,6 @@ export function ownershipSteps(k: Keeper): readonly RebindStep[] {
     store.put("keeperSpendIntervals", successor, { chargeId, threadId: successor, from: at, until: null });
   }
 
-  function rebindChainSeat(_cutover: Cutover) {
-    // Keeper chains rebind their parent seat here, in the same transaction as the charge.
-  }
-
   function unreadTicks({ predecessor, successor }: Cutover) {
     const { cursor, heldNewsCursors, factContinuation, tickAt } = store.runtime(predecessor);
     store.patch(successor, { cursor, heldNewsCursors, factContinuation, tickAt, reanchor: "Keeper succession", reanchorVersion: 1 });
@@ -81,5 +79,5 @@ export function ownershipSteps(k: Keeper): readonly RebindStep[] {
     }
   }
 
-  return [chargeAssignments, requestReceipts, liveAsks, journalOwnership, placements, spendIntervals, rebindChainSeat, unreadTicks];
+  return [chargeAssignments, requestReceipts, liveAsks, journalOwnership, placements, spendIntervals, rebindLeadSeat(k), unreadTicks];
 }

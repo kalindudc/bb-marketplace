@@ -19,6 +19,7 @@ const epochMs = z.number().int().nonnegative();
 
 export const classDefSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/),
+  kind: z.enum(["keeper", "member"]).optional(),
   label: z.string().min(1).max(40),
   /** The plain word shown beside the themed one, for example "scout" beside "Ranger". */
   plain: z.string().min(1).max(40),
@@ -44,6 +45,7 @@ export const classDefSchema = z.object({
   source: z.string(),
 });
 export type ClassDef = z.infer<typeof classDefSchema>;
+export const classKind = (role: Pick<ClassDef, "id" | "kind">) => role.kind ?? (role.id === "keeper" ? "keeper" : "member");
 
 export const characterLookSchema = z.object({
   build: z.enum(LOOK_BUILDS).optional(),
@@ -230,6 +232,7 @@ export const memberSchema = z.object({
   displayName: z.string().max(80).optional(),
   /** keeper: leads board quests. member: hired by a Keeper. solo: started by the user with a non-Keeper class. */
   role: z.enum(["keeper", "member", "solo"]),
+  leadLinkId: id.optional(),
   keeperThreadId: threadId.nullable(),
   boardQuestId: id.nullable(),
   waypointId: id.nullable(),
@@ -342,12 +345,45 @@ export const planQuestionSchema = z.object({
   reversible: z.boolean(),
 });
 
+export const leadEnvelopeSchema = z.object({
+  members: z.number().int().min(1).max(1000),
+  rangers: z.number().int().min(0).max(1000),
+  depth: z.number().int().min(1).max(3),
+}).strict().refine(envelope => envelope.rangers <= envelope.members, "Rangers count toward the lead's member limit.");
+export type LeadEnvelope = z.infer<typeof leadEnvelopeSchema>;
+export const leadLinkSchema = z.object({
+  id,
+  hireToken: id,
+  parentKeeperThreadId: threadId,
+  parentQuestId: id,
+  parentWaypointId: id,
+  childKeeperThreadId: threadId.nullable(),
+  childQuestId: id.nullable(),
+  generation: z.number().int().min(1),
+  parentPlan: z.object({
+    version: z.number().int().positive(),
+    receipt: z.object({ kind: z.enum(["ask-answer", "decision"]), id }),
+    check: waypointCheckSchema,
+    acts: waypointSchema.shape.acts,
+  }),
+  envelope: leadEnvelopeSchema,
+  amendedBy: id.optional(),
+  retirement: z.object({ reason: z.string().min(1).max(500), requestedBy: threadId, confirmedBy: threadId.optional() }).optional(),
+  forcedStop: z.object({ receipt: z.string().min(1), reason: z.string().min(1).max(500), hostStopped: z.boolean().optional() }).optional(),
+  cleanupError: z.string().optional(),
+  result: z.object({ eventId: z.number().int().positive(), makerThreadId: threadId, entryId: z.string() }).optional(),
+  amendedRequirements: z.object({ check: waypointCheckSchema, acts: z.array(waypointSchema.shape.acts.unwrap().element).max(120) }).optional(),
+  state: z.enum(["reserved", "linked", "retirement-requested", "retiring", "retired", "cancelled", "stopped"]),
+});
+export type LeadLink = z.infer<typeof leadLinkSchema>;
+
 export const partySlotSchema = z.object({
   classId: z.string(),
   characterId: z.string().nullable(),
   model: z.string().nullable(),
   purpose: z.string().max(300),
   waypointIds: z.array(z.string()),
+  leadEnvelope: leadEnvelopeSchema.optional(),
 });
 
 import { budgetCentsSchema, spendBudgetSchema, spendProposalSchema } from "./spend";
@@ -444,8 +480,47 @@ export const askOptionSchema = z.object({
 });
 
 import { shellGrantTargetSchema } from "./shell-grant";
+const leadPlanLimitsSchema = z.object({
+  members: z.number().int().nonnegative(),
+  rangers: z.number().int().nonnegative(),
+  depth: z.number().int().min(1).max(3),
+  check: waypointCheckSchema,
+  acts: z.array(waypointSchema.shape.acts.unwrap().element).max(120),
+});
+export const leadPlanDecisionSchema = z.object({
+  childQuestId: id,
+  version: z.number().int().positive(),
+  action: z.enum(["approve", "refuse"]),
+}).strict();
+export const leadPlanReviewSchema = z.object({
+  childQuestId: id,
+  version: z.number().int().positive(),
+  parentQuestId: id,
+  parentWaypointId: id,
+  parentTitle: z.string().min(1).max(200),
+  approved: leadPlanLimitsSchema,
+  requested: leadPlanLimitsSchema,
+  changes: z.array(z.object({ linkId: id, questTitle: z.string().min(1).max(200), approved: leadPlanLimitsSchema, requested: leadPlanLimitsSchema })).max(3),
+  planChanges: z.object({ fromVersion: z.number().int().positive(), fields: z.array(z.string()),
+    addedWaypoints: z.array(z.string()), removedWaypoints: z.array(z.string()), changedWaypoints: z.array(z.string()), orderChanged: z.boolean() }).optional(),
+  why: z.string().max(400),
+});
+export const leadPlanRecordSchema = z.object({
+  request: leadPlanReviewSchema,
+  linkId: id,
+  generation: z.number().int().positive(),
+  parentVersion: z.number().int().positive(),
+  parentApproval: z.object({ id, kind: z.string() }),
+  basis: z.array(z.object({ linkId: id, generation: z.number().int().positive(), amendedBy: id.nullable() })).max(3),
+  lane: z.enum(["keeper", "user"]),
+  state: z.enum(["pending", "approved", "refused", "superseded"]),
+  receipt: z.object({ id, kind: z.enum(["decision", "ask-answer"]) }).nullable(),
+});
+export type LeadPlanReview = z.infer<typeof leadPlanReviewSchema>;
+export type LeadPlanRecord = z.infer<typeof leadPlanRecordSchema>;
 
 export const askEffectSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("lead-plan"), request: leadPlanReviewSchema }),
   z.object({ type: z.literal("greenlight"), planVersion: z.number().int().nonnegative(), requiresExplicit: z.literal(true).optional() }),
   z.object({ type: z.literal("conclude"), draft: concludeDraftSchema }),
   z.object({ type: z.literal("close-early"), draft: closeEarlyDraftSchema }),
@@ -535,6 +610,7 @@ export const decisionSchema = z.object({
   undoUnavailable: z.literal(true).optional(),
   answerReceipt: id.optional(),
   pullRequestReady: id.optional(),
+  leadPlan: leadPlanDecisionSchema.optional(),
   pullRequestGrant: z.object({ digest: z.string().regex(/^[a-f0-9]{64}$/) }).optional(),
   askId: id.optional(), optionId: z.string().optional(), kind: delegationKindSchema.optional(),
   exceeds: z.enum(["party", "rangers"]).optional(),
