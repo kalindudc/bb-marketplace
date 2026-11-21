@@ -351,8 +351,10 @@ function RecordedReader({
           data-diff-stream
           tabIndex={-1}
           onScroll={updateAnchor}
-          className="min-h-0 min-w-0 overflow-y-auto p-3"
+          className="min-h-0 min-w-0 overflow-y-auto px-3 pb-3"
         >
+          {/* Space as a child, not padding: a sticky file header sticks inside the padding and shows code above it. */}
+          <div aria-hidden className="h-3" />
           {unavailableFile && (
             <section
               data-file-card={reading.file}

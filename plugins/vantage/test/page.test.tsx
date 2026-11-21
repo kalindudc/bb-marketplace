@@ -642,6 +642,17 @@ describe("the page", () => {
     );
   });
 
+  // A sticky header sticks inside its scroll container's padding, so top padding leaves scrolled code showing above it.
+  it("gives the page's scrolling views no top padding, so stuck headers meet the top edge", async () => {
+    const paddedTop = (element: Element) => /(^|\s)(p|pt|py)-/.test(element.className);
+    const review = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`);
+    await waitFor(() => expect(review.slot.container.querySelectorAll("[data-file-card]")).toHaveLength(2));
+    expect(paddedTop(review.slot.container.querySelector("[data-diff-stream]")!)).toBe(false);
+    const changes = await mount("tree/thr_root/changes");
+    await waitFor(() => expect(changes.slot.container.querySelector("[data-all-changes]")).not.toBeNull());
+    expect(paddedTop(changes.slot.container.querySelector("[data-all-changes]")!.parentElement!)).toBe(false);
+  });
+
   it("offers the repository view when no worktree exists to open", async () => {
     const { slot } = await mount("tree/thr_root", { overview: tree({ worktrees: [] }) });
     const view = within(slot.container);

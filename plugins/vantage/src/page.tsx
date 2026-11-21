@@ -429,7 +429,9 @@ function PageScreen({ subPath }: PluginNavPanelProps) {
     );
   } else if (route.view === "changes") {
     body = (
-      <div className="h-full overflow-y-auto pt-2">
+      <div className="h-full overflow-y-auto">
+        {/* Space as a child, not padding: the sticky toolbar sticks inside the padding and shows rows above it. */}
+        <div aria-hidden className="h-2" />
         <AllChanges
           overview={overview}
           scope={snapshot.scope}

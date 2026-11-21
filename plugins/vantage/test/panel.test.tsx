@@ -159,6 +159,24 @@ describe("Trail panel", () => {
     expect(view.queryByText("unchanged")).toBeNull();
   });
 
+  // A sticky header sticks inside its scroll container's padding, so top padding leaves scrolled code showing above it.
+  it("gives both diff streams no top padding, so a stuck file header meets the top edge", async () => {
+    const path = "/work/root/record.ts";
+    const { slot } = await mountPanel(1, {
+      ...TREE,
+      otherFiles: [
+        fileChange({ path, status: "clean", edits: { threadIds: ["thr_root"], rawPaths: [path], count: 1 } }),
+      ],
+    });
+    const view = within(slot.container);
+    const paddedTop = () => /(^|\s)(p|pt|py)-/.test(slot.container.querySelector("[data-diff-stream]")!.className);
+    await waitFor(() => expect(slot.container.querySelector("[data-diff-stream]")).not.toBeNull());
+    expect(paddedTop()).toBe(false);
+    fireEvent.click(await view.findByRole("button", { name: "Recorded edits" }));
+    await waitFor(() => expect(slot.container.querySelector(`[data-file-card="${path}"]`)).not.toBeNull());
+    expect(paddedTop()).toBe(false);
+  });
+
   it("focuses recorded evidence and keeps focus when switching sources", async () => {
     const path = "/work/root/record.ts";
     const { slot } = await mountPanel(1, {

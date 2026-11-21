@@ -2,6 +2,12 @@
 
 Notable changes to Vantage, newest first. Releases are tagged `vantage/vX.Y.Z` in this repository.
 
+## 0.11.1 (2026-11-21)
+
+### Fixed
+
+- A file's header stays flush with the top of the diff stream while you scroll through it, in the panel, the page and recorded edits, instead of floating below a strip of the previous file's code. All changes' toolbar does the same.
+
 ## 0.11.0 (2026-11-20)
 
 ### Added

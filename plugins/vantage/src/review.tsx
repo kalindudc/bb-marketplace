@@ -2178,8 +2178,10 @@ export function Review(props: ReviewProps) {
       data-diff-stream
       tabIndex={-1}
       onScroll={updateAnchor}
-      className={`min-h-0 min-w-0 overflow-y-auto pt-3 ${compact ? "px-3" : "px-5"}`}
+      className={`min-h-0 min-w-0 overflow-y-auto ${compact ? "px-3" : "px-5"}`}
     >
+      {/* Space as a child, not padding: a sticky file header sticks inside the padding and shows code above it. */}
+      <div aria-hidden className="h-3" />
       {!loading &&
         !overview.partial &&
         reading.file !== undefined &&
