@@ -45,3 +45,7 @@ Upstream bb core capabilities or fixes that Tavern tracks, paired with Tavern's 
 ## 11. Give plugin Markdown explicit file routing
 - **Ask:** Let bb's host Markdown component accept a thread or host identity for local file links independently of a document root.
 - **Mitigation:** Tavern renders returned tales through a hidden companion renderer on the thread's context and falls back to cards linking back to the Keeper thread.
+
+## 12. Let a composer banner draw over the transcript
+- **Ask:** Offer a thread-scoped layer above the transcript and below the scroll-to-latest control. Let a plugin reserve clearance at the bottom for the latest message. Empty overlay space should pass pointer and scroll input through to chat; only the plugin's controls should take focus or clicks.
+- **Mitigation:** Tavern keeps the character in a compact, transparent banner and leaves bb's composer fade alone. In bb 0.50.1 the sticky footer still paints over chat, and the banner slot has no transcript layer or scroll clearance. No message is covered at the bottom, but chat cannot show through that footer.

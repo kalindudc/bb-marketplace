@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { PartyStrip } from "../../../src/ui/engine/strip";
@@ -37,6 +38,50 @@ it("uses the avatar seed and member class and places the carried light in page c
   expect(createArt.mock.lastCall?.[0].seed).toBe("wren");
   rerender(<PartyStrip {...props} classId="smith" />);
   expect(world!.lightAnchors?.()).toEqual([]);
+});
+
+it("leaves the host's transcript-to-composer fade and backing alone", () => {
+  const css = readFileSync("src/ui/engine/engine.css", "utf8");
+  expect(css).not.toMatch(/\[data-(?:overflow-fade|scroll-footer)(?:=|\])/);
+});
+
+it("fits the thread hop and speech within the compact lane without shrinking page scenes", () => {
+  let world!: engine.EngineWorld;
+  vi.spyOn(engine, "observeWorld").mockImplementation((_, candidate) => {
+    world = candidate;
+    return { invalidate: change => { change?.(); candidate.draw(false); }, remove() {} };
+  });
+  vi.spyOn(engine.scheduler, "isActive").mockReturnValue(true);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(358);
+  const view = render(<PartyStrip {...wanderer} mode="lively" />);
+  const lane = screen.getByRole("region", { name: "Wren walking" });
+  const sprite = screen.getByRole("button", { name: /Wren, Wanderer/ });
+  const height = () => lane.querySelector("canvas")!.height;
+  const spriteTop = () => Number(sprite.style.transform.match(/, (\d+)px\)/)![1]);
+  world.draw(false);
+  const atRest = spriteTop();
+  expect(height()).toBe(70);
+  expect(lane.style.height).toBe(`${height()}px`);
+  expect(atRest + 56).toBeLessThan(height());
+
+  Object.defineProperty(sprite, "animate", { value: () => ({ finished: new Promise(() => {}), playState: "running", finish() {}, cancel() {} }) });
+  fireEvent.click(sprite);
+  let peak = atRest;
+  for (let step = 0; step < 25; step++) {
+    world.update(1 / 60, 1);
+    world.draw(false);
+    peak = Math.min(peak, spriteTop());
+  }
+  expect(atRest - peak).toBeGreaterThanOrEqual(8);
+  expect(peak).toBeGreaterThan(0);
+
+  view.rerender(<PartyStrip {...wanderer} mode="lively" speech={{ actorId: "wren", text: "The lantern is lit." }} />);
+  expect(screen.getByRole("status").textContent).toBe("The lantern is lit.");
+  expect(height()).toBe(70);
+  view.unmount();
+  const scene = render(<PartyStrip {...wanderer} pageScene={{ threadId: "wren" }} />);
+  expect(scene.container.querySelector("canvas")!.height).toBe(64);
 });
 
 it("reacts to clicks beside a held ask without moving the exclamation mark or asking for speech", () => {

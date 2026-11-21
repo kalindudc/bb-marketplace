@@ -16,6 +16,7 @@ const SCALE = 2;
 const HEIGHT = 64;
 const GROUND = 58;
 const THREAD_HOP_ROOM = 12;
+const THREAD_FOOT_ROOM = 2;
 const BUBBLE_GAP = 8;
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_TRAVEL_PX = 8;
@@ -56,9 +57,6 @@ type PartyStripProps = {
 export function PartyStrip(props: PartyStripProps) {
   const { character, classId, classLabel, keeper, mood, speech } = props;
   const scene = props.pageScene;
-  const headroom = scene ? 0 : THREAD_HOP_ROOM;
-  const height = HEIGHT + headroom;
-  const ground = GROUND + headroom;
   const menuId = useId();
   const [menuTrigger, setMenuTrigger] = useState<HTMLButtonElement | null>(null);
   const touchPress = useRef<{ pointerId: number; x: number; y: number; timer: ReturnType<typeof setTimeout> } | null>(null);
@@ -80,6 +78,8 @@ export function PartyStrip(props: PartyStripProps) {
   const art = useMemo(() => createArt({
     seed, classId, hue: character.hue, charge: character.charge, look: character.look, keeper,
   }), [seed, classId, character.hue, character.charge, character.look, keeper]);
+  const height = scene ? HEIGHT : art.height * SCALE + THREAD_HOP_ROOM + THREAD_FOOT_ROOM;
+  const ground = scene ? GROUND : art.ground * SCALE + THREAD_HOP_ROOM;
   const actor = useMemo(() => new Actor(actorId, art, mood, memberId), [actorId, memberId]);
   const strip = useRef<HTMLElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
