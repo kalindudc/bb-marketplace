@@ -6,6 +6,7 @@ import { makeMessageDispatchHookContext, makeQueueEntry } from "@get-bb/plugin-s
 import { setup } from "./runtime-fixture";
 import { makeThreadResponse } from "./host";
 import { TavernRuntime } from "../../src/server/runtime";
+import { AwayHolds } from "../../src/server/away/holds";
 
 async function fixture() {
   const stop = vi.fn(async (_: { threadId: string }) => ({ ok: true as const }));
@@ -113,8 +114,17 @@ describe("shared content-transfer holds", () => {
     f.stop.mockImplementation(() => new Promise(done => { resolves.push(done); if (resolves.length === 1) enteredFirst(); else enteredSecond(); }));
     const first = f.runtime.away.confirmHeld(token);
     await firstStarted;
+    const requestAway = AwayHolds.prototype.requestAway;
+    let recordAway!: () => void;
+    const awayRecorded = new Promise<void>(done => { recordAway = done; });
+    const stage = vi.spyOn(AwayHolds.prototype, "requestAway").mockImplementationOnce(function (this: AwayHolds, ...args) {
+      const hold = requestAway.apply(this, args);
+      recordAway();
+      return hold;
+    });
     const closing = f.close();
-    await Promise.resolve();
+    await awayRecorded;
+    stage.mockRestore();
     expect(f.row().reasons.map((reason: { kind: string }) => reason.kind).sort()).toEqual(["away", "content"]);
     resolves[0]!({ ok: true });
     expect(await first).toMatchObject({ state: "pending" });

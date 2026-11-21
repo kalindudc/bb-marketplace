@@ -145,7 +145,7 @@ describe("the Closing time sheet", () => {
     expect(stop.getAllByRole("checkbox",{checked:false})).toHaveLength(6);
     expect(stop.getAllByRole("checkbox").every(input => !(input as HTMLInputElement).disabled)).toBe(true);
     const confirm = await review(slot);
-    expect(confirm.textContent).toContain("Nothing is blocked while closed.");
+    expect(confirm.textContent).toContain("Cluster writes wait for your return. No other stops are selected.");
     expect(confirm.textContent).toContain("A production or cluster write ask wakes you after 5 hours.");
     expect(confirm.querySelectorAll(".tv-confirm-c.c-pause")).toHaveLength(workingQuests(open).length);
     expect((slot.getByLabelText("Back at") as HTMLInputElement).value).toMatch(/T16:00$/);

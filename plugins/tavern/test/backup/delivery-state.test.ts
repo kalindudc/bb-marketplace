@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
 import { BackupRecords, type RecordsSnapshot } from "../../src/server/backup/records";
+import { requireUserAct } from "../../src/server/authority";
 import { SettingsStore } from "../../src/server/settings/store";
 import type { TickBatch } from "../../src/server/keeper/store";
 import { TickLoop } from "../../src/server/tick";
@@ -43,6 +44,21 @@ function expectLocalFieldsAbsent(value: object, fields: string[]) {
 }
 const batchFields = ["sendPending", "resendCount", "lastSendAt", "measurements", "admittedResendCount"];
 const runtimeFields = ["tickDeliveryAskId", "tickRefusalCount", "queuedTickResetId", "tickRetryAt"];
+
+it("records both cluster answers in history but restores no pending approval or live expiry", () => {
+  const source = fixture(), restored = fixture(true);
+  const ask = () => source.k.ask("lead", { kind: "cluster-write", effect: { type: "decision" }, question: "Apply the sample?", why: "Changes a cluster", target: { command: "kubectl apply -f sample.yaml" }, change: "Update the sample", options: [{ id: "approve", label: "Approve", detail: "", recommended: false }], meanwhile: "", holds: [] });
+  const pending = ask(), done = ask();
+  const receipt = requireUserAct({ experimental_caller: { kind: "client" } } as never, "answerAsk");
+  for (const row of [pending, done]) source.k.answerAsk(row.id, "approve", null, "page", "user", "page", {}, receipt);
+  source.k.answerAsk(done.id, "confirm-run", null, "banner", "user", "banner", {}, receipt);
+  source.k.store.put("asks", done.id, { ...source.k.store.get("asks", done.id)!, clusterGrantExpiresAt: source.time() + 900_000 });
+  restored.records.restore(source.records.capture());
+  expect(restored.k.store.get("asks", pending.id)).toMatchObject({ state: "withdrawn", withdrawnCause: "backup-restored" });
+  const history = restored.k.store.get("asks", done.id);
+  expect(history).toMatchObject({ state: "answered", clusterApproval: { via: "page" }, answer: { via: "banner" } });
+  expect(history).not.toHaveProperty("clusterGrantExpiresAt");
+});
 
 describe("nonportable tick delivery state", () => {
   it.each(["prepared", "queued", "delivered", "cancelled"] as const)("exports %s batches as terminal without local delivery state and leaves the source untouched", state => {

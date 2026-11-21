@@ -16,7 +16,7 @@ export function AwayStopChoices({ items, onChange, disabled, label = "Never whil
 }
 
 export function stopListWords(items: readonly AwayStopKind[]) {
-  return items.length ? `Closing time blocks ${awayStopNames(items)}.` : "Nothing is blocked while closed.";
+  return items.length ? `Closing time blocks ${awayStopNames(items)}. Cluster writes also wait for your return.` : "Cluster writes wait for your return. No other stops are selected.";
 }
 
 export function windowStopWords(window: AwayWindow) {

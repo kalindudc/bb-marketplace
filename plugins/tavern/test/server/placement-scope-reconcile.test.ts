@@ -1,9 +1,12 @@
 // @vitest-environment node
-import { writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { BackendScopes } from "../../src/server/scopes";
 import { PlacementController } from "../../src/server/placement/controller";
+import { scopeRenderedFileSchema } from "../../src/scope/schema";
+import { armedFile, armScope } from "../../src/scope/store";
 import { readyFixture, readyGit } from "./placement-e2e-ready";
 
 async function fixture() {
@@ -31,7 +34,7 @@ it("redelivers a changed host-bound template without a member turn or replaying 
   expect(f.placements.get("placement")).toMatchObject({ phase: "ready", acknowledgedScopeRevision: 2, desiredScopeRevision: 2 });
   expect(JSON.parse(f.deliveries.get("placement")!.scopeFileJson).bindingTemplate).toEqual({ ...f.changed, pullRequestPolicy: { alwaysAsk: true, grants: [], owned: [] } });
   expect(f.harness.experimental_hostRpcCalls.slice(calls).map(call => call.method)).toEqual(["inspect", "bindScope", "sessionStatus"]);
-  expect(f.controller.forMember("member")!.posture.detail).toBeNull();
+  expect(f.controller.forMember("member")!.posture.detail).toBe("Restart needed: cluster writes not prevented.");
   expect((await f.harness.behavior.resolveProviderEnv("pi", { threadId: "member", hostId: "member-host" } as never))
     .some(entry => entry.name === "TAVERN_SCOPE_FILE")).toBe(true);
   f.events([{ id: "read", seq: 1, threadId: "member", type: "item/completed", createdAt: 2,
@@ -82,5 +85,15 @@ it("shows failed scope redelivery and its observation hold, then resumes after r
   expect(await f.services.ready.forThread("member")).toContain("Ready.");
   await f.harness.behavior.emitThreadEvent("experimental_thread.events", { thread, sequence: 1 });
   expect(f.scopes.api.observationHolds()).toEqual([]);
+  expect(f.controller.forMember("member")!.posture.detail).toBe("Restart needed: cluster writes not prevented.");
+
+  const file = f.deliveries.get("placement")!.acknowledged!.scopeFile;
+  const rendered = readFileSync(file, "utf8"), scope = scopeRenderedFileSchema.parse(JSON.parse(rendered));
+  armScope(file, scope, { hostBinding: scope.hostBinding, renderedDigest: createHash("sha256").update(rendered).digest("hex") });
+  expect(await f.services.ready.forThread("member")).toContain("Ready.");
   expect(f.controller.forMember("member")!.posture.detail).toBeNull();
+
+  rmSync(armedFile(file));
+  expect(await f.services.ready.forThread("member")).toContain("Ready.");
+  expect(f.controller.forMember("member")!.posture.detail).toBe("Restart needed: cluster writes not prevented.");
 }, 60_000);

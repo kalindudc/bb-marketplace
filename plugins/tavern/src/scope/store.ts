@@ -21,7 +21,7 @@ const progressSchema = z.object({ cursor: z.number().int().nonnegative(), pendin
 export interface NativeScopeReceipt { hostBinding: ScopeHostBinding; renderedDigest: string }
 export const scopeArmedSchema = z.object({
   threadId: scopeSchema.shape.threadId, issuedAt: scopeSchema.shape.issuedAt, pid: z.number().int().positive(), at: z.number().int().nonnegative(),
-  hostBinding: scopeHostBindingSchema.optional(), renderedDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  clusterWrites: z.literal(1).optional(), hostBinding: scopeHostBindingSchema.optional(), renderedDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict().refine(value => (value.hostBinding === undefined) === (value.renderedDigest === undefined), "A native receipt requires its binding and rendered-byte digest together");
 export const armedFile = (file: string) => file.replace(/\.json$/, "") + ".armed";
 export function atomicWrite(file: string, value: string, check?: () => void): void {
@@ -30,7 +30,7 @@ export function atomicWrite(file: string, value: string, check?: () => void): vo
   finally { rmSync(temp, { force: true }); }
 }
 export function armScope(file: string, scope: Scope, native?: NativeScopeReceipt, at = Date.now()): void {
-  atomicWrite(armedFile(file), JSON.stringify(scopeArmedSchema.parse({ threadId: scope.threadId, issuedAt: scope.issuedAt, pid: process.pid, at, ...native })));
+  atomicWrite(armedFile(file), JSON.stringify(scopeArmedSchema.parse({ threadId: scope.threadId, issuedAt: scope.issuedAt, pid: process.pid, at, clusterWrites: 1, ...native })));
 }
 export class ScopeStore {
   readonly directory: string;
@@ -130,17 +130,19 @@ export class ScopeStore {
   clear(threadId: string): void {
     const file = this.file(threadId);
     rmSync(file, { force: true }); rmSync(armedFile(file), { force: true }); rmSync(file + ".cursor", { force: true }); rmSync(file + ".hold", { force: true }); rmSync(file + ".host", { force: true });
+    rmSync(file + ".grants", { force: true, recursive: true });
+    rmSync(file + ".act-grants", { force: true, recursive: true });
     this.records.delete(threadId);
     this.revisions.set(threadId, this.revision(threadId) + 1);
   }
   arm(scope: Scope): void { armScope(this.file(scope.threadId), scope); }
-  isArmed(threadId: string): boolean {
+  isArmed(threadId: string, clusterWrites = false): boolean {
     try {
       const record = this.records.get(threadId);
       if (record?.binding) return false;
       const scope = record?.scope;
       const marker = scopeArmedSchema.parse(JSON.parse(readFileSync(armedFile(this.file(threadId)), "utf8")));
-      if (marker.hostBinding) return false;
+      if (marker.hostBinding || clusterWrites && marker.clusterWrites !== 1) return false;
       if (!scope || marker.threadId !== threadId || marker.issuedAt !== scope.issuedAt || marker.at < scope.issuedAt) return false;
       process.kill(marker.pid, 0);
       return true;

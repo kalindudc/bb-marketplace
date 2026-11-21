@@ -128,6 +128,7 @@ export const memberScopeSchema = z.object({
   guardPosture: memberSchema.shape.guardPosture,
   shellGrants: z.array(shellGrantSchema.extend({ usable: z.boolean() })).optional(),
   restartNeeded: z.string().nullable().optional(),
+  clusterGuard: z.enum(["armed", "ready", "restart", "not-prevented"]).optional(),
   // added by Builder B: expose the configured mode and rejected class/project policy changes.
   mode: z.enum(["enforce", "watch", "off"]).optional(), problems: z.array(z.string()).optional(),
   guard: z.object({ installed: z.boolean(), stale: z.boolean(), sandbox: z.enum(["available", "missing", "not-applicable"]), claude: z.literal("phase-2-not-installed") }).optional(),
@@ -474,9 +475,10 @@ export const rpcContract = defineContract({
   preapproveQuest: { input: preapprovalInputSchema.extend({ boardQuestId: id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
   revokeQuestAuthority: { input: z.object({ boardQuestId: id, id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
   revokeShellGrant: { input: z.object({ threadId, id }).strict(), output: ok },
+  clusterRunStatus: { input: z.object({ askId: id }).strict(), output: z.object({ guarded: z.boolean() }), tags: () => [tags.room()] },
   answerAsk: {
     input: z.object({ askId: id, optionId: z.string(), note: z.string().max(2000).nullable().default(null), via: z.enum(["banner", "page", "phone", "chat"]), pullRequestChoices: pullRequestChoicesSchema.optional() }).strict(),
-    output: ok.extend({ pullRequestErrors: z.array(z.string()).optional() }),
+    output: ok.extend({ pullRequestErrors: z.array(z.string()).optional(), ask: askSchema.optional(), clusterGrantError: z.string().optional() }),
   },
   // added by Builder B: display-only acknowledgement never undoes a decision or wakes its Keeper.
   markVisitSeen: {

@@ -220,6 +220,7 @@ export interface Runtime {
   openingGoal?: { text: string; at: number };
   requestSources?: RequestSources | null;
   assignmentText?: string | null;
+  clusterSessionPending?: boolean;
   lastFailure?: string;
   placementFirstTurnSettled?: boolean;
   turnStartedAt?: number | null;

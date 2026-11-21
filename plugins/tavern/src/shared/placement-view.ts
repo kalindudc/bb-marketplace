@@ -45,9 +45,10 @@ export const placementViewSchema: z.ZodType<PlacementView> = z.object({
 export function postureText(posture: ExecutionPosture): PlacementView["posture"] {
   const label = posture.aggregate === "remote-detection-only" ? POSTURE.remote
     : posture.aggregate === "local-pre-exec" ? POSTURE.localPi : "Detection only (local)";
-  const detail = ["pre-exec-no-containment", "detection-only-no-containment"].includes(posture.checker)
+  const cluster = posture.clusterWrites === false ? (posture.guard === "prepared" ? "Restart needed: cluster writes not prevented." : "Cluster writes not prevented.") : null;
+  const check = ["pre-exec-no-containment", "detection-only-no-containment"].includes(posture.checker)
     ? posture.toolGate === "pi-observed" ? POSTURE.linuxPi : POSTURE.linuxNoPi : null;
-  return { label, detail };
+  return { label, detail: [check, cluster].filter(Boolean).join(" ") || null };
 }
 
 export function placementLine(view: PlacementView, matchFacts?: string): string {

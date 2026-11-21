@@ -9,7 +9,7 @@ export interface ShellFacts { containment?: "sandbox"; temporaryRoot?: string; i
 export function unquote(value: string): string {
   return value.replace(/\\\n/g, "").replace(/'([^']*)'|"((?:\\.|[^"\\])*)"|\\(.)/gs, (_all, single, double, escaped) => single ?? (double !== undefined ? double.replace(/\\([\\"$`])/g, "$1") : escaped));
 }
-export function stripWrappers(words: string[], chdir?: (path: string) => void): string[] {
+export function stripWrappers(words: string[], chdir?: (path: string) => void, write?: (path: string) => void): string[] {
   let argv = [...words];
   for (let n = 0; n < 20 && argv.length; n++) {
     while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0] ?? "")) argv.shift();
@@ -17,20 +17,30 @@ export function stripWrappers(words: string[], chdir?: (path: string) => void): 
     argv[0] = basename(argv[0]);
     const wrapper = argv[0];
     if (wrapper === "command" && ["-v", "-V"].includes(argv[1])) return ["which", ...argv.slice(2)];
-    if (!["sudo", "env", "command", "exec", "nohup", "timeout", "gtimeout", "nice", "time", "xargs"].includes(wrapper)) break;
+    if (!["sudo", "env", "command", "exec", "nohup", "timeout", "gtimeout", "nice", "time", "xargs", "caffeinate", "stdbuf", "unbuffer", "chronic", "ionice", "taskset", "flock", "doas", "runuser", "script"].includes(wrapper)) break;
     if (wrapper === "env" && (argv.length === 1 || argv.slice(1).every(arg => ["-0", "-i", "--null", "--ignore-environment"].includes(arg) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(arg)))) break;
     argv.shift();
-    const takesValue: Record<string, string[]> = { sudo: ["-u", "-g", "-h", "-p", "-D", "--chdir"], env: ["-u", "--unset", "-C", "--chdir"], timeout: ["-k", "--kill-after", "-s", "--signal"], gtimeout: ["-k", "-s"], nice: ["-n"], time: ["-o", "-f"], xargs: ["-I", "-n", "-P", "-L", "-a", "-d", "-E", "-s", "--max-args", "--max-procs", "--max-lines", "--arg-file", "--delimiter"] };
+    const takesValue: Record<string, string[]> = { sudo: ["-u", "-g", "-h", "-p", "-D", "--chdir"], env: ["-u", "--unset", "-C", "--chdir"], timeout: ["-k", "--kill-after", "-s", "--signal"], gtimeout: ["-k", "-s"], nice: ["-n"], time: ["-o", "-f"], xargs: ["-I", "-n", "-P", "-L", "-a", "-d", "-E", "-s", "--max-args", "--max-procs", "--max-lines", "--arg-file", "--delimiter"], caffeinate: ["-t", "-w"], stdbuf: ["-i", "-o", "-e", "--input", "--output", "--error"], ionice: ["-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"], flock: ["-w", "--timeout", "-E", "--conflict-exit-code"], doas: ["-u", "-C"], runuser: ["-u", "--user", "-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w", "--whitelist-environment"], script: ["-t", "-I", "-O", "-T"] };
     while (argv[0]?.startsWith("-")) {
       const option = argv.shift()!;
       if (option === "--") break;
+      if (["script", "flock", "runuser"].includes(wrapper) && /^(?:-c|--command)(?:=|$)/.test(option)) {
+        if (wrapper === "script") write?.(argv[option.includes("=") ? 0 : 1] ?? "typescript");
+        return [wrapper, option, ...argv];
+      }
+      if (wrapper === "taskset" && /^--pid(?:=|$)|^-[a-z]*p/.test(option)) return [wrapper, option, ...argv];
       if (takesValue[wrapper]?.includes(option)) {
         const value = argv.shift();
         if (value && (wrapper === "env" && ["-C", "--chdir"].includes(option) || wrapper === "sudo" && ["-D", "--chdir"].includes(option))) chdir?.(value);
       } else if ((wrapper === "env" || wrapper === "sudo") && option.startsWith("--chdir=")) chdir?.(option.slice(8));
       else if (wrapper === "env" && option.startsWith("-C") || wrapper === "sudo" && option.startsWith("-D")) chdir?.(option.slice(2));
     }
-    if (wrapper === "timeout" || wrapper === "gtimeout") argv.shift();
+    if (wrapper === "flock" || wrapper === "script") {
+      const file = argv.shift();
+      if (wrapper === "script" || file && (argv.length || !/^\d+$/.test(file))) write?.(file ?? "typescript");
+      if (!argv.length) return [wrapper, ...(file === undefined ? [] : [file])];
+      if (wrapper === "flock" && /^(?:-c|--command)(?:=|$)/.test(argv[0])) return [wrapper, ...argv];
+    } else if (["timeout", "gtimeout", "taskset"].includes(wrapper)) argv.shift();
   }
   return argv;
 }
@@ -38,7 +48,8 @@ export function normalizeCommand(argv: string[]): { argv: string[]; directory?: 
   let directory: string | undefined, repository: string | undefined;
   const values: Record<string, string[]> = { gcloud: ["--project", "--account", "--configuration", "--impersonate-service-account", "--billing-project", "--access-token-file", "--flags-file"], bb: ["--project", "--host", "--server", "--url", "--token", "--new-machine", "--machine", "--environment-provider"], git: ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"], gh: ["-R", "--repo", "--hostname"], kubectl: ["--context", "--namespace", "-n", "--kubeconfig", "--cluster", "--user", "--server", "-s", "--token"], helm: ["--burst-limit", "--color", "--colour", "--content-cache", "--kube-apiserver", "--kube-as-group", "--kube-as-user", "--kube-ca-file", "--kube-context", "--kube-tls-server-name", "--kube-token", "--kubeconfig", "--namespace", "-n", "--qps", "--registry-config", "--repository-cache", "--repository-config"], terraform: ["-chdir"], kapp: ["-a", "--app", "-n", "--namespace", "--kubeconfig-context", "--kubeconfig"], dev: ["--context", "--namespace", "--project"], dt: ["--cluster", "--context", "-R", "--repo"] };
   const name = argv[0];
-  if (!values[name]) return { argv };
+  const flags = /[$`]/.test(name ?? "") ? [...values.kubectl, ...values.helm, ...values.kapp, ...values.terraform] : values[name === "k" ? "kubectl" : name];
+  if (!flags) return { argv };
   if (name === "gh" || name === "dt") {
     const normalized = [name];
     for (let i = 1; i < argv.length; i++) {
@@ -55,7 +66,7 @@ export function normalizeCommand(argv: string[]): { argv: string[]; directory?: 
     const option = argv[index++];
     if (option === "--") break;
     if (["--version", "--help"].includes(option)) return { argv: [name, option] }; 
-    if (values[name].includes(option)) {
+    if (flags.includes(option)) {
       const value = argv[index++];
       if (option === "-C" || option === "--work-tree" || option === "--git-dir") directory = value;
       if (name === "gh" && ["-R", "--repo"].includes(option)) repository = value;
@@ -75,6 +86,7 @@ function changeDirectory(loc: Location, path: string): Location {
 }
 export function shellCommands(source: string, cwd: string, facts: ShellFacts = {}): ShellCommand[] {
   const out: ShellCommand[] = [], aliases: Record<string, string> = {};
+  const commandAliases = new Map<string, string[]>();
   let unknownLinks = false, directoriesStable = true;
   const values: Record<string, string> = {};
   const assigned = new Set<string>(), unsafeTemps = new Set<string>(), activeTemps = new Set<string>();
@@ -148,7 +160,34 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
       words(node.words, loc);
       const original = node.words.map(word => word.text);
       let wrapped = { ...loc };
-      const stripped = stripWrappers(node.words.map(word => valueOf(word.text, loc, word.subs)), path => { wrapped = changeDirectory(wrapped, path); });
+      const expandedWords = node.words.map(word => valueOf(word.text, loc, word.subs));
+      if (expandedWords[0] === "alias") for (const word of expandedWords.slice(1)) {
+        const bound = /^([\w-]+)=([^\n]+)$/.exec(word);
+        if (!bound) continue;
+        try {
+          const list = parseScript(bound[2]);
+          const line = list[0], command = line?.andOr.first.commands[0];
+          if (list.length === 1 && !line.background && !line.andOr.rest.length && !line.andOr.first.negated &&
+              line.andOr.first.commands.length === 1 && command?.type === "simple" && !command.redirects.length &&
+              !command.words.some(word => word.subs.length))
+            commandAliases.set(bound[1], command.words.map(word => unquote(word.text)));
+        } catch { /* The alias definition is data until a literal command prefix can be inspected. */ }
+      }
+      if (expandedWords[0] === "unalias") {
+        if (expandedWords.includes("-a")) commandAliases.clear();
+        else for (const name of expandedWords.slice(1)) commandAliases.delete(name);
+      }
+      const change = (path: string) => { wrapped = changeDirectory(wrapped, path); };
+      const write = (path: string) => {
+        // A wrapped command may change directory after its wrapper opens the file.
+        for (const cwd of locations(wrapped)) targets.push(/[$`]/.test(path) || path.startsWith("~") ? path : resolve(cwd, path));
+      };
+      let stripped = stripWrappers(expandedWords, change, write);
+      const expanded = new Set<string>();
+      while (commandAliases.has(stripped[0]) && !expanded.has(stripped[0])) {
+        expanded.add(stripped[0]);
+        stripped = stripWrappers([...commandAliases.get(stripped[0])!, ...stripped.slice(1)], change, write);
+      }
       const normalized = normalizeCommand(stripped), argv = normalized.argv;
       const local = normalized.directory ? changeDirectory(wrapped, normalized.directory) : wrapped;
       let scriptInput: ShellCommand["scriptInput"];

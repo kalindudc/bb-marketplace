@@ -44,6 +44,22 @@ export function nestedCommands(command: ShellCommand): string[] {
     }
     return found;
   }
+  if (program === "ssh") {
+    const valueFlags = new Set(["-B", "-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J", "-L", "-l", "-m", "-O", "-o", "-p", "-R", "-S", "-W", "-w"]);
+    let i = 1;
+    for (; argv[i]?.startsWith("-"); i++) {
+      if (argv[i] === "--") { i++; break; }
+      if (valueFlags.has(argv[i])) i++;
+    }
+    return i + 1 < argv.length ? [argv.slice(i + 1).join(" ")] : [];
+  }
+  if (["su", "runuser", "script", "flock"].includes(program)) {
+    const i = argv.findIndex(arg => /^(?:-c|--command)(?:=|$)/.test(arg));
+    if (i >= 0) {
+      const command = argv[i].includes("=") ? argv[i].slice(argv[i].indexOf("=") + 1) : argv[i + 1];
+      return command ? [command] : [];
+    }
+  }
   if (["parallel", "watch"].includes(program)) {
     let i = 1;
     while (argv[i]?.startsWith("-")) { const option = argv[i++]; if (["-n", "--interval", "-j", "--jobs", "--delay"].includes(option)) i++; }

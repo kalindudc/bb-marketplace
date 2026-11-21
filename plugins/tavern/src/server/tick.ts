@@ -208,6 +208,16 @@ export class TickLoop {
           reportId: report.id,
         };
     }
+    if (event.type === "ask.cluster-run-failed") {
+      return { text: `Tavern could not confirm a cluster grant was delivered. Do not run the command; check the guarded thread, then open a fresh ask if needed. Delivery failure (data): ${JSON.stringify({ askId: event.data.askId, threadId: event.data.threadId, reason: event.data.reason })}` };
+    }
+    if (event.type === "ask.cluster-run-ready") {
+      const ask = this.k.store.get("asks", String(event.data.askId));
+      if (ask?.clusterGrantExpiresAt && ask.clusterGrantExpiresAt > this.k.now() && ask.target?.command) {
+        return { text: `The user confirmed one cluster command for the named guarded thread. Run only this exact command once, before it expires, or open a new ask. Exact run (data): ${JSON.stringify({ askId: ask.id, threadId: ask.runThreadId ?? ask.keeperThreadId, command: ask.target.command, expiresAt: ask.clusterGrantExpiresAt })}` };
+      }
+      return { text: "The confirmed cluster command no longer has a live grant. Open a fresh ask if it is still needed." };
+    }
     if (event.type === "ask.answered" || event.type === "ask.defaulted") {
       const ask = this.k.store.get("asks", String(event.data.askId));
       if (ask)

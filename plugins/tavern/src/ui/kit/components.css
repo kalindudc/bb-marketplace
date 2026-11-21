@@ -156,6 +156,8 @@
 @container tavern-free (max-width: 163px) { .tavern .tw-sw-x { display: none; } }
 @container tavern-free (max-width: 61px) { .tavern .tw-sw { display: none; } }
 .tavern .tw-fact { white-space: nowrap; flex: none; }
+.tavern.twidget .tw-cluster-warning { margin: 0 10px 6px; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+@container tavern-widget (max-width: 420px) { .tavern.twidget:has(> .tw-cluster-warning) .tw-ledger { min-width: 44px; justify-content: center; } }
 .tavern .tw-lbl.opt { display: none; }
 .tavern .tw-chip.tw-where { border-color: transparent; cursor: pointer; }
 .tavern .tw-chip.tw-where:hover { background: var(--tavern-hover); }

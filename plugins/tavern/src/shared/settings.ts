@@ -26,6 +26,7 @@ export const KNOB_FIELDS = {
     rangerMax: { default: 3, min: 1, max: 20, unit: "Rangers", label: "Rangers at once when the class file is silent" },
     keepMaxHours: { default: 24, min: 1, max: 168, unit: "hours", label: "Longest keep for a resting member" },
     registryWaitSeconds: { default: 30, min: 5, max: 120, unit: "seconds", label: "Wait for class files" },
+    clusterGrantMinutes: { default: 15, min: 1, max: 30, unit: "minutes", label: "Confirmed cluster command expires after" },
     registryBlockerMinutes: { default: 5, min: 1, max: 60, unit: "minutes", label: "Ask me about a class-file problem after" },
   },
   journal: {

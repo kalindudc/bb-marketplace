@@ -39,8 +39,8 @@ it.each(commands)("recognises %s: %s for every class", (kind, command) => {
   for (const role of ["ranger", "warden", "smith", "wanderer", "keeper"]) {
     const decision = evaluate(scope(role), call(command));
     const managed = ["ready", "close", "review"].includes(kind) || /\bpr (?:comment|edit)\b/.test(command);
-    expect(decision.allow, role).toBe(!managed && role === "keeper");
-    if (role === "keeper" && !managed) expect(decision).toMatchObject({ acts: expect.arrayContaining([expect.objectContaining({ kind })]) });
+    expect(decision.allow, role).toBe(kind !== "cluster-write" && !managed && role === "keeper");
+    if (role === "keeper" && !managed && kind !== "cluster-write") expect(decision).toMatchObject({ acts: expect.arrayContaining([expect.objectContaining({ kind })]) });
     if (managed && role === "keeper" && kind !== "ready") expect(decision).toMatchObject({ reason: expect.stringContaining("tavern_pull_request") });
   }
 });

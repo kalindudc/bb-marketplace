@@ -1,3 +1,4 @@
+import { actGrantSchema } from "./scope/act-grants";
 import { ACT_KINDS } from "./scope/acts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -63,7 +64,7 @@ const scopeCall = z.object({
   resolvedPaths: z.record(z.string(), z.string()).optional(), pushTargets: z.record(z.string(), z.array(z.string())).optional(),
   pushHeads: z.record(z.string(), z.string()).optional(), gitRoots: z.record(z.string(), z.string()).optional(),
   directories: z.array(path).optional(), ownedDraftPrs: z.array(z.string()).optional(),
-  ownedPrs: z.array(z.string()).optional(), questOwnedPrs: z.array(z.string()).optional(), observationId: id.optional(),
+  ownedPrs: z.array(z.string()).optional(), questOwnedPrs: z.array(z.string()).optional(), observationId: id.optional(), clusterObservation: z.string().max(160).optional(),
 }).strict();
 export const scopeDecisionSchema = z.discriminatedUnion("allow", [
   z.object({ allow: z.literal(true), check: z.boolean().optional(), prGrant: id.optional(), acts: z.array(z.object({ kind: z.enum(ACT_KINDS), ruleId: id, why: text }).strict()).optional() }).strict(),
@@ -118,7 +119,15 @@ export const hostContract = defineRpcContract({
   },
   sessionStatus: {
     ...retryable, input: authoritySchema.extend({ revision: generation, scopeDigest: sha256Schema }).strict(),
-    output: z.object({ state: z.enum(["not-observed", "armed", "stale"]), revision: generation.nullable(), scopeDigest: sha256Schema.nullable() }).strict(),
+    output: z.object({ state: z.enum(["not-observed", "armed", "stale"]), revision: generation.nullable(), scopeDigest: sha256Schema.nullable(), clusterWrites: z.literal(true).optional() }).strict(),
+  },
+  issueClusterGrant: {
+    input: authoritySchema.extend({ revision: generation, scopeDigest: sha256Schema, grant: actGrantSchema }).strict(),
+    output: z.object({ issued: z.literal(true) }).strict(),
+  },
+  revokeClusterGrant: {
+    input: authoritySchema.extend({ askId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/) }).strict(),
+    output: z.object({ revoked: z.literal(true) }).strict(),
   },
   releaseScope: { input: authoritySchema, output: z.object({ released: z.boolean() }).strict() },
   prepareCall: {

@@ -180,6 +180,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
       f.k.store.put("shellGrants", "fixture", { id: "fixture", keeperThreadId: "lead", memberThreadId: "member", boardQuestId: f.q.id, target: { act: "publish", command: "npm publish", cwd: "/repo", digest: "a".repeat(64) }, scope: "quest", state: "issued", by: "user", issuedAt: 1, changedAt: 1 });
       return call("revokeShellGrant", { threadId: "member", id: "fixture" });
     },
+    clusterRunStatus: () => call("clusterRunStatus", { askId: f.ask.id }),
     answerAsk: () => call("answerAsk", { askId: f.ask.id, optionId: "yes", via: "page" }),
     olderSummaries: () => call("olderSummaries", { boardQuestId: f.q.id, beforeId: "absent" }),
     summary: () => call("summary", { id: "absent", threadId: "lead" }),

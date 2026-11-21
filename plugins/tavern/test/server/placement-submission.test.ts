@@ -53,6 +53,7 @@ it("retains the original carried source when a maker calls tavern_ready after su
   const deps = { bb, host: f.port, placements: f.placements, deliveries, scopeForThread: () => ({ template, templateDigest }) } as unknown as PlacementReadyDeps;
   const ready = new PlacementReady(deps), before = await ready.forThread("maker");
   expect(before).toContain("Ready.");
+  expect(before).not.toContain("Restart needed");
   const result = await f.submissions.capture("maker", "waypoint");
   if (result.state !== "captured") throw new Error("Expected capture");
   expect(f.placements.get("placement")).toMatchObject({ sourceSnapshotId: original.id, submissionSnapshotId: result.snapshot.id });

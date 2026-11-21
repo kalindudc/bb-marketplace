@@ -165,7 +165,14 @@ export class PlacementReady {
           previousDelivery.binding.hostId === sdk.endpoint.hostId && previousDelivery.binding.cwd === sdk.endpoint.root &&
           previousDelivery.binding.revision === record.desiredScopeRevision && record.acknowledgedScopeRevision === record.desiredScopeRevision &&
           previousDelivery.templateDigest === this.deps.scopeForThread(memberId).templateDigest) {
-        const ready = placements.update(placementId, generation, value => ({ ...value, phase: completedPhase }));
+        const { revision, scopeDigest } = previousDelivery.binding;
+        const observed = await call("sessionStatus", { ...authority(), revision, scopeDigest });
+        if (this.deps.scopeForThread(memberId).templateDigest !== previousDelivery.templateDigest || !isDeepStrictEqual(deliveries.get(placementId)?.binding, previousDelivery.binding))
+          throw new StalePlacementError("The effective scope or delivery changed before readiness");
+        const clusterWrites = observed.revision === revision && observed.scopeDigest === scopeDigest && observed.clusterWrites === true;
+        const changed = current().posture.clusterWrites !== clusterWrites;
+        const ready = placements.update(placementId, generation, value => ({ ...value, phase: completedPhase, posture: { ...value.posture, clusterWrites } }));
+        if (changed) this.deps.changed?.(memberId);
         return this.result(ready);
       }
       if (!carried) {
@@ -206,7 +213,7 @@ export class PlacementReady {
       if (!isDeepStrictEqual(this.deps.scopeForThread(memberId), original) || !isDeepStrictEqual(deliveries.get(placementId)?.binding, delivery.binding))
         throw new StalePlacementError("The effective scope or delivery changed before readiness");
       const ready = placements.update(placementId, generation, value => ({ ...value, phase: completedPhase, memberBranch: sdk.branch, posture: { ...value.posture,
-        aggregate: "remote-detection-only", toolGate: piObserved ? "pi-observed" : "not-established", filesystem: "none", network: "not-enforced",
+        aggregate: "remote-detection-only", toolGate: piObserved ? "pi-observed" : "not-established", clusterWrites: observed.clusterWrites === true, filesystem: "none", network: "not-enforced",
         checker: original.template.preset === "checker" ? piObserved ? "pre-exec-no-containment" : "detection-only-no-containment" : "not-a-checker" } }));
       this.deps.changed?.(memberId);
       return this.result(ready);

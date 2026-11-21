@@ -1,11 +1,12 @@
 import { readFileSync, rmSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { authorityDecision, evaluate, blocked, toolAllowed } from "../../src/scope/engine";
+import { authorityDecision, evaluate, blocked, toolAllowed, clusterWriteBlock, hasClusterWrite } from "../../src/scope/engine";
 import { scopeFileSchema, scopeRenderedFileSchema, type Scope } from "../../src/scope/schema";
 import { armedFile, armScope, type NativeScopeReceipt } from "../../src/scope/store";
 import { prepareCall } from "../../src/scope/prepare";
 import { claimPullRequestGrant, pullRequestGrantAvailable, pullRequestReceiptLine } from "../../src/scope/pr-grants";
 import { armShellGrantCapability, claimShellGrant, oldScopeEnvironment, readShellGrants } from "../../src/scope/shell-grants";
+import { actReceiptLine, availableActGrant, claimActGrant } from "../../src/scope/act-grants";
 import { realPath } from "../../src/scope/paths";
 import { sandboxCommand } from "../../src/scope/sandbox";
 import { bindChecks } from "../../src/scope/checker";
@@ -41,6 +42,7 @@ export default function tavernGuard(pi: PiGuardApi): void {
     }
     armScope(file, scope, undefined, localArm.at);
   };
+  const clusterReceipts = new Map<string, string>();
   const modeNote = "[Tavern scope] Enforcement enabled; this call and subsequent calls use the current scope. Earlier calls made while off were not enforced.";
   let mode: Scope["mode"] = process.env.TAVERN_SCOPE_MODE === "off" ? "off" : process.env.TAVERN_SCOPE_MODE === "watch" ? "watch" : "enforce";
   const load = (): Scope => {
@@ -92,21 +94,40 @@ export default function tavernGuard(pi: PiGuardApi): void {
     const name = event.toolName ?? "unknown";
     const previousMode = mode;
     let scope: Scope;
+    const source = event.input?.command ?? event.input?.cmd;
     try { scope = load(); } catch (error) {
+      if (typeof source === "string" && hasClusterWrite(source, ctx.cwd)) return { block: true, reason: clusterWriteBlock(source).reason };
       if (mode !== "enforce" || emergency.includes(name)) return;
       const decision = blocked("tool " + name, "scope-invalid", "the scope file is missing, invalid or its worktree cannot be resolved: " + String(error) + "; ask the Keeper to repair it");
       return { block: true, reason: !decision.allow ? decision.reason : "" };
     }
-    const authority = authorityDecision(scope, { kind: "tool", toolName: name, input: event.input ?? {}, cwd: ctx.cwd });
-    if (authority && !authority.allow) return { block: true, reason: authority.reason };
-    if (mode !== "enforce") return;
     const switched = previousMode === "off";
     try {
+      const input = { kind: "tool" as const, toolName: name, input: event.input ?? {}, cwd: ctx.cwd };
+      const authority = authorityDecision(scope, input);
+      const grant = authority && !authority.allow && authority.ruleId === "cluster-write" && name.toLowerCase() === "bash" && event.toolCallId
+        ? availableActGrant(file, scope.threadId, "cluster-write", source) : undefined;
+      if (authority && !authority.allow && !grant) return { block: true, reason: authority.reason };
+      if (grant) {
+        const remaining = authorityDecision(scope, { ...input, clusterWriteApproved: true });
+        if (remaining && !remaining.allow) return { block: true, reason: remaining.reason };
+      }
+      const claim = () => {
+        if (!grant) return true;
+        const observation = randomUUID();
+        if (!claimActGrant(file, grant, observation)) return false;
+        clusterReceipts.set(event.toolCallId!, actReceiptLine(grant.askId, observation));
+        return true;
+      };
+      if (mode !== "enforce") {
+        if (!claim()) return { block: true, reason: clusterWriteBlock(grant!.target, false, scope.role).reason };
+        return;
+      }
       arm(scope);
       const contained = !nativeReceipt && process.platform === "darwin" && scope.sandbox && ["bash", "Bash"].includes(name);
       const call = prepareCall({ kind: "tool", toolName: name, input: event.input ?? {}, cwd: ctx.cwd, containment: contained ? "sandbox" : undefined }, { scope });
       const shellGrants = !nativeReceipt && !legacyEnv.length && event.toolCallId && ["bash", "Bash"].includes(name) ? readShellGrants(file, scope) : undefined;
-      const decision = evaluate(scope, { ...call, shellGrants, prGrantAvailable: id => !!event.toolCallId && pullRequestGrantAvailable(file, id) });
+      const decision = evaluate(scope, { ...call, clusterWriteApproved: !!grant, shellGrants, prGrantAvailable: id => !!event.toolCallId && pullRequestGrantAvailable(file, id) });
       if (!decision.allow) return { block: true, reason: decision.reason +
         (decision.act ? "\nWorking directory: " + JSON.stringify(ctx.cwd) : "") + (switched ? "\n" + modeNote : "") };
       if (decision.prGrant) {
@@ -115,13 +136,14 @@ export default function tavernGuard(pi: PiGuardApi): void {
           return { block: true, reason: "[Tavern scope blocked] This pull request exception was already used." };
         pullRequestReceipts.set(event.toolCallId!, receipt);
       }
-      const source = name.toLowerCase() === "bash" && typeof event.input?.command === "string" ? event.input.command : undefined;
-      const wrapped = source === undefined ? undefined : sandboxCommand(scope, source, decision.check === true, call.fetchWriteRoots);
+      const shellSource = name.toLowerCase() === "bash" && typeof event.input?.command === "string" ? event.input.command : undefined;
+      const wrapped = shellSource === undefined ? undefined : sandboxCommand(scope, shellSource, decision.check === true, call.fetchWriteRoots);
       if (decision.shellGrant) {
         const receipt = randomUUID();
-        if (source === undefined || wrapped === undefined || !claimShellGrant(file, scope, decision.shellGrant, receipt, [source, wrapped])) return { block: true, reason: "[Tavern scope blocked] This shell grant has ended or was already used. Nothing was done." };
+        if (shellSource === undefined || wrapped === undefined || !claimShellGrant(file, scope, decision.shellGrant, receipt, [shellSource, wrapped])) return { block: true, reason: "[Tavern scope blocked] This shell grant has ended or was already used. Nothing was done." };
         shellReceipts.set(event.toolCallId!, `Tavern shell grant receipt: ${decision.shellGrant} ${receipt}`);
       }
+      if (!claim()) return { block: true, reason: clusterWriteBlock(grant!.target, false, scope.role).reason };
       if (switched) enforcementNotes.add(event.toolCallId ?? name);
       if (event.input && wrapped !== undefined) event.input.command = wrapped;
       if (!nativeReceipt && process.platform === "darwin" && scope.sandbox && name.toLowerCase() === "bash") containmentNotes.set(event.toolCallId ?? name, `Tavern: a ${scope.preset === "worktree" ? "Smith writes only to its worktree, " : scope.preset === "checker" ? "Warden writes only to " : "Ranger writes only to "}$BB_THREAD_STORAGE and temp. Save there instead.`);
@@ -139,6 +161,8 @@ export default function tavernGuard(pi: PiGuardApi): void {
     if (receipt) notes.push(pullRequestReceiptLine(receipt));
     const shellReceipt = shellReceipts.get(key); shellReceipts.delete(key);
     if (shellReceipt) notes.push(shellReceipt);
+    const cluster = clusterReceipts.get(key); clusterReceipts.delete(key);
+    if (cluster) notes.push(cluster);
     if (hint && (event.content ?? []).some(part => typeof part === "object" && part !== null && "text" in part && typeof part.text === "string" && part.text.includes("Operation not permitted"))) notes.push(hint);
     if (enforcementNotes.delete(key)) notes.push(modeNote);
     if (!notes.length) return;

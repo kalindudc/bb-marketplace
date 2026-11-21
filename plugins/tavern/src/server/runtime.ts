@@ -72,6 +72,7 @@ import { SourceDiscovery, readSourceIdentity } from "./placement/source-discover
 import { resolvePlacementRoute } from "./placement/routing";
 import { pickedRoute, repoPlacements, placementPickSchema, type PlacementPick } from "./placement/picks";
 import { targetModelKey, targetModelName, modelResolutionFailure } from "./placement/models";
+import { actTargetDigest } from "../scope/act-grants";
 import { normalizeRemote } from "../scope/remote";
 import { PlacementServices } from "./placement/services";
 import { hasLostOwner, PlacementPreservation } from "./placement/preserve";
@@ -597,6 +598,31 @@ export class TavernRuntime {
     if (!context) throw new Error("Project scope policy was not prepared");
     return context;
   }
+  private clusterGrantDeliveries = 0;
+  private closingClusterGate = false;
+  async closeAfterRevokingClusterGrants(close: () => void) {
+    if (this.closingClusterGate || this.clusterGrantDeliveries)
+      throw new Error("A cluster command confirmation is still being recorded. Try Closing time again when it settles.");
+    this.closingClusterGate = true;
+    try {
+      const rows = this.keeper.store.db.prepare("SELECT id FROM tavern_records WHERE kind='asks' AND json_extract(data,'$.clusterGrantExpiresAt') > ?").all(this.keeper.now()) as { id: string }[];
+      for (const row of rows) {
+        const ask = this.keeper.store.get("asks", row.id);
+        if (ask?.kind !== "cluster-write" || ask.answer?.optionId !== "confirm-run") continue;
+        if (!this.scopes) throw new Error("Tavern cannot reach the thread with an unused cluster approval. Wait for it to expire before closing.");
+        try { await this.scopes.revokeClusterGrant(ask.runThreadId ?? ask.keeperThreadId, ask.id); }
+        catch { throw new Error("Tavern cannot revoke a confirmed cluster command on its host. Wait for the grant to expire before closing."); }
+        this.keeper.store.put("asks", ask.id, { ...ask, clusterGrantExpiresAt: undefined });
+      }
+      close();
+    } finally { this.closingClusterGate = false; }
+  }
+  async clusterRunStatus(ask: Ask) {
+    const threadId = ask.runThreadId ?? ask.keeperThreadId;
+    try { this.keeper.clusterRunner(ask.keeperThreadId, ask.boardQuestId, threadId); }
+    catch { return { guarded: false }; }
+    return { guarded: (await this.scopes?.clusterGuardArmed(threadId)) === true };
+  }
   async answerAsk(
     askId: string,
     optionId: string,
@@ -607,7 +633,7 @@ export class TavernRuntime {
     receipt?: UserActReceipt,
     preapproved = false,
     pullRequestChoices: PullRequestChoices = [],
-  ) {
+  ): Promise<{ pendingArchives: string[]; pullRequestErrors?: string[]; ask?: Ask; awaitingClusterConfirmation?: boolean; clusterGrantError?: string }> {
     if (this.away.store.snapshot().status.closed && !clientAction && !preapproved) throw new Error("An away ask answer needs an explicit client action.");
     const ask = this.keeper.store.get("asks", askId);
     if (!ask) throw new Error("Unknown ask");
@@ -615,6 +641,15 @@ export class TavernRuntime {
     if (isCloseEffect(ask.effect) && !clientAction && !(preapproved && ask.effect.type === "conclude")) throw new Error("Closing needs your explicit answer on the card.");
     if (pullRequestChoices.length && (!clientAction || !isCloseEffect(ask.effect) || optionId !== ask.effect.type)) throw new Error("Pull request choices need your explicit closing answer.");
     const wasOpen = ask.state === "open";
+    const cluster = ask.kind === "cluster-write" && optionId !== "deny";
+    if (cluster && wasOpen) {
+      if (!clientAction || receipt?.act !== "answerAsk" || via === "cli" || via === "timer")
+        throw new Error("Cluster writes require your explicit answer on the card.");
+      if (!(await this.clusterRunStatus(ask)).guarded)
+        throw new Error("This thread cannot be guarded. Run the command yourself or ask a guarded thread to run it.");
+      if (optionId === "confirm-run" && (this.closingClusterGate || this.away.store.snapshot().status.closed))
+        throw new Error("Return from Closing time before confirming this cluster write.");
+    }
     const after: (() => Promise<unknown>)[] = [];
     let pendingArchives: string[] = [], pullRequestErrors: string[] = [];
     const close = (effect: AskEffect) => {
@@ -665,6 +700,7 @@ export class TavernRuntime {
         after.push(async () => { await this.resetQuietQueue(ask.keeperThreadId); await this.loop.recover(ask.keeperThreadId, true); });
       },
     };
+    const mintClusterGrant = cluster && optionId === "confirm-run" && this.keeper.store.get("asks", askId)?.state === "open";
     try {
       this.keeper.answerAsk(askId, optionId, note, via, preapproved ? "preapproval" : "user", surface, effects, receipt);
     } catch (error) {
@@ -675,6 +711,28 @@ export class TavernRuntime {
       throw error;
     }
     for (const apply of after) await apply();
+    if (cluster && optionId === "approve") return { pendingArchives, ask: this.keeper.store.get("asks", askId) ?? undefined, awaitingClusterConfirmation: true };
+    if (mintClusterGrant) {
+      const saved = this.keeper.store.get("asks", askId);
+      if (!saved?.answer || saved.answer.optionId !== "confirm-run" || !saved.target?.command) throw new Error("No confirmed exact cluster command.");
+      const now = saved.answer.at, command = saved.target.command, threadId = saved.runThreadId ?? saved.keeperThreadId;
+      const expiresAt = now + this.config(saved.boardQuestId).keepers.clusterGrantMinutes * 60_000;
+      this.keeper.store.put("asks", askId, { ...saved, clusterGrantExpiresAt: expiresAt });
+      this.clusterGrantDeliveries++;
+      try {
+        if (!this.scopes) throw new Error("No guarded scope is available.");
+        await this.scopes.issueClusterGrant({ threadId, act: "cluster-write", targetDigest: actTargetDigest(command), target: command, scope: "once", askId, issuedAt: now, expiresAt, usedAt: null });
+        this.keeper.store.event(this.keeper.now(), saved.keeperThreadId, saved.boardQuestId, "ask.cluster-run-ready", "Confirmed cluster command is ready for the named thread.", { askId, threadId, command, expiresAt }, { kind: "tavern" });
+        this.keeper.changed(saved.keeperThreadId, saved.boardQuestId);
+        void this.wakeKeeper(saved.keeperThreadId, "confirmed cluster write");
+      } catch (error) {
+        const reason = (error instanceof Error ? error.message : String(error)).slice(0, 600);
+        this.keeper.store.event(this.keeper.now(), saved.keeperThreadId, saved.boardQuestId, "ask.cluster-run-failed", "Tavern could not confirm grant delivery. Open a fresh ask after checking the guarded thread.", { askId, threadId, reason }, { kind: "tavern" });
+        this.keeper.changed(saved.keeperThreadId, saved.boardQuestId);
+        void this.wakeKeeper(saved.keeperThreadId, "cluster grant delivery failed");
+        return { pendingArchives, clusterGrantError: `Tavern could not confirm delivery. Do not run the command; ask the Keeper to check the guarded thread. ${reason}` };
+      } finally { this.clusterGrantDeliveries--; }
+    }
     if (clientAction && wasOpen) await this.away.return({ kind: "ask-answer", threadId: ask.keeperThreadId, refId: ask.id });
     void this.resetQuietQueue(ask.keeperThreadId).then(() => this.recheckDispatch()).catch(error => this.bb.log.warn(`Tavern resume: ${String(error)}`));
     return { pendingArchives, ...(pullRequestErrors.length ? { pullRequestErrors } : {}) };
@@ -3028,6 +3086,7 @@ export class TavernRuntime {
     this.keeper.reanchor(threadId, "failed turn");
   }
   async threadStarted(thread: Thread) {
+    if (this.keeper.store.runtime(thread.id).clusterSessionPending) this.keeper.store.patch(thread.id, { clusterSessionPending: false });
     this.updateThread(thread);
     if (this.scopes) await this.scopes.pinWorktree(thread.id);
   }

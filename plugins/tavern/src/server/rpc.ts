@@ -496,11 +496,15 @@ export function rpcHandlers(
       runtime.scopes.revokeGrant(threadId, id, receipt);
       return { ok: true };
     },
+    clusterRunStatus: ({ askId }) => {
+      const ask = k.store.get("asks", askId);
+      return ask?.kind === "cluster-write" && ask.state === "open" ? runtime.clusterRunStatus(ask) : { guarded: false };
+    },
     answerAsk: async ({ askId, optionId, note, via, pullRequestChoices }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
       const result = await runtime.answerAsk(askId, optionId, note, via, context?.experimental_caller.kind === "client", receipt?.surface, receipt, false, pullRequestChoices);
       const ask = k.store.get("asks", askId)!;
-      wake(ask.keeperThreadId);
-      return { ok: true, ...(result.pullRequestErrors ? { pullRequestErrors: result.pullRequestErrors } : {}) };
+      if (!result.awaitingClusterConfirmation && !(ask.kind === "cluster-write" && optionId === "confirm-run")) wake(ask.keeperThreadId);
+      return { ok: true, ...(result.pullRequestErrors ? { pullRequestErrors: result.pullRequestErrors } : {}), ...(result.ask ? { ask: result.ask } : {}), ...(result.clusterGrantError ? { clusterGrantError: result.clusterGrantError } : {}) };
     },
     markVisitSeen: ({ summaryIds, changeIds }) => {
       const now = k.now();

@@ -1,8 +1,8 @@
 import { authorize, commitUserAct, type UserActReceipt } from "../authority";
 import { QuestAuthority } from "../quest-authority";
 import { DELEGATABLE_KINDS, preapprovalWords, type DelegationKind } from "../../shared/quest-authority";
-import { actsForCommand, clusterCommandTarget, fallbackActs } from "../../scope/acts";
-import { shellCommands } from "../../scope/shell";
+import { clusterCommandTarget, fallbackActs } from "../../scope/acts";
+import { clusterWriteCommands } from "../../scope/engine";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { KeeperCallKind } from "../../shared/undo-lane";
@@ -69,6 +69,7 @@ export type AskInput = Pick<
   unsure?: boolean;
   target?: Ask["target"];
   change?: Ask["change"];
+  runThreadId?: Ask["runThreadId"];
   undo?: Ask["undo"];
   scopeChange?: Ask["scopeChange"];
   releaseHoldId?: string;
@@ -237,7 +238,7 @@ export class Keeper {
         if (owner) transitionMember(this.store, m, "briefing", "bind-hire", { kind: "agent", threadId: owner.keeperThreadId }, { kind: "hire", id: bindingId }, this.now());
         else transitionMember(this.store, m, "active", "bind-solo", { kind: "user" }, { kind: "class-start", id: bindingId }, this.now());
       }
-      this.store.patch(threadId, { projectId, brief: owner?.brief ?? null, reviewTarget: owner?.reviewTarget ?? null, requestSources: owner?.requestSources ?? null, assignmentText: owner?.assignmentText ?? null });
+      this.store.patch(threadId, { projectId, brief: owner?.brief ?? null, reviewTarget: owner?.reviewTarget ?? null, requestSources: owner?.requestSources ?? null, assignmentText: owner?.assignmentText ?? null, ...(owner ? { clusterSessionPending: true } : {}) });
     });
     this.changed(threadId, m.boardQuestId);
     return this.member(threadId)!;
@@ -1149,14 +1150,13 @@ export class Keeper {
     const exactCommand = input.target?.command;
     let clusterTargets: Ask["clusterTargets"];
     if (exactCommand) {
-      let commands: ReturnType<typeof shellCommands> | undefined = undefined;
-      try { commands = shellCommands(exactCommand, "/"); } catch (error) {
+      let writes: ReturnType<typeof clusterWriteCommands> | undefined;
+      try { writes = clusterWriteCommands(exactCommand, "/"); } catch (error) {
         if (input.kind === "cluster-write" || fallbackActs(exactCommand).some(act => act.kind === "cluster-write")) {
           const cause = error instanceof Error ? error.message : String(error);
           throw new Error(`Tavern can't parse this command (${cause}). Send the literal command with supported shell syntax.`);
         }
       }
-      const writes = commands?.filter(command => actsForCommand(command).some(act => act.kind === "cluster-write"));
       if (writes?.length && input.kind !== "cluster-write") throw new Error("Use kind cluster-write for a cluster write command.");
       if (input.kind === "cluster-write") {
         if (!writes?.length) throw new Error("Give the exact command that performs the cluster write.");
@@ -1164,11 +1164,12 @@ export class Keeper {
         clusterTargets = [...new Map(targets.map(target => [JSON.stringify(target), target])).values()];
       }
     }
-    if (input.kind === "cluster-write" && (!exactCommand?.trim() || !input.change?.trim()))
+    const runner = input.kind === "cluster-write" ? this.clusterRunner(threadId, questId, input.runThreadId ?? threadId) : null;
+    if (runner && (!exactCommand?.trim() || !input.change?.trim()))
       throw new Error("Cluster writes need the exact command and what it changes.");
     if (input.kind === "cluster-write" || (input.effect.type !== "grant-shell-act" && ["merge", "production"].includes(input.kind))) {
-      const detail = input.kind === "cluster-write" ? "Approve one run of this exact command. A changed command or another run needs a new ask." : "Authorize the exact act; Keeper approval needs a current Warden verdict.";
-      input = { ...input, options: [{ id: "approve", label: "Approve the act", detail, recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], effect: { type: "decision", outcomes: [{ optionId: "approve", outcome: "approve" }, { optionId: "deny", outcome: "decline" }] } };
+      const detail = runner ? "Approve this exact command for the named thread. Nothing runs until you confirm." : "Authorize the exact act; Keeper approval needs a current Warden verdict.";
+      input = { ...input, options: [{ id: "approve", label: runner ? "Approve" : "Approve the act", detail, recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], effect: { type: "decision", outcomes: [{ optionId: runner ? "confirm-run" : "approve", outcome: "approve" }, { optionId: "deny", outcome: "decline" }] } };
     }
     const lane = this.authority.baseLane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure, effect: input.effect });
     if (questId && lane === "user" && DELEGATABLE_KINDS.includes(input.kind as DelegationKind)) {
@@ -1178,6 +1179,8 @@ export class Keeper {
       ...input,
       lane,
       ...(clusterTargets?.length ? { clusterTargets } : {}),
+      runThreadId: runner?.threadId,
+      runThreadName: runner ? this.name(runner) : undefined,
       effect: input.effect,
       reversible: input.reversible === true,
       id: this.store.id("ask"),
@@ -1222,6 +1225,14 @@ export class Keeper {
       );
     return projected;
   }
+  clusterRunner(keeperThreadId: string, questId: string | null, runThreadId: string) {
+    const runner = this.member(runThreadId);
+    const live = runThreadId === keeperThreadId ? isLiveKeeper(this.store, runner) :
+      isLiveMember(this.store, runner) && runner.keeperThreadId === keeperThreadId && runner.boardQuestId === questId;
+    if (!runner || !live)
+      throw new Error("The cluster command must name a live Keeper or a live member of this quest.");
+    return runner;
+  }
   answerAsk(
     askId: string,
     optionId: string,
@@ -1234,7 +1245,7 @@ export class Keeper {
   ) {
     const ask = this.store.get("asks", askId);
     if (!ask) throw new Error("Unknown ask");
-    if (ask.kind === "cluster-write" && by === "user" && (receipt?.act !== "answerAsk" || via === "timer")) throw new Error("Cluster writes require your explicit answer.");
+    if (ask.kind === "cluster-write" && by === "user" && (receipt?.act !== "answerAsk" || via === "timer" || via === "cli")) throw new Error("Cluster writes require your explicit answer on the card.");
     if (ask.state !== "open") {
       if (ask.answer?.optionId === optionId) {
         if (by === "user") this.userAction(ask.keeperThreadId);
@@ -1273,6 +1284,19 @@ export class Keeper {
       }
     }
     if (ask.boardQuestId && effect.type !== "retry-stop") this.liveQuest(ask.keeperThreadId, ask.boardQuestId);
+    if (ask.kind === "cluster-write" && by === "user") {
+      if (optionId === "confirm-run" && !ask.clusterApproval) throw new Error("Approve the exact cluster command before confirming it.");
+      if (optionId === "approve" && via !== "cli" && via !== "timer") {
+        if (ask.clusterApproval) return;
+        const clusterApproval = { at: this.now(), via, surface: surface ?? "client (unattested)", note };
+        commitUserAct(this.store, () => this.now(), receipt, () => {
+          this.store.put("asks", ask.id, { ...ask, clusterApproval, options: [{ id: "confirm-run", label: "Run it now", detail: "Allow one run of this exact command.", recommended: false }, ...ask.options.filter(option => option.id === "deny")] });
+          this.store.event(this.now(), ask.keeperThreadId, ask.boardQuestId, "ask.cluster-approved", ask.question, { askId, clusterApproval }, { kind: "user" });
+        });
+        this.changed(ask.keeperThreadId, ask.boardQuestId);
+        return;
+      }
+    }
     if (!ask.options.some((o) => o.id === optionId))
       throw new Error("Unknown option");
     if (

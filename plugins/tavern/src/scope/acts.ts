@@ -34,15 +34,29 @@ export { ACT_KINDS, type ActKind } from "./act-routing";
 export interface Act { kind: ActKind; ruleId: string; why: string }
 interface ActDefinition extends Act { commands: string[]; matches(command: ShellCommand): boolean; fallback: RegExp }
 const pr = (command: ShellCommand, actions: string[]) => ["gh", "dt"].includes(command.argv[0]) && command.argv[1] === "pr" && actions.includes(command.argv[2]);
-export const kubectlRead = (a: string[]) => ["get", "describe", "logs", "events", "version", "api-resources", "api-versions", "explain", "cluster-info", "top", "wait"].includes(a[1]) || a[1] === "auth" && a[2] === "can-i" || a[1] === "config" && ["view", "get-contexts", "current-context"].includes(a[2]) || a[1] === "rollout" && ["status", "history"].includes(a[2]);
+export const kubectlRead = (a: string[]) => ["get", "describe", "logs", "events", "version", "api-resources", "api-versions", "explain", "cluster-info", "top", "wait", "kustomize", "completion"].includes(a[1])
+  || a[1] === "auth" && a[2] === "can-i"
+  || a[1] === "config" && ["view", "get-contexts", "current-context", "use-context", "set-context", "get-clusters", "get-users", "rename-context", "delete-context", "delete-cluster", "delete-user", "set-cluster", "set-credentials", "set", "unset"].includes(a[2])
+  || a[1] === "plugin" && a[2] === "list"
+  || a[1] === "rollout" && ["status", "history"].includes(a[2]);
+const kubectlWrites = "apply|create|replace|patch|edit|delete|scale|exec|cp|drain|cordon|uncordon|annotate|label|set|taint|restart|undo|port-forward|proxy|diff|rollout|autoscale|debug|run|certificate";
 const terraformWrites = "apply|destroy|import|refresh|taint|untaint|force-unlock";
 const helmWrites = "install|upgrade|uninstall|rollback|test";
 const terraformStateWrite = "mv|rm|push|replace-provider";
 const terraformWorkspaceWrite = "new|delete";
 const hasVerb = (pattern: string, verb: string) => pattern.split("|").includes(verb);
+const dynamicClusterVerbs = new Set(["delete", "exec", "cp", "scale", "rollout", "drain", "cordon", "upgrade", "uninstall", "rollback", "destroy", "port-forward"]);
 function clusterWrite(c: ShellCommand): boolean {
   const [program, verb, sub] = c.argv;
-  return program === "kubectl" && !!verb && !kubectlRead(c.argv)
+  const dynamic = /[$`]/.test(program ?? "");
+  const index = dynamic ? c.argv.findIndex((arg, i) => i > 0 && !arg.startsWith("-")) : -1;
+  const dynamicVerb = c.argv[index];
+  const target = c.argv[index + 1];
+  // A plain positional operand is also used by git apply; it is not a cluster signal.
+  const clusterApply = dynamicVerb === "apply" && (!target || /^-(?:f|k)(?:$|.)|^--(?:filename|kustomize|auto-approve|var(?:-file)?|target)(?:=|$)/.test(target) || target.endsWith(".tfplan"));
+  return (program === "kubectl" || program === "k") && !!verb && !kubectlRead(c.argv)
+    || index > 0 && (dynamicClusterVerbs.has(dynamicVerb) || clusterApply)
+    || dynamic && (verb === "state" && hasVerb(terraformStateWrite, sub) || verb === "workspace" && hasVerb(terraformWorkspaceWrite, sub))
     || program === "terraform" && (hasVerb(terraformWrites, verb) || verb === "state" && hasVerb(terraformStateWrite, sub) || verb === "workspace" && hasVerb(terraformWorkspaceWrite, sub))
     || program === "helm" && hasVerb(helmWrites, verb)
     || program === "kapp" && ["deploy", "delete"].includes(verb);
@@ -60,7 +74,7 @@ export function clusterCommandTarget(command: ShellCommand) {
     }
     return value || undefined;
   };
-  if (!["kubectl", "helm", "kapp"].includes(program)) return undefined;
+  if (!["kubectl", "k", "helm", "kapp"].includes(program) && !/[$`]/.test(program ?? "")) return undefined;
   const context = readFlag(program === "helm" ? "--kube-context" : program === "kapp" ? "--kubeconfig-context" : "--context");
   const namespace = readFlag("--namespace", "-n");
   return context || namespace ? { context, namespace } : undefined;
@@ -120,7 +134,7 @@ function controlAct(command: ShellCommand): "configure" | "delete" | undefined {
   }
 }
 const deployFallback = /\bgcloud\b[^;\n]*\b(?:run|app|functions)\s+deploy\b|\b(?:dev|dt|quick)\s+deploy\b/;
-const kubectlWriteFallback = /\bkubectl\b[^;\n]*\b(?:apply|create|replace|patch|edit|delete|scale|exec|cp|drain|cordon|uncordon|annotate|label|set|taint|restart|undo|port-forward)\b/;
+const kubectlWriteFallback = new RegExp(String.raw`\bkubectl\b[^;\n]*\b(?:${kubectlWrites})\b|(?:^|[;&|(\n])[^\S\n]*k[^\S\n]+[^;&|\n]*\b(?:${kubectlWrites})\b`);
 const otherClusterWriteFallback = new RegExp(String.raw`\b(?:terraform\s+(?:-chdir=\S+\s+)?(?:${terraformWrites}|state\s+(?:${terraformStateWrite})|workspace\s+(?:${terraformWorkspaceWrite}))|helm\b[^;\n]*\b(?:${helmWrites})|kapp\b[^;\n]*\b(?:deploy|delete))\b`);
 const httpWriteFallback = /\b(?:curl|wget)\b[^;\n]*(?:--(?:data|json|form|upload|post|body|method)|-[dFT]|-X\s*(?:POST|PUT|PATCH|DELETE))/;
 const sendFallback = /\b(?:slack|slack-cli|mail|mailx|sendmail|mutt)\b/;

@@ -17,7 +17,7 @@ import { useChangeCue, useTavernMotion } from "../kit/motion";
 import { ThreadPartyStrip } from "../engine/thread-party";
 import { takeArmedClass } from "../kit/remember";
 import { MemberPanel, memberFinished } from "./member-brief";
-import { memberIdentityWords } from "../kit/member-identity";
+import { clusterGuardWords, memberIdentityWords } from "../kit/member-identity";
 import { HUE_CSS } from "../../shared/heraldry";
 import { PlacementFacts } from "../kit/placement";
 import { memberIdentityLabel } from "../../shared/identity";
@@ -273,6 +273,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const identity = registry.data ? memberIdentity(registry.data, data.member) : null;
   const toggle = (what: Exclude<Open, null>) => setOpen(open === what ? null : what);
   const variant = keeper ? "keeper" : data.member.role === "member" ? "member" : "solo";
+  const clusterWarning = keeper && data.scope?.clusterGuard !== "armed" ? clusterGuardWords(data.scope) : null;
   const lit = !!identity && !identity.character.plain;
   const surface: CSSProperties & { "--widget-edge": string } = { ...(lit ? glowVars(data.boardQuest ? `quest:${data.boardQuest.id}` : `keeper:${threadId}`) : {}), "--widget-edge": lit ? HUE_CSS[identity.character.hue] : "var(--tavern-line)" };
   const hideBtn = <IconButton glyph="close" className="tw-hide" label="Hide Tavern in this thread (⌥⌘T). The crest in the composer brings it back" onClick={() => void hide.mutate({ threadId, hidden: true }).catch(setError)} />;
@@ -325,6 +326,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
         {variant === "member" && <MemberParts data={data} registry={registry.data ?? null} open={open} toggle={toggle} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} onThread={id => navigate.toThread(id)} />}
         {showCharacters}{hideBtn}
       </div>
+      {clusterWarning && <p className="tw-cluster-warning">{clusterWarning}</p>}
       {variant === "member" && data.boardQuest && <WidgetWaypoints member={data.member} reported={data.lastReportedWaypointId} />}
       {open !== "brief" && <PlacementFacts placement={data.member.placement} memberName={name} />}
       <ClassNoticeLine threadId={threadId} notice={notice} />

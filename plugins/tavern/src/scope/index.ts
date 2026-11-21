@@ -7,6 +7,7 @@ import { bindPaths, realPath, type ScopePaths } from "./paths";
 import { narrowScope, scopeForClass } from "./presets";
 import { scopeHostTargetSchema, scopeSchema, type ClassScope, type Scope, type ScopeNarrowing, type ScopeOverride } from "./schema";
 import { ScopeStore } from "./store";
+import { issueActGrant, revokeActGrant, type ActGrant } from "./act-grants";
 import { envForScope, registerEnv } from "./env";
 import { hostTemplate as originalHostTemplate, readHostScope, type HostScopeLookup, type HostScopeState, type ScopeWriteOptions } from "./host-env";
 import { registerWatcher, type WatchDeps } from "./watch";
@@ -214,6 +215,16 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
       return mode;
     },
     mode: () => mode,
+    revokeClusterGrant: (threadId: string, askId: string) => revokeActGrant(store.file(threadId), askId),
+    clusterGuardArmed: (threadId: string) => !store.records.get(threadId)?.error && store.isArmed(threadId, true),
+    issueClusterGrant(grant: ActGrant) {
+      const check = () => {
+        if (store.records.get(grant.threadId)?.error || !store.isArmed(grant.threadId, true))
+          throw new Error("This thread cannot be guarded. Cluster writes are not prevented.");
+      };
+      check();
+      issueActGrant(store.file(grant.threadId), grant, check);
+    },
     writeScope,
     rebindScope,
     refreshPullRequestPolicy(threadId: string) {

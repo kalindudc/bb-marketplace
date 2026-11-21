@@ -61,7 +61,7 @@ describe("Closing time local denials", () => {
     expect(scope.tools.deny.slice(base.tools.deny.length)).toEqual(["*merge*", "*deploy*", "*delete*", "*remove*"]);
     const run = (s: typeof scope, command: string) => evaluate(s, { kind: "bash", toolName: "bash", input: { command }, cwd });
     for (const command of ["git merge feature", "dev deploy", "rm build.log"]) expect(run(scope, command).allow).toBe(false);
-    for (const command of ["git push origin feature", "slack send channel text", "kubectl scale testing", "gh pr create --draft"]) expect(run(scope, command)).toEqual(run(base, command));
+    for (const command of ["git push origin feature", "slack send channel text", "gh pr create --draft"]) expect(run(scope, command)).toEqual(run(base, command));
   });
   it("classifies the fallback command using the same selected policy", () => {
     const blocked = (items: string[], source: string) => {
@@ -94,10 +94,12 @@ describe("Closing time local denials", () => {
     expect(narrowAwayScope(base, selected(["sends-as-you"])).tools.deny).not.toContain("*post*");
     expect(others.tools.deny).toContain("*post*");
   });
-  it("adds no policy when all items are unchecked", () => {
-    const base = bound(), empty = selected([]);
-    expect(narrowAwayScope(base, empty)).toEqual(base);
-    expect(hasAwayDenials(base, empty)).toBe(true);
+  it("still refuses an approved cluster write when all optional stops are unchecked", () => {
+    const base = bound(), empty = selected([]), closed = narrowAwayScope(base, empty);
+    expect(closed.tools).toEqual(base.tools);
+    expect(hasAwayDenials(base, empty)).toBe(false);
+    expect(hasAwayDenials(closed, empty)).toBe(true);
+    expect(evaluate(closed, { kind: "bash", toolName: "bash", input: { command: "kubectl scale testing" }, cwd, clusterWriteApproved: true })).toMatchObject({ allow: false, ruleId: "closing-act" });
     expect(hasAwayDenials(narrowAwayScope(base, current()), empty)).toBe(false);
   });
   it("requires the exact current local policy before claiming prevention", () => {
