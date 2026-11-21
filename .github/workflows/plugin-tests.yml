@@ -1,0 +1,130 @@
+name: Plugin tests
+
+'on':
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      plugins:
+        description: Comma-separated plugin IDs, or all
+        type: string
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  select:
+    name: Select plugins
+    if: ${{ !github.event.deleted }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      plugins: ${{ steps.changed.outputs.plugins }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+      - name: Find plugins to test
+        id: changed
+        env:
+          REQUESTED_PLUGINS: ${{ inputs.plugins }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync, spawnSync } from 'node:child_process';
+          import { appendFileSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
+
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+          const probe = (...args) => {
+            const { status, error, signal } = spawnSync('git', args, { stdio: 'ignore' });
+            if (status === 0 || status === 1) return status === 0;
+            throw error ?? new Error(`git ${args[0]} failed (${status ?? signal})`);
+          };
+          const sha = value => {
+            if (typeof value !== 'string' || !/^[a-f0-9]{40}$/.test(value)) throw new Error('Invalid commit SHA in event');
+            return value;
+          };
+          const stat = path => lstatSync(path, { throwIfNoEntry: false });
+          const known = new Set(stat('plugins')?.isDirectory() ? readdirSync('plugins', { withFileTypes: true })
+            .filter(entry => entry.isDirectory() && /^[a-z0-9][a-z0-9-]*$/.test(entry.name)
+              && stat(`plugins/${entry.name}/package.json`)?.isFile()).map(entry => entry.name) : []);
+          const selected = new Set();
+          const diffOptions = ['--name-only', '--no-renames', '-z'];
+          const selectPaths = output => {
+            for (const path of output.split('\0')) {
+              const [root, id, file] = path.split('/', 3);
+              if (root === 'plugins' && file && known.has(id)) selected.add(id);
+            }
+          };
+
+          if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch') {
+            const input = (process.env.REQUESTED_PLUGINS ?? '').trim();
+            for (const id of (!input || input === 'all' ? known : input.split(',').map(id => id.trim()))) {
+              if (!known.has(id)) throw new Error(`Unknown plugin: ${JSON.stringify(id)}`);
+              selected.add(id);
+            }
+          } else {
+            const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+            if (process.env.GITHUB_EVENT_NAME === 'pull_request') {
+              const { base, head } = event.pull_request;
+              selectPaths(git('diff', ...diffOptions, `${sha(base.sha)}...${sha(head.sha)}`, '--', 'plugins/'));
+            } else {
+              const { before, after, commits } = event;
+              const tip = sha(after);
+              const haveBefore = before && before !== '0'.repeat(40) && probe('rev-parse', '--verify', '--quiet', `${sha(before)}^{commit}`);
+              if (haveBefore && probe('merge-base', '--is-ancestor', before, tip)) {
+                selectPaths(git('diff', ...diffOptions, `${before}..${tip}`, '--', 'plugins/'));
+              } else {
+                // Prefer the Git range when available: push payloads cap the commit list at 2048.
+                if (!haveBefore && (!Array.isArray(commits) || commits.length >= 2048)) {
+                  throw new Error('Need the complete push commit list when the previous tip is unavailable');
+                }
+                const ids = haveBefore ? git('rev-list', `${before}..${tip}`).trim().split('\n').filter(Boolean)
+                  : commits.map(commit => sha(commit.id));
+                for (const id of ids) {
+                  selectPaths(git('show', '--root', '--format=', '--diff-merges=first-parent', ...diffOptions, id, '--', 'plugins/'));
+                }
+              }
+            }
+          }
+
+          appendFileSync(process.env.GITHUB_OUTPUT, `plugins=${JSON.stringify([...selected].sort())}\n`);
+          if (!selected.size) console.log('No plugins changed.');
+          NODE
+
+  test:
+    name: Test ${{ matrix.plugin }}
+    needs: select
+    if: ${{ needs.select.outputs.plugins != '[]' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.select.outputs.plugins) }}
+    defaults:
+      run:
+        working-directory: plugins/${{ matrix.plugin }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: plugins/${{ matrix.plugin }}/package-lock.json
+      - run: npm ci
+      - run: npm test -- --maxWorkers=2
+        env:
+          # Without the bb CLI, Forage skips its compiled-bundle tests when pretest is not run.
+          npm_config_ignore_scripts: ${{ matrix.plugin == 'forage' && 'true' || 'false' }}

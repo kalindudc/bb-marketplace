@@ -136,6 +136,8 @@ Notable changes to Lineup, newest first. Releases are tagged `lineup/vX.Y.Z` in 
 
 ## Develop
 
+On pushes to `main` and pull requests, [Plugin tests](.github/workflows/plugin-tests.yml) runs the full test script for each changed plugin; manual runs accept a comma-separated list of plugin IDs or `all`.
+
 Each plugin is its own npm package:
 
 ```sh
