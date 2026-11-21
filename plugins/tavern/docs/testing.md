@@ -1,9 +1,40 @@
-# Test filesystem isolation
+# Testing
 
-Run `node node_modules/vitest/vitest.mjs run` from the plugin directory to avoid npm launcher logs. `npx vitest run` also works, but npm starts before this isolation and may write its own debug log to the caller’s npm cache. Vitest creates one temporary suite root before it starts workers. HOME, PI_CODING_AGENT_DIR, the XDG directories, npm and Git configuration paths, and TMPDIR/TMP/TEMP point inside that root. Vite's cache stays there too; the root is removed when the runner exits.
+Run tests, type checks, and marketplace checks before landing changes to `plugins/tavern`.
 
-The worker setup blocks Node filesystem writes outside the suite root and reads of the real home outside the checkout and explicitly allowed node_modules. It checks sync, callback, promise, stream and descriptor APIs, follows symlinks, and rejects content writes through hard links. An attempted escape fails the test even if application code catches the immediate error. Standard input/output descriptors remain available for test-runner communication.
+## Running checks
 
-Use `tmpdir()` for ordinary fixtures. Use `TAVERN_TEST_FIXTURES` for project fixtures that must be outside the scope engine's scratch roots; it is a sibling of the suite's temporary directory, not part of the checkout. Optional capture/report output paths must also be inside the suite root. The actual pi jiti dependency is read-only; it does not use the fake home to locate installed code.
+From `plugins/tavern` (avoid `npx`, which writes launcher logs before test isolation starts):
 
-This is a Node filesystem tripwire, not an OS sandbox. It does not police native child-process or better-sqlite3 filesystem syscalls. Git, shell/sandbox and SQLite fixtures must therefore use paths inside the suite root; child processes inherit the temporary home/configuration/cache paths. Do not use native code as a bypass, and do not treat these checks as an adversarial security boundary.
+```sh
+node node_modules/vitest/vitest.mjs run --maxWorkers=1
+node node_modules/vitest/vitest.mjs run test/scope --maxWorkers=1
+node_modules/.bin/tsc -p . --noEmit
+bb plugin build .
+```
+
+Use `--maxWorkers=1` (or `2` when the machine is idle) because Tavern's Git-heavy tests can saturate local I/O if run with many workers. Placement, transport, and snapshot suites run longest.
+
+From the repository root (required for GitHub's Check workflow):
+
+```sh
+npm test
+npm run check
+git diff --check
+```
+
+`npm run check` validates `entries/tavern.json`, `PLUGIN_OVERVIEW.md` (character limit, no `# ` title, no HTML/images/relative links), `CHANGELOG.md` format, and checks that `marketplace.json` is up to date (rebuild with `npm run build` after changing `PLUGIN_OVERVIEW.md` or `entries/tavern.json`).
+
+## Test filesystem isolation
+
+Vitest creates one temporary suite root before starting workers and points `HOME`, `PI_CODING_AGENT_DIR`, XDG directories, npm/Git config paths, Vite's cache, and `TMPDIR`/`TMP`/`TEMP` inside it. The suite root is deleted on clean exit (send `SIGINT`, not `SIGTERM`, if aborting a run so cleanup runs).
+
+Worker setup installs a Node filesystem tripwire that blocks writes outside the suite root and reads of the real home directory outside the checkout and allowed `node_modules` (covering sync, callback, promise, stream, descriptor APIs, symlinks, and hard links). Any attempted escape fails the test even if application code catches the error.
+
+### Fixture rules
+
+- Use `tmpdir()` for ordinary test fixtures.
+- Use `TAVERN_TEST_FIXTURES` for project fixtures that must sit outside the scope engine's scratch roots (it is a sibling of the suite's temp directory, outside the checkout).
+- Keep all Git, shell/sandbox, and SQLite fixture paths inside the suite root: the tripwire polices Node FS APIs, not native child processes or `better-sqlite3` syscalls.
+- Real `sandbox-exec` probes run on macOS under `/private/tmp` and clean up after themselves.
+- Optional private scope replay (`test/scope/effect-containment.test.ts`) is skipped unless `TAVERN_SCOPE_REPLAY` points to a scrubbed fixture file.

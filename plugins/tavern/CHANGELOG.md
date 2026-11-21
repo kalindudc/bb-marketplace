@@ -60,6 +60,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Changed
 
+- The README and documentation explain how to run a quest, steer its party and make decisions. The marketplace listing starts in the fictional Demo Notes Keeper thread and shows the quest map, an ask in the composer and the Journal tab.
 - The shell guard applies the same protections across machine providers: rotate, park, and remove are configuration changes, and create and enroll are machine allocation, for `bb` command groups ending in `-machines`.
 - Agents with an active guard cannot send messages as you, even in Watch or Off. A blocked send leaves you one handoff with the recipient and message when the call reveals them. Scopes accepts tool patterns and shell command prefixes. Named-target draft approvals wake the member for one exact call. Older guards keep their ordinary scope and need a restart for the send guard. If the message policy and scope disagree, Tavern reports it and holds recognized sends and drafts without stopping unrelated work.
 - Reports label confidence percentages as the member’s own estimate, not a Warden verdict.

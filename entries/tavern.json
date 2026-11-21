@@ -5,6 +5,14 @@
   "icon": {
     "url": "plugins/tavern/icons/tavern.svg"
   },
+  "screenshots": [
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/tavern/keeper-thread.jpg",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/tavern/thread-quest-map.jpg",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/tavern/thread-needs-you.jpg",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/tavern/thread-journal-light.jpg",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/tavern/common-room.jpg",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/tavern/the-map.jpg"
+  ],
   "tags": [
     "parallel-agents",
     "orchestration",
