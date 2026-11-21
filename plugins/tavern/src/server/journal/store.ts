@@ -437,9 +437,16 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       saveEntries(threadId, after);
       const seen = actor.kind !== "user" && !(actor.kind === "agent" && actor.threadId !== threadId);
       const sequence = record(threadId, actor, action.action, ids, text, seen);
-      if (action.action === "verify" || action.action === "reject") for (const id of ids) {
-        const prior = before.find(e => e.id === id), entry = after.find(e => e.id === id);
-        if (prior && entry && JSON.stringify(prior.review) !== JSON.stringify(entry.review)) deps.reviewed?.({ before: copy(prior), after: copy(entry), sequence });
+      if (action.action === "verify" || action.action === "reject") {
+        const priorEntries = new Map(before.map(entry => [entry.id, entry]));
+        const changedIds = new Set(ids);
+        const reviews = after.flatMap(entry => {
+          const prior = priorEntries.get(entry.id);
+          return changedIds.has(entry.id) && prior && JSON.stringify(prior.review) !== JSON.stringify(entry.review)
+            ? [{ before: copy(prior), after: copy(entry), sequence }] : [];
+        });
+        if (reviews.length) deps.verdictSubmitted?.(actor, reviews.map(review => review.after));
+        for (const review of reviews) deps.reviewed?.(review);
       }
       if (reviewHistory) for (const entry of reviewHistory.after) {
         const prior = reviewHistory.before.find(e => e.id === entry.id);

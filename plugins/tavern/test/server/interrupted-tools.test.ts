@@ -25,7 +25,9 @@ async function fixture() {
     events.push({ seq: events.length + 1, createdAt: f.time(), type, scope: turnId ? { kind: "turn", turnId } : { kind: "thread" }, data });
   };
   const observe = () => f.runtime.observe(makeThreadResponse({ id: "lead" }), events.length);
-  const decision = { boardQuestId: q.id, text: "Keep the existing plan", why: "No change to scope", reversible: true, source: "keeper" };
+  const route = f.k.store.query("routes", "keeperThreadId", "lead", 50).find(route => route.boardQuestId === q.id)!;
+  const decision = { boardQuestId: q.id, text: "Keep the existing plan", why: "No change to scope", reversible: true, source: "keeper",
+    coveredBy: { kind: "route", id: route.id }, options: ["Keep the plan", "Revise it"], consequence: { change: "None", audience: "The party", undo: "Revise the plan" }, unsure: false };
   return { ...f, q, invoke, event, observe, decision };
 }
 

@@ -168,6 +168,7 @@ export interface TickBatch {
   gateReminderKeys?: string[];
   gateWarnings?: { key: string; value: string }[];
   briefWarnings?: { memberThreadId: string; signature: string }[];
+  momentKeys?: string[];
   reanchorVersion?: number;
   reanchor: string | null;
   createdAt: number;
@@ -227,6 +228,8 @@ export interface Runtime {
   lastReply?: { text: string; at: number };
   lastSpendActivityAt?: number;
   reanchorVersion?: number;
+  momentCards?: { reanchorVersion: number; keys: string[] };
+  pendingMomentEvents?: number[];
   failureCount?: number;
   tickRefusalCount?: number;
   tickRetryAt?: number | null;
@@ -965,6 +968,10 @@ export class KeeperStore {
       `WHERE keeper_thread_id=? AND id>? ${visibleOnly ? `AND ${visibleEventSql}` : ""} ORDER BY id ASC LIMIT ?`,
       [keeperThreadId, after, limit],
     );
+  }
+  momentEvents(keeperThreadId: string, ids: number[]) {
+    if (!ids.length) return [];
+    return this.readEvents(`WHERE keeper_thread_id=? AND id IN (SELECT value FROM json_each(?)) AND ${visibleEventSql} ORDER BY id ASC`, [keeperThreadId, JSON.stringify(ids)]);
   }
   eventCount(keeperThreadId: string, after: number, visibleOnly = false) {
     return (

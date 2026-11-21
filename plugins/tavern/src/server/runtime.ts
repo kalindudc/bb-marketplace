@@ -805,6 +805,7 @@ export class TavernRuntime {
     readonly bb: BbPluginApi,
     readonly keeper: Keeper,
     readonly registry: Registry,
+    readonly keeperCards?: import("./keeper/cards").KeeperCards,
   ) {
     this.alerts = new AlertRoute(bb, keeper);
     keeper.routineAskOpened = async ask => { if (ask.boardQuestId) await this.applyStandingAnswers(ask.boardQuestId); };
@@ -1639,6 +1640,7 @@ export class TavernRuntime {
       );
       if (!entries.length)
         throw new Error(`Cannot hire a Warden for ${waypoint.id}: maker ${maker.threadId} has no known journal entry for this waypoint. Link the maker entry first.`);
+      this.keeper.assertReviewPlan(q.id, maker.threadId, waypoint.id);
       reviewTarget = { boardQuestId: q.id, waypointId: waypoint.id, makerThreadId: maker.threadId, entryIds: entries.map(entry => entry.id) };
     }
     let staffingCapacity: number | null = null;

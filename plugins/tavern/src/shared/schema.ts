@@ -518,8 +518,20 @@ export const askSchema = z.object({
 });
 export type Ask = z.infer<typeof askSchema>;
 
+const decisionReceiptSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("route"), id }).strict(),
+  z.object({ kind: z.literal("rule"), id }).strict(),
+  z.object({ kind: z.literal("answer"), id }).strict(),
+  z.object({ kind: z.literal("plan"), version: z.number().int().positive(), waypointId: id }).strict(),
+]);
+const consequenceLine = z.string().trim().min(1).max(400);
+
 /** A call recorded in the ledger. Reversible calls the Keeper made alone show under "Decided for you" with an Undo. */
 export const decisionSchema = z.object({
+  coveredBy: decisionReceiptSchema.optional(),
+  options: z.array(consequenceLine).min(1).max(5).optional(),
+  consequence: z.object({ change: consequenceLine, audience: consequenceLine, undo: consequenceLine }).strict().optional(),
+  unsure: z.boolean().optional(),
   undoUnavailable: z.literal(true).optional(),
   answerReceipt: id.optional(),
   pullRequestReady: id.optional(),
@@ -572,6 +584,7 @@ export const reportSchema = z.object({
   outcome: z.string().min(1).max(4000),
   // added by Builder B: the answer belongs in credits; the full report stays one click away.
   headline: z.string().trim().min(1).max(160).optional(),
+  reviewWait: z.object({ planVersion: z.number().int().positive(), waypointIds: z.array(id).min(1) }).optional(),
   evidence: z.array(evidenceSchema).max(30),
   artifacts: z.array(z.string().max(1000)).max(30),
   confidence: z.object({ intent: z.number().int().min(0).max(100), safe: z.number().int().min(0).max(100) }).nullable(),

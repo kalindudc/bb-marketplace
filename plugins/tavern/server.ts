@@ -11,6 +11,7 @@ import { registerJournal } from "./src/server/journal/index";
 import type { RegisterJournal } from "./src/server/ports";
 import { KeeperStore } from "./src/server/keeper/store";
 import { Keeper } from "./src/server/keeper/service";
+import { loadKeeperCards } from "./src/server/keeper/cards";
 import { Registry } from "./src/server/registry";
 import { TavernRuntime } from "./src/server/runtime";
 import { registerTools } from "./src/server/tools/index";
@@ -47,6 +48,8 @@ export function pause(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 export default async function tavern(bb: BbPluginApi) {
+  const pluginRoot = new URL(existsSync(new URL("./classes", import.meta.url)) ? "./" : "../", import.meta.url);
+  const keeperCards = loadKeeperCards(pluginRoot);
   registerProvider(bb);
   const storage = bb.storage.database();
   bb.storage.migrate(storage, MIGRATIONS);
@@ -62,6 +65,7 @@ export default async function tavern(bb: BbPluginApi) {
   let runtime: TavernRuntime | undefined;
   const register: RegisterJournal = registerJournal;
   const journal = register(bb, db, {
+    verdictSubmitted: (actor, entries) => keeper.recordWardenRound(actor, entries),
     reviewed: review => {
       if (!runtime) throw new Error("Tavern is still starting");
       runtime.serviceRecords.reviewed(review);
@@ -101,14 +105,8 @@ export default async function tavern(bb: BbPluginApi) {
   runtime = new TavernRuntime(
     bb,
     keeper,
-    new Registry(
-      fileURLToPath(
-        new URL(
-          existsSync(new URL("./classes", import.meta.url)) ? "./" : "../",
-          import.meta.url,
-        ),
-      ),
-    ),
+    new Registry(fileURLToPath(pluginRoot)),
+    keeperCards,
   );
   const burn = new BurnCosts(bb);
   const insights = new InsightsReader(db, settings, Date.now, (data, from, to) => burn.read(data, from, to), () => ({ characters: runtime.snapshot().characters.map(character => ({ id: character.id, classIds: character.classes })), serviceRecords: runtime.serviceRecords.read() }));

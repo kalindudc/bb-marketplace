@@ -363,22 +363,21 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       return `Ask recorded. Continue the work that does not depend on it. Write on its own line:\n::tavern-ask{id="${ask.id}"}`;
     },
   );
+  const decisionCheck = decisionSchema.pick({ consequence: true, unsure: true }).required();
+  const decisionInput = decisionSchema.pick({ text: true, why: true, reversible: true, source: true })
+    .extend({ ...decisionCheck.shape, boardQuestId: optionalQuest, sourceRef: id.nullish() });
   register(
     "tavern_decide",
     "Recorded a decision",
-    "Delegated asks arrive in your Keeper lane: answer with askId and optionId (recorded with Undo), or ask the user when unsure. Quest pre-approval answers routine asks in code; its receipt names the user's record. Record a reversible decision with its reason. Never claim the user's consent without an answered ask: sourceRef must name a real user-answered ask; source:user is not allowed. exceeds: party or rangers permits one extra hire at that soft limit, used once. The review budget and keepers.partyMax are hard limits only the user lifts.",
-    decisionSchema
-      .pick({
-        text: true,
-        why: true,
-        reversible: true,
-        source: true,
-        exceeds: true,
-        askId: true, optionId: true, kind: true,
-      })
-      .extend({ boardQuestId: optionalQuest, sourceRef: id.nullish() }),
+    "Record a reversible decision with Undo. For a plain call give coveredBy, options, consequence and unsure:false. For your lane's ask give askId, optionId, consequence and unsure:false; Tavern gets the citation and options from the ask. If unsure, ask the user. Never claim the user's consent without an answered ask; give its sourceRef. exceeds: party or rangers allows one extra hire within hard limits.",
+    z.union([
+      decisionInput.extend(decisionSchema.pick({ coveredBy: true, options: true }).required().shape)
+        .extend(decisionSchema.pick({ exceeds: true }).shape).strict(),
+      decisionInput.extend(decisionSchema.pick({ askId: true, optionId: true }).required().shape)
+        .extend(decisionSchema.pick({ kind: true }).shape).strict(),
+    ]).meta({ type: "object" }),
     async (input, threadId) => {
-      if (input.askId) await runtime.prepareActDecision(input.askId);
+      if ("askId" in input && !input.unsure) await runtime.prepareActDecision(input.askId);
       const result = k.decideOrAsk(threadId, input);
       return "question" in result ? keeperCallAsk(result.id) : result;
     },
@@ -512,7 +511,8 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         archiveBlocker = await runtime.archiveMember(threadId, report.id);
       }
       const warning = report.status === "done" ? await runtime.uncommittedWarning(threadId) : null;
-      return `Report written. End your turn.\nReport id: ${report.id}${archiveBlocker ? `\nArchive pending: ${archiveBlocker} The thread and its allocation stay held. Tavern will retry preservation before cleanup.` : ""}${warning ? `\n${warning}` : ""}`;
+      const reviewWait = k.pendingReviewPlan(report);
+      return `Report written. End your turn.\nReport id: ${report.id}${reviewWait ? `\nReview for ${reviewWait.waypointIds.join(", ")} waits for the Keeper to record a new plan version.` : ""}${archiveBlocker ? `\nArchive pending: ${archiveBlocker} The thread and its allocation stay held. Tavern will retry preservation before cleanup.` : ""}${warning ? `\n${warning}` : ""}`;
     },
     "member",
   );
