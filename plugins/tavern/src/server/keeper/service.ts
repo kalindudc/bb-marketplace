@@ -36,6 +36,7 @@ import {
   type Actor,
   type BoardQuest,
   type Brief,
+  type JournalEntry,
   type Member,
   type Plan,
   type Report,
@@ -45,6 +46,7 @@ import {
 import { tags, type BoardQuestSummary } from "../../shared/contract";
 import { KeeperStore, type ReviewTarget } from "./store";
 import { renderRestatement } from "./restatement";
+import { planDiff } from "./plan-diff";
 import { checkerAssignments } from "../assignments";
 import { reviewLimitation } from "../../shared/check-posture";
 import { KeeperMemory } from "./memory";
@@ -855,6 +857,7 @@ export class Keeper {
       visited.add(id);
     };
     for (const id of ids) visit(id);
+    const previous = q.planVersion > 0 ? this.store.get("plans", `${q.id}:${q.planVersion}`) : null;
     const approved =
       q.greenlitVersion === null
         ? null
@@ -894,6 +897,9 @@ export class Keeper {
         this.store.put("quests", q.id, updated);
         this.store.event(this.now(), threadId, q.id, "plan.proposed", `Plan v${plan.version}`, data, { kind: "agent", threadId });
       }
+      if (previous) this.store.event(this.now(), threadId, q.id, "plan.revised", `Revised plan v${previous.version} to v${plan.version}`, {
+        fromVersion: previous.version, toVersion: plan.version, reason: plan.changeNote, diff: planDiff(previous, plan),
+      }, { kind: "agent", threadId });
       for (const ask of this.asks(threadId).filter(
         (a) =>
           a.boardQuestId === q.id &&
@@ -1015,7 +1021,19 @@ export class Keeper {
     });
   }
   decideOrAsk(threadId: string, input: Parameters<Keeper["decide"]>[1]): Decision | Ask {
-    if (!input.exceeds || input.source === "user" || !input.reversible || input.askId || input.kind) return this.decide(threadId, input);
+    this.require(threadId, "keeper");
+    const quest = input.boardQuestId ? this.liveQuest(threadId, input.boardQuestId) : null;
+    if (quest) this.guard(threadId, quest.id);
+    if (input.askId) {
+      if (input.unsure === true) throw new Error("This is uncertain; ask the user instead of recording a decision.");
+      if (input.unsure !== false || !input.consequence) throw new Error("Give consequence and unsure:false, or ask the user.");
+      const ask = this.store.get("asks", input.askId);
+      if (!ask || ask.keeperThreadId !== threadId || ask.boardQuestId !== (quest?.id ?? null))
+        throw new Error("A Keeper answer needs its own exact quest ask, kind and option");
+      return this.decide(threadId, { ...input, coveredBy: { kind: "answer", id: ask.id }, options: ask.options.map(option => option.label) });
+    }
+    if (input.source !== "user") this.checkDecision(threadId, quest, input);
+    if (!input.exceeds || input.source === "user" || !input.reversible || input.kind) return this.decide(threadId, input);
     this.assertUnusedSoftLimitAnswer(input.sourceRef);
     const shift = this.keeperCallShift(threadId, input.exceeds);
     if (!shift) return this.decide(threadId, input);
@@ -1023,6 +1041,44 @@ export class Keeper {
     const question = `Allow one hire beyond the class ${target} limit?`;
     return this.askForKeeperCall(threadId, input.boardQuestId ?? null, { type: "soft-limit", limit: input.exceeds, text: input.text, reason: input.why },
       question, "Allow one hire", `Give the Keeper one ${target} exception for this hire; your settings ceiling still applies.`, "Do not give the Keeper an exception.", "The Keeper waits for your answer before using an exception.");
+  }
+  private checkDecision(threadId: string, quest: BoardQuest | null, input: Parameters<Keeper["decide"]>[1]) {
+    if (input.unsure === true) throw new Error("This is uncertain; ask the user instead of recording a decision.");
+    const { coveredBy, options, consequence, unsure } = input;
+    if (!coveredBy || !options || !consequence || unsure !== false) {
+      throw new Error("Give coveredBy, options, consequence and unsure:false, or ask the user.");
+    }
+    const questId = quest?.id ?? null;
+    let valid: boolean;
+    switch (coveredBy.kind) {
+      case "route": {
+        const route = this.store.get("routes", coveredBy.id);
+        const receipt = route?.sourceMessageId && this.store.db.prepare("SELECT 1 FROM tavern_messages WHERE id=? AND thread_id=? AND accepted=2 AND length(trim(text))>0").get(route.sourceMessageId, threadId);
+        valid = !!receipt && route?.keeperThreadId === threadId && !route.classSelectionOnly &&
+          (questId === null ? route.kind === "aside" : ["new-quest", "steer"].includes(route.kind) && routeQuestIds(route).includes(questId));
+        break;
+      }
+      case "rule": {
+        const rule = this.store.get("rules", coveredBy.id);
+        valid = !!rule?.active && (rule.scope === "global" ||
+          rule.scope === "keeper" && rule.scopeId === threadId ||
+          rule.scope === "quest" && rule.scopeId === questId ||
+          rule.scope === "project" && rule.scopeId === this.store.runtime(threadId).projectId);
+        break;
+      }
+      case "answer": {
+        const ask = this.store.get("asks", coveredBy.id);
+        valid = ask?.keeperThreadId === threadId && ask.boardQuestId === questId && ask.state === "answered" && ask.answer?.by === "user";
+        break;
+      }
+      case "plan": {
+        const version = coveredBy.version;
+        const plan = quest && version === (quest.checkPlanVersion ?? quest.greenlitVersion) && this.store.get("plans", `${quest.id}:${version}`);
+        valid = !!plan && plan.waypoints.some(w => w.id === coveredBy.waypointId);
+        break;
+      }
+    }
+    if (!valid) throw new Error("coveredBy must name a real route, active rule, user answer or approved plan step that applies here.");
   }
   private assertUnusedSoftLimitAnswer(sourceRef: string | null | undefined) {
     if (sourceRef && this.store.get("asks", sourceRef)?.effect?.type === "soft-limit")
@@ -1287,7 +1343,7 @@ export class Keeper {
     }
     if (by === "keeper") {
       assertUndoLane(this.store, ask.keeperThreadId, ask.kind);
-      if (this.authority.lane(ask) !== "keeper") throw new Error("This ask belongs to the user");
+      if (this.authority.lane(ask) !== "keeper") throw new Error("This ask belongs to the user; ask them to decide.");
       const outcome = ask.effect?.type === "decision" ? ask.effect.outcomes?.find(answer => answer.optionId === optionId)?.outcome : undefined;
       if (outcome !== "decline" && !(ask.effect?.type === "grant-shell-act" && optionId === "deny")) this.authority.assertVerdict(ask);
     }
@@ -1416,7 +1472,7 @@ export class Keeper {
   }
   decide(
     threadId: string,
-    input: {
+    input: Pick<Decision, "coveredBy" | "options" | "consequence" | "unsure"> & {
       askId?: string; optionId?: string; kind?: import("../../shared/quest-authority").DelegationKind;
       boardQuestId?: string | null;
       text: string;
@@ -1495,7 +1551,7 @@ export class Keeper {
     this.store.atomic(() => {
       if (input.askId) {
         const ask = this.store.get("asks", input.askId);
-        if (!ask || ask.keeperThreadId !== threadId || ask.boardQuestId !== questId || input.source !== "keeper" || !input.optionId) throw new Error("A Keeper answer needs its own quest ask and option");
+        if (!ask || ask.keeperThreadId !== threadId || ask.boardQuestId !== questId || input.source !== "keeper" || !input.optionId || (input.kind && input.kind !== ask.kind)) throw new Error("A Keeper answer needs its own exact quest ask, kind and option");
         this.answerAsk(ask.id, input.optionId, input.why, "chat", "keeper");
       } else if (input.kind) throw new Error("A delegated kind needs its exact askId and optionId");
       this.store.put("decisions", decision.id, decision);
@@ -1601,7 +1657,7 @@ export class Keeper {
         d.keeperThreadId,
         d.boardQuestId,
         "decision.undone",
-        grantAtUndo ? "The grant cannot be used again. Commands that already ran cannot be undone by Tavern." : `Undo this decision and reconcile its effects: ${d.text}`,
+        grantAtUndo ? "The grant cannot be used again. Commands that already ran cannot be undone by Tavern." : d.pullRequestGrant ? "Undo revokes the one-use exception. If the command already ran, its effects cannot be reversed by Tavern." : `Undo this decision and reconcile its effects: ${d.text}`,
         { decisionId: id },
         { kind: "user" },
       );
@@ -1809,14 +1865,26 @@ export class Keeper {
       createdAt: this.now(),
       deliveredAt: late ? this.now() : null,
     });
-    const previous = this.store.query(
-      "reports",
-      "memberThreadId",
-      threadId,
-      1,
-    )[0];
+    const previous = this.store.query("reports", "memberThreadId", threadId, 1)[0];
+    const quest = m.boardQuestId ? this.store.get("quests", m.boardQuestId) : null;
+    const reviewPlanVersion = quest?.checkPlanVersion ?? quest?.greenlitVersion;
+    const reviewPlan = quest && reviewPlanVersion && this.store.get("plans", `${quest.id}:${reviewPlanVersion}`);
+    const reviewWaypoints = !late && report.status === "done" && m.classId !== "warden" && reviewPlan
+      ? reviewPlan.waypoints.flatMap(w => {
+          const entryIds = entries.filter(e => e.link?.waypointId === w.id && e.status === "done").map(e => e.id);
+          return entryIds.length && w.actor === "agent" && waypointCheck(w) === "warden" ? [{ waypointId: w.id, entryIds }] : [];
+        })
+      : [];
+    const rejections = quest && reviewPlanVersion && reviewWaypoints.length
+      ? this.store.db.prepare(`SELECT DISTINCT json_extract(data,'$.waypointId') AS waypointId, json_extract(data,'$.reportId') AS reportId,
+        json_extract(data,'$.planVersion') AS planVersion
+        FROM tavern_events WHERE board_quest_id=? AND type IN ('waypoint.review-round','waypoint.review-rejected')
+        AND (json_extract(data,'$.planVersion')=? OR json_extract(data,'$.reportId')=?)
+        AND json_extract(data,'$.verdict')='rejected' AND json_type(data,'$.reportId')='text'`)
+        .all(quest.id, reviewPlanVersion, previous?.id ?? null) as { waypointId: string; reportId: string; planVersion: number }[]
+      : [];
     if (
-      previous &&
+      previous && !rejections.some(rejection => rejection.reportId === previous.id && reviewWaypoints.some(w => w.waypointId === rejection.waypointId)) &&
       (this.store.runtime(threadId).briefVersion ?? 0) ===
         (this.store.runtime(threadId).reportedBriefVersion ?? 0) &&
       previous.status === report.status &&
@@ -1827,14 +1895,23 @@ export class Keeper {
       isDeepStrictEqual(previous.wait, report.wait)
     )
       return { ...previous, voice: null };
+    const held = reviewWaypoints.filter(({ waypointId }) =>
+      rejections.filter(rejection => rejection.waypointId === waypointId && rejection.planVersion === reviewPlanVersion).length >= 2);
+    if (reviewPlanVersion && held.length) report.reviewWait = { planVersion: reviewPlanVersion, waypointIds: held.map(w => w.waypointId) };
     this.store.atomic(() => {
+      const reviewWaitNotice = !report.reviewWait ? [] : report.reviewWait.waypointIds.filter(waypointId =>
+        !this.store.db.prepare(`SELECT 1 FROM tavern_events WHERE board_quest_id=? AND type='report.filed'
+          AND json_extract(data,'$.reviewPlanVersion')=? AND ? IN (SELECT value FROM json_each(data,'$.reviewWaitNotice')) LIMIT 1`)
+          .get(report.boardQuestId, reviewPlanVersion, waypointId));
       this.store.put("reports", report.id, report);
       if (!late) {
         this.memory.clearMemberWait(threadId);
         this.memory.recordMemberWait(report);
       }
       this.store.patch(threadId, { reportedBriefVersion: this.store.runtime(threadId).briefVersion ?? 0 });
-      const text = `${this.name(m)}: ${input.outcome}`, data = { reportId: report.id, status: input.status };
+      const text = `${this.name(m)}: ${input.outcome}`, data = { reportId: report.id, status: input.status,
+        ...(reviewWaypoints.length ? { makerThreadId: threadId, reviewPlanVersion, reviewWaypoints } : {}),
+        ...(reviewWaitNotice.length ? { reviewWaitNotice } : {}) };
       if (!late && input.status === "done" && m.engagement === "active") {
         transitionMember(this.store, m, "resting", "done-report", { kind: "agent", threadId }, { kind: "report", id: report.id }, this.now(), { text, data });
       } else {
@@ -1850,6 +1927,58 @@ export class Keeper {
     });
     this.changed(threadId, m.boardQuestId);
     return report;
+  }
+  pendingReviewPlan(report: Report) {
+    const quest = report.boardQuestId && this.store.get("quests", report.boardQuestId);
+    const version = quest ? quest.checkPlanVersion ?? quest.greenlitVersion : null;
+    return report.reviewWait && (version == null || version <= report.reviewWait.planVersion) ? report.reviewWait : null;
+  }
+  private reviewSubmission(questId: string, makerThreadId: string, waypointId: string) {
+    return this.store.db.prepare(`SELECT json_extract(data,'$.reportId') AS reportId,
+      json_extract(data,'$.reviewPlanVersion') AS planVersion, json_extract(w.value,'$.entryIds') AS entryIds
+      FROM tavern_events, json_each(data,'$.reviewWaypoints') w WHERE board_quest_id=? AND tavern_events.type='report.filed'
+      AND json_extract(data,'$.makerThreadId')=? AND json_extract(w.value,'$.waypointId')=? ORDER BY tavern_events.id DESC LIMIT 1`)
+      .get(questId, makerThreadId, waypointId) as { reportId: string; planVersion: number; entryIds: string } | undefined;
+  }
+  assertReviewPlan(questId: string, makerThreadId: string, waypointId: string) {
+    const submission = this.reviewSubmission(questId, makerThreadId, waypointId);
+    if (submission) this.assertSubmissionReviewPlan(submission.reportId, waypointId);
+  }
+  private assertSubmissionReviewPlan(reportId: string, waypointId: string) {
+    const report = this.store.get("reports", reportId);
+    const wait = report && this.pendingReviewPlan(report);
+    if (wait?.waypointIds.includes(waypointId))
+      throw new Error(`${waypointId} had two rejected rounds in plan v${wait.planVersion}. This review waits for the Keeper to record a new plan version.`);
+    return report;
+  }
+  recordWardenRound(actor: Actor, entries: JournalEntry[]) {
+    const warden = actor.kind === "agent" ? this.member(actor.threadId) : null;
+    if (warden?.classId !== "warden" || !warden.boardQuestId) return;
+    const q = this.quest(warden.boardQuestId);
+    if (!isOpenQuest(q)) return;
+    const makerThreadId = entries[0]?.threadId;
+    if (!makerThreadId) return;
+    const waypoints = new Set(entries.flatMap(e => e.link?.boardQuestId === q.id ? [e.link.waypointId] : []));
+    for (const waypointId of waypoints) {
+      const submission = this.reviewSubmission(q.id, makerThreadId, waypointId);
+      if (!submission) continue;
+      const { reportId } = submission;
+      const submitted = new Set<string>(JSON.parse(submission.entryIds));
+      const reviewed = entries.filter(e => e.link?.waypointId === waypointId && submitted.has(e.id));
+      if (!reviewed.length) continue;
+      const report = this.assertSubmissionReviewPlan(reportId, waypointId);
+      const verdict = reviewed.some(e => e.status === "rejected") ? "rejected" : "verified";
+      const prior = this.store.db.prepare(`SELECT json_extract(data,'$.verdict') AS verdict, json_extract(data,'$.planVersion') AS planVersion
+        FROM tavern_events WHERE board_quest_id=? AND type IN ('waypoint.review-round','waypoint.review-rejected')
+        AND json_extract(data,'$.waypointId')=? AND json_extract(data,'$.reportId')=? ORDER BY id DESC LIMIT 1`)
+        .get(q.id, waypointId, reportId) as { verdict: string; planVersion: number } | undefined;
+      if (prior && (prior.verdict === "rejected" || verdict === "verified")) continue;
+      const planVersion = prior?.planVersion ?? (report?.reviewWait?.waypointIds.includes(waypointId)
+        ? q.checkPlanVersion ?? q.greenlitVersion ?? submission.planVersion : submission.planVersion);
+      this.store.event(this.now(), q.keeperThreadId, q.id, prior ? "waypoint.review-rejected" : "waypoint.review-round",
+        `Warden ${verdict} work on ${waypointId} in plan v${planVersion}`,
+        { waypointId, planVersion, verdict, reportId, makerThreadId, entryIds: reviewed.map(entry => entry.id) }, actor);
+    }
   }
   checkerWaypoints(threadId: string) {
     const member = this.member(threadId);

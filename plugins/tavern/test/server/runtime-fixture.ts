@@ -12,7 +12,7 @@ import { createFakePluginHost, makeThreadResponse } from "./host";
 import { providerSdk } from "./provider-fixture";
 import { worktreeProvider } from "./environment-fixture";
 
-export function setup(sdkOverrides: Record<string, unknown> = {}, pluginRoot = fileURLToPath(new URL("../../", import.meta.url))) {
+export function setup(sdkOverrides: Record<string, unknown> = {}, pluginRoot = fileURLToPath(new URL("../../", import.meta.url)), keeperCards?: import("../../src/server/keeper/cards").KeeperCards) {
   let now = 1_000_000;
   const db = new Database(":memory:");
   for (const sql of MIGRATIONS) db.exec(sql);
@@ -53,6 +53,7 @@ export function setup(sdkOverrides: Record<string, unknown> = {}, pluginRoot = f
     host.bb,
     k,
     new Registry(pluginRoot, "/nonexistent"),
+    keeperCards,
   );
   k.bind("lead", "keeper", "wren", "project");
   return {

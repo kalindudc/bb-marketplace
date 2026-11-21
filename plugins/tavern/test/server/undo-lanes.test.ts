@@ -167,7 +167,11 @@ it.each(["party", "rangers"] as const)("requires a typed answer for the next %s 
   const input = { text: "One extra", why: "Bounded work", reversible: true, source: "keeper" as const, exceeds: kind };
   await f.undo(f.k.decide("lead", input).id);
   await f.undo(f.k.decide("lead", input).id);
-  const propose = (fields = {}) => f.harness.behavior.invokeAgentTool("tavern_decide", { ...input, ...fields }, { threadId: "lead" });
+  const rule = f.k.addRule({ scope: "keeper", scopeId: "lead", source: "message", text: "Allow an extra hire for bounded work." });
+  const propose = (fields = {}) => f.harness.behavior.invokeAgentTool("tavern_decide", {
+    ...input, coveredBy: { kind: "rule", id: rule.id }, options: ["Allow one extra", "Stay at the current limit"],
+    consequence: { change: "Allow one extra hire", audience: "The Keeper", undo: "Undo the exception" }, unsure: false, ...fields,
+  }, { threadId: "lead" });
   await propose();
   const ask = f.k.store.openAsks("lead").find(a => a.boardQuestId === null)!;
   expect(ask).toMatchObject({ lane: "user", effect: { type: "soft-limit", limit: kind }, proceedAt: null });

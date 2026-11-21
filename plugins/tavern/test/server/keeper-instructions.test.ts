@@ -55,9 +55,9 @@ for (const heading of ["Take a thin goal", "Scout", "Propose the map", "Size the
     expect(Buffer.byteLength(sections.get(heading)!)).toBeLessThanOrEqual(1500);
   });
 }
-it("asks for the full skill at quest opening and after a re-anchor without claiming future delivery or delegation", () => {
-  expect(body).toMatch(/read the full.*skill when a quest opens and after a re-anchor/i);
-  expect(body + skill).not.toMatch(/Tavern sends the section|Tavern also sends it|unless the user handed that kind|tavern_lesson|user lane|your lane/);
+it("says Tavern quotes skill sections in ticks without claiming unsupported delegation or lessons", () => {
+  expect(body).toMatch(/Tavern quotes relevant `tavern-keeper` sections in ticks/);
+  expect(body + skill).not.toMatch(/unless the user handed that kind|tavern_lesson|user lane|your lane/);
 });
 it("teaches carrying the user's outcome to done without adding a stop", () => {
   const carry = sections.get("Carry it to done")!;
