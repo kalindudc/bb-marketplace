@@ -57,6 +57,14 @@ it("registers Setup first, kit descriptions for each section, and history last",
   expect(slot.container.querySelector(".tv-set-introwrap > .tv-set-intro")?.textContent).toMatch(/\w+.*\./);
  }
 });
+it.each([
+ ["keepers","Keeper pacing and memory"],
+ ["tuning","Ledger and tuner limits"],
+])("marks the %s limits as expandable",async(id,title)=>{
+ const s=await section(id);
+ const summary=(await s.findByText(title)).closest("summary");
+ expect(summary?.querySelector("svg.act-i.down[aria-hidden='true']")).toBeTruthy();
+});
 it("shows the schema's user knobs with defaults and only offers Reset for changed values",async()=>{
  const expected=Object.entries(DEFAULT_SETTINGS).flatMap(([group,keys])=>Object.keys(keys).map(key=>`${group}.${key}`));
  // Class records, machine rules and forge profiles have dedicated editors.
@@ -328,6 +336,7 @@ it("keeps large changes readable with three keys and folded remaining details",a
  const s=await section("settings-history",view);fireEvent.click(await s.findByRole("button",{name:"1 change"}));
  expect(s.container.querySelector(".tv-settings-keys")?.children).toHaveLength(3);
  const more=s.container.querySelector("details");expect(more?.open).toBe(false);expect(more?.querySelector("summary")?.textContent).toContain("5 more settings");
+ expect(more?.querySelector("summary svg.act-i.down[aria-hidden='true']")).toBeTruthy();
 });
 it("names Atmosphere in history for all six keys, including legacy TOML spellings",async()=>{
  const changes=[

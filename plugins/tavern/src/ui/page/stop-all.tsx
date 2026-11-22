@@ -1,7 +1,7 @@
 import { experimental_useRpcMutation, experimental_useRpcQuery } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useRef, useState } from "react";
 import { QUEUED_STOP_NOTICE, RESUME_ATTESTATION_NOTICE, stopBy, stopAllContract, type CellarStopReceipt, type StopReceipt } from "../../shared/stop-all";
-import { Glyph } from "../kit";
+import { FoldSummary, Glyph } from "../kit";
 import { useTavernSettings } from "./settings";
 import "./stop-all.css";
 
@@ -48,7 +48,7 @@ export function StopReceiptView({ receipt }: { receipt: StopReceipt }) {
   return <div>
     <p>Stop requested through {receipt.surface ?? "an unrecorded surface"}.</p>
     <p>{receipt.keepersStopped} Keeper{receipt.keepersStopped === 1 ? "" : "s"} and {receipt.membersStopped} member{receipt.membersStopped === 1 ? "" : "s"} stopped; {receipt.stillStopping} still stopping; {receipt.failed} failed; {receipt.alreadyIdle} already idle. {receipt.completedAt === null ? "Collecting confirmations." : `Last confirmed stop after ${receipt.elapsedMs} ms. Still-stopping entries update when bb next reports their status.`}</p>
-    <details><summary>Stop receipt</summary><ul>{receipt.entries.map(entry => <li key={entry.threadId}>{entry.role === "keeper" ? "Keeper" : "Member"} {entry.threadId}: {entry.status.replaceAll("-", " ")}{entry.error ? ` — ${entry.error}` : ""}</li>)}</ul></details>
+    <details><FoldSummary>Stop receipt</FoldSummary><ul>{receipt.entries.map(entry => <li key={entry.threadId}>{entry.role === "keeper" ? "Keeper" : "Member"} {entry.threadId}: {entry.status.replaceAll("-", " ")}{entry.error ? ` — ${entry.error}` : ""}</li>)}</ul></details>
   </div>;
 }
 

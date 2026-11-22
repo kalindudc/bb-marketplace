@@ -97,6 +97,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Fixed
 
+- Expandable sections in Tavern Settings now show a chevron that turns when you open them.
 - Ranger's tests use the host's temporary directory for scratch writes and a separate checkout to check which Git commands can write to it.
 - The character strip takes up less space and lets bb fade scrolling chat into the composer instead of cutting it off at a hard edge.
 - The map fills the available space again when you close the quest filter, and Everyone on the map stays within the page. The filter hides finished rows until you choose Show finished quests.

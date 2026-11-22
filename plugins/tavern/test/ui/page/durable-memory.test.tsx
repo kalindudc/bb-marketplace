@@ -11,7 +11,9 @@ it("makes the active store an explicit settings change", async () => {
   const view = renderSlot({ component: MemorySettings }, {}, { pluginId: "tavern", experimental_rpcContract: memoryContract,
     rpc: { memorySettings: () => ({ revision: 3, config }), memoryConfigure: save } });
   try {
-    fireEvent.change(await view.findByLabelText("Active store"), { target: { value: "field-notes" } });
+    const activeStore = await view.findByLabelText("Active store");
+    expect(view.container.querySelector(".tv-memory-profile > summary svg.act-i.down[aria-hidden='true']")).toBeTruthy();
+    fireEvent.change(activeStore, { target: { value: "field-notes" } });
     expect(save).not.toHaveBeenCalled();
     fireEvent.click(view.getByRole("button", { name: "Save memory settings" }));
     await waitFor(() => expect(save).toHaveBeenCalledWith({ revision: 3, config: { ...config, active: "field-notes" } }));

@@ -1,6 +1,7 @@
 import { Markdown, experimental_FileLink as FileLink, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { ReactNode, ComponentProps } from "react";
 import type { Ask, KeeperNote, SummaryView } from "../../shared/schema";
+import { FoldSummary } from "./glyphs";
 import { EvidenceList, TimeAgo } from "./primitives";
 import { AskCard } from "./ask-card";
 import { KeeperNoteRows } from "./memory";
@@ -23,7 +24,7 @@ export function SummaryCard({ summary, ask, handBack, chat = false, history = fa
     </span></header>
     <div className="tv-sum-body tale-delivery-markdown" data-content>{taleDeliveryBlocks(body, "").map((block, i) => block.kind === "markdown" || chat && /^[`~]/.test(block.source.trimStart())
       ? <Markdown key={i} content={block.source} experimental_document={document} />
-      : <div key={i} className="tale-visual"><p>A visual in the Keeper’s message</p><button type="button" className="lnk-btn act" onClick={() => navigate.toThread(keeperThreadId)}>Open the Keeper’s thread</button><details><summary>Show source</summary><pre><code>{block.source}</code></pre></details></div>)}</div>
+      : <div key={i} className="tale-visual"><p>A visual in the Keeper’s message</p><button type="button" className="lnk-btn act" onClick={() => navigate.toThread(keeperThreadId)}>Open the Keeper’s thread</button><details><FoldSummary>Show source</FoldSummary><pre><code>{block.source}</code></pre></details></div>)}</div>
     <TaleResults results={results} compact />
     {links.length > 0 && <EvidenceList evidence={links} fileRef={ref => ref.startsWith("$BB_THREAD_STORAGE/") ? <FileLink target={{ kind: "thread-storage", threadId: keeperThreadId, path: ref.slice("$BB_THREAD_STORAGE/".length) }}>{ref}</FileLink> : undefined} />}
     {!!next?.length && <div className="tv-sum-next"><b>Next</b><ul>{next.map((line, i) => <li key={i}><Prose text={line} /></li>)}</ul></div>}

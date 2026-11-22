@@ -1,6 +1,7 @@
 import { experimental_useRpcMutation, experimental_useRpcQuery } from "@get-bb/plugin-sdk/app";
 import { useState } from "react";
 import { memoryConfigInput, memoryContract, type MemoryConfigInput } from "../../shared/memory";
+import { FoldSummary } from "../kit";
 import { ReadState } from "./common";
 import { PageGlyph } from "./glyphs";
 import "./memory.css";
@@ -54,7 +55,7 @@ function Profiles({ value, reload }: { value: { revision: number; config: Memory
             {draft.profiles.map((profile, index) => <option value={profile.id} disabled={!profile.id} key={index}>{profile.name || profile.id || "Unnamed profile"}</option>)}
           </select></label>
           {draft.profiles.map((profile, i) => <details className="tv-memory-profile" key={i} open={!value.config.profiles[i] || undefined}>
-            <summary>{profile.name || "New profile"}{draft.active === profile.id && " · Active"}</summary>
+            <FoldSummary>{profile.name || "New profile"}{draft.active === profile.id && " · Active"}</FoldSummary>
             <div className="tv-memory-fields">
               <div className="tv-memory-grid">
                 <label>Name<input className="tv-text" value={profile.name} maxLength={160} required onChange={event => update(i, { name: event.target.value })} /></label>

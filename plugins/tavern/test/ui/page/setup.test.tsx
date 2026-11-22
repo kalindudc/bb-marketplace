@@ -66,6 +66,17 @@ it("expands at most one proposal and seeds the composer with the chosen project 
   fireEvent.click(s.getByRole("button", { name: "Set up with an agent" }));
   await waitFor(() => expect(s.inspection.navigateCalls).toContainEqual({ method: "toCompose", options: { projectId: "platform", focusPrompt: true, initialPrompt: setupPrompt("Use a dedicated checkout for reviews.") } }));
 });
+it("marks both setup proposal disclosures as expandable in Settings", async () => {
+  const change = proposal.changes[0]!;
+  const updated = { ...proposal, changes: [{ ...change, from: [{ id: "review-drafts", name: "Old forge", kind: "github" }] }] };
+  const s = renderSlot({ component: SetupSettings }, {}, { rpc: {
+    setupPending: () => [updated], setupProjects: () => [{ id: "platform", name: "Platform" }],
+  } });
+  fireEvent.click(await s.findByRole("button", { name: /review proposal from @thr_review/i }));
+  const summaries = [...s.container.querySelectorAll("details > summary")];
+  expect(summaries.map(summary => summary.textContent)).toEqual(["Before this change", "Show as settings JSON"]);
+  expect(summaries.filter(summary => summary.querySelector("svg.act-i.down[aria-hidden='true']"))).toEqual(summaries);
+});
 it("tells the user to ask for a fresh proposal when settings changed", async () => {
   const s = directive({ ...proposal, state: "stale", conflicts: [{ key: "machines.rules", at: 1795143990000 }] });
   expect(await s.findByText("Settings changed. Ask the agent for a fresh proposal.")).toBeTruthy();

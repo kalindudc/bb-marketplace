@@ -64,8 +64,8 @@ it("states the cluster write rule on both greenlight and delegation", async () =
   try {
     expect(slot.getByText("Cluster writes always ask you, even after you approve the quest map.")).toBeTruthy();
     await slot.findByRole("heading", { name: "Authority on this quest" });
-    const delegation = slot.getByText("Let Wren decide for this quest");
-    expect(within(delegation.parentElement!).getByText("Cluster writes always ask you. Only you send messages.")).toBeTruthy();
+    const delegation = slot.getByText("Let Wren decide for this quest").closest("details")!;
+    expect(within(delegation).getByText("Cluster writes always ask you. Only you send messages.")).toBeTruthy();
   } finally { slot.lifecycle.unmount(); }
 });
 
@@ -88,7 +88,7 @@ it.runIf(process.env.TAVERN_LAYOUT_HARNESS === "1")("renders the cluster ask, gr
       expect((second.getByRole("radio", { name: /^Run it now/ }) as HTMLInputElement).disabled).toBe(false);
     });
     expect(within(second.container).getByRole("radio", { name: /^Decline/ })).toBeTruthy();
-    plan.getByText("Let Wren decide for this quest").parentElement!.setAttribute("open", "");
+    plan.getByText("Let Wren decide for this quest").closest("details")!.open = true;
     process.stdout.write("LAYOUT_HARNESS=" + JSON.stringify(Object.fromEntries(Object.entries({ cluster, second, plan, settings }).map(([name, slot]) => [name, slot.container.innerHTML]))) + "\n");
   } finally { for (const slot of [cluster, second, plan, settings]) slot.lifecycle.unmount(); }
 });

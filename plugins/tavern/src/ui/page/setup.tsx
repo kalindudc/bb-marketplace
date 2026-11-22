@@ -3,6 +3,7 @@ import { useId, useState, type ReactNode } from "react";
 import { isGuardrailSetting } from "../../shared/settings";
 import { forgeProfileSchema, placementRuleSchema, type ForgeProfile, type PlacementRule } from "../../shared/placement-settings";
 import { setupContract, setupPrompt, type SetupLine, type SetupProposal } from "../../shared/setup";
+import { FoldSummary } from "../kit";
 import { Ago, ReadState } from "./common";
 import { PageGlyph } from "./glyphs";
 import { settingLabel } from "./settings-label";
@@ -71,9 +72,9 @@ function PlacementDiff({ change }: { change: SetupProposal["changes"][number] })
       <header><span className="tsu-tag">{kind}</span> <strong>{name(item)}</strong> <code>{id}</code>{!item.enabled && " (off)"}</header>
       {reordered && <p>Rule order: {previous!.index + 1} to {proposed!.index + 1}</p>}
       {render(item)}
-      {kind === "Changed" && <details><summary>Before this change</summary>{render(previous!.item)}</details>}
+      {kind === "Changed" && <details><FoldSummary>Before this change</FoldSummary>{render(previous!.item)}</details>}
     </li>)}</ul>
-    <details className="tsu-json"><summary>Show as settings JSON</summary><code>{JSON.stringify({ before: change.from, proposed: change.to }, null, 2)}</code></details>
+    <details className="tsu-json"><FoldSummary>Show as settings JSON</FoldSummary><code>{JSON.stringify({ before: change.from, proposed: change.to }, null, 2)}</code></details>
   </>;
 }
 function checkLabel(line: SetupLine, changes: SetupProposal["changes"]) {

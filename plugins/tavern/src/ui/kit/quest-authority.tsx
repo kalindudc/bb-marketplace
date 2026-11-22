@@ -2,6 +2,7 @@ import { useState } from "react";
 import { experimental_useRpcMutation, experimental_useRpcQuery } from "@get-bb/plugin-sdk/app";
 import { rpcContract } from "../../shared/contract";
 import { DELEGATABLE_KINDS, preapprovalWords } from "../../shared/quest-authority";
+import { FoldSummary } from "./glyphs";
 import { QueryState, clockTime } from "./primitives";
 import { useRegistry } from "./registry";
 import { usd } from "../../shared/spend";
@@ -24,7 +25,7 @@ export function QuestAuthority({ questId, via = "page", compact = false }: { que
   return <section className="tavern gl-blocks" aria-label="Who decides on this quest">
     <h3>Authority on this quest</h3>
     <dl className="sendbox"><dt>{data.keeperName} decides</dt><dd>{data.rows.filter(r => r.lane === "keeper").map(r => names[r.kind as keyof typeof names] ?? r.kind).join(", ")}</dd><dt>Asks you</dt><dd>{data.rows.filter(r => r.lane === "user").map(r => names[r.kind as keyof typeof names] ?? r.kind).join(", ") || "No delegated kinds remain with you"}</dd><dt>Tavern answers</dt><dd>{data.rows.filter(r => r.lane === "tavern").map(r => `${r.kind} within your pre-approval`).join(", ") || "No standing answers"}</dd><dt>Review</dt><dd>review {data.review.used} of {data.review.total}</dd><dt>Spend budget</dt><dd>{data.spendBudget === null ? "None set" : usd(data.spendBudget / 100)}{data.spendProposal !== undefined && <p>Approving this plan yourself sets the budget to {usd(data.spendProposal / 100)}.</p>}</dd></dl>
-    {!compact && <details><summary>Let {data.keeperName} decide for this quest</summary><p>Cluster writes always ask you. Only you send messages.</p><ul className="grants">{DELEGATABLE_KINDS.map(kind => {
+    {!compact && <details><FoldSummary>Let {data.keeperName} decide for this quest</FoldSummary><p>Cluster writes always ask you. Only you send messages.</p><ul className="grants">{DELEGATABLE_KINDS.map(kind => {
       const grant = data.delegations.find(g => g.kind === kind && live(g));
       if (kind === "drafts-as-you") return <li key={kind}><span>{names[kind]}</span>
         <label>Draft targets, one per line<textarea value={targetText} onChange={e => setTargetText(e.target.value)} /></label>
@@ -34,7 +35,7 @@ export function QuestAuthority({ questId, via = "page", compact = false }: { que
       </li>;
       return <li key={kind}><span>{names[kind]}</span>{(kind === "merge" || kind === "production") && <p className="m">Needs a Warden verdict on the exact commit or command.</p>}{grant ? <span className="m">Delegated</span> : <button className="btn sm" type="button" disabled={busy} onClick={() => void act(() => delegate.mutate({ boardQuestId: questId, kind, via }), `${names[kind]} delegated to ${data.keeperName} for this quest only.`)}>Let {data.keeperName} decide {names[kind].toLowerCase()}</button>}</li>;
     })}</ul></details>}
-    {!compact && <details><summary>Pre-approve routine answers for this quest</summary><p>No model answers these asks. Anything outside your envelope still asks you.</p><p>The plan’s declared acts are the pre-approval gate; a push still needs its merge ask.</p>
+    {!compact && <details><FoldSummary>Pre-approve routine answers for this quest</FoldSummary><p>No model answers these asks. Anything outside your envelope still asks you.</p><p>The plan’s declared acts are the pre-approval gate; a push still needs its merge ask.</p>
       <label className="opt"><input type="checkbox" checked={greenlight} onChange={e => setGreenlight(e.target.checked)} />Approve fitting greenlights with no always-ask acts</label>
       {greenlight && <><label>At most <input type="number" min={0} max={8} value={max} onChange={e => setMax(Number(e.target.value))} /> members</label><fieldset><legend>Allowed classes</legend>{registry.data?.classes.filter(c => c.id !== "keeper").map(c => <label key={c.id} className="opt"><input type="checkbox" checked={classes.includes(c.id)} onChange={e => setClasses(e.target.checked ? [...classes, c.id] : classes.filter(id => id !== c.id))} />{c.id}</label>)}</fieldset></>}
       <label className="opt"><input type="checkbox" checked={placement} onChange={e => setPlacement(e.target.checked)} />On a placement blocker, retry once, then stop the quest</label>

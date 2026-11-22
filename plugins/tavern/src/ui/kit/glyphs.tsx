@@ -75,6 +75,10 @@ export const OpensMark = memo(function OpensMark() { return <Glyph name="chevron
 /** Trailing mark on a control that expands something in place; it turns up while open. */
 export function ExpandsMark({ open }: { open: boolean }) { return <Glyph name="chevron" size={11} className={`act-i ${open ? "up" : "down"}`} />; }
 
+export function FoldSummary({ children }: { children: ReactNode }) {
+  return <summary className="fold-summary act"><span>{children}</span><ExpandsMark open={false} /></summary>;
+}
+
 /** A small icon button with a visible tooltip name; `label` is the accessible name. */
 export function IconButton({ glyph, label, onClick, disabled, className = "", pressed, expanded, controls, children }: { glyph: GlyphName; label: string; onClick?: () => void; disabled?: boolean; className?: string; pressed?: boolean; expanded?: boolean; controls?: string; children?: ReactNode }) {
   return (

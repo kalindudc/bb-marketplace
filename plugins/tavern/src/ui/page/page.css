@@ -1033,7 +1033,7 @@
 .tavern.tv-page .tv-settings-keys { margin: 0; padding: 0; list-style: none; font-weight: 700; }
 .tavern.tv-page .tv-settings-keys li + li { margin-top: 4px; }
 .tavern.tv-page .tv-history-more { margin-top: 8px; }
-.tavern.tv-page .tv-history-more > summary { cursor: pointer; min-height: 32px; color: var(--tv-text-2); }
+.tavern.tv-page .tv-history-more > summary { color: var(--tv-text-2); }
 .tavern.tv-page .tv-history-author { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; color: var(--tv-text-2); }
 @media (max-width: 480px) {
   .tavern.tv-page .tv-settings-head { padding: 12px; }
@@ -1049,7 +1049,7 @@
 .tavern.tv-page .tv-set-default { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; margin-top: 3px; font-size: 12px; color: var(--tv-text-2); }
 .tavern.tv-page [data-setting-changed] { color: var(--foreground); font-weight: 700; }
 .tavern.tv-page .tv-set-advanced { border-top: 1px solid var(--tavern-line); padding: 4px 0; margin: 10px 0; }
-.tavern.tv-page .tv-set-advanced > summary { cursor: pointer; padding: 8px 0; min-height: 44px; font-size: 13px; }
+.tavern.tv-page .tv-set-advanced > summary { padding: 8px 0; font-size: 13px; }
 .tavern.tv-page .tv-set-advanced > summary .tag { margin-inline-start: 8px; }
 .tavern.tv-page .tv-settings-body h4 { font-size: 13px; font-weight: 700; margin: 12px 0 4px; }
 .tavern.tv-page .tv-message-rule { display: grid; grid-template-columns: minmax(0, 2fr) auto minmax(0, 1fr) auto; align-items: end; gap: 8px; min-width: 0; padding: 8px; margin: 8px 0; border: 1px solid var(--tavern-line); }

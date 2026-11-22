@@ -71,6 +71,9 @@ html.dark .tavern { --tavern-lantern: color-mix(in oklab, var(--attention) 13%, 
 .tavern label { font-size: 12px; }
 .tavern summary { cursor: pointer; list-style: none; }
 .tavern summary::-webkit-details-marker { display: none; }
+.tavern .fold-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 44px; overflow-wrap: anywhere; }
+.tavern .fold-summary > .act-i { width: 16px; height: 16px; color: inherit; }
+.tavern details[open] > .fold-summary > .act-i { transform: rotate(-90deg); }
 
 /* Buttons: native-weight chrome; .pri is the one main action, .seal the greenlight */
 .tavern .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--foreground); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; text-decoration: none; }

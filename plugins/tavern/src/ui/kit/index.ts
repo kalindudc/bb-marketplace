@@ -11,7 +11,7 @@ export { useRemembered, useRememberedView, readRemembered, writeRemembered, armN
 export { Kpi, Chart, formatValue, type ChartSeries, type Format } from "./charts";
 export { RULE_SCOPE, ruleScopeLabel, useWidenRule } from "./rules";
 export { useRegistry, memberIdentity, voiceShown, type Registry } from "./registry";
-export { Glyph, IconButton, OverflowMenu, OpensMark, ExpandsMark, type GlyphName, type MenuItem } from "./glyphs";
+export { Glyph, IconButton, OverflowMenu, OpensMark, ExpandsMark, FoldSummary, type GlyphName, type MenuItem } from "./glyphs";
 export { Tally, Ribbon, tallyMarks, tallyFold, type TallyCounts } from "./journal-marks";
 export { journalSurface, journalSnapshot, diffJournal, useJournalCues, type JournalSnapshot, type JournalChangeSet } from "./journal-cues";
 export { Vocabulary, VOCABULARY, VOCABULARY_PLURAL, vocab, plural, CELLAR, glowVars, Clamp, Button, StatusPill, StatusMark, PhaseStrip, EvidenceList, safeHref, MemberChip, PartyPicture, memberSummary, summaryNames, reportLabels, questNames, CheckIndependence, SAME_FAMILY, GuardPosture, DecidedForYou, useDecisionSeen, TimeAgo, timeAgo, clockTime, localTime, QuietNotice, useNow, useToday, QueryState, useActorNames, useSidebarActorNames, type VocabWord } from "./primitives";

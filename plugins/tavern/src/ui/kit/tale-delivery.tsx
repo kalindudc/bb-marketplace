@@ -1,4 +1,5 @@
 import { Markdown, ThreadChat, experimental_FileLink as FileLink, useBbNavigate, type ExperimentalLiveFileTarget } from "@get-bb/plugin-sdk/app";
+import { FoldSummary } from "./glyphs";
 import { Prose } from "./report-view";
 import type { BoardQuestDetail } from "../../shared/contract";
 
@@ -75,7 +76,7 @@ export function TaleDelivery({ tale, questId, threadId, keeperName }: { tale: Ta
   const links = localLinks(text, threadId, tale).filter((link, i, all) => all.findIndex(other => JSON.stringify(other.target) === JSON.stringify(link.target)) === i);
   return <><div className="tale-delivery-text">{taleDeliveryBlocks(text, questId).map((block, i) => block.kind === "markdown"
     ? <div key={i} className="tale-delivery-markdown"><Markdown content={block.source} experimental_document={tale.document} /></div>
-    : <div key={i} className="tale-visual"><p>A visual in {keeperName}'s message</p><button type="button" className="lnk-btn act" onClick={() => navigate.toThread(threadId)}>Open the Keeper's thread ›</button><details><summary>Show source</summary><pre><code>{block.source}</code></pre></details></div>)}</div>
+    : <div key={i} className="tale-visual"><p>A visual in {keeperName}'s message</p><button type="button" className="lnk-btn act" onClick={() => navigate.toThread(threadId)}>Open the Keeper's thread ›</button><details><FoldSummary>Show source</FoldSummary><pre><code>{block.source}</code></pre></details></div>)}</div>
     {links.length > 0 && <section className="tale-files"><h4>Files in this delivery</h4><ul aria-label="Files in this delivery">{links.map((link, i) => <li key={i}><FileLink target={link.target}>{link.label}</FileLink></li>)}</ul></section>}
   </>;
 }

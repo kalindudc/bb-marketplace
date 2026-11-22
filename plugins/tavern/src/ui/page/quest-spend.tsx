@@ -2,6 +2,7 @@ import { experimental_useRpcMutation, experimental_useRpcQuery } from "@get-bb/p
 import { useId, useState } from "react";
 import { rpcContract } from "../../shared/contract";
 import { NANOS_PER_CENT, budgetCentsSchema, spendCoverage, usd } from "../../shared/spend";
+import { FoldSummary } from "../kit";
 import { Section } from "./common";
 
 const readTime = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -42,7 +43,7 @@ export function QuestSpend({ id, editable }: { id: string; editable: boolean }) 
       {error && <p role="alert">{error}</p>}
     </div>;
   return view.budgetCents === null ? <details className="tv-card tv-spend tv-spend-fold">
-    <summary><strong>Quest spend:</strong> {measured} · No budget{proposal && <> · {proposal}</>}{editable && <> · <span>Set budget</span></>}</summary>
+    <FoldSummary><strong>Quest spend:</strong> {measured} · No budget{proposal && <> · {proposal}</>}{editable && <> · <span>Set budget</span></>}</FoldSummary>
     {details}
   </details> : <Section title="Quest spend" className="tv-card tv-spend">
     <p className="tv-spend-body"><span><strong>{measured}</strong> · {usd(view.budgetCents / 100)} budget</span>{proposal}</p>

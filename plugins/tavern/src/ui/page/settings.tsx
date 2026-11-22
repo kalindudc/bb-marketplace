@@ -1,7 +1,7 @@
 import { experimental_ProviderModelPicker as ProviderModelPicker, experimental_copyToClipboard, experimental_useProviders, experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate, type ExperimentalProviderModelPickerValue } from "@get-bb/plugin-sdk/app";
 import { createContext, useContext, useCallback, useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { ambientMotionPatch, characterQuietPatch, charactersPatch, CHARACTER_QUIET_HOUR_MS, DEFAULT_SETTINGS, KNOB_FIELDS, importSummary, isGuardrailSetting, settingsContract, voicePatch, type TavernSettings, type SettingsChange, type SettingsPatch, type ResettableSetting, type SettingsView, type TunableKey } from "../../shared/settings";
-import { Glyph, OpensMark, TimeAgo, plural, useRegistry, useSidebarActorNames, useRemembered, ExpandsMark } from "../kit";
+import { Glyph, OpensMark, TimeAgo, plural, useRegistry, useSidebarActorNames, useRemembered, ExpandsMark, FoldSummary } from "../kit";
 import { useCharacterQuiet } from "../engine/character-quiet";
 import { ReadState, SegFilter } from "./common";
 import { BACKUP_INTRO, BackupSection } from "./backup";
@@ -131,7 +131,7 @@ function AgentLimits({ title, hint, groups }: { title: string; hint: string; gro
   const changed = groups.flatMap(group => Object.keys(KNOB_FIELDS[group]).map(key => `${group}.${key}` as SettingKey))
     .filter(key => differsFromDefault(effective, key)).length;
   return <details className="tv-set-advanced">
-    <summary><strong>{title}</strong><span className="tag">{changed} changed</span></summary>
+    <FoldSummary><strong>{title}</strong><span className="tag">{changed} changed</span></FoldSummary>
     <p className="tv-set-intro">{hint}</p>
     {groups.map(group => <NumberKnobRows key={group} group={group} managed />)}
   </details>;
@@ -336,7 +336,7 @@ export function SettingsHistorySection() {
       {error && <ReadState error={{message:error}} retry={()=>setError(null)} />}
       <button type="button" className="tv-history-toggle act" aria-expanded={open} aria-controls={open ? id : undefined} onClick={()=>setOpen(!open)}><ExpandsMark open={open} /><span>{plural(history.length,"change")}</span></button>
       {open && <div id={id}><SettingsAuthors history={all?history:history.slice(0,10)}>{names=><ul className="tv-settings-history">{(all?history:history.slice(0,10)).map(c=><li className="tv-settings-change" key={c.id}>
-        <div><HistoryKeys changes={c.changes.slice(0,3)} classes={registry.data?.classes ?? []} providers={providers.providers} />{c.changes.length>3 && <details className="tv-history-more"><summary>{plural(c.changes.length-3,"more setting")}</summary><HistoryKeys changes={c.changes.slice(3)} classes={registry.data?.classes ?? []} providers={providers.providers} /></details>}
+        <div><HistoryKeys changes={c.changes.slice(0,3)} classes={registry.data?.classes ?? []} providers={providers.providers} />{c.changes.length>3 && <details className="tv-history-more"><FoldSummary>{plural(c.changes.length-3,"more setting")}</FoldSummary><HistoryKeys changes={c.changes.slice(3)} classes={registry.data?.classes ?? []} providers={providers.providers} /></details>}
         <p>{c.reason}</p><p className="tv-history-author">By <SettingAuthor threadId={c.threadId} by={c.by} label={c.threadId?names(c.threadId,{mid:true}):undefined} /> <TimeAgo at={c.at} />{c.undoneAt && " (undone)"}</p></div>
         {c.undoable && <button type="button" className="lnk-btn act" disabled={undo.isPending} onClick={()=>void undo.mutate({id:c.id,revision:d.revision,why:"Undo settings change"}).then(()=>api.refetch()).catch(e=>setError(String(e)))}>Undo</button>}
       </li>)}</ul>}</SettingsAuthors>{!history.length && <p>No settings changes yet.</p>}{!all && history.length>10 && <button type="button" className="btn sm" onClick={()=>setAll(true)}>Show all</button>}</div>}

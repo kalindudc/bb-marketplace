@@ -3,7 +3,7 @@ import { useRef } from "react";
 import type { BoardQuestDetail, Room } from "../../shared/contract";
 import { settled, verifiedWaypoint } from "../../shared/waypoint";
 import { useMoment } from "../kit/moment";
-import { verifiedOf, verifiedWords, FigureRow, OpensMark, Prose, QuestMap, questNames, readable, Vocabulary, glowVars, plural, taleFigures } from "../kit";
+import { verifiedOf, verifiedWords, FigureRow, FoldSummary, OpensMark, Prose, QuestMap, questNames, readable, Vocabulary, glowVars, plural, taleFigures } from "../kit";
 import { Ago, PageButton, Section, StateMark, ThreadButton, Time, type Registry } from "./common";
 import { PageGlyph } from "./glyphs";
 import { leftNothing, reportBlocks } from "./model";
@@ -74,7 +74,7 @@ export function TalePage({ detail, registry, room }: { detail: BoardQuestDetail;
         <h3>What to do now</h3>
         {detail.tale.next.length ? <ol>{detail.tale.next.map((action, i) => <li key={i}><TaleAction text={action} threadId={quest.keeperThreadId} tale={detail.tale!} /></li>)}</ol> : <p>Nothing for you to do</p>}
       </section>}
-      {detail.tale?.delivery && <details className="tv-tale-record"><summary>The Keeper's record</summary><p><Prose text={readable(detail.tale.outcome, names)} /></p></details>}
+      {detail.tale?.delivery && <details className="tv-tale-record"><FoldSummary>The Keeper's record</FoldSummary><p><Prose text={readable(detail.tale.outcome, names)} /></p></details>}
       <FigureRow figures={taleFigures(detail)} />
       <div className="tv-tale-path"><QuestMap quest={quest} mode="tale" stretch memberCredits={detail.memberCredits} /></div>
       <LeftForYou detail={detail} registry={registry} />
