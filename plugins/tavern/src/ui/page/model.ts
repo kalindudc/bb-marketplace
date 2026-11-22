@@ -183,12 +183,6 @@ function describeRaw(e: TavernEvent, ctx: EventContext): EventLine | null {
     case "route.corrected": return { ...base, icon: "steer", tone: "steer", filter: "steers", actor: you, head: "re-routed a message" };
     case "route.cancelled": return { ...base, icon: "undo", actor: you, head: "cancelled a queued message" };
     case "route.missed": return { ...base, icon: "note", tone: "warn", actor: leadActor, head: "did not route a message", detail: str("text") };
-    case "quest.renamed": {
-      const from = data.from as { short?: unknown } | undefined;
-      const to = data.to as { short?: unknown } | undefined;
-      const short = typeof from?.short === "string" && typeof to?.short === "string" ? ` · Short name: “${from.short}” to “${to.short}”` : "";
-      return { ...base, icon: "quest", actor: e.actor.kind === "user" ? you : leadActor, head: "renamed the quest", detail: e.text + short };
-    }
     case "quest.opened": return { ...base, icon: "quest", actor: leadActor, head: "pinned a quest", detail: (e.boardQuestId && ctx.questShort(e.boardQuestId)) ?? prefixed(e.text, "Opened ") };
     case "plan.proposed": { const v = data.version; return { ...base, icon: "plan", tone: str("routeId") ? "steer" : "plain", filter: str("routeId") ? "steers" : "other", actor: leadActor, head: `drew quest map v${typeof v === "number" ? v : "?"}${str("routeId") ? " from your steer" : ""}` }; }
     case "quest.phase": return { ...base, icon: "phase", actor: leadActor, head: `moved the quest to ${prefixed(e.text, "Board quest moved to ")}` };

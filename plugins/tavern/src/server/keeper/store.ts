@@ -323,7 +323,6 @@ const initialRuntime = (): Runtime => ({
 import { legacyAskEffect } from "../ask-effects";
 import { consumesQuestWrite } from "./quest-lifecycle";
 import { undoAskProjection } from "../undo-record";
-import { currentAskNames } from "../quest-names";
 
 type StoreView = {
   records: Map<string, Map<string, unknown>>;
@@ -359,9 +358,6 @@ export class KeeperStore {
     const rows = this.db.prepare(`${sql} RETURNING kind`).all(...args) as { kind: string }[];
     for (const kind of new Set(rows.map(row => row.kind))) this.forgetRecords(kind);
     return { changes: rows.length };
-  }
-  renameQuestCreditLabels(id: string, { title, short }: Pick<BoardQuest, "title" | "short">) {
-    return this.writeRecords("UPDATE tavern_records SET data=json_set(data,'$.title',?,'$.short',?) WHERE kind='serviceRecords' AND id=?", title, short, id).changes > 0;
   }
   cancelQuestHires(questId: string, at: number) {
     this.writeRecords("UPDATE tavern_records SET data=json_set(data,'$.cancelledAt',?) WHERE kind='hires' AND json_extract(data,'$.owner.boardQuestId')=?", at, questId);
@@ -653,7 +649,7 @@ export class KeeperStore {
         )
         .all(...args) as { data: string }[]
     ).map((row) => this.decode("asks", row.data));
-    return visibleOnly ? asks.map(undoAskProjection(this)).filter(ask => ask.lane !== "keeper").map(ask => currentAskNames(this, ask)) : asks;
+    return visibleOnly ? asks.map(undoAskProjection(this)).filter(ask => ask.lane !== "keeper") : asks;
   }
   activeRules(
     keeperId: string,

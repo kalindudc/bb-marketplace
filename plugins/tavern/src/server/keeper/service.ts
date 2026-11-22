@@ -14,7 +14,7 @@ import type { RequestSources } from "../../shared/request-source";
 import { briefSteers } from "../request-sources";
 import { LIMITS } from "../limits";
 import { hasLiveName, isKeeperIdentity, isLiveKeeper, isLiveMember, isOpenQuest } from "../liveness";
-import { assertChainPlan, assertLeadPathOpen, bindLead, currentLead, holdsLeadSeat, leadAncestors, leadDescendants, saveLead } from "./leads";
+import { assertChainPlan, assertLeadPathOpen, bindLead, currentLead, holdsLeadSeat, leadAncestors, saveLead } from "./leads";
 import { answerLeadPlan, decideLeadPlan, proposeLeadPlan, undoLeadPlan } from "./lead-plans";
 import { leadChainView } from "./lead-chain-view";
 import { memberDetails, memberHost, outstandingArchivedPlacement, transitionMember } from "../member-engagement";
@@ -38,7 +38,6 @@ import {
   ruleSchema,
   type Ask,
   type Actor,
-  questNamesSchema,
   type BoardQuest,
   type Brief,
   type JournalEntry,
@@ -101,7 +100,6 @@ import { assertQuestTransition, transitionQuest, displayStage, nextNewsBy, store
 import { settled, verifiedWaypoint, waypointCheck } from "../../shared/waypoint";
 import { isCloseEffect, waiverWords } from "../../shared/closing";
 import { assertUndoLane, readUndoLanes, undoAskProjection } from "../undo-record";
-import { captureLegacyForwarding, currentAskNames, forwardedAskQuestion } from "../quest-names";
 
 export class Keeper {
   settings: (questId?: string | null) => TavernSettings = () =>
@@ -651,35 +649,6 @@ export class Keeper {
     this.reanchor(quest.keeperThreadId, "user released the checker handoff");
     this.changed(quest.keeperThreadId, questId);
     return released;
-  }
-  renameQuest(id: string, input: Pick<BoardQuest, "title" | "short">, actor: Extract<Actor, { kind: "agent" | "user" }>, receipt?: UserActReceipt) {
-    const quest = actor.kind === "agent" ? this.owned(actor.threadId, id) : this.quest(id);
-    if (quest.archivedAt !== null || quest.deletedAt != null) throw new Error("Restore this archived or deleted quest from the cellar before renaming it.");
-    if (actor.kind === "agent") this.guard(actor.threadId, id);
-    const to = questNamesSchema.parse(input);
-    if (quest.title === to.title && quest.short === to.short) return quest;
-    const at = this.now();
-    const next = { ...quest, ...to, updatedAt: at };
-    const related = new Set([tags.mapHistory(), tags.settings()]);
-    for (const link of leadAncestors(this.store, id)) {
-      related.add(tags.boardQuest(link.parentQuestId));
-      related.add(tags.thread(link.parentKeeperThreadId));
-    }
-    for (const link of leadDescendants(this.store, id)) {
-      if (link.childQuestId) related.add(tags.boardQuest(link.childQuestId));
-      if (link.childKeeperThreadId) related.add(tags.thread(link.childKeeperThreadId));
-    }
-    const stale = this.store.atomic(() => {
-      if (quest.short !== to.short) captureLegacyForwarding(this.store, quest);
-      this.store.put("quests", id, next);
-      if (this.store.renameQuestCreditLabels(id, to)) related.add(tags.registry());
-      this.store.event(at, quest.keeperThreadId, id, "quest.renamed", `Renamed “${quest.title}” to “${to.title}”`, {
-        from: { title: quest.title, short: quest.short }, to, ...(receipt ? { receipt } : {}),
-      }, actor);
-      return this.changedTags(quest.keeperThreadId, id);
-    });
-    this.invalidate([...new Set([...stale, ...related])]);
-    return next;
   }
   async openQuest(threadId: string, title: string, short: string) {
     const member = this.require(threadId, "keeper");
@@ -1323,19 +1292,16 @@ export class Keeper {
     }
     const lane = this.authority.baseLane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure, effect: input.effect, sendTarget: input.sendTarget });
     const childLink = questId ? this.store.leadLinksBy("childQuestId", questId)[0] : undefined;
-    let forwardedQuestion: Ask["forwardedQuestion"];
     if (lane === "user" && childLink?.childKeeperThreadId === threadId) {
       const parent = this.quest(childLink.parentQuestId), parentKeeper = this.member(parent.keeperThreadId);
-      const byline = `${this.name(callingKeeper)} asks, for ${parentKeeper ? this.name(parentKeeper) + "’s " : ""}`;
-      forwardedQuestion = { parentQuestId: parent.id, byline, body: input.question.slice(0, 400) };
-      input = { ...input, question: forwardedAskQuestion(forwardedQuestion, parent.short) };
+      const prefix = `${this.name(callingKeeper)} asks, for ${parentKeeper ? this.name(parentKeeper) + "’s " : ""}${parent.short.slice(0, 80)}: `;
+      input = { ...input, question: (prefix + input.question).slice(0, 400) };
     }
     if (questId && lane === "user" && input.kind !== "drafts-as-you" && DELEGATABLE_KINDS.some(kind => kind === input.kind)) {
       input = { ...input, options: [...input.options, this.authority.delegationOption(threadId)] };
     }
     const ask = askSchema.parse({
       ...input,
-      ...(forwardedQuestion ? { forwardedQuestion } : {}),
       lane,
       ...(clusterTargets?.length ? { clusterTargets } : {}),
       runThreadId: runner?.threadId,
@@ -1377,7 +1343,7 @@ export class Keeper {
         const current = this.store.get("asks", ask.id);
         if (current?.state !== "open") return;
         if (this.authority.match(current)) return this.routineAskOpened(current);
-        if (this.authority.lane(current) === "user") return this.askOpened(currentAskNames(this.store, undoAskProjection(this.store)(current)));
+        if (this.authority.lane(current) === "user") return this.askOpened(undoAskProjection(this.store)(current));
       })
       .catch((error) =>
         console.warn(`Tavern ask notification ${ask.id}: ${String(error)}`),
@@ -2227,7 +2193,7 @@ export class Keeper {
           : null,
       };
     });
-    const asks = this.store.openAsks(q.keeperThreadId, id).map(ask => currentAskNames(this.store, ask));
+    const asks = this.store.openAsks(q.keeperThreadId, id);
     const next = waypoints.find(w => !settled(w));
     const closing = q.phase === "closing" ? asks.find(a => a.kind === "conclude") : undefined;
     const verified = waypoints.filter(verifiedWaypoint).length;

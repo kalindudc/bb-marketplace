@@ -524,18 +524,7 @@ describe("lasting character service record", () => {
     expect(f.k.store.get("asks", closing.askId!)?.state).toBe("open");
     expect(f.k.quest(f.q.id)).toEqual(quest); expect(f.k.member("maker")).toEqual(member); expect(f.records()).toEqual([]);
   });
-  it("updates the display name on an explicit quest rename without changing earned credits", async () => {
-    const f = await fixture(); f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
-    const before = f.records(), stored = f.k.store.get("serviceRecords", f.q.id);
-    expect(before).not.toHaveLength(0);
-    expect(stored).not.toBeNull();
-    const names = { title: "Repair the signal lamp", short: "Lamp" };
-    f.k.renameQuest(f.q.id, names, { kind: "user" });
-    expect(f.k.store.get("serviceRecords", f.q.id)).toEqual({ ...stored, ...names });
-    expect(f.records()).toEqual(before.map(character => ({ ...character, records: character.records.map(record => ({ ...record, ...names })) })));
-  });
-
-  it("keeps its captured names and earned counts when the source quest changes outside the rename transition or is missing", async () => {
+  it("keeps its captured names and earned counts when the source quest is later renamed or missing", async () => {
     const f = await fixture(); f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", ""); const before = f.records();
     putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), title: "Renamed", short: "new" });
     expect(f.records()).toEqual(before);

@@ -1,7 +1,6 @@
 // @vitest-environment node
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { z } from "zod";
 import { setup } from "./runtime-fixture";
 import { registerTools } from "../../src/server/tools";
 import { briefSteerFact } from "../../src/server/tick";
@@ -19,15 +18,12 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   registerTools(f.bb, f.runtime);
   const keep = registered.mock.calls.find(([tool]) => tool.name === "tavern_keep")![0];
   const refresh = registered.mock.calls.find(([tool]) => tool.name === "tavern_refresh_keeper")![0];
-  const quest = registered.mock.calls.find(([tool]) => tool.name === "tavern_quest")![0];
-  const opening = z.toJSONSchema(z.object({ title: z.string().min(1).max(200), short: z.string().min(1).max(40) }), { io: "input" });
   const source = read("src/server/tools/index.ts");
   const metadata = [...source.matchAll(/register\(\s*"(tavern_\w+)",\s*"((?:[^"\\]|\\.)*)",\s*("(?:[^"\\]|\\.)*")/g)].map(match => match[1]! + match[2]! + JSON.parse(match[3]!)).join("");
   const structure = Buffer.byteLength(JSON.stringify(keep)) - Buffer.byteLength(keep.name + keep.description + "Kept a resting member")
     + Buffer.byteLength(JSON.stringify(refresh)) - Buffer.byteLength(refresh.name + refresh.description + "Requested Keeper refresh");
   const briefWarning = briefSteerFact("Wren XVIII", { at: 0, excerpt: "x".repeat(160), memberThreadId: "thr_abcdefghij" });
-  const questSchemaDelta = Buffer.byteLength(JSON.stringify(quest.parameters)) - Buffer.byteLength(JSON.stringify(opening));
-  const bytes = Buffer.byteLength(metadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
+  const bytes = Buffer.byteLength(metadata + read("classes/keeper.md") + skill) + structure + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
   if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${bytes}\n`);
   expect(bytes).toBeLessThanOrEqual(34754);
 });

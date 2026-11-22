@@ -38,7 +38,6 @@ export const statusInput = z.object({
   limit: z.number().int().min(1).max(10).default(3),
 });
 import { undoAskProjection } from "./undo-record";
-import { currentLeadPlanNames, currentAskNames } from "./quest-names";
 
 export function readStatus(runtime: TavernRuntime, threadId: string, input: z.output<typeof statusInput>) {
   if (input.section === "placement") return runtime.placements().controller.status(threadId, input.boardQuestId ?? null).then(agentData);
@@ -60,8 +59,7 @@ function statusData(
     const record = k.store.get("leadPlans", `${child.id}:${child.planVersion}`);
     const plan = k.store.get("plans", `${child.id}:${child.planVersion}`);
     const previous = child.planVersion > 1 ? k.store.get("plans", `${child.id}:${child.planVersion - 1}`) : null;
-    return { record: record?.state === "pending" ? { ...record, request: currentLeadPlanNames(k.store, record.request) } : record,
-      change: previous && plan ? planDiff(previous, plan) : "First plan", plan };
+    return { record, change: previous && plan ? planDiff(previous, plan) : "First plan", plan };
   }
   if (input.section === "requests") return readRequestSources(k, threadId, { memberThreadId: input.memberThreadId ?? undefined, manifestId: input.manifestId ?? undefined, sourceIndex: input.sourceIndex, offset: input.offset });
   const archivedRows = k.store.all("members").filter(member => member.keeperThreadId === threadId && memberHost(k.store, member).archivedAt !== null).map(member => {
@@ -244,7 +242,7 @@ function statusData(
         input.limit,
         input.offset,
         input.boardQuestId ?? undefined,
-      ).map(undoAskProjection(k.store)).map(ask => currentAskNames(k.store, ask)),
+      ).map(undoAskProjection(k.store)),
     };
   const pending = k.store.runtime(threadId).pending;
   if (input.section === "pending")
@@ -265,7 +263,7 @@ function statusData(
       ? [k.quest(input.boardQuestId)]
       : k.store.visibleRecords("quests", threadId, input.limit, input.offset)
     ).map((q) => k.summary(q.id)),
-    delegatedAsks: k.store.openAsks(threadId).filter(a => k.authority.lane(a) === "keeper" && (!a.boardQuestId || k.quest(a.boardQuestId).archivedAt === null)).slice(0, 5).map(ask => currentAskNames(k.store, ask)),
+    delegatedAsks: k.store.openAsks(threadId).filter(a => k.authority.lane(a) === "keeper" && (!a.boardQuestId || k.quest(a.boardQuestId).archivedAt === null)).slice(0, 5),
     asks: k.store.openAsks(threadId, undefined, true).slice(0, 5),
     recentReports: k.store.visibleRecords("reports", threadId, 3).map((r) => ({
       id: r.id,

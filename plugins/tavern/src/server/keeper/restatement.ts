@@ -1,7 +1,6 @@
 import { isLiveMember } from "../liveness";
 import { memberActivityWord } from "../../shared/member-engagement";
 import { preapprovalWords } from "../../shared/quest-authority";
-import { currentAskNames } from "../quest-names";
 import type { Keeper } from "./service";
 import type { BoardQuestSummary } from "../../shared/contract";
 import type { KeeperNote, Rule } from "../../shared/schema";
@@ -202,8 +201,7 @@ export function renderRestatement(
     .filter((q) => !["done", "stopped"].includes(q.phase));
   const summaries = quests.map((q) => k.summary(q.id));
   const delegated = k.store.openAsks(threadId).filter(a => k.authority.lane(a) === "keeper" &&
-    !(a.effect?.type === "conclude" && a.effect.draft.lead) && (!a.boardQuestId || k.quest(a.boardQuestId).archivedAt === null))
-    .map(a => currentAskNames(k.store, a));
+    !(a.effect?.type === "conclude" && a.effect.draft.lead) && (!a.boardQuestId || k.quest(a.boardQuestId).archivedAt === null));
   const asks = k.store
     .openAsks(threadId, undefined, true)
     .sort((a, b) => (a.proceedAt ?? Infinity) - (b.proceedAt ?? Infinity));
@@ -257,7 +255,7 @@ export function renderRestatement(
   }));
   const childAsks = descendants.flatMap(({ child }) => k.store.openAsks(child.keeperThreadId, child.id)
     .filter(a => k.authority.lane(a) === "user")
-    .map(a => `${a.id} (${quoted(short(child.title, 60))}): ${quoted(short(currentAskNames(k.store, a).question, 160))}`));
+    .map(a => `${a.id} (${quoted(short(child.title, 60))}): ${quoted(short(a.question, 160))}`));
   const conclusions = descendants.flatMap(({ child, link }) => link.parentKeeperThreadId !== threadId ? [] :
     k.store.openAsks(child.keeperThreadId, child.id).flatMap(a => a.effect?.type === "conclude" && a.effect.draft.lead
       ? [`${a.id} (${quoted(short(child.title, 60))}): use tavern_decide with the parent quest ${link.parentQuestId} and optionId conclude.`] : []));

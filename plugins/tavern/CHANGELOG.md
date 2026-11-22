@@ -8,7 +8,6 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Added
 
-- You and the quest’s Keeper can rename an unarchived quest without changing its plan or losing its history. Choose Rename quest on the quest page to edit its title and short name. The quest history records both names and who changed them.
 - Tavern classes can save and find durable project notes, and Keepers review, exclude or replace notes after they are saved. Find and manage notes on the Memory page. Built-in memory needs no setup; choose a command profile in Settings to use another store.
 - Tell selected Keepers in the common room sends one unchanged message to each selected thread and shows a receipt for each. Their normal routing still applies.
 - The Ledger and each quest's party show when a member's brief predates one of your steers. The Keeper receives the hint when it changes, and a delivered re-brief clears it. The path count also shows waypoints added or removed since the last greenlight.
