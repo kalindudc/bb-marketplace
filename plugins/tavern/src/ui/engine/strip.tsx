@@ -6,7 +6,7 @@ import { motion, stuckInView, type Surface } from "../kit/motion";
 import { Actor, type Reaction } from "./actor";
 import { CUE_MS, type Cue, type LightAnchor, type Mood } from "./art";
 import { CharacterMenu } from "./character-menu";
-import { connectStripLantern, holdsLantern } from "./light";
+import { connectStripLantern, lightBreath } from "./light";
 import { isAttentionMood, type MotionMode } from "./rules";
 import { observeWorld, scheduler, type EngineWorld } from "./scheduler";
 import { createArt } from "./sprites";
@@ -141,7 +141,9 @@ export function PartyStrip(props: PartyStripProps) {
         const spriteWidth = actor.art.width * SCALE;
         const spriteHeight = actor.art.height * SCALE;
         const x = scene && (still || !scene.road) ? Math.max(0, Math.floor((width - spriteWidth) / 2)) : Math.round(actor.body.x / SCALE) * SCALE;
-        const y = Math.max(0, ground - actor.art.ground * SCALE - (still || actor.small ? 0 : Math.round(actor.body.lift / SCALE) * SCALE));
+        const restY = ground - actor.art.ground * SCALE;
+        const y = Math.max(0, restY - (still || actor.small ? 0 : Math.round(actor.body.lift / SCALE) * SCALE));
+        const lift = restY - y;
         const speechEl = bubble.current;
         if (speechEl) {
           const left = x - BUBBLE_GAP;
@@ -168,10 +170,13 @@ export function PartyStrip(props: PartyStripProps) {
         drawnX = x;
         drawnY = y;
         if (lantern) {
-          const { typing, held } = holds();
+          const held = !!frame.small || activeRules.typing;
           lantern(drawnLight && drawnLight.kind !== "torch" ? {
             kind: drawnLight.kind, x: x + (drawnLight.x + 0.5) * SCALE, y: y + (drawnLight.y + 0.5) * SCALE,
-          } : null, holdsLantern(frame, typing, held, world.mode() === "off"), `${frame.mood}:${frame.facing}`);
+            ground: ground - SCALE,
+            intensity: lightBreath(drawnLight.kind, frame, activeRules.mode, held),
+            holdRim: held,
+          } : null);
         }
         if (ctx === undefined) {
           ctx = board.getContext("2d");
@@ -185,12 +190,12 @@ export function PartyStrip(props: PartyStripProps) {
         ctx.save();
         ctx.translate(x, y);
         ctx.beginPath();
-        ctx.rect(0, 0, spriteWidth, spriteHeight);
+        ctx.rect(0, 0, spriteWidth, spriteHeight + (frame.dark ? 0 : lift));
         // Reserve the badge's full CSS box, including its transparent corners.
         if (frame.mood === "waiting" && !scene) ctx.rect(spriteWidth - 16, 4, 13, 13);
         ctx.clip("evenodd");
         ctx.scale(SCALE, SCALE);
-        actor.art.draw(ctx, frame, palette);
+        actor.art.draw(ctx, frame, palette, lift / SCALE);
         ctx.restore();
       },
       lightAnchors() {

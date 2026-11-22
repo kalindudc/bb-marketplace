@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { connectStripLantern, lanternAlpha, lanternIslands, lightMap, subscribeStripLantern, type LightSpan } from "../../../src/ui/engine/light";
+import { connectStripLantern, lanternAlpha, lanternIslands, lightBreath, lightMap, subscribeStripLantern, type LightSpan } from "../../../src/ui/engine/light";
 import { collectLanternSurfaces, watchLantern } from "../../../src/ui/engine/light-overlay";
+import type { ArtFrame } from "../../../src/ui/engine/art";
 
 const box = (x: number, y: number, width: number, height: number) => new DOMRect(x, y, width, height);
-const source = { kind: "lantern", x: 48, y: 16 } as const;
+const source = { kind: "lantern", x: 48, y: 16, ground: 58, intensity: 1, holdRim: false } as const;
 const options = { lanternLight: true, lanternStrength: "medium", lanternLightBb: true } as const;
 
 function fixture() {
@@ -139,6 +140,17 @@ describe("contrast next to the brightest rim", () => {
 });
 
 describe("strip-driven light", () => {
+  it("gives each member a subtle, distinct warm or cool breath without increasing the peak brightness", () => {
+    const idle: ArtFrame = { activity: "stand", cue: null, progress: 0, t: 0, mood: "idle", facing: 1, step: 0, swing: 0, flame: 1, still: false };
+    const breath = (kind: typeof source.kind | "crystal", motionSeed: number) =>
+      Array.from({ length: 30 }, (_, sample) => lightBreath(kind, { ...idle, motionSeed, t: sample * 400 }, "calm", false));
+    const flame = breath("lantern", 20);
+    expect(flame).not.toEqual(breath("lantern", 398));
+    expect(flame).not.toEqual(breath("crystal", 20));
+    expect(Math.max(...flame)).toBeLessThanOrEqual(1);
+    expect(Math.min(...flame)).toBeGreaterThanOrEqual(0.85);
+    expect(Math.max(...flame) - Math.min(...flame)).toBeGreaterThan(0.075);
+  });
   it("repaints source tint and strength even when the new source is in the same cell", () => {
     const { strip } = fixture();
     const paint = vi.fn();
@@ -159,19 +171,76 @@ describe("strip-driven light", () => {
     } finally { observer.dispose(); }
   });
 
-  it("tracks a deliberate still pose change but ignores small movement in the same pose", () => {
+  it("publishes movement within a cell and intensity changes, but skips identical light frames", () => {
     const { strip } = fixture();
     const moves = vi.fn();
     const stop = subscribeStripLantern(moves);
     const publish = connectStripLantern(strip);
     try {
-      publish(source, true, "idle:1");
-      publish({ ...source, x: 50 }, true, "idle:1");
-      expect(moves).toHaveBeenCalledTimes(1);
-      publish({ ...source, x: 51 }, true, "idle:-1");
-      publish({ ...source, y: 29 }, true, "resting:-1");
-      expect(moves).toHaveBeenCalledTimes(3);
+      publish(source);
+      publish({ ...source });
+      publish({ ...source, x: 50 });
+      publish({ ...source, x: 50, intensity: 0.9 });
+      expect(moves.mock.calls.map(([, anchor]) => [anchor.x, anchor.intensity])).toEqual([[48, 1], [50, 1], [50, 0.9]]);
     } finally { stop(); publish(null); }
+  });
+
+  it("moves the halo to the exact source and spreads and fades its ground pool through a hop", () => {
+    const { strip } = fixture();
+    strip.append(Object.assign(document.createElement("canvas"), { className: "twalk-canvas" }));
+    const draws = new Map<number, { left: number; top: number; width: number; height: number; alpha: number }>();
+    const mask: { alpha: number; rect: number[] }[] = [];
+    const ctx = { globalAlpha: 1, globalCompositeOperation: "source-over",
+      beginPath() {}, rect() {}, fill() {}, clearRect() { mask.length = 0; },
+      fillRect(...rect: number[]) {
+        if (this.globalCompositeOperation === "destination-out") mask.push({ alpha: this.globalAlpha, rect });
+      },
+      drawImage(_image: HTMLCanvasElement, left: number, top: number, width: number, height: number) {
+        draws.set(height, { left, top, width, height, alpha: this.globalAlpha });
+      },
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
+      return this.classList.contains("tv-lantern-islands") ? ctx as unknown as CanvasRenderingContext2D : null;
+    });
+    const observer = watchLantern(document.createElement("canvas"), options);
+    try {
+      const read = (imageHeight: number) => {
+        const layer = strip.querySelector<HTMLCanvasElement>(".tv-lantern-islands")!;
+        const origin = Number(layer.style.transform.match(/-?[\d.]+(?=px)/)![0]);
+        const { left, top, width, height, alpha } = draws.get(imageHeight)!;
+        return { x: origin + left + width / 2, y: top + height / 2, radius: width / 2, alpha };
+      };
+      const sample = (x: number, y: number, intensity = 1) => {
+        observer.draw(strip, { ...source, x, y, intensity });
+        expect(read(48)).toMatchObject({ x, y });
+        const pool = read(16);
+        expect(pool).toMatchObject({ x, y: source.ground });
+        return pool;
+      };
+      const rest = sample(48, 25);
+      const rising = sample(49, 21);
+      const apex = sample(50, 15);
+      expect(apex.radius).toBeGreaterThan(rising.radius);
+      expect(rising.radius).toBeGreaterThan(rest.radius);
+      expect(apex.alpha).toBeLessThan(rising.alpha);
+      expect(rising.alpha).toBeLessThan(rest.alpha);
+      expect(sample(48, 25)).toEqual(rest);
+      expect(sample(48, 25, 0.9).alpha).toBeLessThan(rest.alpha);
+
+      for (const y of [49, 35, 25, 15, 8]) for (const x of [10, 140, 272]) {
+        sample(x, y);
+        const layer = strip.querySelector<HTMLCanvasElement>(".tv-lantern-islands")!;
+        const clipLeft = layer.width / 2 - x;
+        const clipRight = clipLeft + 280;
+        const firstX = Math.max(0, clipLeft), lastX = Math.min(clipRight, layer.width);
+        const edgePixels = Array.from({ length: lastX - firstX }, (_, i) => [[firstX + i + 0.5, 0.5], [firstX + i + 0.5, 63.5]]).flat();
+        if (clipLeft >= 0) for (let row = 0; row < 64; row++) edgePixels.push([clipLeft + 0.5, row + 0.5]);
+        if (clipRight <= layer.width) for (let row = 0; row < 64; row++) edgePixels.push([clipRight - 0.5, row + 0.5]);
+        expect(mask.some(({ alpha }) => alpha > 0 && alpha < 1)).toBe(true);
+        expect(edgePixels.every(([px, py]) => mask.some(({ alpha, rect: [left, top, w, h] }) =>
+          alpha === 1 && px! >= left! && px! < left! + w! && py! >= top! && py! < top! + h!))).toBe(true);
+      }
+    } finally { observer.dispose(); }
   });
 
   it("coalesces local invalidations and ignores streaming changes below timeline rows", async () => {
@@ -197,6 +266,19 @@ describe("strip-driven light", () => {
       expect(request).toHaveBeenCalledTimes(1);
     } finally { decorator.dispose(); }
   });
+  it("keeps the lit rims still while held, without suppressing publication of the source", () => {
+    const { strip } = fixture();
+    const paint = vi.fn();
+    const observer = watchLantern(document.createElement("canvas"), options, paint);
+    try {
+      observer.draw(strip, source);
+      observer.draw(strip, { ...source, x: 70, holdRim: true });
+      expect(paint).toHaveBeenCalledTimes(1);
+      observer.draw(strip, { ...source, x: 70 });
+      expect(paint).toHaveBeenCalledTimes(2);
+    } finally { observer.dispose(); }
+  });
+
   it("does no work with Lantern light off", () => {
     const paint = vi.fn(), canvas = document.createElement("canvas");
     const { strip } = fixture();

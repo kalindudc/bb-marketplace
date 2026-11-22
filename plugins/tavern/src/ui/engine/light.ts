@@ -1,8 +1,11 @@
 import type { ArtFrame, ClassLight, LightAnchor } from "./art";
+import type { MotionMode } from "./rules";
 
 const CELL = 4;
 export const LANTERN_RADIUS = 176;
 export const LANTERN_BANDS = [0.35, 0.66, 1] as const;
+export const ISLAND_BANDS = [0.14, 0.48, 1] as const;
+export const ISLAND_EDGE = { cell: CELL, bands: [1, 0.78, 0.46, 0.2] } as const;
 export const LANTERN_STRENGTH = { low: 0.4, medium: 0.7, high: 1 } as const;
 export function lanternAlpha(strength: keyof typeof LANTERN_STRENGTH, dark: boolean) {
   return LANTERN_STRENGTH[strength] * (dark ? 0.3 : 0.22);
@@ -93,12 +96,24 @@ export function sameLightMap(a: readonly LightSpan[], b: readonly LightSpan[]) {
   });
 }
 
-export function holdsLantern(frame: ArtFrame, typing: boolean, held: boolean, motionOff: boolean) {
-  return frame.still || typing || held || motionOff || (frame.activity !== "walk" && frame.activity !== "cue");
+export function groundLight(sourceY: number, ground: number) {
+  const spread = 1 + Math.max(0, ground - sourceY) / 96;
+  return { spread, falloff: 1 / (spread * spread) };
 }
 
-type LanternListener = (strip: HTMLElement, anchor: LightAnchor | null) => void;
-const carriers = new Map<HTMLElement, LightAnchor>();
+export function lightBreath(kind: LightAnchor["kind"], frame: ArtFrame, mode: MotionMode, held: boolean) {
+  if (frame.still || held || mode === "off") return 1;
+  const warm = kind !== "crystal" && kind !== "runewood";
+  const phase = ((frame.motionSeed ?? 0) % 1024) * (2 * Math.PI / 1024);
+  const wave = Math.sin(frame.t * (2 * Math.PI / (warm ? 9300 : 11700)) + phase);
+  const shimmer = warm ? 0.18 * Math.sin(frame.t / 410 + 3 * phase) : 0;
+  const depth = mode === "calm" ? 0.06 : 0.09;
+  return Math.round((1 - depth * (1.18 - wave - shimmer)) * 1000) / 1000;
+}
+
+export type CarrierLight = LightAnchor & { ground: number; intensity: number; holdRim: boolean };
+type LanternListener = (strip: HTMLElement, anchor: CarrierLight | null) => void;
+const carriers = new Map<HTMLElement, CarrierLight>();
 const listeners = new Set<LanternListener>();
 const presenceListeners = new Set<() => void>();
 
@@ -109,22 +124,17 @@ export function subscribeLanternPresence(listener: () => void) {
 }
 
 export function connectStripLantern(strip: HTMLElement) {
-  let pose: string | undefined;
-  const publish = (anchor: LightAnchor | null, steady = false, nextPose?: string) => {
+  return (anchor: CarrierLight | null) => {
     const previous = carriers.get(strip);
-    const changedPose = nextPose !== pose;
-    pose = nextPose;
     if (!anchor && !previous) return;
-    if (anchor && previous?.kind === anchor.kind && ((steady && !changedPose &&
-        Math.abs(previous.x - anchor.x) < CELL * 2 && Math.abs(previous.y - anchor.y) < CELL * 2) ||
-        (previous.x === anchor.x && previous.y === anchor.y))) return;
+    if (anchor && previous?.kind === anchor.kind && previous.x === anchor.x && previous.y === anchor.y &&
+        previous.ground === anchor.ground && previous.intensity === anchor.intensity && previous.holdRim === anchor.holdRim) return;
     const wasPresent = hasStripLantern();
     if (anchor) carriers.set(strip, anchor);
     else carriers.delete(strip);
     for (const listener of listeners) listener(strip, anchor);
     if (wasPresent !== hasStripLantern()) for (const listener of presenceListeners) listener();
   };
-  return publish;
 }
 
 export function subscribeStripLantern(listener: LanternListener) {

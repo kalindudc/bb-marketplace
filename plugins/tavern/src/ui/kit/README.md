@@ -331,7 +331,7 @@ The budgets apply to automatic motion. The user's own actions (`auto: false`) an
 - Asks of any kind: cards, chips, counts, pointers and rows whose move is yours. The coordinator refuses anything inside `[data-ask]`.
 - Blockers, failures (a failed member or quest row), evidence and numbers.
 - A notice that needs the user, including its tack.
-- The radial card glow. Carried light may follow the lantern or hearth-light on the thread strip, without flicker or its own animation frames. It is steady when the carrier is still, while typing or in Quiet, and with Motion off or reduced motion.
+- The radial card glow. The carried light on the thread strip follows the lit pixel in the sprite. Its ground pool widens and dims as the source rises. Their pixel cells fade to transparency before the strip edges. Only the halo and pool breathe, on the existing actor frames; they keep steady brightness while held, while typing, in Quiet, and with Motion Off or reduced motion.
 - Text being read: chat, the Ledger, journal entries, briefs.
 - The composer, and the widget row while it is held. The only light on them is decoration at the edges, and the light stays still while the row is held.
 - bb's own surfaces, except the composer box and message bubble rims described above. Never animate anything tied to scrolling.

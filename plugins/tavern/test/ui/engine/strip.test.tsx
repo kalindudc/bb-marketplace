@@ -137,15 +137,21 @@ it("reacts to clicks beside a held ask without moving the exclamation mark or as
   Object.defineProperty(button, "animate", { value: () => ({ finished: new Promise(() => {}), playState: "running", finish() {}, cancel() {} }) });
   const mark = screen.getByText("!");
   expect(button.contains(mark)).toBe(false);
-  world!.refresh?.(); world!.draw(false);
-  const original = [button.style.transform, mark.outerHTML];
-  for (let click = 0; click < 6; click++) {
-    fireEvent.click(button);
-    for (let step = 0; step < 15; step++) {
-      world!.update(1 / 60, 1); world!.draw(false);
-      expect([button.style.transform, mark.outerHTML]).toEqual(original);
+  expect(mark.hasAttribute("data-tavern-still")).toBe(true);
+  const light = vi.fn();
+  const stop = subscribeStripLantern(light);
+  try {
+    world!.refresh?.(); world!.draw(false);
+    const original = [button.style.transform, mark.outerHTML];
+    for (let click = 0; click < 6; click++) {
+      fireEvent.click(button);
+      for (let step = 0; step < 15; step++) {
+        world!.update(1 / 60, 1); world!.draw(false);
+        expect([button.style.transform, mark.outerHTML]).toEqual(original);
+        expect(light.mock.lastCall?.[1]).toMatchObject({ ...world!.lightAnchors!()[0], intensity: 1 });
+      }
     }
-  }
+  } finally { stop(); }
   const cues = play.mock.calls.map(([cue, auto]) => { expect(auto).toBe(false); return cue; });
   expect(cues).toHaveLength(6);
   expect(new Set(cues).size).toBe(3);
@@ -153,7 +159,7 @@ it("reacts to clicks beside a held ask without moving the exclamation mark or as
   expect(speak).not.toHaveBeenCalled();
 });
 
-it("follows the walking art but holds the light while standing, typing, reduced motion, Motion Off and Quiet", () => {
+it("tracks the emitted pixel while standing and walking but keeps brightness steady while typing, reduced, Off or Quiet", () => {
   let world: engine.EngineWorld;
   vi.spyOn(engine, "observeWorld").mockImplementation((_, candidate) => {
     world = candidate;
@@ -174,23 +180,27 @@ it("follows the walking art but holds the light while standing, typing, reduced 
     const draw = (reduced = false) => {
       const still = reduced || world.mode() === "off";
       world.refresh?.();
-      if (!still) world.update(1 / 60, 1);
+      if (!still) world.update(1 / 60, 35);
       world.draw(still);
+      const anchor = listener.mock.lastCall?.[1];
+      expect(anchor).toMatchObject(world.lightAnchors!()[0]!);
+      return anchor.intensity as number;
     };
-    x++; draw(); draw(); draw();
-    expect(listener).toHaveBeenCalledTimes(1);
+    const first = draw();
+    x++;
+    expect(draw()).not.toBe(first);
     view.rerender(<PartyStrip {...props} mode="lively" />);
     x++; draw(); x++; draw();
-    expect(listener).toHaveBeenCalledTimes(3);
     typing = true;
-    x++; draw(); draw();
-    expect(listener).toHaveBeenCalledTimes(3);
+    expect(draw()).toBe(1);
+    x++;
+    expect(draw()).toBe(1);
     typing = false;
-    draw(true); draw(true);
-    expect(listener).toHaveBeenCalledTimes(3);
+    expect(draw(true)).toBe(1);
+    expect(draw(true)).toBe(1);
     view.rerender(<PartyStrip {...props} mode="off" />);
-    draw(); draw();
-    expect(listener).toHaveBeenCalledTimes(3);
+    expect(draw()).toBe(1);
+    expect(draw()).toBe(1);
     const react = vi.spyOn(Actor.prototype, "react");
     const speak = vi.fn();
     view.rerender(<PartyStrip {...props} mode="lively" quiet onActorClick={speak} />);
@@ -198,9 +208,7 @@ it("follows the walking art but holds the light while standing, typing, reduced 
     fireEvent.click(screen.getByRole("button", { name: /Wren, Wanderer/ }));
     expect(react).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ mode: "off" }), true);
     expect(speak).not.toHaveBeenCalled();
-    expect(listener).toHaveBeenCalledTimes(4);
-    draw(); draw();
-    expect(listener).toHaveBeenCalledTimes(4);
+    expect(draw()).toBe(1);
     view.unmount();
     expect(listener.mock.lastCall?.[1]).toBeNull();
   } finally {
@@ -253,17 +261,20 @@ it.each(["off", "calm", "lively"] as const)("adds no wakes in %s while drawing o
   expect(on).toEqual(off);
   if (mode === "off") expect(on).toMatchObject({ frames: 0, timerWakes: 0, requests: 0, draws: 1 });
   else expect(on.frames).toBeGreaterThan(0);
-  if (mode !== "lively") {
+  const positions = on.anchors.map(({ x, y }) => ({ x, y }));
+  expect(positions.filter((anchor, i, all) => !i || anchor.x !== all[i - 1]!.x || anchor.y !== all[i - 1]!.y))
+    .toEqual(on.rendered.filter((anchor, i, all) => !i || anchor.x !== all[i - 1]!.x || anchor.y !== all[i - 1]!.y)
+      .map(({ x, y }) => ({ x, y })));
+  if (mode === "off") {
     expect(on.anchors).toHaveLength(1);
     expect(lit).toBe(1);
   } else {
-    expect(on.anchors).toEqual(on.rendered.filter((anchor, i, all) => !i || anchor.x !== all[i - 1]!.x || anchor.y !== all[i - 1]!.y));
-    expect(lit).toBeGreaterThan(100);
+    expect(lit).toBeGreaterThan(1);
     expect(lit).toBeLessThan(on.draws);
   }
 });
 
-it("repaints from the Wanderer's lantern swing on a Calm click, then holds still again", () => {
+it("follows the Wanderer's lantern swing on a Calm click, then returns to sparse idle draws", () => {
   const clock = mountWithClock("calm", true);
   const play = vi.spyOn(Actor.prototype, "playCue");
   try {
@@ -280,8 +291,10 @@ it("repaints from the Wanderer's lantern swing on a Calm click, then holds still
     expect(new Set(anchors.map(anchor => roundToLightCell(anchor.x))).size).toBeGreaterThan(1);
     expect(clock.paint.mock.calls.length).toBeGreaterThan(1);
     clock.advance(180);
-    const count = clock.paint.mock.calls.length;
+    const count = clock.scheduler.snapshot().timerWakes;
+    const rest = button.style.transform;
     clock.advance(600);
-    expect(clock.paint).toHaveBeenCalledTimes(count);
+    expect(clock.scheduler.snapshot().timerWakes - count).toBeLessThan(20);
+    expect(button.style.transform).toBe(rest);
   } finally { clock.dispose(); }
 });

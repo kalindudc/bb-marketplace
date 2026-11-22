@@ -82,13 +82,24 @@ export const createArt: ArtFactory = input => {
       const x = anchor.x + (lamp?.flameX ?? 0);
       return { kind, x: frame.facing === -1 ? WIDTH - 1 - x : x, y: anchor.y + (lamp?.flameY ?? 0) };
     },
-    draw(ctx, frame, palette) {
+    draw(ctx, frame, palette, lift = 0) {
       const { index: i, ember } = at(frame);
       const { runs, anchor } = drawing(i, frame.dark);
       const { facing } = frame;
       const colours = coloursFor(palette);
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
-      if (!frame.dark) blit(ctx, DAY_SHADOW, colours, 1);
+      if (!frame.dark) {
+        if (lift > 0) {
+          const scale = 1 / (1 + lift / 12);
+          ctx.save();
+          ctx.translate(WIDTH / 2, GROUND - 1 + lift);
+          ctx.scale(scale, scale);
+          ctx.translate(-WIDTH / 2, 1 - GROUND);
+          ctx.globalAlpha *= scale;
+        }
+        blit(ctx, DAY_SHADOW, colours, 1);
+        if (lift > 0) ctx.restore();
+      }
       blit(ctx, runs, colours, facing);
       if (anchor && isLampKind(anchor.kind)) {
         const lamp = LIGHTS[anchor.kind][swingFor(frame, i)]![brightFor(frame, i, ember) as 0 | 1];

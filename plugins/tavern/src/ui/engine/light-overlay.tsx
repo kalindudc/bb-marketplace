@@ -2,8 +2,7 @@ import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { experimental_useRpcQuery, type PluginAppBuilder } from "@get-bb/plugin-sdk/app";
 import { settingsContract, type TavernSettings } from "../../shared/settings";
 import { STUCK_IN_VIEW } from "../kit/motion";
-import type { LightAnchor } from "./art";
-import { LANTERN_BANDS, LANTERN_RADIUS, hasArea, hasStripLantern, intersect, lanternAlpha, lanternIslands, lightMap, roundToLightCell, sameLightMap, sourceGlow, subscribeLanternPresence, subscribeStripLantern, type LightSpan, type LightSurface } from "./light";
+import { ISLAND_BANDS, ISLAND_EDGE, LANTERN_BANDS, LANTERN_RADIUS, groundLight, hasArea, hasStripLantern, intersect, lanternAlpha, lanternIslands, lightMap, roundToLightCell, sameLightMap, sourceGlow, subscribeLanternPresence, subscribeStripLantern, type CarrierLight, type LightSpan, type LightSurface } from "./light";
 import { REPORT_READING } from "./report-reading";
 import "./light-overlay.css";
 
@@ -84,7 +83,8 @@ export function collectLanternSurfaces(strip: HTMLElement, lightBb: boolean, cac
   const widget = stack.querySelector<HTMLElement>('[data-part="TavernWidget"]');
   const prompt = lightBb ? composer?.querySelector<HTMLElement>("[data-composer-box] form[data-promptbox]") ?? null : null;
   const local = [widget, prompt].filter((el): el is HTMLElement => !!el);
-  const visible = hasArea(intersect(stripRect, localClip)) && !strip.closest(EXCLUDED) && getComputedStyle(strip).visibility !== "hidden";
+  const stripClip = intersect(stripRect, localClip);
+  const visible = hasArea(stripClip) && !strip.closest(EXCLUDED) && getComputedStyle(strip).visibility !== "hidden";
   const fixed: Rim[] = [];
   if (visible) for (const el of local) {
     observed.add(el);
@@ -107,15 +107,15 @@ export function collectLanternSurfaces(strip: HTMLElement, lightBb: boolean, cac
     }
   }
   const until = clipBottom(chatClip, stripRect.top);
-  return { stripRect, fixed, bubbleRims, observed, bubbles, local, stack, timeline, scroll,
+  return { stripRect, stripClip, fixed, bubbleRims, observed, bubbles, local, stack, timeline, scroll,
     sharedScroll: !!scroll?.contains(strip), scrollTop: scroll?.scrollTop ?? 0, visible, chatClip: until,
     surfaces: [...fixed.map(r => r.surface), ...bubbleRims.map(r => ({ ...r.surface, clip: until }))],
     exclusions: [...fixed, ...bubbleRims].flatMap(r => r.exclusions) };
 }
 
-function paintSpans(ctx: CanvasRenderingContext2D, spans: LightSpan[], colour: string, alpha: number) {
+function paintSpans(ctx: CanvasRenderingContext2D, spans: LightSpan[], colour: string, alpha: number, bands: readonly number[] = LANTERN_BANDS) {
   ctx.fillStyle = colour;
-  for (const [i, bandAlpha] of LANTERN_BANDS.entries()) {
+  for (const [i, bandAlpha] of bands.entries()) {
     ctx.globalAlpha = alpha * bandAlpha;
     ctx.beginPath();
     for (const r of spans) if (r.band === i + 1) ctx.rect(r.left, r.top, r.right - r.left, r.bottom - r.top);
@@ -124,35 +124,103 @@ function paintSpans(ctx: CanvasRenderingContext2D, spans: LightSpan[], colour: s
   ctx.globalAlpha = 1;
 }
 
-const ISLAND_WIDTH = 124;
-function drawIslands(layer: HTMLCanvasElement, rect: DOMRect, anchor: LightAnchor, colour: string, alpha: number) {
-  const left = roundToLightCell(anchor.x) - ISLAND_WIDTH / 2;
-  const position = `translateX(${left}px)`;
-  if (layer.style.transform !== position) layer.style.transform = position;
-  const y = roundToLightCell(anchor.y), height = Math.ceil(rect.height);
-  const tag = `${height}:${y}:${colour}:${alpha}`;
-  if (layer.dataset.paint === tag) return;
-  layer.dataset.paint = tag;
-  layer.width = ISLAND_WIDTH;
-  layer.height = height;
+const textures = { halo: lanternIslands(24, 24, 0).halo, pool: lanternIslands(60, 0, 8).pool };
+const EDGE_FEATHER = ISLAND_EDGE.cell * ISLAND_EDGE.bands.length;
+
+function fadeEdge(ctx: CanvasRenderingContext2D, boundary: number, limit: number, span: number, vertical: boolean, inward: 1 | -1) {
+  for (const [i, opacity] of ISLAND_EDGE.bands.entries()) {
+    const a = boundary + i * ISLAND_EDGE.cell * inward;
+    const b = a + ISLAND_EDGE.cell * inward;
+    const from = Math.max(0, inward === 1 ? (i === 0 ? 0 : a) : b);
+    const to = Math.min(limit, inward === 1 ? b : (i === 0 ? limit : a));
+    if (from >= to) continue;
+    ctx.globalAlpha = opacity;
+    if (vertical) ctx.fillRect(0, from, span, to - from);
+    else ctx.fillRect(from, 0, to - from, span);
+  }
+}
+
+function makeIslands(sprite: Element) {
+  const layer = document.createElement("canvas");
+  layer.className = "tv-lantern-islands";
+  layer.setAttribute("aria-hidden", "true");
+  const add = (width: number, height: number) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    return canvas;
+  };
+  const halo = add(48, 48), pool = add(120, 16);
+  sprite.before(layer);
+  return { layer, halo, pool, colour: "", y: NaN, ground: NaN, alpha: NaN, x: NaN, clip: null as Rect | null };
+}
+
+function drawIslands(islands: ReturnType<typeof makeIslands>, anchor: CarrierLight, { stripRect, stripClip }: Scene, colour: string, alpha: number) {
+  const { layer, halo, pool } = islands;
+  const height = Math.ceil(stripRect.height);
+  const intensity = alpha * anchor.intensity;
+  const resized = layer.height !== height || !Number.isFinite(islands.x);
+  if (resized) {
+    layer.height = height;
+    layer.width = 2 * Math.ceil(pool.width / 2 * groundLight(0, height).spread);
+  }
+  const mid = layer.width / 2, origin = anchor.x - mid;
+  if (resized || islands.x !== anchor.x) {
+    islands.x = anchor.x;
+    layer.style.transform = `translateX(${origin}px)`;
+  }
+  const clip = {
+    left: Math.max(-EDGE_FEATHER, Math.ceil(stripClip.left - stripRect.left - origin)),
+    right: Math.min(layer.width + EDGE_FEATHER, Math.floor(stripClip.right - stripRect.left - origin)),
+    top: Math.ceil(stripClip.top - stripRect.top),
+    bottom: Math.floor(stripClip.bottom - stripRect.top),
+  };
+  const prior = islands.clip;
+  const reclipped = !prior || prior.left !== clip.left || prior.right !== clip.right || prior.top !== clip.top || prior.bottom !== clip.bottom;
+  const recolour = islands.colour !== colour;
+  if (!resized && !recolour && !reclipped && islands.y === anchor.y && islands.ground === anchor.ground && islands.alpha === intensity) return;
+  islands.clip = clip;
+  islands.y = anchor.y;
+  islands.ground = anchor.ground;
+  islands.alpha = intensity;
+  if (recolour) {
+    islands.colour = colour;
+    for (const part of ["halo", "pool"] as const) {
+      const canvas = islands[part];
+      const ctx = canvas.getContext("2d");
+      if (!ctx) continue;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      paintSpans(ctx, textures[part], colour, 1, ISLAND_BANDS);
+    }
+  }
   const ctx = layer.getContext("2d");
   if (!ctx) return;
-  const { halo, pool } = lanternIslands(ISLAND_WIDTH / 2, y, roundToLightCell(height - 10));
-  const cells = new Map<number, LightSpan>();
-  for (const cell of [...halo, ...pool]) {
-    const key = cell.top * ISLAND_WIDTH + cell.left;
-    if ((cells.get(key)?.band ?? 0) < cell.band) cells.set(key, cell);
-  }
-  paintSpans(ctx, [...cells.values()], colour, alpha);
+  const { spread, falloff } = groundLight(anchor.y, anchor.ground);
+  const poolWidth = pool.width * spread;
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, layer.width, height);
+  ctx.globalAlpha = intensity * falloff;
+  ctx.drawImage(pool, mid - poolWidth / 2, anchor.ground - pool.height / 2, poolWidth, pool.height);
+  ctx.globalAlpha = intensity;
+  ctx.drawImage(halo, mid - halo.width / 2, anchor.y - halo.height / 2, halo.width, halo.height);
+  // Fade the last cells instead of letting the strip's overflow cut through lit pixels.
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.fillStyle = "#000";
+  fadeEdge(ctx, clip.left, layer.width, height, false, 1);
+  fadeEdge(ctx, clip.right, layer.width, height, false, -1);
+  fadeEdge(ctx, clip.top, height, layer.width, true, 1);
+  fadeEdge(ctx, clip.bottom, height, layer.width, true, -1);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
 }
 
 type Scene = ReturnType<typeof collectLanternSurfaces>;
 type LightPaint = { map: LightSpan[]; colour: string; alpha: number };
-type Carrier = { anchor: LightAnchor; scene: Scene; layer: HTMLCanvasElement | null; paint: LightPaint | null; x: number; y: number };
+type Carrier = { anchor: CarrierLight; scene: Scene; islands: ReturnType<typeof makeIslands> | null; paint: LightPaint | null; x: number; y: number };
 
 export function watchLantern(canvas: HTMLCanvasElement, { lanternLight, lanternLightBb, lanternStrength }: Options,
   paint?: (spans: LightSpan[], colour: string, alpha: number) => void) {
-  if (!lanternLight) return { draw() {}, dispose() {} } satisfies { draw(strip: HTMLElement, anchor: LightAnchor | null): void; dispose(): void };
+  if (!lanternLight) return { draw() {}, dispose() {} } satisfies { draw(strip: HTMLElement, anchor: CarrierLight | null): void; dispose(): void };
   const carriers = new Map<HTMLElement, Carrier>();
   let previous: LightPaint[] = [];
   let colour = "", alpha = 0, dirtyTheme = true;
@@ -165,13 +233,17 @@ export function watchLantern(canvas: HTMLCanvasElement, { lanternLight, lanternL
   let cache: TextCache = new WeakMap();
 
   function update(carrier: Carrier, layout = false) {
-    const { anchor, scene } = carrier;
-    if (carrier.layer) carrier.layer.hidden = !scene.visible;
-    if (!scene.visible) { carrier.paint = null; return; }
+    const { anchor, scene, islands } = carrier;
+    if (islands && islands.layer.hidden === scene.visible) islands.layer.hidden = !scene.visible;
+    if (!scene.visible) {
+      const changed = carrier.paint !== null;
+      carrier.paint = null;
+      return changed;
+    }
     const x = roundToLightCell(scene.stripRect.left + anchor.x), y = roundToLightCell(scene.stripRect.top + anchor.y);
-    if (!layout && !dirtyTheme && x === carrier.x && y === carrier.y) return;
     const glow = sourceGlow(anchor.kind, colour, alpha);
-    if (carrier.layer) drawIslands(carrier.layer, scene.stripRect, anchor, glow.colour, glow.alpha);
+    if (islands) drawIslands(islands, anchor, scene, glow.colour, glow.alpha);
+    if (!layout && !dirtyTheme && (anchor.holdRim || (x === carrier.x && y === carrier.y))) return false;
     carrier.x = x;
     carrier.y = y;
     const dy = scene.scrollTop - (scene.scroll?.scrollTop ?? 0);
@@ -184,6 +256,7 @@ export function watchLantern(canvas: HTMLCanvasElement, { lanternLight, lanternL
       for (const box of blocked) exclusions.push(offsetY(box, dy));
     }
     carrier.paint = { ...glow, map: lightMap({ ...anchor, x, y }, surfaces, exclusions) };
+    return true;
   }
   function refreshColour() {
     colour = getComputedStyle(canvas).color;
@@ -282,10 +355,10 @@ export function watchLantern(canvas: HTMLCanvasElement, { lanternLight, lanternL
   theme.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
   window.addEventListener("resize", onResize);
   return {
-    draw(strip: HTMLElement, anchor: LightAnchor | null) {
+    draw(strip: HTMLElement, anchor: CarrierLight | null) {
       let carrier = carriers.get(strip);
       if (!anchor) {
-        if (carrier) { carrier.layer?.remove(); carriers.delete(strip); observe(); render(); }
+        if (carrier) { carrier.islands?.layer.remove(); carriers.delete(strip); observe(); render(); }
         return;
       }
       if (dirtyTheme) refreshColour();
@@ -294,22 +367,16 @@ export function watchLantern(canvas: HTMLCanvasElement, { lanternLight, lanternL
       else {
         const scene = collectLanternSurfaces(strip, lanternLightBb, cache);
         const sprite = strip.querySelector(".twalk-canvas");
-        const layer = sprite && !paint ? document.createElement("canvas") : null;
-        if (layer) {
-          layer.className = "tv-lantern-islands";
-          layer.setAttribute("aria-hidden", "true");
-          sprite?.before(layer);
-        }
-        carrier = { anchor, scene, layer, paint: null, x: NaN, y: NaN };
+        const islands = sprite && !paint ? makeIslands(sprite) : null;
+        carrier = { anchor, scene, islands, paint: null, x: NaN, y: NaN };
         carriers.set(strip, carrier);
         observe();
       }
-      update(carrier, changedKind);
-      render();
+      if (update(carrier, changedKind)) render();
     },
     dispose() {
       if (frame !== null) cancelAnimationFrame(frame);
-      for (const carrier of carriers.values()) carrier.layer?.remove();
+      for (const carrier of carriers.values()) carrier.islands?.layer.remove();
       for (const el of scrollers) el.removeEventListener("scroll", onScroll);
       resize?.disconnect();
       mutation.disconnect();
