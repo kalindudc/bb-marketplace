@@ -7,7 +7,8 @@ import type { Decision, Rule } from "../../shared/schema";
 import { QuestAuthority, activeHold, heldQuests, CheckIndependence, GuardPosture, Clamp, characterName, stoppingWords, useToday, RULE_SCOPE, localTime, ruleScopeLabel, useWidenRule, DecidedForYou, useDecisionSeen, QuietNotice, useRemembered, useRememberedView, GateRows, KeeperNoteRows, KeptInMind, ExpandsMark, Glyph, OpensMark, PartyPicture, PhaseStrip, QueryState, QuestMap, SkCrest, SkDecided, SkLine, SkLines, SkPhaseStrip, StatusPill, TimeAgo, Vocabulary, clockTime, glowVars, plural, useRegistry, useSkeletonCount, useSkeletonDelay } from "../kit";
 import { revealAsk } from "./state";
 import { BriefSteerLine } from "../kit/brief-steer";
-import { summaryPath } from "../kit/summary-card";
+import { NewSummaries } from "./new-summaries";
+import { keeperGuards, keeperState, useKeeperStop } from "./keeper-state";
 import { KeeperSuccessionRecord } from "../kit/succession";
 import { LeadChainRows } from "./lead-chain-rows";
 import "./skeletons.css";
@@ -85,18 +86,21 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
   const undo = experimental_useRpcMutation({ contract: rpcContract, method: "undoDecision" });
   const resetLane = experimental_useRpcMutation({ contract: rpcContract, method: "resetUndoLane" });
   const confirm = experimental_useRpcMutation({ contract: rpcContract, method: "confirmRule" });
-  const markSummary = experimental_useRpcMutation({ contract: rpcContract, method: "markSummariesSeen" });
   const widenRule = experimental_useRpcMutation({ contract: rpcContract, method: "widenRule" });
   const [error, setError] = useState<unknown>(null);
   // The open quest map, the history folds and scroll come back when the panel reopens on this Keeper (per device).
   const [mapOpen, setMapOpen] = useRemembered<string | null>(`ledger:${threadId}:map`, null, (v): v is string | null => v === null || typeof v === "string");
   const [dismissed, setDismissed] = useState<string[]>([]);
   const data = query.data;
+  const keeper = decor.data?.keeperView;
+  const stopped = useKeeperStop(!!data);
+  const activity = keeper ? keeperState(keeper, stopped) : null;
+  const guard = keeperGuards(data?.scopes?.find(scope => scope.threadId === threadId) ?? decor.data?.scope);
   const root = useRef<HTMLDivElement>(null);
   useRememberedView(root, `ledger:${threadId}:view`, !!data);
   const attentionGroup = params && typeof params === "object" && !Array.isArray(params) ? params.attentionGroup : null;
   useEffect(() => {
-    if (!data || (attentionGroup !== "need" && attentionGroup !== "new")) return;
+    if (!data || (attentionGroup !== "need" && attentionGroup !== "new" && attentionGroup !== "guard")) return;
     const target = root.current?.querySelector(`[data-attention-group="${attentionGroup}"]`);
     target?.scrollIntoView({ block: "start" });
   }, [threadId, attentionGroup, !!data]);
@@ -117,6 +121,11 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
       <QueryState error={query.error ?? registry.error ?? error} loading={query.isLoading} retry={() => void query.refetch()} label="the ledger" skeleton={<SkLedger quests={skeletonQuests} />} />
       {data?.succession && <KeeperSuccessionRecord view={data.succession} threadId={threadId} />}
       {data && <QuietNotice threadId={threadId} since={data.quietSince} />}
+      {activity && activity.word !== "Quiet" && <p className="m small lg-keeper-state">{activity.word}{activity.since != null && <> since <time dateTime={new Date(activity.since).toISOString()}>{new Date(activity.since).toLocaleString()}</time></>} · {activity.detail}</p>}
+      {data && <section className="lg-card" aria-label="Guardrails" data-attention-group="guard">
+        <h3><Glyph name="shield" /><span>Guardrails</span></h3>
+        {guard.words.length ? <ul className="lg-rows">{guard.words.map(word => <li key={word}>{word}</li>)}</ul> : <p className="m small">No guard status is recorded for this Keeper.</p>}
+      </section>}
       {data && (() => {
         const live = data.boardQuests.filter(q => q.archivedAt === null && q.phase !== "done" && q.phase !== "stopped");
         const returned = data.boardQuests.filter(q => q.archivedAt === null && (q.phase === "done" || q.phase === "stopped"));
@@ -130,7 +139,6 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
         const cellared = new Set(archived.map(q => q.id));
         const attention = data.decidedForYou ?? keeperCalls.filter(d => !d.undone && d.reversible && d.seenAt == null && !(d.boardQuestId && cellared.has(d.boardQuestId)));
         const decidedCount = data.decidedCount ?? attention.length;
-        const newSummaries = list.items.filter(item => item.kind === "summary" && item.questId).reverse();
         const historyTotal = data.decisionsTotal ?? data.decisions.length;
         const undoFromHistory = { pending: undo.isPending, run: (decisionId: string) => void undo.mutate({ decisionId }).catch(setError) };
         const short = (id: string | null) => data.boardQuests.find(q => q.id === id)?.short ?? null;
@@ -176,12 +184,7 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
           ))}
           <KeptInMind notes={notes} total={data.notesTotal} older={data.olderPromises} short={short} />
           <h3 data-attention-group="new">New for you</h3>
-          {!!list.summaries && <ul className="lg-rows lg-summary-rows" aria-label="New summaries">{newSummaries.map(item => <li key={item.id}>
-            <span data-content>{item.title}</span>
-            <button type="button" className="lnk-btn act" onClick={() => navigate.toPluginPanel("tavern", { subPath: summaryPath(item.questId!, item.id) })}>Open<OpensMark /></button>
-            <button type="button" className="btn sm" aria-label={`OK: ${item.title}`} disabled={markSummary.isPending} onClick={() => void markSummary.mutate({ boardQuestId: item.questId!, ids: [item.id] }).catch(setError)}>OK</button>
-          </li>)}</ul>}
-          {(list.summaries ?? 0) > newSummaries.length && <p className="m small">Showing the newest {newSummaries.length} of {list.summaries} summaries.</p>}
+          <NewSummaries attention={list} />
           {!!data.undoLanes?.length && <section className="lg-card" aria-label="Decisions that now ask you">
             <h3>Decisions that now ask you</h3>
             <ul className="lg-undo-lanes">{data.undoLanes.map(lane => <li key={lane.kind}>

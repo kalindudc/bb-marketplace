@@ -122,12 +122,13 @@ it("loads seen history as title rows and fetches older titles only when asked", 
   expect(await slot.findByText("Older words")).toBeTruthy();
 });
 
-it("uses the projected quest count on the chip and in its narrow quests popover", async () => {
+it("uses the projected summary count on the quest chip and in its inline section", async () => {
   const quest = { ...fixtureDecor.keeperView!.boardQuests[0]!, attention: count };
   const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { registry: () => fixtureRegistry, decor: () => ({ ...fixtureDecor, characters: false, keeperView: { ...fixtureDecor.keeperView!, attention: count, boardQuests: [quest] } }) } });
-  const chip = await slot.findByRole("button", { name: /Open the quest page for.*1 new summary/i });
+  const chip = await slot.findByRole("button", { name: `Show ${quest.title}` });
+  expect(chip.title).toContain("1 new summary");
   expect(chip.textContent).toContain("1 new");
-  fireEvent.click(slot.getByRole("button", { name: "Show 1 quest" }));
+  fireEvent.click(chip);
   const popover = slot.getByRole("region", { name: "Board quests" });
   expect(within(popover).getByText("1 new summary")).toBeTruthy();
 });

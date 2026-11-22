@@ -45,9 +45,10 @@ it.runIf(process.env.TAVERN_LAYOUT_HARNESS === "1")("renders branch components f
   const widgets: string[] = [];
   for (const n of [1, 2, 3, 0]) {
     const count = n || 1;
-    const decor = { ...fixtureDecor, characters: false, pendingEvents: 4, member: { ...fixtureDecor.member!, displayName: "Wren XVIII" }, keeperView: { ...fixtureDecor.keeperView!, boardQuests: Array.from({ length: count }, (_, i) => ({ ...fixtureQuest, id: `q${i}`, short: n === 0 ? "Vault" : ["Edge infrastructure", "Resiliency action", "Operations monitoring"][i]! })), openAsks: Array.from({ length: 3 }, (_, i) => ({ ...fixtureDecor.keeperView!.openAsks[0]!, id: `ask${i}` })) } };
+    const attention = { items: [], needYou: 3, new: 0, heldByYou: 0 };
+    const decor = { ...fixtureDecor, characters: false, pendingEvents: 4, member: { ...fixtureDecor.member!, displayName: "Wren XVIII" }, keeperView: { ...fixtureDecor.keeperView!, attention, boardQuests: Array.from({ length: count }, (_, i) => ({ ...fixtureQuest, id: `q${i}`, short: n === 0 ? "Atlas" : ["Edge infrastructure", "Resiliency action", "Operations monitoring"][i]! })), openAsks: Array.from({ length: 3 }, (_, i) => ({ ...fixtureDecor.keeperView!.openAsks[0]!, id: `ask${i}` })) } };
     const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { decor: () => decor, registry: () => fixtureRegistry } });
-    await slot.findByRole("button", { name: /3 asks need you/ });
+    await slot.findByRole("button", { name: /3 need you/ });
     widgets.push(slot.container.innerHTML);
     slot.lifecycle.unmount();
   }

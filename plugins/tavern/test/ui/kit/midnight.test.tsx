@@ -30,16 +30,16 @@ async function mount(node: () => ReactElement, rpc: Record<string, unknown> = {}
 
 describe("clock texts turn at midnight with no refetch", () => {
   it("QuietNotice: quiet since 23:50, then with its date", async () => {
-    const slot = await mount(() => <QuietNotice threadId="keeper-1" since={AT} compact />);
-    const time = () => slot.container.querySelector(".tq-since time")!.textContent;
+    const slot = await mount(() => <QuietNotice threadId="keeper-1" since={AT} />);
+    const time = () => slot.container.querySelector(".tq-t time")!.textContent;
     expect(time()).toBe("23:50");
     pastMidnight();
     expect(time()).toBe(`${dated} 23:50`);
   });
 
   it("catches up on return to the tab when a sleeping laptop missed the midnight timer", async () => {
-    const slot = await mount(() => <QuietNotice threadId="keeper-1" since={AT} compact />);
-    const time = () => slot.container.querySelector(".tq-since time")!.textContent;
+    const slot = await mount(() => <QuietNotice threadId="keeper-1" since={AT} />);
+    const time = () => slot.container.querySelector(".tq-t time")!.textContent;
     vi.setSystemTime(BEFORE + 8 * 3600_000);
     expect(time()).toBe("23:50");
     act(() => { document.dispatchEvent(new Event("visibilitychange")); });

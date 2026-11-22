@@ -63,13 +63,16 @@ it("shows at most three asks per group before expanding", () => {
 it("every rendered count surface reads the four-item server view", async () => {
   function Surface() { const badge = useTavernBadge(); return <><span data-testid="badge">{badge?.count} need you</span><ThreadWidget threadId="keeper-1" /><LedgerTab threadId="keeper-1" environment={null} /><NeedsYouQueue room={room} registry={fixtureRegistry} /><TavernHomepage projectId={null} /></>; }
   const slot = renderSlot({ component: Surface }, {}, { composer: { scope: { kind: "thread", threadId: "keeper-1" } }, rpc: { registry: () => fixtureRegistry, decor: () => ({ ...fixtureDecor, characters: false, keeperView: { ...fixtureDecor.keeperView!, attention: ledger.attention } }), ledger: () => ledger, room: () => room } } as any);
-  await slot.findByRole("button", { name: "4 need you: open the Ledger" });
+  const widget = await slot.findByRole("region", { name: "Tavern widget" });
   expect(slot.getByTestId("badge").textContent).toBe("4 need you");
   expect(slot.container.querySelector(".lg-now-line")?.textContent).toContain("4 need you");
   expect(within(slot.container.querySelector(".lg-needs") as HTMLElement).getByText("4 need you")).toBeTruthy();
   expect(slot.container.querySelector("#tv-needs-you > header .tv-count")).toBeNull();
   expect(slot.container.querySelector(".qrow-home .tag")?.textContent).toBe("4 need you");
-  expect(slot.getByRole("button", { name: "4 need you" })).toBeTruthy();
-  fireEvent.click(slot.getByRole("button", { name: "4 need you: open the Ledger" }));
+  fireEvent.click(within(widget).getByRole("button", { name: "4 need you" }));
+  const asks = within(widget).getByRole("region", { name: "Asks waiting for you" });
+  expect(within(asks).getByRole("list", { name: "Waiting on you" })).toBeTruthy();
+  expect(within(asks).getByRole("list", { name: "Rules to review" })).toBeTruthy();
+  fireEvent.click(within(asks).getByRole("button", { name: /Review in Ledger/ }));
   expect(slot.inspection.experimental_panelCalls).toContainEqual({ method: "openTab", options: { tab: expect.objectContaining({ id: "ledger" }), params: { attentionGroup: "need" } } });
 });

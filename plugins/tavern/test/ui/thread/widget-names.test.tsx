@@ -17,7 +17,7 @@ it.each(["keeper", "member"] as const)("shows the %s display name in bold before
   const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { decor: () => decor, registry: () => fixtureRegistry } });
   await waitFor(() => expect(slot.container.querySelector(".tw-id .tw-name b")?.textContent).toBe("Wren II"));
   expect(slot.container.querySelector(".tw-id")?.getAttribute("title")).toContain(`${role === "keeper" ? "This thread: " : ""}Wren II, Keeper (lead)`);
-  if (role === "keeper") expect(slot.container.querySelector(".tw-id .sr")?.textContent).toBe("Keeper, idle");
+  if (role === "keeper") expect(slot.container.querySelector(".tw-id .sr")?.textContent).toMatch(/^Keeper, Idle:/);
   expect(slot.container.querySelector(".tw-row")?.textContent).toMatch(/Wren II.*Vault/s);
   slot.lifecycle.unmount();
 });

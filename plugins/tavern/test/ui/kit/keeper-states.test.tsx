@@ -44,7 +44,7 @@ describe("a Keeper's state", () => {
     const slot = renderSlot(banner, {}, { composer: { scope: { kind: "thread", threadId: "keeper-1" }, text: "" }, rpc: { decor: () => decor, registry: () => fixtureRegistry } });
     await slot.findByRole("region", { name: "Tavern widget" });
     const id = slot.container.querySelector(".tw-id")!;
-    expect(id.getAttribute("title")).toContain(`idle: ${KEEPER_STATE_HINT.idle}`);
+    expect(id.getAttribute("title")).toContain(`Idle: ${KEEPER_STATE_HINT.idle}`);
     expect(id.getAttribute("title")).not.toMatch(/listening/i);
   });
 });

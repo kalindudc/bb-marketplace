@@ -72,14 +72,22 @@ it("shows that a new member's cluster guard will arm on its next session", async
   const slot = await panel({ ...memberPanelDecor, scope: { ...memberPanelDecor.scope!, clusterGuard: "ready" } });
   expect(slot.getByText("Ready for the member's next session")).toBeTruthy();
 });
-it.each(["armed", "restart"] as const)("shows only exceptional Keeper cluster posture (%s)", async clusterGuard => {
-  const decor = { ...fixtureDecor, characters: false, scope: { ...memberPanelDecor.scope!, clusterGuard } };
+it.each([
+  ["armed", "armed", "Cluster writes require confirmation", false],
+  ["ready", "armed", "Ready for the member's next session", false],
+  ["restart", "armed", "restart needed: cluster writes not prevented", true],
+  ["armed", "not-prevented", "Cluster writes require confirmation", true],
+] as const)("puts %s cluster and %s send posture behind a shield", async (clusterGuard, sendGuard, words, warning) => {
+  const decor = { ...fixtureDecor, characters: false, scope: { ...memberPanelDecor.scope!, clusterGuard, sendGuard } };
   const slot = renderSlot({ component: ThreadWidget }, { threadId: decor.threadId }, { rpc: { decor: () => decor, registry: () => fixtureRegistry } });
   try {
-    await slot.findByRole("button", { name: /Open the Keeper’s ledger/ });
-    expect(slot.queryByText("Cluster writes require confirmation")).toBeNull();
-    const warning = slot.queryByText("restart needed: cluster writes not prevented");
-    expect(!!warning).toBe(clusterGuard === "restart");
+    const shield = await slot.findByRole("button", { name: /^Open guardrails in the Ledger:/ });
+    expect(shield.title).toContain(words);
+    expect(shield.title).toContain(sendGuard === "armed" ? "Listed sends are prevented" : "Sends are not prevented");
+    expect(shield.hasAttribute("data-warning")).toBe(warning);
+    expect(slot.queryByText(words)).toBeNull();
+    fireEvent.click(shield);
+    expect(slot.inspection.experimental_panelCalls).toContainEqual({ method: "openTab", options: { tab: expect.objectContaining({ id: "ledger" }), params: { attentionGroup: "guard" } } });
     if (process.env.TAVERN_G1BN_HARNESS === "1" && warning)
       process.stdout.write("G1BN_HARNESS=" + JSON.stringify(slot.container.innerHTML) + "\n");
   } finally { slot.lifecycle.unmount(); }

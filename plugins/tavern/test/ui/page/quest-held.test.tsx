@@ -48,10 +48,14 @@ it("the board row, new-thread row and map use the server's held move, not a hire
   assertHeld(board.container.textContent); assertHeld(homepage.container.querySelector('[data-part="QuestRow"]')?.textContent);
   assertHeld(graphFor(room, scenes.registry).nodes.find(node => node.questId === quest.id && node.kind === "quest")?.detail);
 });
-it("the widget displays the server's held line and keeps its production ask counted", async () => {
+it("the widget explains the server's held move on hover and in the quest section, and keeps its production ask counted", async () => {
   const widget = renderSlot({ component: ThreadWidget }, { threadId: "lead" }, { rpc: { decor: () => decor, registry: () => scenes.registry } }); slots.push(widget);
-  await waitFor(() => assertHeld(widget.container.querySelector(".tw-quest")?.textContent));
-  expect(decor.keeperView!.openAsks).toHaveLength(1);
+  const chip = await widget.findByRole("button", { name: `Show ${quest.title}` });
+  assertHeld(chip.title);
+  expect(chip.textContent).not.toContain(quest.move.text);
+  fireEvent.click(chip);
+  assertHeld(widget.getByRole("region", { name: "Board quests" }).textContent);
+  expect(widget.getByRole("button", { name: "1 need you" })).toBeTruthy();
 });
 it.each([false, true])("offers a review allowance only when the review budget is reached: %s", async reached => {
   const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));

@@ -27,10 +27,10 @@ const released = (via: "banner" | "page", askId: string | null = null) => ({ che
 describe("the checker-handoff hold in the Keeper's widget row", () => {
   it("counts the hold on the asks chip, and draws it in the panel with its reason, its source and one release control", async () => {
     const slot = await keeperRow({ boardQuests: [heldQuest] });
-    const chip = await slot.findByRole("button", { name: /1 need you: open the Ledger/ });
+    const chip = await slot.findByRole("button", { name: /1 need you/ });
     expect(chip.textContent).toMatch(/1\s*need you/);
     expect(chip.hasAttribute("data-ask")).toBe(true);
-    act(() => revealAsk("keeper-1", `hold:${hold.id}`));
+    fireEvent.click(chip);
     const panel = await slot.findByRole("region", { name: "Asks waiting for you" });
     // The only item opens by itself, as a single ask does.
     const row = within(panel).getByRole("button", { name: /Checker handoff/, expanded: true });

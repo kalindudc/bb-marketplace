@@ -14,6 +14,7 @@ const PATHS = {
   link: "M6 5v7a3 3 0 0 0 3 3h9M14 11l4 4-4 4",
   close: "M6 6l12 12M18 6 6 18",
   panel: "M4 5h16v14H4ZM14 5v14",
+  shield: "M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6Z",
   list: "M9 6h11M9 12h11M9 18h11M4 6h1M4 12h1M4 18h1",
   book: "M4 5h6a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H4ZM20 5h-6a2 2 0 0 0-2 2v13a2 2 0 0 1 2-2h6Z",
   bell: "M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15ZM10 20.5h4",

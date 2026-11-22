@@ -40,26 +40,3 @@ it("retains member clipping and limits the new gap rule to Keepers", () => {
   expect(clip).toContain("overflow-clip-margin: 4px");
   expect(css.match(/max-width: 520px\) \{ \.tavern\.twidget \.tw-row[^}]+/)?.[0]).toBeUndefined();
 });
-
-it.each([[576, ":only-child"], [645, ":nth-child(2)"], [715, ":nth-child(3)"]] as const)("uses the measured %i px boundary for %s", (width, count) => {
-  const start = css.indexOf(`@container tavern-widget (max-width: ${width}px)`);
-  expect(start).toBeGreaterThan(-1);
-  const block = css.slice(start, css.indexOf("\n}", start));
-  expect(block).toContain(`.tw-row:has(.tw-quest${count}) .tw-quests { display: none; }`);
-  expect(block).toContain(`.tw-row:has(.tw-quest${count}) .tw-quests-count { display: inline-flex; }`);
-  expect(block).toContain(`.tw-row:has(.tw-quest${count}) :is(.tw-free, .tw-ledger > span, .tw-ledger > svg:last-child) { display: none; }`);
-});
-
-it.each([[611, ".tw-quest:only-child"], [810, ".tw-quests:has(.tw-quest:nth-child(3)) .tw-quest"]] as const)("keeps phase strips out of the measured transition gap at %i px", (width, selector) => {
-  const start = css.indexOf(`@container tavern-widget (max-width: ${width}px)`);
-  expect(start).toBeGreaterThan(-1);
-  const block = css.slice(start, css.indexOf("\n}", start));
-  expect(block).toContain(`${selector} .tw-ph { display: none; }`);
-  expect(block).toContain(`${selector} { min-width: calc(6ch + 26px); }`);
-});
-
-it("does not introduce an unconditional quest collapse above 520 or phase-word drop at 900", () => {
-  const extra = [...css.matchAll(/@container tavern-widget \(max-width: (\d+)px\)\s*\{\s*\.tavern \.tw-quests\s*\{ display: none/g)].map(m => Number(m[1]));
-  expect(extra.filter(w => w > 520)).toEqual([]);
-  expect(css.match(/max-width: 900px\) \{ \.tavern \.tw-quest \.tw-pw[^}]+/)?.[0]).toBeUndefined();
-});

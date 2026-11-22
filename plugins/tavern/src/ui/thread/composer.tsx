@@ -1,6 +1,6 @@
 import { useHandBackReply } from "./handback-reply";
-import { attentionView, attentionTitle } from "../../shared/attention";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from "react";
+import { attentionView, attentionTitle, attentionNotes } from "../../shared/attention";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties, type MouseEvent } from "react";
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_usePluginId, experimental_useAppPanel, useBbNavigate, useComposer, useRpc, UrlLink, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
 import { charactersPatch, settingsContract, type SettingsPatch } from "../../shared/settings";
 import { isSetupPrompt } from "../../shared/setup";
@@ -9,16 +9,18 @@ import { classDifferences, composerProjectId, fieldWords, rearmClassSettings, st
 import { rpcContract, type ThreadDecor } from "../../shared/contract";
 import type { Ask, CheckerHandoffHold, ClassDef, Phase as QuestPhase } from "../../shared/schema";
 import type { ClassNotice } from "../../shared/class-execution-contract";
-import { AskCard, Crest, KEEPER_STATE_HINT, DecidedForYou, useDecisionSeen, ExpandsMark, Glyph, IconButton, OpensMark, QueryState, Skeleton, SkCrest, SkLine, TimeAgo, Vocabulary, memberIdentity, plural, useRegistry, useSkeletonCount, useSkeletonDelay, type Registry, glowVars, QuietNotice, useArmedNewQuest, activeHold, heldQuests, releaseWords, Clamp, localTime, useNow } from "../kit";
+import { AskCard, Crest, KeeperNoteRows, PhaseStrip, StatusPill, DecidedForYou, useDecisionSeen, ExpandsMark, Glyph, IconButton, OpensMark, QueryState, Skeleton, SkCrest, SkLine, TimeAgo, Vocabulary, memberIdentity, plural, useRegistry, useSkeletonCount, useSkeletonDelay, type Registry, glowVars, QuietNotice, useArmedNewQuest, activeHold, heldQuests, releaseWords, Clamp, localTime, useNow } from "../kit";
 import { PHASE_STEPS, phaseIndex, phaseWord } from "../kit/phase";
 import { LEDGER_TAB } from "./tabs";
-import { summaryCountWords } from "../kit/rows";
+import { pathProgress, summaryCountWords } from "../kit/rows";
+import { NewSummaries } from "./new-summaries";
 import { useWidgetPanel, threadDecorCache, type WidgetPanel } from "./state";
 import { useChangeCue, useTavernMotion } from "../kit/motion";
 import { ThreadPartyStrip } from "../engine/thread-party";
 import { takeArmedClass } from "../kit/remember";
 import { MemberPanel, memberFinished } from "./member-brief";
-import { clusterGuardWords, memberIdentityWords, sendGuardWords } from "../kit/member-identity";
+import { memberIdentityWords } from "../kit/member-identity";
+import { keeperGuards, keeperState, useKeeperStop } from "./keeper-state";
 import { HUE_CSS } from "../../shared/heraldry";
 import { PlacementFacts } from "../kit/placement";
 import { memberIdentityLabel } from "../../shared/identity";
@@ -191,6 +193,10 @@ export function ClassBanner() {
 export function TavernBanner() { const composer = useComposer(); return composer.scope.kind === "thread" ? <ThreadWidget threadId={composer.scope.threadId} /> : null; }
 
 type Open = NonNullable<WidgetPanel>["kind"] | null;
+type KeeperSection = Exclude<Open, "brief" | null>;
+const SECTION_LABEL = { asks: "Asks waiting for you", decided: "New for you", quests: "Board quests" };
+const LEDGER_LABEL = "Open the Keeper’s ledger (what the lead knows)";
+const sectionId = (threadId: string, kind: KeeperSection) => `tw-${kind}-${threadId}`;
 
 export function ThreadWidget({ threadId }: { threadId: string }) {
   const composer = useComposer();
@@ -210,12 +216,14 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const [receiptFocused, setReceiptFocused] = useState(false);
   const [widgetPanel, setWidgetPanel] = useWidgetPanel(threadId);
   const open = widgetPanel?.kind ?? null;
+  const opener = useRef<{ threadId: string; kind: KeeperSection; button: HTMLButtonElement } | null>(null);
   const [error, setError] = useState<unknown>(null);
   useHandBackReply(threadId, composer, setError);
   const lastTyping = useRef(0);
   const [pageSince] = useState(Date.now);
   const data = decor.data;
   const keeper = data?.keeperView;
+  const stopped = useKeeperStop(!!keeper);
   const retired = data?.succession?.state === "done" && data.succession.current !== threadId;
   useEffect(() => {
     if (!retired) return;
@@ -233,10 +241,10 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   // Motion: the row holds still while an ask is in it, and for 2 s after the user types (the coordinator's hold; a restored draft doesn't
   // count); the busy dot pulses twice when its Keeper turns busy or the row comes into view busy, then holds solid.
   const need = needsOf(keeper);
-  const held = need.asks + need.holds > 0 || (!keeper && Boolean(data?.openScopeAsk || data?.scope?.pendingAskId || data?.scope?.error));
+  const held = !!stopped || need.asks + need.holds > 0 || (!keeper && Boolean(data?.openScopeAsk || data?.scope?.pendingAskId || data?.scope?.error));
   const { cue, settle } = useTavernMotion(`thread:${threadId}`, { held });
   const dot = useRef<HTMLElement>(null);
-  const pulsing = !!keeper && keeper.quietSince == null && keeper.status === "busy" && !!data?.member && !!registry.data;
+  const pulsing = !stopped && !!keeper && keeper.quietSince == null && keeper.status === "busy" && !!data?.member && !!registry.data;
   const pulse = () => cue(dot.current, "busy dot", { key: "dot", ms: 3200, className: "mo-pulse", ambient: true, region: "widget" });
   useLayoutEffect(() => { if (pulsing) pulse(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useChangeCue(pulsing, (_prev, next) => { if (next) pulse(); });
@@ -249,8 +257,11 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
     const target = focusAfterCharacterChange.current;
     if (!target || data?.characters !== (target === "actor")) return;
     focusAfterCharacterChange.current = null;
-    if (document.activeElement === document.body)
-      stack.current?.querySelector<HTMLElement>(target === "actor" ? "button[data-actor]" : ".tw-show-characters")?.focus({ preventScroll: true });
+    if (document.activeElement === document.body) {
+      const button = stack.current?.querySelector<HTMLElement>(target === "actor" ? "button[data-actor]" : ".tw-row .tw-show-characters");
+      const visible = button && getComputedStyle(button).display !== "none" ? button : stack.current?.querySelector<HTMLElement>(".tw-expand");
+      visible?.focus({ preventScroll: true });
+    }
   }, [data?.characters]);
   useEffect(() => {
     const el = receiptEl.current;
@@ -279,14 +290,36 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const names = registry.data ?? { classes: [], characters: [] };
   const name = memberIdentityLabel(data.member, names);
   const identity = registry.data ? memberIdentity(registry.data, data.member) : null;
-  const toggle = (kind: "brief" | "quests") => setWidgetPanel(open === kind ? null : { kind });
-  const closePanel = () => {
+  const toggle = (kind: "brief") => setWidgetPanel(open === kind ? null : { kind });
+  const keeperSection = keeper && open !== "brief" ? open : null;
+  const attention = attentionView(keeper?.attention);
+  const holds = keeper && keeperSection === "asks" ? heldQuests(keeper.boardQuests, keeper.openAsks) : [];
+  const activity = keeper ? keeperState(keeper, stopped) : null;
+  const activityLabel = activity ? `${activity.word}${activity.since == null ? "" : ` since ${new Date(activity.since).toLocaleString()}`}: ${activity.detail}` : "";
+  const guard = keeperGuards(data.scope);
+  const closePanel = (from?: HTMLButtonElement) => {
+    const trigger = open === "asks" ? ".tw-asks" : open === "quests" ? ".tw-quest" : open === "brief" ? ".tw-member-id" : ".tw-new";
+    const button = from ?? (opener.current?.kind === open && opener.current.threadId === threadId ? opener.current.button : stack.current?.querySelector<HTMLButtonElement>(trigger));
     setWidgetPanel(null);
-    const trigger = open === "asks" ? ".tw-asks" : open === "quests" ? ".tw-quests-count" : open === "brief" ? ".tw-member-id" : ".tw-ledger";
-    (stack.current?.querySelector<HTMLButtonElement>(trigger) ?? stack.current?.querySelector<HTMLButtonElement>(".tw-ledger"))?.focus();
+    opener.current = null;
+    const fallback = stack.current?.querySelector<HTMLButtonElement>(".tw-expand");
+    (button?.isConnected && !button.hasAttribute("data-empty") ? button : fallback)?.focus({ preventScroll: true });
   };
+  const toggleSection = (kind: KeeperSection, button: HTMLButtonElement) => {
+    if (open === kind) { closePanel(button); return; }
+    opener.current = { threadId, kind, button };
+    if (kind !== "asks") { setWidgetPanel({ kind }); return; }
+    const ask = keeper?.openAsks[0];
+    const holdQuest = !ask && keeper ? heldQuests(keeper.boardQuests, keeper.openAsks)[0] : undefined;
+    const hold = holdQuest && activeHold(holdQuest);
+    setWidgetPanel({ kind, askId: ask?.id ?? (hold ? holdKey(hold) : null) });
+  };
+  const onLedger = () => panel.openTab({ tab: LEDGER_TAB });
+  const onQuest = (id: string) => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` });
+  const guardButton = guard.words.length > 0 && <button type="button" className="ibtn tw-guard act" data-warning={guard.warning || undefined}
+    aria-label={`Open guardrails in the Ledger: ${guard.words.join(" · ")}`} title={`Open guardrails in the Ledger: ${guard.words.join(" · ")}`}
+    onClick={() => panel.openTab({ tab: LEDGER_TAB, params: { attentionGroup: "guard" } })}><Glyph name="shield" /></button>;
   const variant = keeper ? "keeper" : data.member.role === "member" ? "member" : "solo";
-  const clusterWarning = keeper && data.scope?.clusterGuard !== "armed" ? clusterGuardWords(data.scope) : null;
   const lit = !!identity && !identity.character.plain;
   const surface: CSSProperties & { "--widget-edge": string } = { ...(lit ? glowVars(data.boardQuest ? `quest:${data.boardQuest.id}` : `keeper:${threadId}`) : {}), "--widget-edge": lit ? HUE_CSS[identity.character.hue] : "var(--tavern-line)" };
   const hideBtn = <IconButton glyph="close" className="tw-hide" label="Hide Tavern in this thread (⌥⌘T). The crest in the composer brings it back" onClick={() => void hide.mutate({ threadId, hidden: true }).catch(setError)} />;
@@ -335,27 +368,46 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
       closePanel();
     }}>
       <div className="tw-row">
-        {identity && data.member && keeper && <span className={`tw-id ${keeper ? `st-${keeper.quietSince != null ? "quiet" : keeper.status}` : ""}`} title={`This thread: ${name}, ${identity.cls.label} (${identity.cls.plain})${keeper ? ` · ${data.pendingEvents ?? 0} updates waiting for the Keeper’s next turn · ${keeper.quietSince != null ? `quiet: ${KEEPER_STATE_HINT.quiet}` : `${STATUS_WORD[keeper.status]}: ${STATUS_HINT[keeper.status]}`}` : ""}`}><span className="tw-crest"><Crest {...identity} size={18} />{keeper && <i ref={dot} className="tw-dot" aria-hidden="true" />}</span>{<span className="who-t tw-name"><b>{name}</b>{keeper ? <span aria-hidden="true"> · </span> : <span className="anc">{identity.cls.label} · {identity.cls.plain}</span>}</span>}{keeper && <span className="sr">Keeper, {STATUS_WORD[keeper.status]}</span>}</span>}
+        {keeper && activity && <span className={`tw-id st-${stopped ? "stopped" : keeper.quietSince != null ? "quiet" : keeper.status}`} title={`This thread: ${name}${identity ? `, ${identity.cls.label} (${identity.cls.plain})` : ""} · ${activityLabel} · ${data.pendingEvents ?? 0} updates waiting for the Keeper’s next turn`}>
+          {identity && <span className="tw-crest"><Crest {...identity} size={18} /></span>}
+          <span className="who-t tw-name"><b>{name}</b></span>
+          <span ref={dot} className="tw-dot" aria-hidden="true"><span className="tw-state">{activity.word}</span><Glyph name={activity.icon} size={10} /></span>
+          <span className="sr">Keeper, {activityLabel}</span>
+        </span>}
         {!keeper && data.member && registry.data && <button type="button" className="tw-id tw-member-id act" title={memberIdentityWords(data.member, registry.data, data.scope, memberFinished(data))} aria-label={memberIdentityWords(data.member, registry.data, data.scope, memberFinished(data))} aria-expanded={open === "brief"} aria-controls={`tw-brief-${threadId}`} onClick={() => toggle("brief")}>
           {identity && <span className="tw-crest"><Crest {...identity} size={18} /></span>}
           <span className="who-t tw-name"><b>{name}</b><span className="tw-member-class"> · {identity?.cls.label ?? data.member.classId}</span></span>
         </button>}
-        {keeper && <KeeperParts quiet={<QuietNotice threadId={threadId} since={keeper.quietSince} compact />} data={data} open={open} onToggleQuests={() => toggle("quests")} onLedger={group => panel.openTab({ tab: LEDGER_TAB, ...(group ? { params: { attentionGroup: group } } : {}) })} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} />}
+        {keeper && <>
+          <QuietNotice threadId={threadId} since={stopped ? null : keeper.quietSince} compact onError={setError} />
+          <KeeperParts data={data} open={keeperSection} onToggle={toggleSection} />
+          {guardButton}
+          <button type="button" className="tw-chip tw-ledger act" aria-label={LEDGER_LABEL} title={LEDGER_LABEL} onClick={onLedger}><Glyph name="book" size={13} /><span>Ledger</span><OpensMark /></button>
+        </>}
         {variant === "member" && <MemberParts data={data} registry={registry.data ?? null} open={open} toggle={toggle} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} onThread={id => navigate.toThread(id)} />}
         {showCharacters}{hideBtn}
       </div>
-      {clusterWarning && <p className="tw-cluster-warning">{clusterWarning}</p>}
       {variant === "member" && data.boardQuest && <WidgetWaypoints member={data.member} reported={data.lastReportedWaypointId} />}
       {open !== "brief" && <PlacementFacts placement={data.member.placement} memberName={name} />}
       <ClassNoticeLine threadId={threadId} notice={notice} />
       {armedLine}
       <QueryState error={error} />
-      {keeper && widgetPanel?.kind === "asks" && <AsksPanel threadId={threadId} asks={keeper.openAsks} holds={heldQuests(keeper.boardQuests, keeper.openAsks)} quests={keeper.boardQuests} expanded={widgetPanel.askId} onSelect={askId => setWidgetPanel({ kind: "asks", askId })} onClose={closePanel} />}
-      {keeper && keeper.quietSince == null && open === "quests" && <div id={`tw-quests-${threadId}`} className="tw-panel tw-quest-popover" role="region" aria-label="Board quests">
-        <ul>{keeper.boardQuests.map(q => <li key={q.id}><button type="button" className="lnk-btn act" onClick={() => { setWidgetPanel(null); navigate.toPluginPanel("tavern", { subPath: `quest/${q.id}` }); }}><b>{q.title}</b><OpensMark /></button>{!!q.attention?.summaries && <span className="m">{summaryCountWords(q.attention.summaries)}</span>}</li>)}</ul>
-        <div className="tw-pf"><button type="button" className="btn sm" onClick={() => { setWidgetPanel(null); panel.openTab({ tab: LEDGER_TAB }); }}>Open the Ledger</button><button type="button" className="btn sm" onClick={closePanel}>Close</button></div>
+      {keeper && keeperSection && <div id={sectionId(threadId, keeperSection)} className={`tw-panel ${keeperSection === "asks" ? "tw-asks-p" : keeperSection === "decided" ? "tw-new-panel" : "tw-quest-popover"}`} role="region" aria-label={SECTION_LABEL[keeperSection]}>
+        <div className="tw-section-body">
+          {widgetPanel?.kind === "asks" && <AsksPanel key={threadId} asks={keeper.openAsks} holds={holds} quests={keeper.boardQuests} attention={attention} expanded={widgetPanel.askId} onSelect={askId => setWidgetPanel({ kind: "asks", askId })} onClose={closePanel} onQuest={onQuest} onLedger={() => panel.openTab({ tab: LEDGER_TAB, params: { attentionGroup: "need" } })} />}
+          {keeperSection === "decided" && <>
+            <NewSummaries attention={attention} />
+            <DecidedPanel threadId={threadId} data={data} />
+          </>}
+          {keeperSection === "quests" && <QuestBriefs quests={keeper.boardQuests} onQuest={onQuest} />}
+        </div>
+        <div className="tw-pf tw-section-actions">
+          <button type="button" className="btn sm tw-panel-ledger" onClick={onLedger}>Open the Ledger</button>
+          {guardButton}
+          {showCharacters}
+          <button type="button" className="btn sm" onClick={() => closePanel()}>Close</button>
+        </div>
       </div>}
-      {keeper && open === "decided" && <DecidedPanel threadId={threadId} data={data} />}
       {open === "brief" && !keeper && <div className="tw-panel tw-brief" id={`tw-brief-${threadId}`} role="region" aria-label="Member"><MemberPanel key={threadId} data={data} cue={data.ambientMotion === "off" ? undefined : cue} registry={registry.data ?? null} scopeDetails={<ScopePanel data={data} />} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} /></div>}
     </section>
     </div>
@@ -364,7 +416,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
 
 /**
  * The widget row while it loads: its frame from the first frame, its shapes at the kit's delay, in the row's own classes so the
- * height is the real row's at every width (24 px chips, 44 px on phones) and bb's composer below does not move when it swaps.
+ * height is the real row's at every width and bb's composer below does not move when it swaps.
  */
 export function SkWidget({ keeper, shown }: { keeper: boolean; shown: boolean }) {
   return <Skeleton label="the Tavern row" shown={shown} className={`tavern twidget v-${keeper ? "keeper" : "member"} sk-widget`}>
@@ -426,34 +478,46 @@ function ArmedLine({ onCancel, onError }: { onCancel: () => void; onError: (e: u
   );
 }
 
-/** The widget's words for the server's Keeper status; "listening" reads as "idle" (keeperStatus says why). */
-const STATUS_WORD = { listening: "idle", busy: "busy", holding: "holding while you type" } as const;
-const STATUS_HINT = { listening: KEEPER_STATE_HINT.idle, busy: KEEPER_STATE_HINT.busy, holding: KEEPER_STATE_HINT.holding } as const;
-function KeeperParts({ data, open, onToggleQuests, onLedger, onQuest, quiet }: { data: ThreadDecor; open: Open; onToggleQuests: () => void; onLedger: (group?: "need" | "new") => void; onQuest: (id: string) => void; quiet: ReactNode }) {
+function KeeperParts({ data, open, onToggle }: { data: ThreadDecor; open: KeeperSection | null; onToggle: (kind: KeeperSection, button: HTMLButtonElement) => void }) {
   const keeper = data.keeperView!;
-  const list = attentionView(keeper.attention), need = list.needYou;
-  const decided = list.new;
-  // A quiet Keeper moves no quest until resumed, so the notice takes the quests' place; the quest pages stay one click away in the Ledger.
-  const sends = sendGuardWords(data.scope);
+  const list = attentionView(keeper.attention);
+  const quest = keeper.boardQuests[0];
+  const others = keeper.boardQuests.length - 1;
+  const unread = quest?.attention?.summaries ?? 0;
+  const questLabel = quest ? `Show ${quest.title}${others > 0 ? ` and ${plural(others, "other quest")}` : ""}` : "";
+  const expand = open ? "Fold Tavern widget" : "Expand Tavern widget";
+  const urgent = list.needYou ? "asks" : list.new ? "decided" : "quests";
+  const disclosure = (kind: KeeperSection) => ({
+    "aria-expanded": open === kind,
+    "aria-controls": sectionId(data.threadId, kind),
+    onClick: (event: MouseEvent<HTMLButtonElement>) => onToggle(kind, event.currentTarget),
+  });
   return <>
-    {quiet}
-    {sends && <span className="tw-fact" title={sends}>{sends}</span>}
-    {keeper.quietSince == null && <span className={`tw-quests ${keeper.boardQuests.reduce((n, q) => n + q.short.length, 0) > 18 ? "long" : ""}`} role="group" aria-label="Board quests (goals)">
-      {keeper.boardQuests.map(q => {
-        const unread = q.attention?.summaries ?? 0;
-        const suffix = unread ? `, ${summaryCountWords(unread)}` : "";
-        return <button type="button" key={q.id} className="tw-quest act" title={`Open the quest page: ${q.title} · ${q.phase} · plan v${q.planVersion} · ${q.move.text}${suffix}`} aria-label={`Open the quest page for ${q.title}: ${q.phase}, plan v${q.planVersion}${suffix}`} onClick={() => onQuest(q.id)}><b>{q.short}</b>{unread > 0 && <span className="tw-unread m" aria-hidden="true">{unread} new</span>}{q.phase !== "held" && <Phase phase={q.phase} />}{(q.phase === "held" || (q.phase === "scout" && q.nextNewsBy != null)) && <span className="tw-quest-move">{q.move.text}</span>}<OpensMark /></button>;
-      })}
-    </span>}
-    {keeper.quietSince == null && keeper.boardQuests.length > 0 && <button type="button" className="tw-chip tw-quests-count act" title={keeper.boardQuests.map(q => q.title).join(" · ")} aria-label={`Show ${plural(keeper.boardQuests.length, "quest")}`} aria-expanded={open === "quests"} aria-controls={`tw-quests-${data.threadId}`} onClick={onToggleQuests}>{plural(keeper.boardQuests.length, "quest")}</button>}
-    {/* The free space carries the status words and measures itself, so they show only when the whole phrase fits; the dot, the crest's tooltip and the hidden name carry it otherwise. */}
-    <span className="tw-sp tw-free">{keeper.status === "holding" && keeper.quietSince == null && <span className="tw-sw" aria-hidden="true">holding<span className="tw-sw-x"> while you type</span></span>}</span>
-
-    {/* A count of nothing is not shown: no asks chip and no decided chip at zero, unless its panel is open, so Close stays reachable after the last answer. */}
-    {need > 0 && <button type="button" className="tw-asks act has" data-ask title={attentionTitle(list, "need")} aria-label={`${need} need you: open the Ledger`} onClick={() => onLedger("need")}><Glyph name="ask" size={13} /><span className="num">{need}</span><span className="tw-w">need you</span><OpensMark /></button>}
-    {decided > 0 && <button type="button" className="tw-chip tw-new act" title={attentionTitle(list, "new")} aria-label={`${decided} new: open the Ledger`} onClick={() => onLedger("new")}><Glyph name="bell" size={13} /><span className="num">{decided}</span><span className="tw-w">new</span><OpensMark /></button>}
-    <button type="button" className="tw-chip tw-ledger act" aria-label="Open the Keeper’s ledger (what the lead knows)" title="Open the Keeper’s ledger (what the lead knows)" onClick={() => onLedger()}><Glyph name="book" size={13} /><span>Ledger</span><span className="anc tw-anc">lead state</span><OpensMark /></button>
+    <button type="button" className="ibtn tw-expand act" aria-label={expand} title={expand} aria-expanded={open !== null} aria-controls={sectionId(data.threadId, open ?? urgent)} onClick={event => onToggle(open ?? urgent, event.currentTarget)}><ExpandsMark open={open !== null} /></button>
+    <span className="tw-sp" />
+    {quest && <button type="button" className="tw-quest act" title={`${questLabel} · ${phaseWord(quest.phase)} · ${quest.move.text}${unread ? ` · ${summaryCountWords(unread)}` : ""}`} aria-label={questLabel} {...disclosure("quests")}>
+      <b>{quest.short}</b><Phase phase={quest.phase} />
+      {others > 0 && <span className="num" aria-hidden="true">+${others}</span>}
+      {unread > 0 && <span className="tw-unread m" aria-hidden="true">{unread} new</span>}
+    </button>}
+    {(list.needYou > 0 || open === "asks") && <button type="button" className="tw-asks act has" data-ask data-empty={list.needYou === 0 || undefined} title={[`${list.needYou} need you`, attentionTitle(list, "need")].filter(Boolean).join(" · ")} aria-label={`${list.needYou} need you`} {...disclosure("asks")}><Glyph name="ask" size={13} /><span className="num">{list.needYou}</span><span className="tw-w">need you</span></button>}
+    {(list.new > 0 || open === "decided") && <button type="button" className="tw-chip tw-new act" data-empty={list.new === 0 || undefined} title={[`${list.new} new`, attentionTitle(list, "new")].filter(Boolean).join(" · ")} aria-label={`${list.new} new`} {...disclosure("decided")}><Glyph name="bell" size={13} /><span className="num">{list.new}</span><span className="tw-w">new</span></button>}
   </>;
+}
+
+function QuestBriefs({ quests, onQuest }: { quests: KeeperView["boardQuests"]; onQuest: (id: string) => void }) {
+  if (!quests.length) return <p className="m small">No board quests yet.</p>;
+  return <ul>{quests.map(q => {
+    const progress = pathProgress(q);
+    return <li key={q.id} className="tw-quest-brief">
+      <h3>{q.title}</h3>
+      <PhaseStrip phase={q.phase} />
+      <p>{q.move.text}</p>
+      <p className="m">{progress ? `${progress.done} of ${plural(progress.total, "waypoint")} settled` : "No waypoints yet"}{!!q.attention?.summaries && <> · <span>{summaryCountWords(q.attention.summaries)}</span></>}</p>
+      {q.waypoints.length > 0 && <ol aria-label="Waypoints">{q.waypoints.slice(0, 5).map(w => <li key={w.id}><span>{w.title}</span><StatusPill status={w.state}>{w.state}</StatusPill></li>)}</ol>}
+      <button type="button" className="lnk-btn act" aria-label={`Open the quest page for ${q.title}`} onClick={() => onQuest(q.id)}>Open quest page{q.waypoints.length > 5 && ` · ${q.waypoints.length - 5} more`}<OpensMark /></button>
+    </li>;
+  })}</ul>;
 }
 
 function Phase({ phase }: { phase: QuestPhase }) {
@@ -529,20 +593,25 @@ type HeldQuest = KeeperView["boardQuests"][number];
 const needsOf = (keeper: KeeperView | null | undefined) => ({ asks: attentionView(keeper?.attention).needYou, holds: 0 });
 const holdKey = (hold: CheckerHandoffHold) => `hold:${hold.id}`;
 
-function AsksPanel({ threadId, asks, holds, quests, expanded, onSelect, onClose }: { threadId: string; asks: Ask[]; holds: HeldQuest[]; quests: KeeperView["boardQuests"]; expanded: string | null; onSelect: (id: string | null) => void; onClose: () => void }) {
+function AsksPanel({ asks, holds, quests, attention, expanded, onSelect, onClose, onQuest, onLedger }: { asks: Ask[]; holds: HeldQuest[]; quests: KeeperView["boardQuests"]; attention: NonNullable<KeeperView["attention"]>; expanded: string | null; onSelect: (id: string | null) => void; onClose: () => void; onQuest: (id: string) => void; onLedger: () => void }) {
   const [receipts, setReceipts] = useState<Ask[]>([]);
   const [released, setReleased] = useState<{ quest: HeldQuest; hold: CheckerHandoffHold }[]>([]);
   const shown = [...asks, ...receipts.filter(r => !asks.some(a => a.id === r.id))];
   // A released hold keeps its receipt until the panel closes, even after the server's next read drops it.
   const waiting = holds.filter(q => !released.some(r => r.hold.id === activeHold(q)!.id));
+  const notes = attentionNotes(attention);
+  const rules = attention.items.filter(item => item.kind === "rule");
+  const spend = attention.items.filter(item => item.kind === "hold" && item.id.startsWith("spend:"));
+  const count = shown.length + waiting.length + released.length + notes.length + rules.length + spend.length;
   const toggle = (id: string) => {
     if (expanded !== id) onSelect(id);
-    else if (shown.length + waiting.length + released.length === 1) onClose();
+    else if (count === 1) onClose();
     else onSelect(null);
   };
   return (
-    <div className="tw-panel tw-asks-p" id={`asks-${threadId}`} role="region" aria-label="Asks waiting for you">
-      {shown.length + waiting.length + released.length === 0 ? <p className="m small tw-none">Nothing needs you.</p> : shown.map(ask => {
+    <>
+      {count === 0 && <p className="m small tw-none">Nothing needs you.</p>}
+      {shown.map(ask => {
         const q = quests.find(b => b.id === ask.boardQuestId);
         const isOpen = expanded === ask.id;
         const done = !asks.some(a => a.id === ask.id);
@@ -555,7 +624,7 @@ function AsksPanel({ threadId, asks, holds, quests, expanded, onSelect, onClose 
                 <span className="tw-aq" title={ask.question}>{ask.question}</span>
                 {q && <span className="tw-ag">{q.short}</span>}
                 <TimeAgo at={ask.createdAt} />
-                <span className="tw-ago">{isOpen ? "Fold" : "Answer"}<ExpandsMark open={isOpen} /></span>
+                <span className="tw-ago">{isOpen ? count === 1 ? "Fold" : "Hide answer" : "Answer"}<ExpandsMark open={isOpen} /></span>
               </button>
             )}
             {/* The row keeps the question to one line; the panel prints it in full, wrapped, so it reads before you answer. */}
@@ -567,8 +636,13 @@ function AsksPanel({ threadId, asks, holds, quests, expanded, onSelect, onClose 
       })}
       {waiting.map(q => { const hold = activeHold(q)!, key = holdKey(hold); return <HoldItem key={key} quest={q} hold={hold} open={expanded === key} onToggle={() => toggle(key)} onReleased={h => setReleased(r => [...r, { quest: q, hold: h }])} />; })}
       {released.map(r => <HoldReceipt key={holdKey(r.hold)} quest={r.quest} hold={r.hold} />)}
-      <div className="tw-pf">{asks.length > 0 ? <span className="m small">Answering here clears the ask everywhere: the common room, the phone and the chat pointer.</span> : waiting.length > 0 ? <span className="m small">Releasing here clears the hold everywhere: the common room and the quest page.</span> : <span />}<button type="button" className="btn sm" onClick={onClose}>Close</button></div>
-    </div>
+      {(notes.length > 0 || rules.length > 0 || spend.length > 0) && <div className="tw-other-needs">
+        <KeeperNoteRows notes={notes} short={id => quests.find(q => q.id === id)?.short ?? null} label="Waiting on you" />
+        {rules.length > 0 && <ul className="lg-rows" aria-label="Rules to review">{rules.map(item => <li key={item.id}><span>{item.title}</span><button type="button" className="lnk-btn act" onClick={onLedger}>Review in Ledger<OpensMark /></button></li>)}</ul>}
+        {spend.length > 0 && <ul className="lg-rows" aria-label="Spend limits">{spend.map(({ id, title, questId }) => <li key={id}><span>{title}</span>{questId && <button type="button" className="lnk-btn act" onClick={() => onQuest(questId)}>Open quest<OpensMark /></button>}</li>)}</ul>}
+      </div>}
+      {asks.length > 0 ? <p className="tw-panel-status m small">Answering here clears the ask everywhere: the common room, the phone and the chat pointer.</p> : waiting.length > 0 && <p className="tw-panel-status m small">Releasing here clears the hold everywhere: the common room and the quest page.</p>}
+    </>
   );
 }
 /**
@@ -616,7 +690,7 @@ function DecidedPanel({ threadId, data }: { threadId: string; data: ThreadDecor 
   const undo = experimental_useRpcMutation({ contract: rpcContract, method: "undoDecision" });
   const seen = useDecisionSeen({ keeperThreadId: threadId, throughId: data.keeperView!.decidedThroughId });
   const [error, setError] = useState<unknown>(null);
-  return <div className="tw-panel" id={`decided-${threadId}`}><DecidedForYou decisions={data.keeperView!.decidedForYou} total={data.keeperView!.decidedCount} pending={undo.isPending} onUndo={id => void undo.mutate({ decisionId: id }).catch(setError)} {...seen} /><QueryState error={error} /></div>;
+  return <><DecidedForYou decisions={data.keeperView!.decidedForYou} total={data.keeperView!.decidedCount} pending={undo.isPending} onUndo={id => void undo.mutate({ decisionId: id }).catch(setError)} {...seen} /><QueryState error={error} /></>;
 }
 
 export function CrestToggle() { const composer = useComposer(); return composer.scope.kind === "thread" ? <ThreadToggle threadId={composer.scope.threadId} /> : null; }

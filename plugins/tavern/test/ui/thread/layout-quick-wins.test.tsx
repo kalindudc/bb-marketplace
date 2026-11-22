@@ -32,52 +32,28 @@ it.each([false, true])("never rounds a measured chart up into SVG downscaling (n
   expect(view.container.querySelector("svg")?.getAttribute("width")).toBe("287");
 });
 
-it.each([1, 2, 3])("offers one collapsed chip for %i quests with the Ledger still reachable", async count => {
-  const decor = { ...fixtureDecor, characters: false, keeperView: { ...fixtureDecor.keeperView!, boardQuests: Array.from({ length: count }, (_, i) => ({ ...fixtureQuest, id: `q${i}` })) } };
+it.each([1, 2, 3])("keeps all %i quests reachable from the single row chip", async count => {
+  const quests = Array.from({ length: count }, (_, i) => ({ ...fixtureQuest, id: `q${i}`, title: `Survey ${i + 1}` }));
+  const decor = { ...fixtureDecor, characters: false, keeperView: { ...fixtureDecor.keeperView!, boardQuests: quests } };
   const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { decor: () => decor, registry: () => fixtureRegistry } });
-  const chip = await slot.findByRole("button", { name: `Show ${count} ${count === 1 ? "quest" : "quests"}` });
-  expect(chip.classList.contains("tw-quests-count")).toBe(true);
-  expect(chip.textContent).toBe(`${count} ${count === 1 ? "quest" : "quests"}`);
-  expect(slot.getAllByRole("button", { name: /Open the quest page for/ })).toHaveLength(count);
+  const chip = await slot.findByRole("button", { name: /^Show Survey 1/ });
+  expect(chip.querySelectorAll(".tw-ph i")).toHaveLength(5);
   fireEvent.click(chip);
-  fireEvent.click(slot.getByRole("button", { name: "Open the Ledger" }));
-  expect(slot.inspection.experimental_panelCalls).toContainEqual({ method: "openTab", options: { tab: expect.objectContaining({ id: "ledger" }) } });
-  slot.lifecycle.unmount();
+  const links = slot.getAllByRole("button", { name: /Open the quest page for Survey/ });
+  expect(links).toHaveLength(count);
+  fireEvent.click(links.at(-1)!);
+  expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "tavern", options: { subPath: `quest/q${count - 1}` } });
 });
 
-it.each(["scout", "held"] as const)("lets a long %s quest summary yield to the Ledger and close controls", async phase => {
+it.each(["scout", "held"] as const)("keeps the full %s quest move in the tooltip and section", async phase => {
   const text = "Propose the quest map · next " + "review the remaining findings and schedule the handoff ".repeat(12).trimEnd();
   const quest = { ...fixtureQuest, phase, nextNewsBy: 60_000, move: { ...fixtureQuest.move, text } };
   const decor = { ...fixtureDecor, characters: false, keeperView: { ...fixtureDecor.keeperView!, boardQuests: [quest] } };
   const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { decor: () => decor, registry: () => fixtureRegistry } });
-  const chip = await slot.findByRole("button", { name: /Open the quest page for/ });
+  const chip = await slot.findByRole("button", { name: `Show ${quest.title}` });
   expect(chip.title).toContain(text);
-  expect(chip.querySelector(".tw-quest-move")?.textContent).toBe(text);
-  expect(css).toMatch(/\.tw-quest-move\s*\{[^}]*min-width: 0[^}]*overflow: hidden[^}]*text-overflow: ellipsis/);
-  const ledger = slot.getByRole("button", { name: /Open the Keeper’s ledger/ });
-  const close = slot.getByRole("button", { name: /Hide Tavern in this thread/ });
-  expect(chip.closest(".tw-row")).toBe(ledger.parentElement);
-  expect(ledger.parentElement).toBe(close.parentElement);
-  slot.lifecycle.unmount();
-});
-
-it("reserves chip space for a crowded Keeper row even at desktop widths", async () => {
-  const attention = { items: [], needYou: 1, new: 4, heldByYou: 0 };
-  const quest = { ...fixtureQuest, phase: "scout" as const, nextNewsBy: 60_000, move: { ...fixtureQuest.move, text: "Propose the quest map · next compare the autumn atlases".repeat(10) }, attention: { ...attention, summaries: 12 } };
-  const scope = { threadId: "keeper-1", scope: null, error: null, armed: true, pendingAskId: null, clusterGuard: "armed" as const, sendGuard: "armed" as const };
-  const decor = { ...fixtureDecor, scope, characters: false, keeperView: { ...fixtureDecor.keeperView!, attention, boardQuests: [quest] } };
-  const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { decor: () => decor, registry: () => fixtureRegistry } });
-  const needs = await slot.findByRole("button", { name: /1 need you/ });
-  const chip = slot.getByRole("button", { name: /Open the quest page for/ });
-  expect(chip.querySelectorAll(".tw-ph i")).toHaveLength(5);
-  expect(chip.querySelector(".tw-unread")?.textContent).toBe("12 new");
-  expect(slot.getByRole("button", { name: /4 new/ })).toBeTruthy();
-  expect(needs.closest(".tw-row")).toBe(chip.closest(".tw-row"));
-  expect(css).toMatch(/^\.tavern\.v-keeper \.tw-row\s*\{[^}]*flex-wrap: wrap/m);
-  expect(css).toMatch(/\.tw-quests\s*\{[^}]*flex: 1 1 0[^}]*flex-wrap: wrap[^}]*overflow: clip/);
-  expect(css).toMatch(/\.tw-quests:has\(\.tw-unread\)\s*\{[^}]*min-width:/);
-  expect(css).toMatch(/\.tw-quest:has\(\.tw-unread\)\s*\{[^}]*min-width:/);
-  slot.lifecycle.unmount();
+  fireEvent.click(chip);
+  expect(slot.getByText(text)).toBeTruthy();
 });
 
 it("keeps the journal progress control content-sized beside other context chips", () => {
@@ -102,12 +78,13 @@ it("clamps the title to two lines and guards the other constrained Ledger labels
   expect(css).toMatch(/\.lg-done \.lg-row \.m\s*\{[^}]*min-width: 0[^}]*text-overflow: ellipsis/);
 });
 
-it("reserves the Keeper name until after quests collapse and keeps count nouns at 340", () => {
-  expect(css).toMatch(/\.v-keeper \.tw-id\s*\{[^}]*flex: none/);
-  expect(css).toMatch(/\.tw-quest b\s*\{[^}]*min-width: 6ch/);
-  expect(css).toMatch(/max-width: 520px[^}]*\.tw-quests-count[^}]*display: inline-flex/);
-  expect(css).toMatch(/max-width: 339px[^}]*\.tw-w[^}]*display: none/);
-  expect(css).not.toMatch(/max-width: 340px[^}]*\.tavern \.tw-id \.tw-name[^}]*display: none/);
+it("keeps the Keeper row unwrapped and the full name available on its identity", async () => {
+  expect(css).toMatch(/\.v-keeper \.tw-row\s*\{[^}]*flex-wrap: nowrap/);
+  const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { decor: () => fixtureDecor, registry: () => fixtureRegistry } });
+  await slot.findByRole("button", { name: "Expand Tavern widget" });
+  const name = slot.container.querySelector(".tw-name")!.textContent;
+  expect(name).toBeTruthy();
+  expect(slot.container.querySelector(".tw-id")!.getAttribute("title")).toContain(name);
 });
 
 it("sets chart labels to at least 11 px and lets long model ids wrap", () => {

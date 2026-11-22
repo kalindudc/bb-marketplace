@@ -330,7 +330,10 @@ function subscribeDay(listener: () => void) {
 export function useToday(): number { return useSyncExternalStore(subscribeDay, readToday, readToday); }
 
 /** A Keeper the user stopped stays quiet until they resume it. Resume clears the Stop and asks the Keeper to re-anchor; Closing time is not touched. The notice hides once Resume succeeds and returns only if a later Stop is newer. */
-export function QuietNotice({ threadId, since, compact = false }: { threadId: string; since: number | null | undefined; compact?: boolean }) {
+type QuietProps = { threadId: string; since: number | null | undefined } & ({ compact?: false } | { compact: true; onError: (error: unknown) => void });
+
+export function QuietNotice(props: QuietProps) {
+  const { threadId, since, compact } = props;
   const resume = experimental_useRpcMutation({ contract: rpcContract, method: "resumeKeeper" });
   const [resumedAt, setResumedAt] = useState<number | null>(null);
   const [receipt, setReceipt] = useState(false);
@@ -338,14 +341,17 @@ export function QuietNotice({ threadId, since, compact = false }: { threadId: st
   const day = useToday();
   useEffect(() => { if (!receipt) return; const t = setTimeout(() => setReceipt(false), 6000); return () => clearTimeout(t); }, [receipt]);
   const quiet = since != null && (resumedAt === null || since > resumedAt);
-  if (!quiet) return receipt ? <span className={`tquiet done ${compact ? "compact" : ""}`} role="status"><Glyph name="play" size={12} /><span>{compact ? "Resumed" : "Resumed · the Keeper re-anchors now"}</span></span> : null;
+  if (!quiet) return receipt ? <span className={compact ? "sr" : "tquiet done"} role="status">{!compact && <Glyph name="play" size={12} />}<span>Resumed · the Keeper re-anchors now</span></span> : null;
   const when = localTime(since, day);
   const full = new Date(since).toLocaleString();
-  const onResume = () => { setError(null); void resume.mutate({ threadId }).then(() => { setResumedAt(Date.now()); setReceipt(true); }, setError); };
-  return <span className={`tquiet ${compact ? "compact" : ""}`} role="group" aria-label={`Quiet since you stopped it, ${when}`}>
+  const reportProblem = compact ? props.onError : setError;
+  const onResume = () => { reportProblem(null); void resume.mutate({ threadId }).then(() => { setResumedAt(Date.now()); setReceipt(true); }, reportProblem); };
+  const resumeLabel = "Resume: clears your Stop and has the Keeper re-anchor. Closing time is unchanged.";
+  if (compact) return <button type="button" className="tw-chip act tw-keeper-resume" disabled={resume.isPending} title={resumeLabel} aria-label="Resume this Keeper" onClick={onResume}><Glyph name="play" size={11} /><span>Resume</span></button>;
+  return <span className="tquiet" role="group" aria-label={`Quiet since you stopped it, ${when}`}>
     <Glyph name="pause" size={12} />
-    <span className="tq-t" title={`You stopped this Keeper at ${full}. It does nothing on its own until you resume it.`}>{compact ? <>Quiet <span className="tq-since">since <time dateTime={new Date(since).toISOString()}>{when}</time></span></> : <>Quiet since you stopped it, <time dateTime={new Date(since).toISOString()} title={full}>{when}</time></>}</span>
-    <button type="button" className={compact ? "tw-chip act tq-go" : "btn sm tq-go"} disabled={resume.isPending} title="Resume: clears your Stop and has the Keeper re-anchor. Closing time is unchanged." aria-label="Resume this Keeper" onClick={onResume}><Glyph name="play" size={11} /><span>Resume</span></button>
+    <span className="tq-t" title={`You stopped this Keeper at ${full}. It does nothing on its own until you resume it.`}>Quiet since you stopped it, <time dateTime={new Date(since).toISOString()} title={full}>{when}</time></span>
+    <button type="button" className="btn sm tq-go" disabled={resume.isPending} title={resumeLabel} aria-label="Resume this Keeper" onClick={onResume}><Glyph name="play" size={11} /><span>Resume</span></button>
     {error != null && <span className="tq-err" role="alert">{error instanceof Error ? error.message : String(error)}</span>}
   </span>;
 }
