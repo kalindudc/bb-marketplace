@@ -171,6 +171,7 @@ export class AwayRuntime {
       const latest = this.store.snapshot().revision;
       if (revision !== latest || input.settingsRevision !== undefined && this.runtime.settings?.snapshot().revision !== input.settingsRevision) throw new AwayConflict(latest);
       commitUserAct(this.k.store, () => this.k.now(), receipt, () => this.store.close(input, neverWhileClosed, productionWakeHours));
+      this.runtime.memory.cancel(true);
     });
     await this.refreshLocalScopes();
     for (const member of this.members()) this.stage(member);

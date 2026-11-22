@@ -7,6 +7,7 @@ import { forgeProfileSchema } from "./shared/placement-settings";
 import { pullRequestReviewerSchema } from "./shared/pull-request";
 import { setupLineSchema } from "./shared/setup";
 import { setupForgeInput } from "./shared/setup-forge";
+import { memoryPreflightInput, memoryPreflightOutput, memoryRunInput, memoryRunOutput } from "./shared/memory";
 import { nativeScopeVariablesSchema } from "./scope/host-env";
 import { artifactFileSchema, endpointSchema, gitOidSchema, objectFormatSchema, sha256Schema, sourceFetchSchema, workspaceKindSchema } from "./shared/placement";
 
@@ -165,6 +166,8 @@ export const hostContract = defineRpcContract({
     input: authoritySchema.extend({ profile: forgeProfileSchema, title: z.string().min(1).max(500), body: z.string().max(100_000) }).strict(),
     output: z.discriminatedUnion("ok", [z.object({ ok: z.literal(true), url: z.string().url(), state: z.enum(["open", "merged", "closed"]).optional() }).strict(), z.object({ ok: z.literal(false), failureClass: z.enum(["temporary", "lasting", "broken contract"]), lines: text }).strict()]),
   },
+  memoryPreflight: { input: memoryPreflightInput, output: memoryPreflightOutput },
+  memoryRun: { input: memoryRunInput, output: memoryRunOutput },
   setupForgeInspect: { input: setupForgeInput, output: z.array(setupLineSchema.extend({ resolvedPath: path.optional() })) },
   setupForgeProbe: { input: setupForgeInput, output: z.array(setupLineSchema) },
   forgePullRequest: {

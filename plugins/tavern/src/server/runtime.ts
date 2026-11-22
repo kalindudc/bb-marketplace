@@ -141,13 +141,16 @@ type QueuedMessage = PluginThreadEventPayloads["message.queued"]["entry"];
 
 import { authorize, commitUserAct, type UserActReceipt } from "./authority";
 import { storedPhase, transitionQuest } from "./keeper/quest-lifecycle";
+import { TavernMemory } from "./memory";
 
 export class TavernRuntime {
   readonly stopAll = new StopAll(this);
+  private memoryState: TavernMemory | undefined;
+  get memory() { return this.memoryState ??= new TavernMemory(this); }
   readonly succession = new KeeperSuccessionCoordinator(this);
   readonly serviceRecords: ServiceRecords;
   readonly spend: SpendBudget;
-  readonly toolNames = [...KEEPER_TOOLS, "tavern_report", "tavern_request_sources", "tavern_ready", "tavern_draft_pr", "tavern_act_verdict"];
+  readonly toolNames = [...KEEPER_TOOLS, "tavern_memory", "tavern_report", "tavern_request_sources", "tavern_ready", "tavern_draft_pr", "tavern_act_verdict"];
   private readonly loop = new TickLoop(this);
   private readonly releaseLocks = new Map<string, Promise<boolean>>();
   private sourceInspection: SourceDiscovery | null = null;
@@ -827,6 +830,7 @@ export class TavernRuntime {
     readonly keeperCards?: import("./keeper/cards").KeeperCards,
   ) {
     this.alerts = new AlertRoute(bb, keeper);
+    keeper.memoryReviewPending = threadId => this.memory.unreviewedFor(threadId, 0, 1).length > 0;
     keeper.routineAskOpened = async ask => { if (ask.boardQuestId) await this.applyStandingAnswers(ask.boardQuestId); };
     this.serviceRecords = new ServiceRecords(keeper, stale => bb.rpc.experimental_invalidate(stale));
     this.spend = new SpendBudget(bb, keeper);
@@ -1135,7 +1139,7 @@ export class TavernRuntime {
   private configureChecked(ctx: PluginAgentConfigurationContext, fallback?: RegistrySnapshot) {
     const m = this.keeper.member(ctx.thread.id);
     const common = {
-      tools: ["journal", ...(m?.classId === "smith" ? ["tavern_draft_pr"] : []), ...(m && new PlacementStore(this.keeper.store.db).byMember(m.threadId) ? ["tavern_ready"] : [])],
+      tools: ["journal", ...(m ? ["tavern_memory"] : []), ...(m?.classId === "smith" ? ["tavern_draft_pr"] : []), ...(m && new PlacementStore(this.keeper.store.db).byMember(m.threadId) ? ["tavern_ready"] : [])],
       skills: ["journal", "quest-management", "tavern"],
     };
     const journal = this.keeper.journal.instructions(ctx.thread.id);

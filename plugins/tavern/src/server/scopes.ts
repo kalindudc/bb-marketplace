@@ -27,6 +27,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Ask, Member } from "../shared/schema";
 import { publishShellGrants, readShellGrants, removeShellGrantProjection, scopeRestartReason, shellGrantCapable, shellGrantTarget, shellGrantUse } from "../scope/shell-grants";
 import { actAskKind } from "../scope/act-routing";
+import { withMemoryCommandPolicy } from "../scope/memory-policy";
 import { prepareCall } from "../scope/prepare";
 import { shellCommunication } from "../scope/shell-communication";
 import { settleShellGrant } from "./shell-grants";
@@ -108,6 +109,7 @@ export class BackendScopes {
         return undefined;
       },
       narrowBoundScope: scope => runtime.away.narrowScope(scope),
+      memoryCommandPaths: () => runtime.memory.commandPaths(),
       onScopeModeChanged: (threadId, mode) => this.scopeRefreshed(threadId, `Scope mode is now ${mode}.`),
       pullRequestPolicy: threadId => this.pullRequestPolicy(threadId),
       cwdForThread: (threadId) => this.cwd.get(threadId),
@@ -122,6 +124,9 @@ export class BackendScopes {
       onActObservation: (observation) => this.observeAct(observation),
       onShellGrantUsed: (threadId, id) => { this.recordGrantUse(threadId, id); this.syncGrants(threadId); },
     });
+  }
+  refreshMemoryGuards() {
+    for (const row of this.api.status().threads) this.api.refreshMemoryPolicy(row.threadId);
   }
   refreshCommunication(threadId?: string, keeperId?: string) {
     if (threadId) { this.api.refreshCommunicationPolicy(threadId); return; }
@@ -276,7 +281,7 @@ export class BackendScopes {
           const { context, files } = project;
           const resolved = this.api.resolveForRefresh(member.classId, context, definition.scope, files, input?.initial);
           if (!input) {
-            const { threadId: _id, issuedAt: _issued, mode: _mode, checks: _checks, expectedWorktree: _root, assignedBranch: _branch, pullRequestPolicy: _prs, sendTools: _send, communicationAuthority: _communication, workspaceKind: _kind, enforceFrom: _from, env: priorEnv, ...prior } = template;
+            const { threadId: _id, issuedAt: _issued, mode: _mode, checks: _checks, expectedWorktree: _root, assignedBranch: _branch, pullRequestPolicy: _prs, sendTools: _send, communicationAuthority: _communication, workspaceKind: _kind, enforceFrom: _from, env: priorEnv, ...prior } = withMemoryCommandPolicy(template, []);
             const { threadId: _nextId, issuedAt: _nextIssued, mode: _nextMode, checks: _nextChecks, expectedWorktree: _nextRoot, assignedBranch: _nextBranch, pullRequestPolicy: _nextPrs, sendTools: _nextSend, communicationAuthority: _nextCommunication, workspaceKind: _nextKind, enforceFrom: _nextFrom, env: nextEnv, ...next } = resolved.scope;
             if (!isDeepStrictEqual({ ...prior, variables: priorEnv.variables }, { ...next, variables: nextEnv.variables })) continue;
             k.store.put("scopeInputs", row.threadId, { changes: [] });

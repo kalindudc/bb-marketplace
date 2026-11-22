@@ -1,6 +1,7 @@
 import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
 import { execGitSync, gitEnvironmentSync } from "../shared/git-safety";
-import { statSync } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
+import { basename, delimiter, resolve } from "node:path";
 import { normalizeRemote, pushSpec } from "./remote";
 import { draftEditKey, draftEditSelector } from "./github";
 import { prCallKey, prUrl, pullRequestWrite } from "./pr-policy";
@@ -9,6 +10,7 @@ import { containmentRead, readonlyProgram, temporaryRoot, type ScopeCall } from 
 import type { Scope } from "./schema";
 import { gitWriteRoots } from "./sandbox";
 import { commandWritePaths, shellCommands } from "./shell";
+import { memoryCommandCandidates, memoryCommandRule, memoryExecutableKey } from "./memory-policy";
 
 export interface PrepareDeps { scope?: Scope; readCommand?(program: string, args: string[], cwd?: string): string }
 export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall {
@@ -57,6 +59,8 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
     if (call.containment === "sandbox" && commands.every(cmd => !cmd.uncertain && commandWritePaths(cmd).length === 0 && (containmentRead(cmd) || cmd.argv[0] === "git" && cmd.argv[1] === "fetch" && !cmd.gitEnvironment))) {
       for (const cmd of commands) if (cmd.argv[0] === "git" && cmd.argv[1] === "fetch") fetchWriteRoots.push(...gitWriteRoots(cmd.cwd));
     }
+    const memoryPaths = deps.scope && memoryCommandRule(deps.scope)?.argv?.[0];
+    const memoryNames = new Set(Array.isArray(memoryPaths) ? memoryPaths.map(path => basename(path)) : []);
     let branchStable = true;
     const redirectedGithub = commands.some(cmd => cmd.githubEnvironment);
     for (const cmd of commands) {
@@ -64,6 +68,23 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
       const git = cmd.argv[0] === "git";
       let preservesBranch = readonlyProgram(cmd) && commandWritePaths(cmd).length === 0 || git && (["add", "commit", "fetch", "tag"].includes(cmd.argv[1]) || cmd.argv[1] === "stash" && cmd.argv[2] === "push");
       add(cmd.cwd, cwd);
+      if (memoryNames.size) for (const path of memoryCommandCandidates(cmd)) {
+        if (/[\\/]/.test(path)) {
+          try { add(path, cmd.cwd); }
+          catch { /* A path that cannot be resolved can still match the literal rule. */ }
+        } else if (memoryNames.has(path)) {
+          const searchPath = deps.scope?.env.variables.PATH ?? process.env.PATH;
+          for (const dir of searchPath?.split(delimiter) ?? []) {
+            const candidate = resolve(cmd.cwd, dir, path);
+            try {
+              if (!statSync(candidate).isFile()) continue;
+              accessSync(candidate, constants.X_OK);
+              resolvedPaths[memoryExecutableKey(cmd.cwd, path)] = realPath(candidate);
+              break;
+            } catch { /* Not an executable on this PATH element. */ }
+          }
+        }
+      }
       const push = pushSpec(cmd.argv);
       if (push) {
         try {

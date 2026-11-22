@@ -31,6 +31,7 @@ import { agentData } from "../agent-data";
 import { registerReady } from "./ready";
 import { managePullRequest, pullRequestActionSchema } from "../pull-request-rules";
 import { refreshQuestPullRequests } from "../conclude-pull-requests";
+import { memoryToolInput } from "../../shared/memory";
 
 const id = z.string().min(1).max(120);
 const optionalQuest = id.nullish();
@@ -47,6 +48,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       input: z.output<S>,
       threadId: string,
       projectId: string,
+      signal: AbortSignal,
     ) => unknown | Promise<unknown>,
     role: "keeper" | "member" | ((input: z.output<S>, threadId: string) => void) = "keeper",
   ) => {
@@ -64,7 +66,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         try {
           const parsed = parameters.parse(input);
           if (typeof role === "function") role(parsed, ctx.threadId);
-          result = await action(parsed, ctx.threadId, ctx.projectId);
+          result = await action(parsed, ctx.threadId, ctx.projectId, ctx.signal);
         } catch (error) {
           if (ctx.signal.aborted)
             throw new Error(`${name} failed while its turn was cancelled or stopped; its outcome is not confirmed. Read tavern_status before retrying. Cause: ${String(error)}`, { cause: error });
@@ -79,6 +81,14 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       },
     });
   };
+  register(
+    "tavern_memory",
+    "Used durable memory",
+    "Find or save project notes as data. Keepers: use unreviewed, read and curate. Never use raw shell.",
+    memoryToolInput,
+    (input, thread, project, signal) => runtime.memory.tool(input, thread, project, signal),
+    () => {},
+  );
   register(
     "tavern_refresh_keeper",
     "Requested Keeper refresh",

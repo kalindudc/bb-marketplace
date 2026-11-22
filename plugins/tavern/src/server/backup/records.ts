@@ -19,6 +19,7 @@ import { migrateMemberEngagement } from "../member-engagement-migration";
 import { actorSchema, readStoredActor, askSchema, boardQuestSchema, decisionSchema, gateRecordSchema, journalEntrySchema, keeperNoteSchema, leadLinkSchema, leadPlanRecordSchema, memberSchema, planSchema, reportSchema, routeSchema, ruleSchema, summarySchema } from "../../shared/schema";
 
 import { taleDeliverySchema, taleDeliveryAttemptSchema } from "../tale";
+import { memoryNote } from "../../shared/memory";
 
 const scalar = z.union([z.string(), z.number().finite(), z.null()]);
 const tableSchema = z.object({ columns: z.array(z.string()).min(1), rows: z.array(z.record(z.string(), scalar)) }).strict();
@@ -31,8 +32,8 @@ const jsonColumns = new Set(["data", "actor", "entry_ids", "before_data", "after
 const privateRecordKinds = new Set(["placementArtifactManifests", "stopAll", "scopeInputs"]);
 const privateAuthorityTables = ["tavern_placements", "tavern_source_snapshots", "tavern_placement_discoveries", "tavern_snapshot_owners"];
 // Setup proposals hold agent-named commands against a past settings revision; a restore never revives them.
-const excluded = new Set(["tavern_settings", "tavern_insight_meta", "tavern_setup_proposals", "tavern_spend_inputs", ...privateAuthorityTables]);
-const supported = new Set(["tavern_records", "tavern_runtime", "tavern_events", "tavern_messages", "tavern_outbox", "tavern_setting_changes", "tavern_tuning_runs", "tavern_tuning_suggestions", "tavern_insight_samples", "tavern_spend_receipts", "tavern_spend_burn", "questlog_logs", "questlog_entries", "questlog_reserved", "questlog_changes", "questlog_history", "questlog_imports", "questlog_archive", "questlog_mirrors"]);
+const excluded = new Set(["tavern_settings", "tavern_insight_meta", "tavern_setup_proposals", "tavern_spend_inputs", "tavern_memory_config", ...privateAuthorityTables]);
+const supported = new Set(["tavern_memory_notes", "tavern_records", "tavern_runtime", "tavern_events", "tavern_messages", "tavern_outbox", "tavern_setting_changes", "tavern_tuning_runs", "tavern_tuning_suggestions", "tavern_insight_samples", "tavern_spend_receipts", "tavern_spend_burn", "questlog_logs", "questlog_entries", "questlog_reserved", "questlog_changes", "questlog_history", "questlog_imports", "questlog_archive", "questlog_mirrors"]);
 function identifier(value: string) {
   if (!/^[a-z_][a-z0-9_]*$/i.test(value)) throw new Error(`Unsupported database identifier: ${value}`);
   return `"${value}"`;
@@ -70,7 +71,7 @@ export class BackupRecords {
     const result: RecordsSnapshot = this.db.transaction(() => {
       const schema = [...this.schema()], names = schema.map(([name]) => name);
       const sequences = this.db.prepare(`SELECT name,seq FROM sqlite_sequence WHERE name IN (${names.map(() => "?").join(",")}) ORDER BY name`).all(...names) as { name: string; seq: number }[];
-      return { format: "tavern-records/1" as const, collectingSince: this.settings.collectingSince(), overrides: this.settings.questOverrides(), sequences: Object.fromEntries(sequences.map(row => [row.name, row.seq])), tables: Object.fromEntries(schema.map(([name, columns]) => [name, { columns: columns.map(column => column.name), rows: this.db.prepare(`SELECT * FROM ${identifier(name)}`).all() as RecordsSnapshot["tables"][string]["rows"] }])) };
+      return { format: "tavern-records/1" as const, collectingSince: this.settings.collectingSince(), overrides: this.settings.questOverrides(), sequences: Object.fromEntries(sequences.map(row => [row.name, row.seq])), tables: Object.fromEntries(schema.map(([name, columns]) => [name, { columns: columns.map(column => column.name), rows: this.db.prepare(`SELECT ${columns.map(column => identifier(column.name)).join(",")} FROM ${identifier(name)}${name === "tavern_memory_notes" ? " WHERE store='builtin'" : ""}`).all() as RecordsSnapshot["tables"][string]["rows"] }])) };
     })();
     if (result.tables.tavern_records) result.tables.tavern_records.rows = result.tables.tavern_records.rows.filter(row => !privateRecordKinds.has(String(row.kind)));
     for (const row of result.tables.tavern_events?.rows ?? []) if (typeof row.actor === "string") row.actor = JSON.stringify(readStoredActor(row.actor));
@@ -166,6 +167,10 @@ export class BackupRecords {
           }
         }
         if (name === "questlog_entries") journalEntrySchema.parse(JSON.parse(String(row.data)));
+        if (name === "tavern_memory_notes") {
+          const note = memoryNote.parse(JSON.parse(String(row.data)));
+          if (row.store !== "builtin" || row.reference !== null || row.id !== note.id) throw new Error("Only built-in memory notes may be restored.");
+        }
       }
     }
     const contentTokens = new Set<string>();

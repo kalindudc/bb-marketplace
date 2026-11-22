@@ -19,6 +19,7 @@ import { SETUP_CALLER_NOTICE } from "../../shared/setup";
 import { alertRouteContract, type AlertRouteView, type HoldReason } from "../../shared/alert-route";
 import { insightsContract } from "../../shared/insights";
 import { WardenQualitySection } from "./warden-quality";
+import { MemorySettings } from "./memory-settings";
 
 const WHY = "Changed on the settings page";
 export const ATMOSPHERE_ANCHOR = "tavern-settings-atmosphere";
@@ -758,6 +759,7 @@ export const SETTINGS_SECTIONS = [
   { id: "classes", title: "Classes and models", intro: "Choose the agent, model and thinking each class uses.", component: ClassesSection },
   { id: "scopes", title: "Scopes", intro: "Set the guardrails on what members may touch.", component: ScopesSection },
   ...(PLACEMENT_RPC_LIVE ? [{ id: "machines", title: "Where work runs", intro: "Choose the machines and environments that may host work.", component: MachineCard }] as const : []),
+  { id: "memory-profiles", title: "Memory profiles", intro: "Choose where Tavern classes save and find durable notes.", component: MemorySettings },
   { id: "atmosphere", title: "Atmosphere", intro: "How the tavern looks and feels: its characters, their speech and its motion.", component: AtmosphereSection },
   { id: "away", title: "Closing time", intro: "Choose what the next window starts with.", component: AwaySettingsSection },
   { id: "journal", title: "Journal", intro: "Choose reminders for each thread's checklist.", component: JournalSection },

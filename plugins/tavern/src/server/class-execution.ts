@@ -35,7 +35,7 @@ export async function classExecutionFacts(runtime: TavernRuntime, input: ClassEx
     out.fields.push({ ...fileField("permission", forcePermission ? "full" : role.permission), ...(forcePermission ? { source: "forced" as const, rule: "Hire scopes limit commands while the provider runs at full permission." } : {}) }, { field: "scope", value: requestedPreset, source: role.scope ? source : "preset" },
       { ...fileField("environment", input.mode === "hire" ? role.environment : null), ...(input.mode === "start" ? { source: "role" as const, rule: "Uses the environment selected in the composer; class worktree preference applies only to hires." } : {}) },
       { ...fileField("role prompt", `${out.body.bytes} bytes`), rule: classRules(kind) },
-      { field: "tools", value: kind === "keeper" ? ["journal", ...runtime.toolNames.filter(name => !["tavern_report", "tavern_request_sources"].includes(name))].join(", ") : kind === "member" ? "journal, tavern_report, tavern_request_sources" : "journal", source: "role" },
+      { field: "tools", value: kind === "keeper" ? ["journal", ...runtime.toolNames.filter(name => !["tavern_report", "tavern_request_sources"].includes(name))].join(", ") : kind === "member" ? "journal, tavern_memory, tavern_report, tavern_request_sources" : "journal, tavern_memory", source: "role" },
       { ...fileField("characters", role.characters.join(", ") || "None"), rule: "Only these, in this order; the first free character is chosen. None chosen means no character name. When all are busy the first is reused with a unique display name." });
     if (role.id === "keeper") {
       const limits = classLimits(role, runtime.config());

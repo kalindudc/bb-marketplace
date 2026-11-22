@@ -14,6 +14,7 @@ Start with the [README](../README.md) for installation and a first quest, or bro
 | [Closing time](closing-time.md) | Away windows, end states, temporary stop lists, guarded vs watched work, wakes, and reopening digests. |
 | [Stop all](stop-all.md) | Emergency Stop all brake, Pause every Keeper, stop confirmations, Resume, and caller provenance. |
 | [Backups](backups.md) | Saving, inspecting, exporting, previewing, and restoring private backups, retention, exit codes, and daily automation. |
+| [Memory](memory.md) | Saving, finding, and curating project notes with the built-in store or a command profile. |
 | [Settings and CLI](settings-and-cli.md) | Settings sections, guided setup proposals, tuning, Insights, and the complete `bb tavern` CLI reference. |
 
 ## Reference for contributors

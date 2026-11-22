@@ -14,6 +14,7 @@ import { awkRead, fileRead, findRead, sedRead, xxdRead } from "./reads";
 import { draftEditKey, githubApiRead } from "./github";
 import { prCommandDigest, pullRequestOwned } from "./pr-policy";
 import { commandWritePaths, knownWritePaths, ruleMatches, shellCommands, type ShellCommand } from "./shell";
+import { memoryCommandRule, runsMemoryCommand } from "./memory-policy";
 
 export interface ScopeCall { draftApproved?: boolean; clusterWriteApproved?: boolean; clusterObservation?: string; containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; shellGrants?: readonly ShellGrantProjection[]; prGrantAvailable?(id: string): boolean }
 export type Decision = { allow: true; check?: boolean; acts?: Act[]; prGrant?: string; shellGrant?: string } | { allow: false; ruleId: string; reason: string; act?: ActKind };
@@ -164,6 +165,8 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
   const source = call.input.command ?? call.input.cmd;
   if (typeof source !== "string") return call.kind === "bash" ? blocked("shell call", "shell-input", "the command cannot be checked") : allowed;
   if (scope.preset !== "open" && !(scope.commandTools ?? ["bash", "Bash"]).includes(call.toolName)) return blocked(call.toolName, "command-tool", "command-running tools require an explicit scope allowlist and a guarded execution backend");
+  const memoryRule = memoryCommandRule(scope);
+  const memoryPaths = memoryRule?.argv?.[0];
   let commands;
   try { commands = shellCommands(source, call.cwd, { temporaryRoot: temporaryRoot(scope), isRead: contained ? containmentRead : readonlyProgram, gitRoots: call.gitRoots, directories: call.directories, env: scope.env.variables, containment: contained ? "sandbox" : undefined }); } catch {
     const route = fallbackPullRequestRoute(source);
@@ -172,6 +175,7 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
     if (refused) return closingAct(scope, refused, source)
       ? blocked("shell command", "closing-act", "Closing time: " + refused.kind + " waits for your return")
       : blockedAct(source, refused, refused.kind === "deploy" ? "deploy-fallback" : refused.ruleId);
+    if (memoryRule && Array.isArray(memoryPaths) && memoryPaths.some(path => source.includes(path))) return blocked("shell command", memoryRule.id, memoryRule.why);
     if (remote || scope.preset === "open") return acts.length ? { allow: true, acts } : allowed;
     for (const rule of scope.shell.deny) if (rule.regex && new RegExp(rule.regex).test(source)) return blocked("shell command", rule.id, rule.why);
     if (contained) return allowed;
@@ -183,6 +187,8 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
   const matchesGrant = (act: Act) => !!grant && grantTarget?.act === act.kind;
   const observed: Act[] = [];
   for (const command of commands) {
+    if (memoryRule && Array.isArray(memoryPaths) && runsMemoryCommand(memoryPaths, command, call.resolvedPaths))
+      return blocked(command.text, memoryRule.id, memoryRule.why);
     for (const source of nestedCommands(command)) {
       const result = evaluateShell(scope, { ...call, input: { command: source }, cwd: command.cwd, prGrantAvailable: undefined, shellGrants: undefined }, legacyWanderer, remote || command.argv[0] === "ssh");
       if (!result.allow) return result;

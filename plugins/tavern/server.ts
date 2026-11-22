@@ -33,7 +33,9 @@ import { setupContract } from "./src/shared/setup";
 import { SetupPreflight } from "./src/server/settings/setup-preflight";
 import { SetupService } from "./src/server/settings/setup";
 import { insightsContract } from "./src/shared/insights";
-export const rpcContract = { ...coreContract, ...settingsContract, ...setupContract, ...insightsContract, ...backupContract };
+import { memoryContract } from "./src/shared/memory";
+import { memoryHandlers } from "./src/server/memory-rpc";
+export const rpcContract = { ...coreContract, ...settingsContract, ...setupContract, ...insightsContract, ...backupContract, ...memoryContract };
 
 export function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -118,12 +120,13 @@ export default async function tavern(bb: BbPluginApi) {
   runtime.spend.ledger.directory = join(dirname(db.name), "scopes");
   runtime.taleRenderer = new TaleCompanions(bb, keeper);
   bb.onDispose(() => runtime.taleRenderer?.settled());
+  bb.onDispose(() => runtime.memory.cancel());
   registerTools(bb, runtime);
   const backups = createBackupService(bb, settings, runtime.registry, () => runtime.scopes?.clearGrantProjections());
   const setup = new SetupService(bb, settings, store, new SetupPreflight(bb, async (projectId, id) =>
     (projectId === null ? runtime.snapshot() : await runtime.prepareRegistry(projectId)).classes.find(role => role.id === id)));
   bb.rpc.register(rpcContract, { ...rpcHandlers(runtime), ...settingsHandlers(settings, new SettingsFiles(settings)), ...setup.handlers(), ...backupHandlers(backups),
-    ...insightsHandlers(insights) });
+    ...insightsHandlers(insights), ...memoryHandlers(runtime) });
   registerCli(bb, runtime, backups, setup);
   bb.agents.configure((ctx) => runtime.configure(ctx));
   bb.ui.registerMentionProvider({

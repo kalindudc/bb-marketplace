@@ -14,7 +14,7 @@ describe("class execution server facts", () => {
     const out = await classExecutionFacts(f.runtime, { classId: "ranger", projectId: "project", providerId: "pi", environmentId: null, mode: "start" });
     expect(out.errors).toEqual([]);
     expect(out.execution).toMatchObject({ providerId: "pi", model: "anthropic/claude-sonnet-5-5", reasoningLevel: "high", permissionMode: "full" });
-    expect(out.fields.find(field => field.field === "tools")).toMatchObject({ source: "role", value: "journal" });
+    expect(out.fields.find(field => field.field === "tools")).toMatchObject({ source: "role", value: "journal, tavern_memory" });
     expect(out.fields.find(field => field.field === "role prompt")!.rule).toContain("plainly");
   });
 

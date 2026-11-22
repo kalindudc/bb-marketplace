@@ -119,6 +119,7 @@ export class StopAll {
       this.save(state);
       if (previous.state !== "stopped") k.store.event(startedAt, null, null, "tavern.stopped", "Tavern stopped; new work is held until Resume.", { receipt, surface: source.surface, pluginId: source.pluginId ?? null }, by);
     });
+    this.runtime.memory.cancel();
     this.flight = this.run(state).finally(() => { this.flight = null; });
     return this.flight;
   }

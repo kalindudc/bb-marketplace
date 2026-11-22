@@ -16,6 +16,8 @@ import { ensureGuardInstalled, guardStatus, type GuardOptions } from "./install"
 import { ScopePolicy, type PolicyOptions, type ProjectContext } from "./policy";
 import { bindChecks } from "./checker";
 
+import { withMemoryCommandPolicy } from "./memory-policy";
+
 export * from "./schema";
 export { evaluate } from "./engine";
 export { ScopePolicy } from "./policy";
@@ -37,6 +39,7 @@ export interface ScopesDeps extends WatchDeps {
   onHostTemplateChanged?(threadId: string): void;
   onScopeModeChanged?(threadId: string, mode: ScopeMode): void;
   narrowBoundScope?(scope: Scope): Scope;
+  memoryCommandPaths?(): readonly string[];
   pullRequestPolicy?(threadId: string): Scope["pullRequestPolicy"];
   communicationPolicy?(threadId: string): Pick<Scope, "sendTools" | "communicationAuthority">;
   dataDir?: string;
@@ -115,6 +118,7 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
     template = { ...template, mode, ...(enforceFrom === undefined ? {} : { enforceFrom }) };
     if (deps.pullRequestPolicy) template.pullRequestPolicy = deps.pullRequestPolicy(threadId);
     if (deps.communicationPolicy) template = withCommunicationPolicy(template, deps.communicationPolicy(threadId));
+    if (deps.memoryCommandPaths) template = withMemoryCommandPolicy(template, deps.memoryCommandPaths());
     if (current?.binding) {
       if (current.binding.placementId === null && current.scope?.preset === "open" && template.preset !== "open") throw new Error("Only an open Keeper scope can bind remotely without a native delivery");
       if (!current.error && JSON.stringify(current.scope) === JSON.stringify(template) && JSON.stringify(current.template) === JSON.stringify(template)) return current.scope!;
@@ -249,6 +253,14 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
       const policy = deps.communicationPolicy(threadId);
       if (JSON.stringify([record.scope.sendTools, record.scope.communicationAuthority]) === JSON.stringify([policy.sendTools, policy.communicationAuthority])) return;
       store.write(threadId, withCommunicationPolicy(record.scope, policy), record.template && withCommunicationPolicy(record.template, policy), undefined, true);
+      if (record.binding) deps.onHostTemplateChanged?.(threadId);
+    },
+    refreshMemoryPolicy(threadId: string) {
+      const record = store.records.get(threadId);
+      if (!record?.scope || record.error || !deps.memoryCommandPaths) return;
+      const paths = deps.memoryCommandPaths(), next = withMemoryCommandPolicy(record.scope, paths);
+      if (JSON.stringify(next.shell.deny) === JSON.stringify(record.scope.shell.deny)) return;
+      store.write(threadId, next, record.template && withMemoryCommandPolicy(record.template, paths), undefined, true);
       if (record.binding) deps.onHostTemplateChanged?.(threadId);
     },
     sendGuardArmed: (threadId: string) => store.isArmed(threadId, false, true),

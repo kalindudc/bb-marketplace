@@ -10,7 +10,8 @@ import type { ShellCommand } from "./shell";
 import { AUTHORITY, USER_ONLY_CLI } from "../shared/authority";
 import { pullRequestWrite } from "./pr-policy";
 
-const userMethods = new Set(Object.keys(AUTHORITY).filter(act => AUTHORITY[act as keyof typeof AUTHORITY].level === "user-explicit"));
+const userMethods = new Set([...Object.keys(AUTHORITY).filter(act => AUTHORITY[act as keyof typeof AUTHORITY].level === "user-explicit"),
+  "memoryProjects", "memorySettings", "memoryList", "memoryPrevious"]);
 const bbOptions = String.raw`\s+(?:--(?:input-file|project|host|server|url|token)\s+[^\s;\n]+\s+|--[^\s;\n]+\s+)*`;
 const cliControls = USER_ONLY_CLI.map(command => {
   const words = command.split(" "), option = words.at(-1)?.startsWith("--") ? words.pop() : undefined;

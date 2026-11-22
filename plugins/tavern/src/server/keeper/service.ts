@@ -111,6 +111,7 @@ export class Keeper {
   routineAskOpened: (ask: Ask) => Promise<void> = async () => {};
   readonly authority = new QuestAuthority(this);
   readonly memory = new KeeperMemory(this);
+  memoryReviewPending: (threadId: string) => boolean = () => false;
   readonly succession: KeeperSuccessionStore;
   private readonly syncing = new Set<string>();
   constructor(
@@ -2276,7 +2277,8 @@ export class Keeper {
     return renderRestatement(this, threadId);
   }
   ledger(threadId: string) {
-    return this.memory.snapshot(threadId, this.restatement(threadId));
+    const pending = this.memoryReviewPending(threadId) ? "Durable notes await review (tavern_memory unreviewed).\n\n" : "";
+    return this.memory.snapshot(threadId, pending + this.restatement(threadId));
   }
   priorities(threadId: string) {
     return renderRestatement(this, threadId, true);

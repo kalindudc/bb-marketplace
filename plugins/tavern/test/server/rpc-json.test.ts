@@ -11,6 +11,7 @@ const location = vi.hoisted(() => ({ home: "" }));
 vi.mock("node:os", async original => ({ ...await original<typeof import("node:os")>(), homedir: () => location.home }));
 import tavern, { rpcContract } from "../../server";
 import { registerScopes } from "../../src/scope";
+import { memoryNote } from "../../src/shared/memory";
 import { Keeper } from "../../src/server/keeper/service";
 import { KeeperStore } from "../../src/server/keeper/store";
 import { planInput, fakePort } from "./support";
@@ -230,6 +231,19 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     placementModelFailures: () => call("placementModelFailures", {}),
     placementModelFailureClear: () => call("placementModelFailureClear", { id: "missing" }),
     settings: () => call("settings", null),
+    memorySettings: () => call("memorySettings", null),
+    memoryProjects: () => call("memoryProjects", null),
+    memoryList: () => call("memoryList", { project: "project", text: "", kind: null, status: null, memory: null, limit: 3, offset: 0 }),
+    memoryPrevious: () => call("memoryPrevious", { project: "project", id: "missing" }),
+    memoryConfigure: () => call("memoryConfigure", { revision: 0, config: { active: "builtin", profiles: [] } }),
+    memoryManage: () => {
+      const note = memoryNote.parse({ id: "rpc-note", project: "project", quest: null, title: "RPC note", body: "Fixture body",
+        kind: "reference", source: { kind: "file", value: "README.md" }, appliesTo: { kind: "release", value: "preview" },
+        tags: [], author: { thread: "lead", classId: "keeper" }, curator: "lead", status: "accepted", supersedes: null,
+        memory: "included", exclusionReason: null, reviewedBy: null, reviewedAt: null, createdAt: 1, updatedAt: 1 });
+      f.k.store.db.prepare("INSERT INTO tavern_memory_notes(id,store,data) VALUES(?,'builtin',?)").run(note.id, JSON.stringify(note));
+      return call("memoryManage", { action: "retire", id: note.id, expectedUpdatedAt: note.updatedAt });
+    },
     alertRoute: () => call("alertRoute", null),
     alertTestSend: async () => {
       const result = await call("alertTestSend", {}) as { lastTest: { id: number } };

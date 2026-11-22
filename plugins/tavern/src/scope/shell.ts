@@ -4,16 +4,17 @@ import { parseScript, type Command, type List, type Redirect, type Word } from "
 import type { ShellRule } from "./schema";
 import { glob } from "./paths";
 
-export interface ShellCommand { argv: string[]; originalArgv?: string[]; cwd: string; writes: string[]; text: string; source?: string; uncertain?: boolean; scriptInput?: "inline" | "heredoc" | "opaque"; gitEnvironment?: boolean; aliases?: Record<string, string>; repository?: string; sequence?: number; cwdAlternative?: boolean; githubEnvironment?: boolean; fedInput?: boolean; literalStdin?: string }
+export interface ShellCommand { argv: string[]; originalArgv?: string[]; executable?: string; cwd: string; writes: string[]; text: string; source?: string; uncertain?: boolean; scriptInput?: "inline" | "heredoc" | "opaque"; gitEnvironment?: boolean; aliases?: Record<string, string>; repository?: string; sequence?: number; cwdAlternative?: boolean; githubEnvironment?: boolean; fedInput?: boolean; literalStdin?: string }
 export interface ShellFacts { captureStdin?: boolean; containment?: "sandbox"; temporaryRoot?: string; isRead?(command: ShellCommand): boolean; directories?: string[]; gitRoots?: Record<string, string>; env?: Record<string, string> }
 export function unquote(value: string): string {
   return value.replace(/\\\n/g, "").replace(/'([^']*)'|"((?:\\.|[^"\\])*)"|\\(.)/gs, (_all, single, double, escaped) => single ?? (double !== undefined ? double.replace(/\\([\\"$`])/g, "$1") : escaped));
 }
-export function stripWrappers(words: string[], chdir?: (path: string) => void, write?: (path: string) => void): string[] {
+export function stripWrappers(words: string[], chdir?: (path: string) => void, write?: (path: string) => void, captureExecutable?: (path: string) => void): string[] {
   let argv = [...words];
   for (let n = 0; n < 20 && argv.length; n++) {
     while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0] ?? "")) argv.shift();
     if (!argv.length) break;
+    captureExecutable?.(argv[0]);
     argv[0] = basename(argv[0]);
     const wrapper = argv[0];
     if (wrapper === "command" && ["-v", "-V"].includes(argv[1])) return ["which", ...argv.slice(2)];
@@ -182,11 +183,13 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
         // A wrapped command may change directory after its wrapper opens the file.
         for (const cwd of locations(wrapped)) targets.push(/[$`]/.test(path) || path.startsWith("~") ? path : resolve(cwd, path));
       };
-      let stripped = stripWrappers(expandedWords, change, write);
+      let executable: string | undefined;
+      const captureExecutable = (path: string) => { executable = path; };
+      let stripped = stripWrappers(expandedWords, change, write, captureExecutable);
       const expanded = new Set<string>();
       while (commandAliases.has(stripped[0]) && !expanded.has(stripped[0])) {
         expanded.add(stripped[0]);
-        stripped = stripWrappers([...commandAliases.get(stripped[0])!, ...stripped.slice(1)], change, write);
+        stripped = stripWrappers([...commandAliases.get(stripped[0])!, ...stripped.slice(1)], change, write, captureExecutable);
       }
       const normalized = normalizeCommand(stripped), argv = normalized.argv;
       const local = normalized.directory ? changeDirectory(wrapped, normalized.directory) : wrapped;
@@ -219,7 +222,7 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
       const literalStdin = doc && docText !== undefined && (doc.quoted || !/[$`\\]/.test(docText))
         ? doc.stripTabs ? docText.replace(/^\t+/gm, "") : docText
         : redirectIn?.op === "<<<" && !redirectIn.target.subs.length && !/[$`]/.test(redirectIn.target.text) ? unquote(redirectIn.target.text) + "\n" : undefined;
-      for (const cwd of locations(local)) { const command: ShellCommand = { argv, originalArgv: stripped, cwd, cwdAlternative: !!local.alternates?.length, writes: targets, text: argv.join(" "), source: text.slice(node.start, node.end), repository: normalized.repository, githubEnvironment: original.some(value => /^--hostname(?:=|$)/.test(value)) || ["GH_REPO", "GH_HOST"].some(name => assigned.has(name) || facts.env?.[name] !== undefined), fedInput: pipeInput || node.redirects.some(value => ["<", "<<<"].includes(value.op)), ...(literalStdin === undefined ? {} : { literalStdin }), aliases: { ...aliases }, uncertain: !local.known || unknownLinks || (original.some(value => basename(value) === "env") && original.some(value => /^--split-string(?:=|$)|^-S/.test(value))), scriptInput, gitEnvironment: original.some((value, index) => /^(?:GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_CONFIG\w*)=/.test(value) || original[index - 1] === "-c" && /^(?:remote\.|url\.|alias\.)/.test(unquote(value)) || value === "--config-env" || value.startsWith("--config-env=")) };
+      for (const cwd of locations(local)) { const command: ShellCommand = { argv, originalArgv: stripped, executable, cwd, cwdAlternative: !!local.alternates?.length, writes: targets, text: argv.join(" "), source: text.slice(node.start, node.end), repository: normalized.repository, githubEnvironment: original.some(value => /^--hostname(?:=|$)/.test(value)) || ["GH_REPO", "GH_HOST"].some(name => assigned.has(name) || facts.env?.[name] !== undefined), fedInput: pipeInput || node.redirects.some(value => ["<", "<<<"].includes(value.op)), ...(literalStdin === undefined ? {} : { literalStdin }), aliases: { ...aliases }, uncertain: !local.known || unknownLinks || (original.some(value => basename(value) === "env") && original.some(value => /^--split-string(?:=|$)|^-S/.test(value))), scriptInput, gitEnvironment: original.some((value, index) => /^(?:GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_CONFIG\w*)=/.test(value) || original[index - 1] === "-c" && /^(?:remote\.|url\.|alias\.)/.test(unquote(value)) || value === "--config-env" || value.startsWith("--config-env=")) };
         out.push(command);
         directoriesStable &&= !!facts.isRead?.(command) || ["mkdir", "touch", "tee", "mktemp"].includes(argv[0]);
       }

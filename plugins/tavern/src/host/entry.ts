@@ -10,6 +10,7 @@ import { NativeScopes, type NativeScopePaths } from "./scopes";
 import { createTransport } from "./transport";
 import { draftPush, draftOpen, forgePullRequest } from "./forge";
 import { inspectSetupForges, probeSetupForges } from "./setup-forge";
+import { preflightMemory, runMemory } from "./memory";
 import { pushedBase } from "./pushed-base";
 import { snapshotWorktree } from "./snapshot";
 
@@ -76,6 +77,8 @@ export function createTavernHostEntry(options: TavernHostEntryOptions) {
       }),
       draftPush: (input, context) => call(context, (native, signal) => draftPush(native.registry, input, signal)),
       draftOpen: (input, context) => call(context, (native, signal) => draftOpen(native.registry, input, signal)),
+      memoryPreflight: (input, context) => invoke(context, signal => preflightMemory(input, signal)),
+      memoryRun: (input, context) => invoke(context, signal => runMemory(input, signal)),
       setupForgeInspect: (input, context) => invoke(context, () => inspectSetupForges(input)),
       setupForgeProbe: (input, context) => invoke(context, signal => probeSetupForges(input, signal)),
       forgePullRequest: (input, context) => call(context, (native, signal) => forgePullRequest(native.registry, input, signal)),

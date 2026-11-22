@@ -8,7 +8,8 @@ export interface HostPort {
 }
 export function hostCallTimeoutMs(method: HostMethod, input: { networkTimeoutMs?: number }): number {
   if (method === "importCommit" || method === "pushedBase") return Math.min(1_800_000, 2 * (input.networkTimeoutMs ?? 120_000) + 330_000);
-  if (method === "setupForgeProbe") return 150_000;
+  if (method === "setupForgeProbe" || method === "memoryRun") return 150_000;
+  if (method === "memoryPreflight") return 370_000;
   return ["inspect", "snapshotWorktree", "commitAll", "exportChanges", "carryStart", "carryFinish", "carryAbort", "worktreeState", "revokePlacement", "releaseSnapshotRef"].includes(method) ? 330_000 : 30_000;
 }
 export function createHostPort(bb: Pick<BbPluginApi, "hosts">): HostPort {

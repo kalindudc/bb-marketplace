@@ -126,6 +126,24 @@ const APPENDED: string[] = [
      WHERE kind='leadLinks' AND json_extract(data,'$.state') IN ('reserved','linked','retirement-requested','retiring');
    CREATE INDEX tavern_lead_parent ON tavern_records(json_extract(data,'$.parentQuestId')) WHERE kind='leadLinks';
    CREATE INDEX tavern_hire_quest ON tavern_records(json_extract(data,'$.owner.boardQuestId')) WHERE kind='hires';`,
+  // Durable notes and host-approved, nonportable memory settings.
+  `CREATE TABLE tavern_memory_config (
+    id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, data TEXT NOT NULL
+   );
+   CREATE TABLE tavern_memory_notes (
+    id TEXT PRIMARY KEY, store TEXT NOT NULL, reference TEXT,
+    data TEXT NOT NULL CHECK(json_extract(data,'$.id')=id),
+    project TEXT GENERATED ALWAYS AS (json_extract(data,'$.project')) VIRTUAL NOT NULL,
+    status TEXT GENERATED ALWAYS AS (json_extract(data,'$.status')) VIRTUAL NOT NULL,
+    memory TEXT GENERATED ALWAYS AS (json_extract(data,'$.memory')) VIRTUAL NOT NULL,
+    kind TEXT GENERATED ALWAYS AS (json_extract(data,'$.kind')) VIRTUAL NOT NULL,
+    reviewed_at INTEGER GENERATED ALWAYS AS (json_extract(data,'$.reviewedAt')) VIRTUAL,
+    updated_at INTEGER GENERATED ALWAYS AS (json_extract(data,'$.updatedAt')) VIRTUAL NOT NULL
+   );
+   CREATE INDEX tavern_memory_search ON tavern_memory_notes(store,project,status,memory,updated_at DESC,id DESC);
+   CREATE INDEX tavern_memory_recent ON tavern_memory_notes(store,project,updated_at DESC,id DESC);
+   CREATE INDEX tavern_memory_review ON tavern_memory_notes(store,project,updated_at DESC,id DESC)
+    WHERE reviewed_at IS NULL AND status='accepted';`,
 ];
 
 export const MIGRATIONS: string[] = [

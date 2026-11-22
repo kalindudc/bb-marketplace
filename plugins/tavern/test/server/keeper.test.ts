@@ -279,7 +279,7 @@ describe("host boundaries", () => {
     const member = await harness.behavior.resolveAgentConfiguration(
       makePluginAgentConfigurationContext({ thread: { id: "child" } }),
     );
-    expect(member.tools.map((t) => t.name)).toEqual(["journal", "tavern_request_sources", "tavern_report", "tavern_draft_pr"]);
+    expect(member.tools.map((t) => t.name)).toEqual(["journal", "tavern_memory", "tavern_request_sources", "tavern_report", "tavern_draft_pr"]);
     expect(member.instructions).toContain("Write asks, blockers and failures plainly");
     expect(member.instructions).not.toContain("Character voice rules");
   });

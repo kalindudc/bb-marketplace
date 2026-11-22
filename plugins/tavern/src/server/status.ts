@@ -256,6 +256,7 @@ function statusData(
   return {
     archivedCount,
     archivedMembers, archivedMemberTotal, nextArchivedOffset,
+    unreviewedMemory: runtime.memory.unreviewedFor(threadId, 0, 3),
     freeHands: resting.filter(m => m.mayRebriefFor !== null || m.machineLost).map(m => m.machineLost ? { ...m, unavailable: "machine lost: can't take new work; release it" } : m),
     restingMembers: resting.filter(m => m.settled),
     quests: (input.boardQuestId
