@@ -1,6 +1,6 @@
 import { readPalette, type CharacterPalette } from "../../kit/characters";
-import type { ArtFactory, ArtFrame, ArtInput, LightAnchor, Mood } from "../art";
-import { actor, lamp, rainCloud } from "./parts";
+import { isLampKind, type ArtFactory, type ArtFrame, type ArtInput, type LightAnchor, type Mood } from "../art";
+import { actor, dayShadow, lamp, rainCloud } from "./parts";
 import { blit, GROUND, HEIGHT, spriteColours, WIDTH } from "./pixels";
 import { poseBook, smallIdle } from "./poses";
 import { classKit, HANDWORK, seedTraits } from "./traits";
@@ -12,6 +12,7 @@ const LIGHTS = {
   torch: SWING.map(shift => [lamp("torch", shift, false), lamp("torch", shift, true)] as const),
 };
 const RAIN = rainCloud();
+const DAY_SHADOW = dayShadow();
 
 export const createArt: ArtFactory = input => {
   const traits = seedTraits(input);
@@ -20,15 +21,16 @@ export const createArt: ArtFactory = input => {
   const { poses, at, index } = poseBook(handwork, traits.blinkOffset, kit.signature);
   const drawings = new Map<number, { runs: Uint8Array; anchor: LightAnchor | null; bodyKey: number }>();
   const bodies = new Map<string, number>();
-  const drawing = (i: number) => {
-    const cached = drawings.get(i);
+  const drawing = (i: number, dark = false) => {
+    const key = i * 2 + Number(dark);
+    const cached = drawings.get(key);
     if (cached) return cached;
-    const { runs, anchor } = actor(traits, poses[i]!, input.charge);
-    const encoding = `${runs}|${anchor?.x},${anchor?.y}`;
+    const { runs, anchor } = actor(traits, poses[i]!, input.charge, dark);
+    const encoding = `${runs}|${anchor?.x},${anchor?.y}|${dark}`;
     const bodyKey = bodies.get(encoding) ?? bodies.size;
     bodies.set(encoding, bodyKey);
     const result = { runs, anchor, bodyKey };
-    drawings.set(i, result);
+    drawings.set(key, result);
     return result;
   };
   const swingFor = (frame: ArtFrame, i: number) => {
@@ -43,8 +45,8 @@ export const createArt: ArtFactory = input => {
   };
   const pixelKey = (frame: ArtFrame) => {
     const { index: i, ember } = at(frame);
-    const { bodyKey, anchor } = drawing(i);
-    const light = anchor ? swingFor(frame, i) * 2 + brightFor(frame, i, ember) : 0;
+    const { bodyKey, anchor } = drawing(i, frame.dark);
+    const light = anchor && isLampKind(anchor.kind) ? swingFor(frame, i) * 2 + brightFor(frame, i, ember) : 0;
     return ((bodyKey * 10 + light) * 2 + Number(frame.facing === -1)) * 2 + Number(frame.mood === "error");
   };
   const palettes = new WeakMap<CharacterPalette, readonly string[]>();
@@ -73,20 +75,22 @@ export const createArt: ArtFactory = input => {
     },
     lightAnchor(frame) {
       const i = index(frame);
-      const { anchor } = drawing(i);
+      const { anchor } = drawing(i, frame.dark);
       if (!anchor) return null;
-      const { flameX, flameY } = LIGHTS[anchor.kind][swingFor(frame, i)]![0];
-      const x = anchor.x + flameX;
-      return { kind: anchor.kind, x: frame.facing === -1 ? WIDTH - 1 - x : x, y: anchor.y + flameY };
+      const { kind } = anchor;
+      const lamp = isLampKind(kind) ? LIGHTS[kind][swingFor(frame, i)]![0] : null;
+      const x = anchor.x + (lamp?.flameX ?? 0);
+      return { kind, x: frame.facing === -1 ? WIDTH - 1 - x : x, y: anchor.y + (lamp?.flameY ?? 0) };
     },
     draw(ctx, frame, palette) {
       const { index: i, ember } = at(frame);
-      const { runs, anchor } = drawing(i);
+      const { runs, anchor } = drawing(i, frame.dark);
       const { facing } = frame;
       const colours = coloursFor(palette);
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
+      if (!frame.dark) blit(ctx, DAY_SHADOW, colours, 1);
       blit(ctx, runs, colours, facing);
-      if (anchor) {
+      if (anchor && isLampKind(anchor.kind)) {
         const lamp = LIGHTS[anchor.kind][swingFor(frame, i)]![brightFor(frame, i, ember) as 0 | 1];
         blit(ctx, lamp.runs, colours, facing, anchor.x - 4, anchor.y + lamp.topOffset);
       }
@@ -102,5 +106,5 @@ export function drawStillAvatar(canvas: HTMLCanvasElement, input: ArtInput, mood
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  createArt(input).draw(ctx, { activity: "stand", cue: null, progress: 0, t: 0, mood, facing: 1, step: 0, swing: 0, flame: 1, still: true }, palette);
+  createArt(input).draw(ctx, { activity: "stand", cue: null, progress: 0, t: 0, mood, facing: 1, step: 0, swing: 0, flame: 1, still: true, dark: palette.dark }, palette);
 }

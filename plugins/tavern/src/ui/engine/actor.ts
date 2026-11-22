@@ -8,6 +8,7 @@ export type Reaction = (typeof REACTIONS)[number];
 
 export class Actor {
   readonly body = createBody();
+  dark = false;
   readonly motionSeed: number;
   moodSince = 0;
   target: number | null = null;
@@ -144,7 +145,7 @@ export class Actor {
       motionSeed: this.motionSeed,
       swing: still || (this.small && cue?.kind !== "signature") ? 0 : this.facing * this.body.swing,
       flame: flickers ? this.flicker(time) : 1,
-      still, small: this.small,
+      still, small: this.small, dark: this.dark,
     };
   }
 

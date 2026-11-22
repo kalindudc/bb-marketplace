@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PartyStrip } from "../../../src/ui/engine/strip";
 import * as engine from "../../../src/ui/engine/scheduler";
 import * as sprites from "../../../src/ui/engine/sprites";
@@ -14,7 +14,44 @@ import { motion } from "../../../src/ui/kit/motion";
 const character = { id: "wren", avatar: "a-new-roll", name: "Wren", hue: "teal", charge: "chevron", look: { hat: "pointy" } } as const;
 const wanderer = { character, classLabel: "Wanderer", classId: "wanderer", mood: "idle", keeper: false, surface: "thread:wren", region: "widget" } as const;
 
-afterEach(() => { cleanup(); motion.reset(); vi.restoreAllMocks(); });
+beforeEach(() => { document.documentElement.classList.add("dark"); });
+afterEach(() => { cleanup(); document.documentElement.classList.remove("dark"); motion.reset(); vi.restoreAllMocks(); });
+
+it("swaps the carried source on a theme change without moving a held ask marker", async () => {
+  let strip: engine.EngineWorld;
+  vi.spyOn(engine, "observeWorld").mockImplementation((_, candidate) => {
+    strip = candidate;
+    return { invalidate: change => { change?.(); candidate.refresh?.(); candidate.draw(false); }, remove() {} };
+  });
+  let bounds: number[][] = [];
+  const clip = vi.fn((rule: string) => ({ rule, bounds }));
+  const context = {
+    beginPath: () => { bounds = []; }, rect: (...rect: number[]) => { bounds.push(rect); }, clip,
+    clearRect() {}, save() {}, restore() {}, translate() {}, scale() {}, fillRect() {},
+  } as unknown as CanvasRenderingContext2D;
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context);
+  const listener = vi.fn();
+  const stop = subscribeStripLantern(listener);
+  try {
+    render(<div><PartyStrip {...wanderer} classId="warden" classLabel="Warden" held mood="waiting" /><span data-ask>Review the route</span></div>);
+    strip!.draw(false);
+    expect(listener.mock.lastCall?.[1]).toMatchObject({ kind: "crystal" });
+    const mark = screen.getByText("!"), ask = screen.getByText("Review the route");
+    const pixels = clip.mock.results.at(-1)?.value;
+    expect(pixels).toEqual({ rule: "evenodd", bounds: [[0, 0, 48, 56], [32, 4, 13, 13]] });
+    const still = [mark.outerHTML, ask.outerHTML];
+    document.documentElement.classList.remove("dark");
+    await Promise.resolve();
+    expect(listener.mock.lastCall?.[1]).toBeNull();
+    expect(strip!.lightAnchors?.()).toEqual([]);
+    expect(clip.mock.results.at(-1)?.value).toEqual(pixels);
+    expect([mark.outerHTML, ask.outerHTML]).toEqual(still);
+    document.documentElement.classList.add("dark");
+    await Promise.resolve();
+    expect(listener.mock.lastCall?.[1]).toMatchObject({ kind: "crystal" });
+    expect([mark.outerHTML, ask.outerHTML]).toEqual(still);
+  } finally { stop(); }
+});
 
 it("uses the avatar seed and member class and places the carried light in page coordinates", () => {
   let world: engine.EngineWorld | undefined;
@@ -37,7 +74,7 @@ it("uses the avatar seed and member class and places the carried light in page c
   rerender(<PartyStrip {...props} character={{ ...character, avatar: undefined }} />);
   expect(createArt.mock.lastCall?.[0].seed).toBe("wren");
   rerender(<PartyStrip {...props} classId="smith" />);
-  expect(world!.lightAnchors?.()).toEqual([]);
+  expect(world!.lightAnchors?.()).toEqual([expect.objectContaining({ kind: "ember" })]);
 });
 
 it("leaves the host's transcript-to-composer fade and backing alone", () => {

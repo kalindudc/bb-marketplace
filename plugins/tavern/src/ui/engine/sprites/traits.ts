@@ -1,5 +1,6 @@
 import { LOOK_HAIR_COLOURS, LOOK_SKINS, type LookFields } from "../../../shared/look";
 import type { ArtInput, LightAnchor, Mood, Signature } from "../art";
+import type { DayProp } from "./props";
 
 export const HAIR = ["fringe-crop", "tousled-crop", "bob", "shoulder-length", "long-straight", "braid", "tied-tail", "bun", "curls"] as const;
 const MATERIALS = ["linen", "undyed-wool", "moss", "wine", "slate", "ochre"] as const;
@@ -35,18 +36,19 @@ type Kit = {
   hats: readonly (Part<"hat"> | null)[];
   tool: Part<"tool"> | null;
   light: LightAnchor["kind"] | null;
+  day: DayProp | null;
   idle: Handwork;
   quiet: Partial<Record<Mood, Handwork>>;
   signature: Signature;
 };
 
 export const KITS = {
-  keeper: { outfits: ["long-coat", "tabard"], hats: ["soft-cap", "coif", null], tool: "ledger-quill", light: "hearth", idle: "ledger", signature: "quill", quiet: { resting: "hands" } },
-  wanderer: { outfits: ["travel-cloak"], hats: ["wide-brim", "round-brim"], tool: "staff-lantern", light: "lantern", idle: "satchel", signature: "lantern", quiet: { working: "lantern", waiting: "lantern", resting: "lantern" } },
-  ranger: { outfits: ["short-cape"], hats: ["hood", "tall-hood"], tool: "spyglass", light: null, idle: "spyglass", signature: "spyglass", quiet: { working: "map", resting: "hands" } },
-  smith: { outfits: ["leather-apron"], hats: ["kerchief"], tool: "hammer", light: null, idle: "apron", signature: "hammer", quiet: { waiting: "hammer", resting: "hammer" } },
-  warden: { outfits: ["robe"], hats: ["warden-felt", null], tool: "crystal-staff", light: null, idle: "scroll", signature: "staff", quiet: { waiting: "staff", resting: "staff" } },
-  none: { outfits: ["tunic"], hats: [null], tool: null, light: null, idle: "hands", signature: "nod", quiet: {} },
+  keeper: { outfits: ["long-coat", "tabard"], hats: ["soft-cap", "coif", null], tool: "ledger-quill", light: "runewood", day: "teacup", idle: "ledger", signature: "quill", quiet: { resting: "hands" } },
+  wanderer: { outfits: ["travel-cloak"], hats: ["wide-brim", "round-brim"], tool: "staff-lantern", light: "lantern", day: "flask", idle: "satchel", signature: "lantern", quiet: { working: "lantern", waiting: "lantern", resting: "lantern" } },
+  ranger: { outfits: ["short-cape"], hats: ["hood", "tall-hood"], tool: "spyglass", light: "shutter", day: "compass", idle: "spyglass", signature: "spyglass", quiet: { working: "map", resting: "hands" } },
+  smith: { outfits: ["leather-apron"], hats: ["kerchief"], tool: "hammer", light: "ember", day: "whetstone", idle: "apron", signature: "hammer", quiet: { waiting: "hammer", resting: "hammer" } },
+  warden: { outfits: ["robe"], hats: ["warden-felt", null], tool: "crystal-staff", light: "crystal", day: "herbs", idle: "scroll", signature: "staff", quiet: { waiting: "staff", resting: "staff" } },
+  none: { outfits: ["tunic"], hats: [null], tool: null, light: null, day: null, idle: "hands", signature: "nod", quiet: {} },
 } as const satisfies Record<string, Kit>;
 
 type Traits = {
@@ -65,6 +67,7 @@ type Traits = {
   outfit: Part<"outfit">;
   tool: Part<"tool"> | null;
   light: LightAnchor["kind"] | null;
+  day: DayProp | null;
   blinkOffset: number;
 };
 
@@ -112,6 +115,6 @@ export function seedTraits({ seed, classId, look }: Pick<ArtInput, "seed" | "cla
     skin: look?.skin ? LOOK_SKINS.indexOf(look.skin) : skin,
     secondary, blinkOffset,
     hat: look?.hair === "bald" ? "kerchief" : look?.hat ? HAT_PIN[look.hat] : hat,
-    outfit: pick(kit.outfits), tool: kit.tool, light,
+    outfit: pick(kit.outfits), tool: kit.tool, light, day: kit.day,
   };
 }

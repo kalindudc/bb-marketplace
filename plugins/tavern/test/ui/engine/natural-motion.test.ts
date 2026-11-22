@@ -27,7 +27,7 @@ it("moves a tall-hatted head after the torso has started to dip, with no canvas 
   expect(new Set(samples.map(({ lift }) => lift))).toEqual(new Set([0]));
   const gait = samples.map(({ frame }) => {
     const pose = poses.poses[poses.index(frame)]!;
-    return { chin: paintBody(traits, pose, null).chin, anchor: art.lightAnchor({ ...frame, swing: 0 })!.y };
+    return { chin: paintBody(traits, pose, null).chin, anchor: art.lightAnchor({ ...frame, swing: 0, dark: true })!.y };
   });
   expect(new Set(gait.map(p => p.chin)).size).toBeGreaterThan(1);
   expect(gait.some((p, i) => i > 0 && p.anchor !== gait[i - 1]!.anchor && p.chin === gait[i - 1]!.chin)).toBe(true);
@@ -69,7 +69,7 @@ it("keeps the tall-hatted head connected to the torso as an idle breath rises an
   const actor = new Actor("wren", art, "idle");
   const headAndTorso = (t: number) => {
     const pose = poses.poses[poses.index({ ...actor.frame(false), t })]!;
-    const result = paintBody(traits, pose, null);
+    const result = paintBody(traits, pose, null, true);
     return { chin: result.chin, anchor: result.anchor!.y };
   };
   const samples = Array.from({ length: 500 }, (_, i) => headAndTorso(i * 16));
@@ -156,6 +156,7 @@ it("does not glance beside an ask or in a still frame", () => {
 
 it("swings the lantern while travelling, then shows a damped tail without travelling or waking for invisible swing", () => {
   const actor = new Actor("wren", art, "working");
+  actor.dark = true;
   const swing = () => art.lightAnchor({ ...actor.frame(false), t: 0 })!.x;
   const moving = Array.from({ length: 48 }, () => {
     actor.update(dt, 640, lively, 5);

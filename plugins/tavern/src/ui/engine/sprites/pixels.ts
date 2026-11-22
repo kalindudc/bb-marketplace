@@ -1,5 +1,5 @@
 import type { CharacterPalette } from "../../kit/characters";
-import { spriteFabric } from "./palette";
+import { PROP_COLOURS, spriteFabric } from "./palette";
 import type { SeedTraits } from "./traits";
 
 export const WIDTH = 24;
@@ -10,6 +10,7 @@ export const enum Ink {
   Empty, Shadow, Outline, Garment, Secondary, Skin, Hair, Boot, Leather, Wood,
   Metal, Paper, Flame, Seal, DarkCloth, Cloud, Rain, Cream, Glint, Cheek,
   Edge, TopEdge, Brass, Lens, Crystal, Facet, Charge, ChargeGlint, PaperShade, Lip,
+  ShadeOuter, ShadeMiddle, ShadeCore, Prop,
 }
 
 const LIP = ["#bb806d", "#a96f5b", "#8e5848"];
@@ -73,6 +74,7 @@ export function spriteColours(hue: string, traits: SeedTraits, p: CharacterPalet
     cloth.leather, p.wood, p.metal, p.dark ? p.metal : p.card,
     p.hearth, p.bad, cloth.fold, p.cloud, p.drop, p.skin[0]!, p.dark ? p.metal : p.card, p.cheeks?.[traits.skin] ?? p.skin[traits.skin]!,
     cloth.rim, cloth.topRim, "#b68a42", "#bad4cf", "#a792cc", "#6b5799", "#96bbc4", "#e4f2f5", "#a5987b", LIP[traits.skin]!,
+    "rgba(59, 52, 42, 0.025)", "rgba(59, 52, 42, 0.05)", "rgba(59, 52, 42, 0.08)", ...PROP_COLOURS,
   ];
 }
 

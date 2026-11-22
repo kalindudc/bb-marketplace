@@ -139,6 +139,26 @@ describe("contrast next to the brightest rim", () => {
 });
 
 describe("strip-driven light", () => {
+  it("repaints source tint and strength even when the new source is in the same cell", () => {
+    const { strip } = fixture();
+    const paint = vi.fn();
+    const observer = watchLantern(document.createElement("canvas"), options, paint);
+    try {
+      observer.draw(strip, { ...source, kind: "crystal" });
+      const crystal = paint.mock.lastCall!;
+      expect(crystal[0].length).toBeGreaterThan(0);
+      expect(crystal[1]).toBe("#abacff");
+      observer.draw(strip, { ...source, kind: "ember" });
+      expect(paint).toHaveBeenCalledTimes(2);
+      const ember = paint.mock.lastCall!;
+      expect(ember[0]).toEqual(crystal[0]);
+      expect(ember[1]).toBe("#ff713b");
+      expect(ember[2]).toBeGreaterThan(crystal[2]);
+      observer.draw(strip, { ...source, kind: "ember", x: 72 });
+      expect(paint.mock.lastCall?.[0]).not.toEqual(ember[0]);
+    } finally { observer.dispose(); }
+  });
+
   it("tracks a deliberate still pose change but ignores small movement in the same pose", () => {
     const { strip } = fixture();
     const moves = vi.fn();

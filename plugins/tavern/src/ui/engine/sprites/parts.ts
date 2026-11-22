@@ -1,29 +1,47 @@
 import { CHARGE_PIXELS } from "../../kit/characters";
-import type { LightAnchor } from "../art";
-import { GROUND, Ink, PixelGrid } from "./pixels";
+import { isLampKind, type LampKind, type LightAnchor } from "../art";
+import { DAY_SHADOW_CELLS } from "../light";
+import { GROUND, Ink, PixelGrid, WIDTH } from "./pixels";
 import type { SpritePose } from "./poses";
+import { crystalTop, dayProp, nightProp } from "./props";
 import type { SeedTraits } from "./traits";
 
 const HAIRSTYLES: Record<SeedTraits["hair"], { back: readonly string[]; fringe: readonly string[] }> = {
-  "fringe-crop": { back: ["..######..", ".########.", "##########"], fringe: ["##########", "###..##..#", "#........#"] },
+  "fringe-crop": { back: ["...####...", ".########.", "##########"], fringe: ["##########", "###..##..#", "#........#"] },
   "tousled-crop": { back: ["...###....", ".#######..", ".########.", "##########"], fringe: ["##########", "#.#.###..#", ".....#...."] },
-  bob: { back: ["..######..", ".########.", "##########", "##########", "##########", "##########", ".########.", "..######.."], fringe: ["##########", "########.#", "##...#...#"] },
-  "shoulder-length": { back: ["..######..", ".########.", "###########", "###########", "###########", ".#########.", "##########", "##......##"], fringe: ["##########", "####..####", "##......##"] },
-  "long-straight": { back: ["....######....", "...########...", "..##########..", ".############.", ".############.", ".###......###.", ".###......###.", ".###......###."], fringe: ["##########", "###....###", "##......##"] },
-  braid: { back: ["..######..", ".########.", "##########", "##########", "###########", "###########", "..........##", ".........##."], fringe: ["##########", "####..####", "##.......#"] },
-  "tied-tail": { back: ["..######..", ".########.", "############", "############", "###########.", "###########.", "........####", ".........###", "..........##"], fringe: ["##########", "#####.#..#", "###......#"] },
+  bob: { back: ["...####...", ".########.", "##########", "##########", "##########", "##########", ".########.", "..######.."], fringe: ["##########", "########.#", "##...#...#"] },
+  "shoulder-length": { back: ["...####...", ".########.", "###########", "###########", "###########", ".#########.", "##########", "##......##"], fringe: ["##########", "####..####", "##......##"] },
+  "long-straight": { back: [".....####.....", "...########...", "..##########..", ".############.", ".############.", ".###......###.", ".###......###.", ".###......###."], fringe: ["##########", "###....###", "##......##"] },
+  braid: { back: ["...####...", ".########.", "##########", "##########", "###########", "###########", "..........##", ".........##."], fringe: ["##########", "####..####", "##.......#"] },
+  "tied-tail": { back: ["...####...", ".########.", "############", "############", "###########.", "###########.", "........####", ".........###", "..........##"], fringe: ["##########", "#####.#..#", "###......#"] },
   bun: { back: [".......###", "..#########", ".##########", "##########", "##########"], fringe: ["##########", "###.#...##", "#........."] },
   curls: { back: ["..##.###..", ".########.", "##########", "###########", "##########", "###########", "###....###", ".##.....##"], fringe: ["##########", "##.###.###", "#..##....#"] },
 };
 
-const HAT_HEADROOM: Record<NonNullable<SeedTraits["hat"]>, number> = {
+const HAT_RISE: Record<NonNullable<SeedTraits["hat"]>, number> = {
   "soft-cap": 4, coif: 3, kerchief: 2, "folded-hat": 4, "wide-brim": 5, "round-brim": 4, hood: 2, "tall-hood": 4, "warden-felt": 5,
 };
 
+const hairRise = (hair: SeedTraits["hair"]) => hair === "tousled-crop" || hair === "bun" ? 2 : 1;
+const CROWN_TOP = 2;
+
+function crown(p: PixelGrid, x: number, y: number, rows: readonly string[], ink: Ink) {
+  const above = CROWN_TOP - y;
+  if (above <= 0) {
+    p.mask(x, y, rows, ink);
+    return;
+  }
+  // Keep the apex and compress the crown, so the face can still follow the torso.
+  const visible = rows.slice(above);
+  const apex = rows.slice(0, above).find(row => row.includes("#"));
+  if (apex) visible[0] = apex;
+  p.mask(x, CROWN_TOP, visible, ink);
+}
+
 function head(p: PixelGrid, x: number, top: number, chin: number, t: SeedTraits, pose: SpritePose, hatLift: number) {
   const hair = HAIRSTYLES[t.hair];
-  const hairY = top - (t.hair === "tousled-crop" || t.hair === "bun" ? 2 : 1);
-  p.mask(x - (t.hair === "long-straight" ? 2 : 0), hairY, hair.back.slice(0, chin - hairY), Ink.Hair);
+  const hairY = top - hairRise(t.hair);
+  crown(p, x - (t.hair === "long-straight" ? 2 : 0), hairY, hair.back.slice(0, chin - hairY), Ink.Hair);
   if (t.ears === "pointed") p.mask(x - 2, top + 3, ["#............#", "###........###", ".####....####.", "..###....###.."], Ink.Skin);
   else p.mask(x - 1, top + 4, ["##........##", ".##......##."], Ink.Skin);
   p.mask(x, top, ["..######..", ".########."], Ink.Hair);
@@ -59,36 +77,36 @@ function head(p: PixelGrid, x: number, top: number, chin: number, t: SeedTraits,
 function hat(p: PixelGrid, x: number, y: number, part: SeedTraits["hat"]) {
   switch (part) {
     case "soft-cap":
-      p.mask(x - 2, y - 4, ["...#####....", ".########...", "##########..", ".##########.", ".....######."], Ink.Secondary);
-      p.mask(x - 1, y - 2, ["###", ".###"], Ink.DarkCloth);
+      crown(p, x - 2, y - 4, ["....###.....", ".########...", "##########..", ".##########.", ".....######."], Ink.Secondary);
+      p.mask(x - 1, Math.max(CROWN_TOP + 1, y - 2), ["###", ".###"], Ink.DarkCloth);
       break;
     case "coif":
-      p.mask(x - 1, y - 3, ["...######...", "..########..", ".##########.", ".##......##.", "##........##", "##........##", ".#........#.", ".#........#."], Ink.Garment);
+      crown(p, x - 1, y - 3, ["....####....", "..########..", ".##########.", ".##......##.", "##........##", "##........##", ".#........#.", ".#........#."], Ink.Garment);
       break;
     case "kerchief":
-      p.mask(x - 1, y - 2, ["...#######..", "..#########.", ".###########", ".#........##", "...........##", "............#"], Ink.Secondary);
+      crown(p, x - 1, y - 2, ["....#####...", "..#########.", ".###########", ".#........##", "...........##", "............#"], Ink.Secondary);
       p.rect(x + 1, y, 8, 1, Ink.Garment);
       break;
     case "folded-hat":
-      p.mask(x - 1, y - 4, ["......###...", ".....#####..", "...########.", "..#########.", ".###########"], Ink.Garment);
-      p.rect(x + 3, y - 2, 6, 1, Ink.Secondary);
+      crown(p, x - 1, y - 4, ["......###...", ".....#####..", "...########.", "..#########.", ".###########"], Ink.Garment);
+      p.rect(x + 3, Math.max(CROWN_TOP + 1, y - 2), 6, 1, Ink.Secondary);
       break;
     case "wide-brim":
     case "round-brim":
-      p.mask(x - 3, y - 5, part === "wide-brim"
+      crown(p, x - 3, y - 5, part === "wide-brim"
         ? [".......##.......", "......####......", "......#####.....", ".....#######....", "....########....", "..############..", "###..........###"]
         : ["................", "......###.......", ".....######.....", ".....#######....", "....########....", "..############..", "###..........###"], Ink.Secondary);
       p.mask(x - 3, y + 1, ["...##########..."], Ink.DarkCloth);
       break;
     case "warden-felt":
-      p.mask(x - 1, y - 5, [".......###..", "......#####.", ".....#####..", "...#######..", "..########..", ".##########.", "..#......#.."], Ink.Garment);
-      p.mask(x + 7, y - 3, ["#", ".#", ".#", "..#", "..#", ".#"], Ink.Brass);
+      crown(p, x - 1, y - 5, [".......###..", "......#####.", ".....#####..", "...#######..", "..########..", ".##########.", "..#......#.."], Ink.Garment);
+      p.mask(x + 7, Math.max(CROWN_TOP + 1, y - 3), ["#", ".#", ".#", "..#", "..#", ".#"], Ink.Brass);
       break;
     case "hood":
     case "tall-hood":
-      if (part === "tall-hood") p.mask(x + 1, y - 4, [".....#..", "...####.", "..######"], Ink.Garment);
-      p.mask(x - 2, y - 2, ["....######....", "..##########..", ".###......###.", ".##........##.", "##..........##", "#............#", "#............#", ".#..........#."], Ink.Garment);
-      p.mask(x - 1, y - 1, ["...######...", ".##......##.", ".#........#.", "#..........#"], Ink.DarkCloth);
+      if (part === "tall-hood") crown(p, x + 1, y - 4, [".....#..", "...####.", "..######"], Ink.Garment);
+      crown(p, x - 2, y - 2, [".....####.....", "..##########..", ".###......###.", ".##........##.", "##..........##", "#............#", "#............#", ".#..........#."], Ink.Garment);
+      p.mask(x - 1, Math.max(CROWN_TOP + 1, y - 1), ["...######...", ".##......##.", ".#........#.", "#..........#"], Ink.DarkCloth);
       break;
   }
 }
@@ -148,7 +166,7 @@ function folio(p: PixelGrid, x: number, y: number, kind: "map" | "scroll" | "led
   else p.mask(x + 1, y, turn ? [".....#", "..###.", "##...."] : ["..##..", ".#..##", "#....."], Ink.Wood);
 }
 
-function handTool(p: PixelGrid, t: SeedTraits, hand: number, pose: SpritePose) {
+function handTool(p: PixelGrid, t: SeedTraits, hand: number, pose: SpritePose, dark: boolean) {
   const active = pose.gesture === "work" && pose.beat;
   switch (t.tool) {
     case "ledger-quill":
@@ -156,7 +174,7 @@ function handTool(p: PixelGrid, t: SeedTraits, hand: number, pose: SpritePose) {
       break;
     case "staff-lantern":
       p.mask(15, hand, [".###", "#####", "#####", "####."], Ink.Leather);
-      p.rect(17, hand + 1, 2, 1, Ink.Flame);
+      p.rect(17, hand + 1, 2, 1, dark ? Ink.Flame : Ink.Brass);
       break;
     case "spyglass": {
       const y = hand - 4 - Number(pose.action === "spyglass");
@@ -178,7 +196,7 @@ function handTool(p: PixelGrid, t: SeedTraits, hand: number, pose: SpritePose) {
     }
     case "crystal-staff": {
       const salute = pose.action === "staff" && pose.accent === "peak";
-      const y = Math.max(1, hand - 10 - (salute ? 4 : Number(pose.action === "staff")));
+      const y = crystalTop(hand, pose);
       p.rect(20, y + 5, 1, GROUND - y - 6 - (salute ? 3 : 0), Ink.Wood);
       p.mask(18, y, ["...#", "..##", ".####", ".####", ".###", "..#"], Ink.Crystal);
       p.mask(20, y + 2, ["..#", ".##", ".#", "#"], Ink.Facet);
@@ -190,7 +208,7 @@ function handTool(p: PixelGrid, t: SeedTraits, hand: number, pose: SpritePose) {
   }
 }
 
-export function actor(t: SeedTraits, pose: SpritePose, charge: string | null) {
+export function actor(t: SeedTraits, pose: SpritePose, charge: string | null, dark = false) {
   const p = new PixelGrid();
   const bootTop = GROUND - 2 - pose.lift;
   const bottom = bootTop + (pose.seated ? 0 : t.outfit === "robe" ? 0 : -1);
@@ -201,11 +219,11 @@ export function actor(t: SeedTraits, pose: SpritePose, charge: string | null) {
   const spyglass = pose.action === "spyglass" && peak && t.tool === "spyglass";
   const tip = pose.gesture === "tip";
   const removableHat = t.hat === "soft-cap" || t.hat === "folded-hat" || t.hat === "wide-brim" || t.hat === "round-brim" || t.hat === "warden-felt";
-  const headroom = t.hat ? HAT_HEADROOM[t.hat] : 2;
+  const headroom = t.hat ? HAT_RISE[t.hat] : 2;
   const dip = pose.dip ?? (pose.action === "nod" ? peak ? 3 : 1 : 0);
   const headTop = Math.max(headroom, shoulders - (pose.slump ? 6 : pose.glance === -1 ? 9 : 8) + dip + (gait?.head ?? 0));
   const hatLift = tip && peak && removableHat ? Math.min(2, headTop - headroom) : 0;
-  p.rect(7, GROUND, 12, 1, Ink.Shadow);
+  if (dark) p.rect(7, GROUND, 12, 1, Ink.Shadow);
   const fast = pose.stride === 2;
   if (pose.seated) {
     p.rect(9, bootTop + 1, 5, 1, Ink.Boot);
@@ -219,7 +237,8 @@ export function actor(t: SeedTraits, pose: SpritePose, charge: string | null) {
   }
   garment(p, t, pose, top, bottom, charge);
   if (pose.seated) p.mask(15, bottom - 3, ["##...", "####.", "#####"], Ink.Secondary);
-  const lampLimit = t.light && t.tool !== "staff-lantern" ? GROUND - 8 : GROUND;
+  const lamp = dark && t.light && isLampKind(t.light) ? t.light : null;
+  const lampLimit = lamp && t.tool !== "staff-lantern" ? GROUND - 8 : GROUND;
   const tendsLight = pose.gesture === "lantern" || (pose.gesture === "work" && t.tool === "staff-lantern");
   const liftLight = pose.action === "lantern" && peak ? 5 : pose.raised && t.tool === "staff-lantern" ? 3 : Number(tendsLight && pose.beat);
   const arm = gait?.arm ?? 0;
@@ -232,7 +251,7 @@ export function actor(t: SeedTraits, pose: SpritePose, charge: string | null) {
     p.rect(19, y + 1, 2, top + 5 - y, Ink.Garment);
     p.rect(17, top + 4, 3, 2, Ink.Garment);
     if (!peak) p.rect(19, y, 2, 2, Ink.Skin);
-    if (t.tool === "ledger-quill" || t.tool === "crystal-staff") handTool(p, t, rightHand, pose);
+    if (t.tool === "ledger-quill" || t.tool === "crystal-staff") handTool(p, t, rightHand, pose, dark);
   } else if (spyglass) {
     const y = headTop + 4 + pose.glance;
     p.rect(18, y + 2, 2, top + 5 - y, Ink.Garment);
@@ -241,7 +260,7 @@ export function actor(t: SeedTraits, pose: SpritePose, charge: string | null) {
     p.rect(17, top + 1, 1, 3, Ink.Garment);
     p.rect(18, top + 1, pose.beat ? 2 : 1, 1, Ink.Garment);
     p.rect(pose.beat ? 20 : 18, top, 2, 2, Ink.Skin);
-    handTool(p, t, rightHand, pose);
+    handTool(p, t, rightHand, pose, dark);
   } else {
     if (pose.gesture === "spyglass" || (pose.gesture === "work" && (t.tool === "spyglass" || t.tool === "hammer"))) rightHand -= pose.beat ? 2 : 1;
     if (pose.gesture === "hammer" || pose.gesture === "staff") rightHand--;
@@ -251,12 +270,12 @@ export function actor(t: SeedTraits, pose: SpritePose, charge: string | null) {
     if (gesture === "map" || gesture === "scroll" || gesture === "ledger" || (gesture === "work" && t.tool === "ledger-quill")) {
       folio(p, t.tool === "crystal-staff" ? 10 : 9, top + 3, gesture === "map" || gesture === "scroll" ? gesture : "ledger",
         pose.beat || pose.action === "quill" || (pose.action === "staff" && gesture === "scroll"));
-      if (t.tool === "crystal-staff" || t.tool === "spyglass") handTool(p, t, rightHand, pose);
+      if (t.tool === "crystal-staff" || t.tool === "spyglass") handTool(p, t, rightHand, pose, dark);
     } else if (gesture === "hands" || gesture === "apron" || (gesture === "work" && !t.tool)) {
       p.rect(pose.beat ? 13 : 12, bottom - 3, 3, 1, Ink.Skin);
-      handTool(p, t, rightHand, pose);
+      handTool(p, t, rightHand, pose, dark);
     } else {
-      handTool(p, t, rightHand, pose);
+      handTool(p, t, rightHand, pose, dark);
       if (gesture === "satchel") p.rect(17 + Number(pose.beat), rightHand - 1, 2, 1, Ink.Skin);
     }
   }
@@ -279,20 +298,32 @@ export function actor(t: SeedTraits, pose: SpritePose, charge: string | null) {
     p.rect(18, y + 5, 2, 2, Ink.Skin);
   }
   let anchor: LightAnchor | null = null;
-  if (t.light === "lantern" && t.tool === "staff-lantern") {
+  if (lamp === "lantern" && t.tool === "staff-lantern") {
     p.rect(3, leftHand - 5, 1, 9, Ink.Wood);
     p.rect(3, leftHand - 5, 3, 1, Ink.Wood);
     p.rect(4, leftHand, 2, 1, Ink.Wood);
-    anchor = { x: 5, y: leftHand - 5, kind: t.light };
-  } else if (t.light) {
+    anchor = { x: 5, y: leftHand - 5, kind: lamp };
+  } else if (lamp) {
     p.rect(5, leftHand, 1, 1, Ink.Wood);
-    anchor = { x: 5, y: leftHand, kind: t.light };
+    anchor = { x: 5, y: leftHand, kind: lamp };
   }
   p.outline();
+  if (!dark && t.day) dayProp(p, t.day, leftHand);
+  if (dark && t.light && !isLampKind(t.light)) {
+    anchor = { ...nightProp(p, t.light, leftHand, rightHand, pose), kind: t.light };
+  }
   return { runs: p.runs(), anchor, chin };
 }
 
-export function lamp(kind: LightAnchor["kind"], shift: number, bright: boolean) {
+export function dayShadow() {
+  const p = new PixelGrid();
+  for (const { left, top, right, bottom, band } of DAY_SHADOW_CELLS) {
+    p.rect(WIDTH / 2 + left / 2, GROUND - 1 + top / 2, (right - left) / 2, (bottom - top) / 2, (Ink.ShadeOuter + band - 1) as Ink);
+  }
+  return p.runs();
+}
+
+export function lamp(kind: LampKind, shift: number, bright: boolean) {
   const p = new PixelGrid();
   const cx = 4;
   const x = cx + shift;

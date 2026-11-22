@@ -1,4 +1,4 @@
-import type { ArtFrame, LightAnchor } from "./art";
+import type { ArtFrame, ClassLight, LightAnchor } from "./art";
 
 const CELL = 4;
 export const LANTERN_RADIUS = 176;
@@ -6,6 +6,18 @@ export const LANTERN_BANDS = [0.35, 0.66, 1] as const;
 export const LANTERN_STRENGTH = { low: 0.4, medium: 0.7, high: 1 } as const;
 export function lanternAlpha(strength: keyof typeof LANTERN_STRENGTH, dark: boolean) {
   return LANTERN_STRENGTH[strength] * (dark ? 0.3 : 0.22);
+}
+
+const CLASS_GLOW = {
+  runewood: { colour: "#9fdf9a", strength: 0.88 },
+  shutter: { colour: "#ffd996", strength: 0.66 },
+  ember: { colour: "#ff713b", strength: 0.96 },
+  crystal: { colour: "#abacff", strength: 0.83 },
+} satisfies Record<ClassLight, { colour: string; strength: number }>;
+
+export function sourceGlow(kind: LightAnchor["kind"], colour: string, alpha: number) {
+  const glow = Object.hasOwn(CLASS_GLOW, kind) ? CLASS_GLOW[kind as ClassLight] : null;
+  return glow ? { colour: glow.colour, alpha: alpha * glow.strength } : { colour, alpha };
 }
 
 type Rect = { left: number; top: number; right: number; bottom: number };
@@ -66,6 +78,7 @@ function oval(x: number, y: number, rx: number, ry: number): LightSpan[] {
 
 const haloPattern = oval(0, 0, 24, 24);
 const poolPattern = oval(0, 0, 60, 8);
+export const DAY_SHADOW_CELLS = oval(0, 0, 20, 8);
 export function lanternIslands(x: number, y: number, foot: number) {
   const place = (pattern: LightSpan[], cy: number) => pattern.map(span => ({ ...span,
     left: span.left + x, right: span.right + x, top: span.top + cy, bottom: span.bottom + cy,

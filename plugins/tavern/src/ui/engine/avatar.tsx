@@ -36,6 +36,7 @@ export function CharacterAvatar({ character, seed = character.avatar ?? characte
     let ctx: CanvasRenderingContext2D | null | undefined;
     let palette: CharacterPalette | undefined;
     const actor = new Actor(id, art, "idle");
+    actor.dark = document.documentElement.classList.contains("dark");
     let turn = 0;
     const cueGap = () => CUE_GAP + 12 * variation(actor.motionSeed, turn++);
     let untilCue = cueGap();
@@ -92,6 +93,7 @@ export function CharacterAvatar({ character, seed = character.avatar ?? characte
       })) handle.invalidate(() => { cancel = actor.playCue(kind, auto, rules()); });
     };
     const theme = new MutationObserver(() => {
+      actor.dark = document.documentElement.classList.contains("dark");
       palette = undefined;
       painted = null;
       handle.invalidate();

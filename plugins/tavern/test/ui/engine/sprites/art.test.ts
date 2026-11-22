@@ -47,6 +47,47 @@ function hash(art: CharacterArt, frame = rest) {
 }
 
 describe("seeded character art", () => {
+  it.each([
+    ["keeper", "runewood", "#ecffd0", "#f7edd4"],
+    ["wanderer", "lantern", palette.skin[0]!, "#9abdb2"],
+    ["ranger", "shutter", "#ffdf92", "#9a443b"],
+    ["smith", "ember", "#ffd5a0", "#b1bbc0"],
+    ["warden", "crystal", "#eef0ff", "#aeba81"],
+  ])("gives the %s a light source at night and a different tool by day", (classId, kind, core, dayInk) => {
+    const art = createArt({ ...input, classId });
+    const { ctx, pixels } = recorder();
+    const poses: ArtFrame[] = [rest, { ...rest, still: false, activity: "walk", step: 2 }, { ...rest, mood: "resting" }];
+    for (const pose of poses) {
+      const dark = { ...pose, dark: true };
+      const anchor = art.lightAnchor(dark)!;
+      expect(anchor?.kind).toBe(kind);
+      art.draw(ctx, dark, palette);
+      expect(pixels[anchor.y * art.width + anchor.x]).toBe(core);
+      const mirror = art.lightAnchor({ ...dark, facing: -1 })!;
+      expect([mirror.x, mirror.y]).toEqual([art.width - 1 - anchor.x, anchor.y]);
+      expect(art.lightAnchor(pose)).toBeNull();
+      art.draw(ctx, pose, palette);
+      expect(pixels).toContain(dayInk);
+      expect(pixels).not.toContain(classId === "wanderer" ? palette.hearth : core);
+    }
+  });
+
+  it("paints only a faint, static, falling-off ground shadow by day", () => {
+    const art = createArt(input);
+    const { ctx, pixels } = recorder();
+    const ground = () => pixels.slice(art.width * (art.ground + 1));
+    art.draw(ctx, rest, palette);
+    const shadow = ground();
+    const darkening = shadow.filter(Boolean).map(pixel => Number(pixel.match(/,[ ]*([\d.]+)\)$/)?.[1]));
+    expect(new Set(darkening).size).toBeGreaterThan(1);
+    expect(Math.max(...darkening)).toBeLessThanOrEqual(0.09);
+    expect(Math.min(...darkening)).toBeGreaterThan(0);
+    art.draw(ctx, { ...rest, t: 1800, swing: 1.1, facing: -1 }, palette);
+    expect(ground()).toEqual(shadow);
+    art.draw(ctx, { ...rest, dark: true }, palette);
+    expect(ground().every(pixel => !pixel)).toBe(true);
+  });
+
   it("has stable shipped ids and snapshots traits for their original seeds", () => {
     const characters = shipped();
     expect(characters.map(c => c.id)).toEqual(["ada", "bram", "fern", "juno", "lark", "moss", "otto", "pip", "rook", "tam", "vex", "wren"]);
@@ -123,6 +164,39 @@ describe("seeded character art", () => {
       }
     }
     expect(seen).toEqual(new Set(HAIR));
+  });
+
+  it.each([
+    ["keeper", "c035-alder", Ink.Hair, 4],
+    ["smith", "c035-flint", Ink.Secondary, 5],
+  ] as const)("rounds the first visible crown row on the %s sheet sprite", (classId, seed, ink, width) => {
+    const kit = classKit(classId);
+    const traits = seedTraits({ ...input, classId, seed });
+    const book = poseBook(mood => kit.quiet[mood] ?? kit.idle, traits.blinkOffset, kit.signature);
+    const { runs } = actor(traits, book.poses[book.index(rest)]!, null);
+    let firstRow = -1;
+    let firstWidth = 0;
+    for (let i = 0; i < runs.length; i += 4) {
+      if (runs[i] !== ink) continue;
+      const row = runs[i + 2]!;
+      if (firstRow === -1) firstRow = row;
+      if (row !== firstRow) break;
+      firstWidth += runs[i + 3]!;
+    }
+    expect(firstRow).toBeGreaterThan(0);
+    expect(firstWidth).toBe(width);
+  });
+
+  it.each(Object.keys(KITS))("leaves the top art row blank in every %s pose and headwear option", classId => {
+    const kit = classKit(classId);
+    const { poses } = poseBook(mood => kit.quiet[mood] ?? kit.idle, 0, kit.signature);
+    const traits = { ...seedTraits({ ...input, classId }), height: 21 };
+    for (const hat of [null, ...PARTS.hat]) for (const hair of HAIR) for (const dark of [false, true]) {
+      for (const [index, pose] of poses.entries()) {
+        const { runs } = actor({ ...traits, hat, hair }, pose, null, dark);
+        if (runs.length && runs[2] === 0) throw new Error(`${classId}: ${hat ?? "no hat"}, ${hair}, pose ${index}, dark=${dark} paints row 0`);
+      }
+    }
   });
 
   it("never paints a hair strand on or below the chin in any compiled pose", () => {
@@ -284,13 +358,14 @@ describe("seeded character art", () => {
   it("draws visibly different seeded silhouettes and never depends on draw order", () => {
     const hashes = Array.from({ length: 24 }, (_, i) => hash(createArt({ ...input, seed: `roll-${i}` })));
     expect(new Set(hashes).size).toBeGreaterThan(20);
-    const art = createArt(input);
-    const a = { ...rest, activity: "quiet", t: 2040, still: false, swing: 0.6, flame: 1.17 } as const;
+    const art = createArt({ ...input, classId: "wanderer" });
+    const night = { ...rest, dark: true };
+    const a = { ...night, activity: "quiet", t: 2040, still: false, swing: 0.6, flame: 1.17 } as const;
     const first = hash(art, a);
     expect(hash(art, { ...a, facing: -1, mood: "blocked", swing: -0.8 })).not.toBe(first);
     expect(hash(art, a)).toBe(first);
-    expect(hash(art, { ...a, still: true })).toBe(hash(art));
-    expect(art.lightAnchor({ ...a, still: true })).toEqual(art.lightAnchor(rest));
+    expect(hash(art, { ...a, still: true })).toBe(hash(art, night));
+    expect(art.lightAnchor({ ...a, still: true })).toEqual(art.lightAnchor(night));
     expect(art.lightAnchor({ ...a, facing: -1 })!.x + art.lightAnchor(a)!.x).toBe(23);
     expect(hash(art, { ...a, swing: -0.6 })).not.toBe(first);
   });
@@ -301,13 +376,13 @@ describe("seeded character art", () => {
     const colours = spriteColours(wanderer.hue, seedTraits(wanderer), palette);
     const { ctx, pixels } = recorder();
     for (const facing of [1, -1] as const) for (const swing of [-1.1, 0, 1.1]) {
-      const frame = { ...rest, facing, swing, cue: "signature", activity: "cue", still: false } as const;
+      const frame = { ...rest, facing, swing, cue: "signature", activity: "cue", still: false, dark: true } as const;
       art.draw(ctx, frame, palette);
       const anchor = art.lightAnchor(frame)!;
       expect(anchor.kind).toBe("lantern");
       expect([colours[Ink.Cream], colours[Ink.Flame]]).toContain(pixels[anchor.y * art.width + anchor.x]);
     }
-    const neutral = { ...rest, activity: "cue", cue: "signature", still: false } as const;
+    const neutral = { ...rest, activity: "cue", cue: "signature", still: false, dark: true } as const;
     expect(art.lightAnchor({ ...neutral, swing: -1.1 })!.x).toBeLessThan(art.lightAnchor(neutral)!.x);
     expect(art.lightAnchor({ ...neutral, swing: 1.1 })!.x).toBeGreaterThan(art.lightAnchor(neutral)!.x);
   });

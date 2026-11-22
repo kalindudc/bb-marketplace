@@ -6,9 +6,9 @@
   height: 100%;
   pointer-events: none;
   image-rendering: pixelated;
-  color: var(--tavern-glow-tint, var(--attention));
+  color: var(--attention);
 }
-html.dark .tavern.tv-lantern-light { color: var(--attention); }
+html:not(.dark) :is(.tv-lantern-light, .tv-lantern-islands) { visibility: hidden; }
 
 .tv-lantern-islands {
   position: absolute;

@@ -28,6 +28,18 @@ const mix = (a: Rgb, b: Rgb, amount: number): Rgb => [
 const hex = (colour: Rgb) => `#${colour.map(channel => channel.toString(16).padStart(2, "0")).join("")}`;
 const linear = (c: number) => c <= 10.31475 ? c / 3294.6 : ((c / 255 + 0.055) / 1.055) ** 2.4;
 const luminance = ([r, g, b]: Rgb) => 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+
+export const PROP_COLOURS = [
+  "#6e4a32", "#bc885e", "#514c4f", "#f7edd4", "#6b9397", "#77583a", "#58412d", "#af9062",
+  "#93734d", "#704e2e", "#ba9560", "#a68c64", "#344b49", "#9abdb2", "#548880", "#795c42",
+  "#624728", "#bc9554", "#f2e1bb", "#9a443b", "#354e62", "#3c3937", "#626e77", "#b1bbc0",
+  "#8d704f", "#ba955e", "#475844", "#889f60", "#aeba81", "#b08656", "#795b45", "#b89468",
+  "#654732", "#ab8158", "#88ae6d", "#c0eea6", "#ecffd0", "#5d503b", "#ceb180", "#74634f",
+  "#b28b58", "#403631", "#9a7950", "#ed9b41", "#ffdf92", "#775234", "#56483e", "#d6532e",
+  "#ff8b46", "#ffd5a0", "#a33d25", "#8d9ca6", "#666d72", "#bcc1bf", "#bbc4fa", "#9c99ec",
+  "#eef0ff", "#7562b0",
+];
+
 const NIGHT_GROUND: Rgb = [40, 40, 40];
 const DAY_GROUND: Rgb = [231, 227, 216];
 const NIGHT_EDGE: Rgb = [170, 165, 156];

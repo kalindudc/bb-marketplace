@@ -3,7 +3,7 @@ import { experimental_useRpcQuery, type PluginAppBuilder } from "@get-bb/plugin-
 import { settingsContract, type TavernSettings } from "../../shared/settings";
 import { STUCK_IN_VIEW } from "../kit/motion";
 import type { LightAnchor } from "./art";
-import { LANTERN_BANDS, LANTERN_RADIUS, hasArea, hasStripLantern, intersect, lanternAlpha, lanternIslands, lightMap, roundToLightCell, sameLightMap, subscribeLanternPresence, subscribeStripLantern, type LightSpan, type LightSurface } from "./light";
+import { LANTERN_BANDS, LANTERN_RADIUS, hasArea, hasStripLantern, intersect, lanternAlpha, lanternIslands, lightMap, roundToLightCell, sameLightMap, sourceGlow, subscribeLanternPresence, subscribeStripLantern, type LightSpan, type LightSurface } from "./light";
 import { REPORT_READING } from "./report-reading";
 import "./light-overlay.css";
 
@@ -147,13 +147,14 @@ function drawIslands(layer: HTMLCanvasElement, rect: DOMRect, anchor: LightAncho
 }
 
 type Scene = ReturnType<typeof collectLanternSurfaces>;
-type Carrier = { anchor: LightAnchor; scene: Scene; layer: HTMLCanvasElement | null; map: LightSpan[]; x: number; y: number };
+type LightPaint = { map: LightSpan[]; colour: string; alpha: number };
+type Carrier = { anchor: LightAnchor; scene: Scene; layer: HTMLCanvasElement | null; paint: LightPaint | null; x: number; y: number };
 
 export function watchLantern(canvas: HTMLCanvasElement, { lanternLight, lanternLightBb, lanternStrength }: Options,
   paint?: (spans: LightSpan[], colour: string, alpha: number) => void) {
   if (!lanternLight) return { draw() {}, dispose() {} } satisfies { draw(strip: HTMLElement, anchor: LightAnchor | null): void; dispose(): void };
   const carriers = new Map<HTMLElement, Carrier>();
-  let previous: LightSpan[] = [];
+  let previous: LightPaint[] = [];
   let colour = "", alpha = 0, dirtyTheme = true;
   let width = innerWidth, height = innerHeight;
   let observed = new Set<HTMLElement>();
@@ -166,10 +167,11 @@ export function watchLantern(canvas: HTMLCanvasElement, { lanternLight, lanternL
   function update(carrier: Carrier, layout = false) {
     const { anchor, scene } = carrier;
     if (carrier.layer) carrier.layer.hidden = !scene.visible;
-    if (!scene.visible) { carrier.map = []; return; }
+    if (!scene.visible) { carrier.paint = null; return; }
     const x = roundToLightCell(scene.stripRect.left + anchor.x), y = roundToLightCell(scene.stripRect.top + anchor.y);
     if (!layout && !dirtyTheme && x === carrier.x && y === carrier.y) return;
-    if (carrier.layer) drawIslands(carrier.layer, scene.stripRect, anchor, colour, alpha);
+    const glow = sourceGlow(anchor.kind, colour, alpha);
+    if (carrier.layer) drawIslands(carrier.layer, scene.stripRect, anchor, glow.colour, glow.alpha);
     carrier.x = x;
     carrier.y = y;
     const dy = scene.scrollTop - (scene.scroll?.scrollTop ?? 0);
@@ -181,36 +183,41 @@ export function watchLantern(canvas: HTMLCanvasElement, { lanternLight, lanternL
       surfaces.push({ ...surface, rect, clip: scene.chatClip });
       for (const box of blocked) exclusions.push(offsetY(box, dy));
     }
-    carrier.map = lightMap({ ...anchor, x, y }, surfaces, exclusions);
+    carrier.paint = { ...glow, map: lightMap({ ...anchor, x, y }, surfaces, exclusions) };
   }
   function refreshColour() {
     colour = getComputedStyle(canvas).color;
-    alpha = lanternAlpha(lanternStrength, document.documentElement.classList.contains("dark"));
+    alpha = lanternAlpha(lanternStrength, true);
   }
   function render() {
-    const map = [...carriers.values()].flatMap(carrier => carrier.map);
+    const lights = [...carriers.values()].flatMap(({ paint }) => paint?.map.length ? [paint] : []);
     const resized = width !== innerWidth || height !== innerHeight || (!paint && (canvas.width !== innerWidth || canvas.height !== innerHeight));
-    if (!dirtyTheme && !resized && sameLightMap(previous, map)) return;
+    if (!dirtyTheme && !resized && lights.length === previous.length && lights.every((light, i) => {
+      const prior = previous[i]!;
+      return light === prior || (light.colour === prior.colour && light.alpha === prior.alpha && sameLightMap(prior.map, light.map));
+    })) return;
     dirtyTheme = false;
     width = innerWidth;
     height = innerHeight;
-    if (paint) paint(map, colour, alpha);
-    else {
+    if (paint) {
+      if (lights.length === 0) paint([], colour, alpha);
+      for (const light of lights) paint(light.map, light.colour, light.alpha);
+    } else {
       const ctx = canvas.getContext("2d");
       if (ctx) {
         if (resized) { canvas.width = width; canvas.height = height; }
         else if (previous.length) {
           let left = width, right = 0, top = height, bottom = 0;
-          for (const r of previous) {
+          for (const light of previous) for (const r of light.map) {
             left = Math.min(left, Math.floor(r.left)); right = Math.max(right, Math.ceil(r.right));
             top = Math.min(top, Math.floor(r.top)); bottom = Math.max(bottom, Math.ceil(r.bottom));
           }
           ctx.clearRect(left, top, right - left, bottom - top);
         }
-        paintSpans(ctx, map, colour, alpha);
+        for (const light of lights) paintSpans(ctx, light.map, light.colour, light.alpha);
       }
     }
-    previous = map;
+    previous = lights;
   }
   function observe() {
     const nextObserved = new Set<HTMLElement>(), nextWatched = new Map<HTMLElement, boolean>(), nextScrollers = new Set<HTMLElement>();
@@ -282,6 +289,7 @@ export function watchLantern(canvas: HTMLCanvasElement, { lanternLight, lanternL
         return;
       }
       if (dirtyTheme) refreshColour();
+      const changedKind = carrier?.anchor.kind !== anchor.kind;
       if (carrier) carrier.anchor = anchor;
       else {
         const scene = collectLanternSurfaces(strip, lanternLightBb, cache);
@@ -292,11 +300,11 @@ export function watchLantern(canvas: HTMLCanvasElement, { lanternLight, lanternL
           layer.setAttribute("aria-hidden", "true");
           sprite?.before(layer);
         }
-        carrier = { anchor, scene, layer, map: [], x: NaN, y: NaN };
+        carrier = { anchor, scene, layer, paint: null, x: NaN, y: NaN };
         carriers.set(strip, carrier);
         observe();
       }
-      update(carrier);
+      update(carrier, changedKind);
       render();
     },
     dispose() {

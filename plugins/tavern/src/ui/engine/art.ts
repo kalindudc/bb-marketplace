@@ -37,9 +37,16 @@ export type ArtFrame = {
   small?: boolean;
   /** Reduced motion or Motion off: draw the mood's rest pose and nothing time-based. */
   still: boolean;
+  dark?: boolean;
 };
 
-export type LightAnchor = { x: number; y: number; kind: "lantern" | "hearth" | "torch" };
+export type LampKind = "lantern" | "hearth" | "torch";
+export type ClassLight = "runewood" | "shutter" | "ember" | "crystal";
+export type LightAnchor = { x: number; y: number; kind: LampKind | ClassLight };
+
+export function isLampKind(kind: LightAnchor["kind"]): kind is LampKind {
+  return kind === "lantern" || kind === "hearth" || kind === "torch";
+}
 
 export interface CharacterArt {
   /** The art's grid in art pixels; the engine draws it at a whole multiple. */

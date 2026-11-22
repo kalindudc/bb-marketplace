@@ -109,6 +109,7 @@ export function PartyStrip(props: PartyStripProps) {
     let ctx: CanvasRenderingContext2D | null | undefined;
     const composer = el.closest<HTMLElement>("[data-app-composer]");
     let palette: CharacterPalette = readPalette(control);
+    actor.dark = document.documentElement.classList.contains("dark");
     let width = 0;
     let span = 0;
     let lastPosition = "";
@@ -226,7 +227,11 @@ export function PartyStrip(props: PartyStripProps) {
     resize?.observe(el);
     if (composer) resize?.observe(composer);
     if (!resize) window.addEventListener("resize", onResize);
-    const theme = new MutationObserver(() => { palette = readPalette(control); handle.invalidate(); });
+    const theme = new MutationObserver(() => {
+      palette = readPalette(control);
+      actor.dark = document.documentElement.classList.contains("dark");
+      handle.invalidate();
+    });
     theme.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
     const cue = (kind: Cue, auto: boolean, onEnd?: () => void, reaction?: Reaction) => {
       if (!scheduler.isActive(world)) { onEnd?.(); return; }
