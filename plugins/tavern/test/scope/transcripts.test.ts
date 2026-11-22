@@ -15,8 +15,8 @@ const source = JSON.parse(readFileSync(new URL("./fixtures/round2-transcripts.js
 it("replays 88 Ranger, 79 Smith, 11 Keeper and 8 regression commands with anonymized remotes", () => {
   const base = realPath(mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES!, "transcript-")));
   try {
-    const scratch = process.platform === "darwin" ? ["/private/tmp", realPath(tmpdir())] : [realPath(tmpdir())];
-    expect(scratch.some(path => within(base, path)), "The fixture must be outside every allowed scratch root").toBe(false);
+    const scratch = realPath(tmpdir());
+    expect(within(base, scratch), "The fixture must be outside the allowed scratch root").toBe(false);
     const { main, worktree, git } = linkedWorktree(base);
     git(worktree, "branch", "-m", "feature"); git(main, "remote", "add", "origin", "git@github.com:fixture-dev/sample-repo.git"); git(main, "remote", "add", "upstream", "https://github.com/example-org/sample-repo.git");
     for (const path of ["src", "packages/a"]) mkdirSync(join(worktree, path), { recursive: true });
@@ -24,12 +24,12 @@ it("replays 88 Ranger, 79 Smith, 11 Keeper and 8 regression commands with anonym
     const scopes = Object.fromEntries(["ranger", "smith", "keeper"].map(role => {
       let scope: import("../../src/scope/schema").Scope = { ...scopeForClass(role, undefined, role === "keeper" ? "keeper" : undefined), threadId: "t1", issuedAt: 1, assignedBranch: "feature" };
       if (scope.writes.mode === "worktree") scope = bindWorktree(scope, worktree);
-      return [role, bindPaths(scope, { home: homedir(), tmp: scratch, scopesDir: join(base, "scopes"), threadStorage: join(base, "storage") }, realPath)];
+      return [role, bindPaths(scope, { home: homedir(), tmp: [scratch], scopesDir: join(base, "scopes"), threadStorage: join(base, "storage") }, realPath)];
     }));
     const report: Record<string, unknown> = {};
     for (const group of ["ranger", "smith", "keeper", "regressions"]) {
       const rows = source[group].map((row: { command: string; expected: string; preset?: string }) => {
-        const command = row.command.replaceAll("${threadStorage}", join(base, "storage"));
+        const command = row.command.replaceAll("${threadStorage}", join(base, "storage")).replaceAll("${tmp}", scratch);
         const call = prepareCall({ kind: "tool", toolName: "bash", input: { command }, cwd: worktree }, {
           scope: scopes[row.preset ?? group],
           readCommand: (program, args, cwd) => {
