@@ -78,8 +78,11 @@ it("clamps the title to two lines and guards the other constrained Ledger labels
   expect(css).toMatch(/\.lg-done \.lg-row \.m\s*\{[^}]*min-width: 0[^}]*text-overflow: ellipsis/);
 });
 
-it("keeps the Keeper row unwrapped and the full name available on its identity", async () => {
+it("keeps the Keeper row to one bb widget height with 24px controls and the full name in its tooltip", async () => {
   expect(css).toMatch(/\.v-keeper \.tw-row\s*\{[^}]*flex-wrap: nowrap/);
+  expect(css).toMatch(/\.v-keeper \.tw-row\s*\{[^}]*min-height: 33px/);
+  expect(css).toMatch(/\.v-keeper \.tw-row > button\s*\{[^}]*min-width: 24px; height: 24px/);
+  expect(css).toMatch(/@media \(max-width: 767px\) and \(pointer: coarse\)\s*\{[^}]*\.v-keeper \.tw-row\s*\{[^}]*min-height: 36px/);
   const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { decor: () => fixtureDecor, registry: () => fixtureRegistry } });
   await slot.findByRole("button", { name: "Expand Tavern widget" });
   const name = slot.container.querySelector(".tw-name")!.textContent;

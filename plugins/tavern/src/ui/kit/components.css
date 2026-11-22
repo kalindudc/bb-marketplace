@@ -366,10 +366,15 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .sendbox.grant .grants code, .tavern .sendbox.grant code.wrap { font-size: 11px; color: var(--tavern-muted); overflow-wrap: anywhere; }
 .tavern .sendbox.grant code.wrap { display: block; }
 .tavern .sendbox.grant dd .who { margin: 0; }
-.tavern.twidget.v-keeper .tw-row { flex-wrap: nowrap; }
+/* bb's context row is 35px, including its two borders. */
+.tavern.twidget.v-keeper .tw-row { flex-wrap: nowrap; min-height: 33px; }
 .tavern.v-keeper .tw-id { flex: none; max-width: min(33%, 20ch); }
 .tavern.v-keeper .tw-id .tw-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.tavern.twidget.v-keeper .tw-row > :is(button, .tw-chip, .ibtn) { min-width: 44px; height: 44px; justify-content: center; }
+.tavern.twidget.v-keeper .tw-row > button { min-width: 24px; height: 24px; justify-content: center; }
+@media (max-width: 767px) and (pointer: coarse) {
+  .tavern.twidget.v-keeper .tw-row { min-height: 36px; }
+  .tavern.twidget.v-keeper .tw-row > button { height: 28px; }
+}
 .tavern.twidget.v-keeper .tw-row > .tw-quest { flex: 0 1 auto; min-width: calc(4ch + 48px); }
 .tavern .tw-quest b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tavern .tw-quest > :not(b) { flex: none; }
@@ -387,7 +392,6 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .tw-panel-ledger { display: none; margin-inline-end: auto; }
 .tavern .tw-section-actions :is(.tw-show-characters, .tw-guard) { display: none; }
 .tavern .tw-guard[data-warning] { color: var(--tavern-blocked); }
-.tavern .tw-keeper-resume { border-color: var(--tavern-line); }
 .tavern .lg-keeper-state { margin: 0 12px 8px; }
 .tavern .tw-same { margin: 4px 10px 0; }
 .tavern .lg-rules li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: start; }

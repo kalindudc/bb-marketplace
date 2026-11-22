@@ -98,6 +98,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Fixed
 
+- The Keeper widget is the same height as bb’s context row. Resume is a plain button like Ledger, and the chips still open in place.
 - Idle characters stay in place in Lively mode and keep their small movements. A Quiet Keeper also stays in place. Walking characters face their travel direction when the composer narrows.
 - Characters resume their normal motion after a scope ask closes. Earlier violations remain visible under Scope and guardrails, but no longer hold the character in place.
 - Characters in Lively mode keep their idle animation when the composer strip is too narrow to walk.
