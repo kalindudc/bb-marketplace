@@ -1,6 +1,7 @@
 /* The journal's segment in bb's thread context row and its section in the thread context card (one of the two at a time).
    The summary sits among bb's own segments, so it takes their size (24 px, 12 px text) and its steps follow bb's promptbox-shell container. */
 .tavern.jseg-sum { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; min-width: 0; max-width: max-content; flex: 1 1 auto; padding: 4px 6px; border: 0; border-radius: var(--radius); background: transparent; color: var(--tavern-muted); font-size: 12px; line-height: 1; white-space: nowrap; overflow: hidden; cursor: pointer; }
+.tavern.jseg-sum:not(.jseg-skel) { flex: none; min-width: max-content; }
 .tavern.jseg-sum:hover { background: var(--tavern-hover); color: var(--foreground); }
 .tavern.jseg-sum:focus-visible { outline: 1px solid var(--ring, var(--primary)); outline-offset: 0; }
 .tavern.jseg-sum .jseg-icon { width: 14px; height: 14px; flex: none; color: var(--foreground); }

@@ -97,6 +97,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Fixed
 
+- Long quest summaries in the Keeper’s composer banner now end in an ellipsis. Crowded rows wrap instead of covering progress marks or controls, and the Journal count stays readable beside other thread chips.
 - Expandable sections in Tavern Settings now show a chevron that turns when you open them.
 - Ranger's tests use the host's temporary directory for scratch writes and a separate checkout to check which Git commands can write to it.
 - The character strip takes up less space and lets bb fade scrolling chat into the composer instead of cutting it off at a hard edge.
