@@ -11,7 +11,7 @@ export const AUTHORITY = {
   addRule: explicit, widenRule: explicit, confirmRule: explicit, undoDecision: explicit, resetUndoLane: explicit,
   correctRoute: explicit, stopBoardQuest: explicit, stopKeeperGoneQuests: explicit, resumeAll: explicit, prepareTellKeepers: explicit,
   placementRetry: explicit, placementModelFailureClear: explicit,
-  holdBoardQuest: explicit, resumeBoardQuest: explicit, allowReview: explicit, setSpendBudget: explicit,
+  holdBoardQuest: explicit, resumeBoardQuest: explicit, allowReview: explicit, setSpendBudget: explicit, renameBoardQuest: explicit,
   archiveBoardQuests: explicit, deleteBoardQuest: explicit, restoreDeletedQuest: explicit,
   setTaleKept: explicit, journalEdit: explicit, resumeKeeper: explicit, refreshKeeper: explicit, cancelKeeperRefresh: explicit, finishKeeperHandover: explicit,
   saveCharacterVoice: explicit, saveCharacterAvatar: explicit, saveClass: explicit, removeClassOverride: explicit,

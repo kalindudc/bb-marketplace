@@ -8,6 +8,7 @@ import { SettingsStore } from "../../src/server/settings/store";
 import { InsightsReader } from "../../src/server/insights";
 import { setup } from "./runtime-fixture";
 import { planInput, seedQuest } from "./support";
+import { roomSchema } from "../../src/shared/contract";
 
 const brief = { outcome: "Coordinate two parallel tracks", mode: "make-it-work" as const, outOfScope: "No deployment", doneWhen: "Both checks pass", context: [], questions: [], timeboxMinutes: null };
 const workSlot = (index: number) => ({ classId: "smith", characterId: null, model: null, purpose: `Build track ${index}`, waypointIds: ["w1"] });
@@ -65,6 +66,23 @@ it("only the immediate parent can approve a fitting exact child plan, without a 
   await expect(f.runtime.hire(f.lead.threadId, "project", { classId: "smith", boardQuestId: f.child.id, waypointId: "w1", title: "Start the approved track", brief })).resolves.toMatchObject({ classId: "smith" });
 });
 
+it("keeps a pending plan answerable after either quest is renamed and shows both new names", async () => {
+  const f = await fixture();
+  const plan = f.propose(2);
+  const ask = f.k.store.openAsks(f.lead.threadId, f.child.id)[0]!;
+  await f.harness.invokeRpc("renameBoardQuest", { id: f.parent.id, title: "Service restoration", short: "Restore" });
+  await f.harness.invokeRpc("renameBoardQuest", { id: f.child.id, title: "Lamp checks", short: "Lamps" });
+  const detail = await f.harness.invokeRpc("boardQuest", { id: f.child.id });
+  expect(detail).toMatchObject({ asks: expect.arrayContaining([expect.objectContaining({
+    id: ask.id, question: expect.stringContaining(`Restore: Approve Lamp checks, plan v${plan.version}?`),
+    effect: { type: "lead-plan", request: expect.objectContaining({ parentTitle: "Service restoration",
+      changes: [expect.objectContaining({ questTitle: "Service restoration" })] }) },
+  })]) });
+  expect(f.k.store.get("asks", ask.id)?.effect).toEqual(ask.effect);
+  await f.answer(ask.id);
+  expect(f.k.quest(f.child.id).greenlitVersion).toBe(plan.version);
+});
+
 it("will not reuse a refusal, superseded version or a held parent's decision", async () => {
   const f = await fixture();
   const first = f.propose();
@@ -88,6 +106,32 @@ it("leaves the user card and envelope untouched when the parent plan changes bef
   expect(f.k.store.get("asks", ask.id)).toMatchObject({ state: "open", answer: null });
   expect(f.k.store.all("leadLinks")).toMatchObject([{ envelope: { members: 1 } }]);
   expect(f.k.quest(f.child.id)).toMatchObject({ planVersion: plan.version, greenlitVersion: null });
+});
+
+it.each(["new", "legacy"] as const)("shows the renamed parent on a %s forwarded ask without changing its body", async stored => {
+  const f = await fixture();
+  const body = `Wait until the bell rings: does the “${f.parent.short}” memo still apply?`;
+  const ask = f.k.ask(f.lead.threadId, { boardQuestId: f.child.id, kind: "blocker", effect: { type: "decision" }, question: body,
+    why: "The glass might be cracked.", holds: [], meanwhile: "", options: [{ id: "wait", label: "Wait", detail: "", recommended: false }] });
+  expect(ask.question).toContain(`${f.parent.short}: ${body}`);
+  if (stored === "legacy") {
+    const { forwardedQuestion: _, ...legacy } = ask;
+    f.k.store.put("asks", ask.id, legacy);
+  }
+  f.runtime.away.store.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: f.parent.id, endState: "drafts-ready" }] });
+  await f.harness.invokeRpc("renameBoardQuest", { id: f.parent.id, title: "Restore the harbor bell", short: "Bell: harbor" });
+  const question = ask.question.replace(`${f.parent.short}: ${body}`, `Bell: harbor: ${body}`);
+  const row = expect.objectContaining({ id: ask.id, question });
+  const room = roomSchema.parse(await f.harness.invokeRpc("room", {}));
+  expect(room.asks).toContainEqual(row);
+  expect(room.attention?.items).toContainEqual(expect.objectContaining({ id: ask.id, title: question }));
+  expect(await f.harness.invokeRpc("boardQuest", { id: f.parent.id })).toMatchObject({ quest: { leadChain: {
+    asks: expect.arrayContaining([expect.objectContaining({ id: ask.id, title: question })]),
+  } } });
+  expect(f.k.store.get("asks", ask.id)?.forwardedQuestion).toMatchObject({ parentQuestId: f.parent.id, body });
+  expect(f.k.restatement("lead")).toContain(`Bell: harbor: ${body}`);
+  expect(await f.harness.invokeRpc("ledger", { threadId: f.lead.threadId })).toMatchObject({ asks: expect.arrayContaining([row]) });
+  expect(await f.harness.invokeRpc("awayDigest", {})).toMatchObject({ asks: expect.arrayContaining([expect.objectContaining({ ask: row })]) });
 });
 
 it("cannot use an ordinary greenlight or hire outside the linked child", async () => {

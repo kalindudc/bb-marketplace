@@ -8,6 +8,7 @@ import { isLiveKeeper, isOpenQuest } from "./liveness";
 import { UNSEEN_SUMMARY_SQL } from "./summaries";
 import { unseenQuestChanges } from "./quest-change-attention";
 import { usd } from "../shared/spend";
+import { currentAskNames } from "./quest-names";
 
 export const DECIDED_FOR_YOU_SQL = "(json_extract(r.data,'$.source')='keeper' OR json_type(r.data,'$.checkChange')='object')";
 
@@ -55,7 +56,7 @@ export class AttentionSnapshot {
       });
     };
     const quests = rows<BoardQuest>("quests", "json_extract(r.data,'$.phase') NOT IN ('done','stopped','stopping') AND (json_extract(r.data,'$.phase')='held' OR json_type(r.data,'$.spendBudget.reached')='object' OR (json_extract(r.data,'$.checkerHandoffHold') IS NOT NULL AND json_extract(r.data,'$.checkerHandoffHold.release') IS NULL))", true);
-    this.asks = rows<Ask>("asks", "json_extract(r.data,'$.state')='open'").map(undoAskProjection(store)).filter(ask => askNeedsUser(store, ask));
+    this.asks = rows<Ask>("asks", "json_extract(r.data,'$.state')='open'").map(undoAskProjection(store)).filter(ask => askNeedsUser(store, ask)).map(ask => currentAskNames(store, ask));
     this.notes = rows<KeeperNote>("notes", "json_extract(r.data,'$.state')='open' AND json_extract(r.data,'$.kind')='waiting-on-user'");
     this.rules = rows<Rule>("rules", "json_extract(r.data,'$.active')=0 AND json_extract(r.data,'$.source')='keeper-proposed' AND json_extract(r.data,'$.confirmedAt') IS NULL", false, `, ${origin} AS origin`);
     this.decisions = rows<Decision>("decisions", `${DECIDED_FOR_YOU_SQL} AND json_extract(r.data,'$.reversible')=1 AND json_extract(r.data,'$.undone')=0 AND json_extract(r.data,'$.seenAt') IS NULL AND NOT EXISTS (SELECT 1 FROM tavern_records seen WHERE seen.kind='attentionSeen' AND seen.id=r.id)`).map(decisionUndoProjection(store));

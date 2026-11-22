@@ -39,6 +39,7 @@ export const NEWS = new Set([
   "rule.confirmed",
   "rules.changed",
   "reanchor.requested",
+  "quest.renamed",
   "quest.stopped",
   "quest.stop-failed",
   "quest.archive-failed",

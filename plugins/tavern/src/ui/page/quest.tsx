@@ -25,6 +25,7 @@ import { pullRequestVerified } from "../../shared/pull-request";
 import { AsksRecord, PlanRecord, RecordFold, RulesAndAnchor } from "./quest-record";
 import { QuestLead } from "./quest-lead";
 import { QuestSpend } from "./quest-spend";
+import { QuestRename } from "./quest-rename";
 import { QuestSummaries } from "./summaries";
 import { recordedStop } from "./quest-road";
 import { PlacementFacts } from "../kit/placement";
@@ -181,7 +182,8 @@ export function QuestPage({ detail, registry, room, summaryId }: { detail: Board
       </div>
     </header>
     {stop.confirm}
-    <QuestSpend key={quest.id} id={quest.id} editable={!finished && quest.phase !== "stopping"} />
+    {quest.archivedAt === null && quest.deletedAt == null && <QuestRename key={`rename:${quest.id}`} quest={quest} />}
+    <QuestSpend key={`spend:${quest.id}`} id={quest.id} editable={!finished && quest.phase !== "stopping"} />
     {finished && <QuestLead detail={detail} registry={registry} />}
     {quest.outcome === "closed-early" && <Section title="Closed early at your request" count={`${quest.waivers?.length ?? 0} not verified`} className="tv-card"><WaiverRows items={quest.waivers ?? []} final /></Section>}
     <section className={`tv-card tv-qmapcard ${finished ? "" : "lit"} ${showMap ? "" : "folded"}`} aria-labelledby="tv-qmap-h" style={finished ? undefined : glowVars(`questmap:${quest.id}`)}>
@@ -192,7 +194,7 @@ export function QuestPage({ detail, registry, room, summaryId }: { detail: Board
         <GateRows waypoints={quest.waypoints} />
       </div>}
     </section>
-    <QuestSummaries key={quest.id} detail={detail} focusId={summaryId} />
+    <QuestSummaries key={`summaries:${quest.id}`} detail={detail} focusId={summaryId} />
     <div className="tv-ggrid" role="group" aria-label="The quest sections">
       <div className="tv-col">
         {!finished ? <Section title="By whose move" count={`${attention.needYou} need you`}>

@@ -1,6 +1,7 @@
 import { cliCommand, defineCli, PLUGIN_CLI_OUTPUT_MAX_BYTES, PluginCliError, type BbPluginApi, type PluginCliContext } from "@get-bb/plugin-sdk";
 import { terminalUserAct } from "./authority";
 import type { TavernRuntime } from "./runtime";
+import { currentAskNames } from "./quest-names";
 import { settingsCommands } from "./settings/cli";
 import { setupDiscoveryCommands } from "./settings/setup-discovery";
 import { backupCommands } from "./backup/cli";
@@ -15,7 +16,8 @@ function statusOutput(runtime: TavernRuntime, thread?: string) {
   const { items, ...review } = runtime.review();
   const members = runtime.keeper.store.all("members").filter(m => !thread || m.threadId === thread || m.keeperThreadId === thread);
   const selected = new Set(members.map(m => m.threadId));
-  const asks = runtime.keeper.store.openAsks().filter(a => !thread || a.keeperThreadId === thread || a.scopeChange?.memberThreadId === thread);
+  const store = runtime.keeper.store;
+  const asks = store.openAsks().filter(a => !thread || a.keeperThreadId === thread || a.scopeChange?.memberThreadId === thread).map(ask => currentAskNames(store, ask));
   const reviews = items.filter(i => !thread || i.member && selected.has(i.member.threadId));
   const project = ({ title, url, boardQuestId }: typeof items[number]) => ({ title, url, boardQuestId });
   const status = { members, asks, review: { ...review, items: reviews.map(project) } };

@@ -204,6 +204,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     allowReview: () => call("allowReview", { id: f.q.id }),
     questSpend: () => call("questSpend", { id: f.q.id }),
     setSpendBudget: () => call("setSpendBudget", { id: f.q.id, budgetCents: 500 }),
+    renameBoardQuest: () => call("renameBoardQuest", { id: f.q.id, title: "Repair the signal lamp", short: "Lamp" }),
     holdBoardQuest: () => call("holdBoardQuest", { id: f.q.id }),
     resumeBoardQuest: () => call("resumeBoardQuest", { id: f.q.id }),
     stopBoardQuest: () => call("stopBoardQuest", { id: f.q.id }),

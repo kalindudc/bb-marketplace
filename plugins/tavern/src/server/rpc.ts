@@ -37,6 +37,7 @@ import { readCharacterPresentation } from "./character-presentation";
 import type { TavernRuntime } from "./runtime";
 import { freeHands, restingContext } from "./resting";
 import { threadIdentities } from "./identity";
+import { currentAskNames } from "./quest-names";
 
 /** The stored brief for the widget: every hire-time line, then as many of the newest follow-ups as fit. */
 function decorBrief(brief: Brief | null | undefined) {
@@ -100,7 +101,7 @@ export function rpcHandlers(
   const invalidateCharacter = () => runtime.bb.rpc.experimental_invalidate([
     tags.registry(), tags.rows(), tags.room(), ...k.store.all("members").map(m => tags.thread(m.threadId)),
   ]);
-  return userActHandlers({
+  const handlers = userActHandlers<OptionalRpcContext<ExperimentalPluginRpcHandlersWithContext<Omit<typeof rpcContract, "renameBoardQuest">>>>({
     ...stopAllHandlers(runtime),
     ...placementHandlers(runtime),
     ...awayHandlers(runtime),
@@ -382,7 +383,7 @@ export function rpcHandlers(
           events.sort((a, b) => a.id - b.id);
         }
       }
-      const asks: BoardQuestDetail["asks"] = k.store.query("asks", "boardQuestId", id, 500).map(undoAskProjection(k.store));
+      const asks: BoardQuestDetail["asks"] = k.store.query("asks", "boardQuestId", id, 500).map(undoAskProjection(k.store)).map(ask => currentAskNames(k.store, ask));
       return {
         ...historyPage,
         ...(visitChangeId ? { visitChangeId } : {}),
@@ -421,7 +422,7 @@ export function rpcHandlers(
       const request = summary.request;
       const ask = request?.kind === "ask" ? k.store.get("asks", request.id) : null;
       const handBack = request?.kind === "hand-back" ? k.store.get("notes", request.id) : null;
-      return { summary, ask: ask ? undoAskProjection(k.store)(ask) : null, handBack };
+      return { summary, ask: ask ? currentAskNames(k.store, undoAskProjection(k.store)(ask)) : null, handBack };
     },
     allowReview: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => new LimitPolicy(k).allowReview(id, requireUserAct(context, "allowReview").surface),
     questSpend: ({ id }) => runtime.spend.view(id),
@@ -540,7 +541,7 @@ export function rpcHandlers(
       const result = await runtime.answerAsk(askId, optionId, note, via, context?.experimental_caller.kind === "client", receipt?.surface, receipt, false, pullRequestChoices);
       const ask = k.store.get("asks", askId)!;
       if (!result.awaitingClusterConfirmation && !(ask.kind === "cluster-write" && optionId === "confirm-run")) wake(ask.keeperThreadId);
-      return { ok: true, ...(result.pullRequestErrors ? { pullRequestErrors: result.pullRequestErrors } : {}), ...(result.ask ? { ask: result.ask } : {}), ...(result.clusterGrantError ? { clusterGrantError: result.clusterGrantError } : {}) };
+      return { ok: true, ...(result.pullRequestErrors ? { pullRequestErrors: result.pullRequestErrors } : {}), ...(result.ask ? { ask: currentAskNames(k.store, result.ask) } : {}), ...(result.clusterGrantError ? { clusterGrantError: result.clusterGrantError } : {}) };
     },
     markVisitSeen: ({ summaryIds, changeIds }) => {
       const now = k.now();
@@ -615,6 +616,14 @@ export function rpcHandlers(
       return { ok: true };
     },
   }, k.store, () => k.now());
+  return {
+    ...handlers,
+    renameBoardQuest: ({ id, title, short }, context) => {
+      const receipt = requireUserAct(context, "renameBoardQuest");
+      k.renameQuest(id, { title, short }, { kind: "user" }, receipt);
+      return { ok: true };
+    },
+  };
 }
 export function registerRpc(bb: BbPluginApi, runtime: TavernRuntime) {
   bb.rpc.register(rpcContract, rpcHandlers(runtime));

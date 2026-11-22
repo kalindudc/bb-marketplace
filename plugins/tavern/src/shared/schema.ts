@@ -438,6 +438,11 @@ import { delegationSchema, preapprovalSchema, delegationKindSchema, actTargetSch
 import { closeEarlyDraftSchema, concludeDraftSchema, questOutcomeSchema, waypointWaiverSchema } from "./closing";
 import { pullRequestDraftOperationSchema } from "./pull-request";
 
+export const questNamesSchema = z.object({
+  title: z.string().min(1).max(200).refine(value => value.trim().length > 0).transform(value => value.trim()),
+  short: z.string().min(1).max(40).refine(value => value.trim().length > 0).transform(value => value.trim()),
+});
+
 export const boardQuestSchema = z.object({
   delegations: z.array(delegationSchema).max(100).optional(),
   preapprovals: z.array(preapprovalSchema).max(100).optional(),
@@ -560,6 +565,7 @@ export const askSchema = z.object({
   keeperThreadId: threadId,
   boardQuestId: id.nullable(),
   question: z.string().min(1).max(400),
+  forwardedQuestion: z.object({ parentQuestId: id, byline: z.string().min(1).max(400), body: z.string().min(1).max(400) }).optional(),
   /** Why it is the user's call, in a few words. */
   why: z.string().max(200),
   kind: z.enum(ASK_KINDS),

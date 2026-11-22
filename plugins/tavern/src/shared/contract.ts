@@ -25,6 +25,7 @@ import {
   keeperNoteSchema,
   gateRecordSchema,
   boardQuestSchema,
+  questNamesSchema,
   checkerHandoffHoldSchema,
   characterDefSchema, characterVoiceSchema,
   classDefSchema,
@@ -568,6 +569,7 @@ export const rpcContract = defineContract({
   },
   questSpend: { input: z.object({ id }).strict(), output: spendViewSchema, tags: ({ id }: { id: string }) => [tags.boardQuest(id)] },
   setSpendBudget: { input: z.object({ id, budgetCents: budgetCentsSchema.nullable() }).strict(), output: ok },
+  renameBoardQuest: { input: questNamesSchema.extend({ id }).strict(), output: ok },
   holdBoardQuest: {
     input: z.object({ id }).strict(), output: boardQuestSchema,
   },
