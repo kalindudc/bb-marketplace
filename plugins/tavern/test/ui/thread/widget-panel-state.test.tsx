@@ -5,14 +5,15 @@ import { afterEach, expect, it } from "vitest";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { ThreadWidget } from "../../../src/ui/thread/composer";
+import { LedgerTab } from "../../../src/ui/thread/tabs";
 import { clearThreadState, revealAsk } from "../../../src/ui/thread/state";
-import { fixtureDecor, fixtureRegistry, fixtureAsk } from "../../../src/ui/thread/fixtures";
+import { fixtureDecor, fixtureRegistry, fixtureAsk, fixtureLedger } from "../../../src/ui/thread/fixtures";
 
 afterEach(() => { cleanup(); clearThreadState(); });
 function row(threadId = "keeper-1", asks = [fixtureAsk]) {
   return renderSlot({ component: ThreadWidget }, { threadId }, { rpc: { decor: () => withAttention({ ...fixtureDecor, threadId, keeperView: { ...fixtureDecor.keeperView!, openAsks: asks } }), registry: () => fixtureRegistry } });
 }
-it("consumes a reveal once: close, switch threads, and remount stays closed", async () => {
+it("keeps the panel closed when switching threads and opens again on a new request", async () => {
   act(() => revealAsk("keeper-1", fixtureAsk.id));
   const first = row();
   fireEvent.click(await first.findByRole("button", { name: "Close" }));
@@ -29,7 +30,28 @@ it("consumes a reveal once: close, switch threads, and remount stays closed", as
   expect(await back.findByRole("button", { name: "Close" })).toBeTruthy();
   back.lifecycle.unmount();
 });
-it("does not replay a handled reveal into the inner ask on remount", async () => {
+it.each(["Fold", "Close", "Escape"])("%s closes the one-ask panel opened from the Ledger and returns focus to the banner", async action => {
+  const threadId = "keeper-1";
+  const slot = renderSlot({ component: () => <>
+    <ThreadWidget threadId={threadId} />
+    <LedgerTab threadId={threadId} environment={null} />
+  </> }, {}, { rpc: { decor: () => withAttention(fixtureDecor), ledger: () => withAttention(fixtureLedger), registry: () => fixtureRegistry } });
+  const chip = await slot.findByRole("button", { name: /1 need you/ });
+  fireEvent.click(chip);
+  expect(slot.inspection.experimental_panelCalls).toContainEqual({ method: "openTab", options: { tab: expect.objectContaining({ id: "ledger" }), params: { attentionGroup: "need" } } });
+  fireEvent.click(await slot.findByRole("button", { name: /Send Luc the link.*Answer/ }));
+  const fold = await slot.findByRole("button", { name: /Send Luc the link.*Fold/ });
+  expect(slot.getByRole("region", { name: "Asks waiting for you" })).toBeTruthy();
+  if (action === "Fold") fireEvent.click(fold);
+  else if (action === "Close") fireEvent.click(slot.getByRole("button", { name: "Close" }));
+  else fireEvent.keyDown(fold, { key: "Escape" });
+  expect(slot.queryByRole("region", { name: "Asks waiting for you" })).toBeNull();
+  expect(document.activeElement).toBe(chip);
+  fireEvent.click(slot.getByRole("button", { name: /Send Luc the link.*Answer/ }));
+  expect(await slot.findByRole("button", { name: /Send Luc the link.*Fold/ })).toBeTruthy();
+  slot.lifecycle.unmount();
+});
+it("keeps a multi-ask list open and its answer folded across remounts", async () => {
   const asks = [fixtureAsk, { ...fixtureAsk, id: "second", question: "A second ask?" }];
   act(() => revealAsk("keeper-1", fixtureAsk.id));
   const first = row("keeper-1", asks);

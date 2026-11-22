@@ -13,7 +13,7 @@ import { AskCard, Crest, KEEPER_STATE_HINT, DecidedForYou, useDecisionSeen, Expa
 import { PHASE_STEPS, phaseIndex, phaseWord } from "../kit/phase";
 import { LEDGER_TAB } from "./tabs";
 import { summaryCountWords } from "../kit/rows";
-import { acknowledgeAskReveal, acknowledgeWidgetReveal, useWidgetPanel, useWidgetReveal, threadDecorCache } from "./state";
+import { useWidgetPanel, threadDecorCache, type WidgetPanel } from "./state";
 import { useChangeCue, useTavernMotion } from "../kit/motion";
 import { ThreadPartyStrip } from "../engine/thread-party";
 import { takeArmedClass } from "../kit/remember";
@@ -190,7 +190,7 @@ export function ClassBanner() {
 
 export function TavernBanner() { const composer = useComposer(); return composer.scope.kind === "thread" ? <ThreadWidget threadId={composer.scope.threadId} /> : null; }
 
-type Open = null | "asks" | "decided" | "brief" | "quests";
+type Open = NonNullable<WidgetPanel>["kind"] | null;
 
 export function ThreadWidget({ threadId }: { threadId: string }) {
   const composer = useComposer();
@@ -208,10 +208,10 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const receiptEl = useRef<HTMLDivElement>(null);
   const [characterReceipt, setCharacterReceipt] = useState<{ text: string; show: boolean } | null>(null);
   const [receiptFocused, setReceiptFocused] = useState(false);
-  const [open, setOpen] = useWidgetPanel(threadId);
+  const [widgetPanel, setWidgetPanel] = useWidgetPanel(threadId);
+  const open = widgetPanel?.kind ?? null;
   const [error, setError] = useState<unknown>(null);
   useHandBackReply(threadId, composer, setError);
-  const { revealAskId, revealVersion } = useWidgetReveal(threadId);
   const lastTyping = useRef(0);
   const [pageSince] = useState(Date.now);
   const data = decor.data;
@@ -230,7 +230,6 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   // Any successful send ends the arm: "Send as a new quest" goes through the same submit, and a plain send was the user's choice.
   useEffect(() => { if (!isArmed) return; return composer.onSubmitted(() => armed.disarm()); }, [isArmed, composer, armed.disarm]);
   useEffect(() => { if (data) threadDecorCache.set(threadId, data); return () => { threadDecorCache.delete(threadId); }; }, [threadId, data]);
-  useEffect(() => { if (acknowledgeWidgetReveal(threadId, revealVersion)) setOpen("asks"); }, [threadId, revealVersion]);
   // Motion: the row holds still while an ask is in it, and for 2 s after the user types (the coordinator's hold; a restored draft doesn't
   // count); the busy dot pulses twice when its Keeper turns busy or the row comes into view busy, then holds solid.
   const need = needsOf(keeper);
@@ -279,7 +278,12 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const names = registry.data ?? { classes: [], characters: [] };
   const name = memberIdentityLabel(data.member, names);
   const identity = registry.data ? memberIdentity(registry.data, data.member) : null;
-  const toggle = (what: Exclude<Open, null>) => setOpen(open === what ? null : what);
+  const toggle = (kind: "brief" | "quests") => setWidgetPanel(open === kind ? null : { kind });
+  const closePanel = () => {
+    setWidgetPanel(null);
+    const trigger = open === "asks" ? ".tw-asks" : open === "quests" ? ".tw-quests-count" : open === "brief" ? ".tw-member-id" : ".tw-ledger";
+    (stack.current?.querySelector<HTMLButtonElement>(trigger) ?? stack.current?.querySelector<HTMLButtonElement>(".tw-ledger"))?.focus();
+  };
   const variant = keeper ? "keeper" : data.member.role === "member" ? "member" : "solo";
   const clusterWarning = keeper && data.scope?.clusterGuard !== "armed" ? clusterGuardWords(data.scope) : null;
   const lit = !!identity && !identity.character.plain;
@@ -323,14 +327,19 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
         onClick={restoreCharacters} onFocus={() => setReceiptFocused(true)} onBlur={() => setReceiptFocused(false)} disabled={updateSettings.isPending}>Show</button>}
     </div>}
     {walker}
-    <section className={`tavern twidget v-${variant} ${lit ? "glow" : ""} ${open ? "is-open" : ""} ${keeper?.quietSince != null ? "is-quiet" : ""}`} style={surface} aria-label="Tavern widget" data-part="TavernWidget">
+    <section className={`tavern twidget v-${variant} ${lit ? "glow" : ""} ${open ? "is-open" : ""} ${keeper?.quietSince != null ? "is-quiet" : ""}`} style={surface} aria-label="Tavern widget" data-part="TavernWidget" onKeyDown={event => {
+      if (!open || event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closePanel();
+    }}>
       <div className="tw-row">
         {identity && data.member && keeper && <span className={`tw-id ${keeper ? `st-${keeper.quietSince != null ? "quiet" : keeper.status}` : ""}`} title={`This thread: ${name}, ${identity.cls.label} (${identity.cls.plain})${keeper ? ` · ${data.pendingEvents ?? 0} updates waiting for the Keeper’s next turn · ${keeper.quietSince != null ? `quiet: ${KEEPER_STATE_HINT.quiet}` : `${STATUS_WORD[keeper.status]}: ${STATUS_HINT[keeper.status]}`}` : ""}`}><span className="tw-crest"><Crest {...identity} size={18} />{keeper && <i ref={dot} className="tw-dot" aria-hidden="true" />}</span>{<span className="who-t tw-name"><b>{name}</b>{keeper ? <span aria-hidden="true"> · </span> : <span className="anc">{identity.cls.label} · {identity.cls.plain}</span>}</span>}{keeper && <span className="sr">Keeper, {STATUS_WORD[keeper.status]}</span>}</span>}
         {!keeper && data.member && registry.data && <button type="button" className="tw-id tw-member-id act" title={memberIdentityWords(data.member, registry.data, data.scope, memberFinished(data))} aria-label={memberIdentityWords(data.member, registry.data, data.scope, memberFinished(data))} aria-expanded={open === "brief"} aria-controls={`tw-brief-${threadId}`} onClick={() => toggle("brief")}>
           {identity && <span className="tw-crest"><Crest {...identity} size={18} /></span>}
           <span className="who-t tw-name"><b>{name}</b><span className="tw-member-class"> · {identity?.cls.label ?? data.member.classId}</span></span>
         </button>}
-        {keeper && <KeeperParts quiet={<QuietNotice threadId={threadId} since={keeper.quietSince} compact />} data={data} open={open} toggle={toggle} onLedger={group => panel.openTab({ tab: LEDGER_TAB, ...(group ? { params: { attentionGroup: group } } : {}) })} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} />}
+        {keeper && <KeeperParts quiet={<QuietNotice threadId={threadId} since={keeper.quietSince} compact />} data={data} open={open} onToggleQuests={() => toggle("quests")} onLedger={group => panel.openTab({ tab: LEDGER_TAB, ...(group ? { params: { attentionGroup: group } } : {}) })} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} />}
         {variant === "member" && <MemberParts data={data} registry={registry.data ?? null} open={open} toggle={toggle} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} onThread={id => navigate.toThread(id)} />}
         {showCharacters}{hideBtn}
       </div>
@@ -340,10 +349,10 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
       <ClassNoticeLine threadId={threadId} notice={notice} />
       {armedLine}
       <QueryState error={error} />
-      {keeper && open === "asks" && <AsksPanel threadId={threadId} asks={keeper.openAsks} holds={heldQuests(keeper.boardQuests, keeper.openAsks)} quests={keeper.boardQuests} revealAskId={revealAskId} revealVersion={revealVersion} onClose={() => setOpen(null)} />}
+      {keeper && widgetPanel?.kind === "asks" && <AsksPanel threadId={threadId} asks={keeper.openAsks} holds={heldQuests(keeper.boardQuests, keeper.openAsks)} quests={keeper.boardQuests} expanded={widgetPanel.askId} onSelect={askId => setWidgetPanel({ kind: "asks", askId })} onClose={closePanel} />}
       {keeper && keeper.quietSince == null && open === "quests" && <div id={`tw-quests-${threadId}`} className="tw-panel tw-quest-popover" role="region" aria-label="Board quests">
-        <ul>{keeper.boardQuests.map(q => <li key={q.id}><button type="button" className="lnk-btn act" onClick={() => { setOpen(null); navigate.toPluginPanel("tavern", { subPath: `quest/${q.id}` }); }}><b>{q.title}</b><OpensMark /></button>{!!q.attention?.summaries && <span className="m">{summaryCountWords(q.attention.summaries)}</span>}</li>)}</ul>
-        <div className="tw-pf"><button type="button" className="btn sm" onClick={() => { setOpen(null); panel.openTab({ tab: LEDGER_TAB }); }}>Open the Ledger</button><button type="button" className="btn sm" onClick={() => setOpen(null)}>Close</button></div>
+        <ul>{keeper.boardQuests.map(q => <li key={q.id}><button type="button" className="lnk-btn act" onClick={() => { setWidgetPanel(null); navigate.toPluginPanel("tavern", { subPath: `quest/${q.id}` }); }}><b>{q.title}</b><OpensMark /></button>{!!q.attention?.summaries && <span className="m">{summaryCountWords(q.attention.summaries)}</span>}</li>)}</ul>
+        <div className="tw-pf"><button type="button" className="btn sm" onClick={() => { setWidgetPanel(null); panel.openTab({ tab: LEDGER_TAB }); }}>Open the Ledger</button><button type="button" className="btn sm" onClick={closePanel}>Close</button></div>
       </div>}
       {keeper && open === "decided" && <DecidedPanel threadId={threadId} data={data} />}
       {open === "brief" && !keeper && <div className="tw-panel tw-brief" id={`tw-brief-${threadId}`} role="region" aria-label="Member"><MemberPanel key={threadId} data={data} cue={data.ambientMotion === "off" ? undefined : cue} registry={registry.data ?? null} scopeDetails={<ScopePanel data={data} />} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} /></div>}
@@ -419,7 +428,7 @@ function ArmedLine({ onCancel, onError }: { onCancel: () => void; onError: (e: u
 /** The widget's words for the server's Keeper status; "listening" reads as "idle" (keeperStatus says why). */
 const STATUS_WORD = { listening: "idle", busy: "busy", holding: "holding while you type" } as const;
 const STATUS_HINT = { listening: KEEPER_STATE_HINT.idle, busy: KEEPER_STATE_HINT.busy, holding: KEEPER_STATE_HINT.holding } as const;
-function KeeperParts({ data, open, toggle, onLedger, onQuest, quiet }: { data: ThreadDecor; open: Open; toggle: (o: "asks" | "decided" | "quests") => void; onLedger: (group?: "need" | "new") => void; onQuest: (id: string) => void; quiet: ReactNode }) {
+function KeeperParts({ data, open, onToggleQuests, onLedger, onQuest, quiet }: { data: ThreadDecor; open: Open; onToggleQuests: () => void; onLedger: (group?: "need" | "new") => void; onQuest: (id: string) => void; quiet: ReactNode }) {
   const keeper = data.keeperView!;
   const list = attentionView(keeper.attention), need = list.needYou;
   const decided = list.new;
@@ -435,7 +444,7 @@ function KeeperParts({ data, open, toggle, onLedger, onQuest, quiet }: { data: T
         return <button type="button" key={q.id} className="tw-quest act" title={`Open the quest page: ${q.title} · ${q.phase} · plan v${q.planVersion} · ${q.move.text}${suffix}`} aria-label={`Open the quest page for ${q.title}: ${q.phase}, plan v${q.planVersion}${suffix}`} onClick={() => onQuest(q.id)}><b>{q.short}</b>{unread > 0 && <span className="tw-unread m" aria-hidden="true">{unread} new</span>}{q.phase !== "held" && <Phase phase={q.phase} />}{(q.phase === "held" || (q.phase === "scout" && q.nextNewsBy != null)) && <span className="tw-quest-move">{q.move.text}</span>}<OpensMark /></button>;
       })}
     </span>}
-    {keeper.quietSince == null && keeper.boardQuests.length > 0 && <button type="button" className="tw-chip tw-quests-count act" title={keeper.boardQuests.map(q => q.title).join(" · ")} aria-label={`Show ${plural(keeper.boardQuests.length, "quest")}`} aria-expanded={open === "quests"} aria-controls={`tw-quests-${data.threadId}`} onClick={() => toggle("quests")}>{plural(keeper.boardQuests.length, "quest")}</button>}
+    {keeper.quietSince == null && keeper.boardQuests.length > 0 && <button type="button" className="tw-chip tw-quests-count act" title={keeper.boardQuests.map(q => q.title).join(" · ")} aria-label={`Show ${plural(keeper.boardQuests.length, "quest")}`} aria-expanded={open === "quests"} aria-controls={`tw-quests-${data.threadId}`} onClick={onToggleQuests}>{plural(keeper.boardQuests.length, "quest")}</button>}
     {/* The free space carries the status words and measures itself, so they show only when the whole phrase fits; the dot, the crest's tooltip and the hidden name carry it otherwise. */}
     <span className="tw-sp tw-free">{keeper.status === "holding" && keeper.quietSince == null && <span className="tw-sw" aria-hidden="true">holding<span className="tw-sw-x"> while you type</span></span>}</span>
 
@@ -519,15 +528,17 @@ type HeldQuest = KeeperView["boardQuests"][number];
 const needsOf = (keeper: KeeperView | null | undefined) => ({ asks: attentionView(keeper?.attention).needYou, holds: 0 });
 const holdKey = (hold: CheckerHandoffHold) => `hold:${hold.id}`;
 
-function AsksPanel({ threadId, asks, holds, quests, revealAskId, revealVersion, onClose }: { threadId: string; asks: Ask[]; holds: HeldQuest[]; quests: KeeperView["boardQuests"]; revealAskId: string | null; revealVersion: number; onClose: () => void }) {
-  const only = asks.length + holds.length === 1 ? asks[0]?.id ?? holdKey(activeHold(holds[0]!)!) : null;
-  const [expanded, setExpanded] = useState<string | null>(only);
+function AsksPanel({ threadId, asks, holds, quests, expanded, onSelect, onClose }: { threadId: string; asks: Ask[]; holds: HeldQuest[]; quests: KeeperView["boardQuests"]; expanded: string | null; onSelect: (id: string | null) => void; onClose: () => void }) {
   const [receipts, setReceipts] = useState<Ask[]>([]);
   const [released, setReleased] = useState<{ quest: HeldQuest; hold: CheckerHandoffHold }[]>([]);
-  useEffect(() => { if (revealAskId && acknowledgeAskReveal(threadId, revealVersion)) setExpanded(revealAskId); }, [threadId, revealAskId, revealVersion]);
   const shown = [...asks, ...receipts.filter(r => !asks.some(a => a.id === r.id))];
   // A released hold keeps its receipt until the panel closes, even after the server's next read drops it.
   const waiting = holds.filter(q => !released.some(r => r.hold.id === activeHold(q)!.id));
+  const toggle = (id: string) => {
+    if (expanded !== id) onSelect(id);
+    else if (shown.length + waiting.length + released.length === 1) onClose();
+    else onSelect(null);
+  };
   return (
     <div className="tw-panel tw-asks-p" id={`asks-${threadId}`} role="region" aria-label="Asks waiting for you">
       {shown.length + waiting.length + released.length === 0 ? <p className="m small tw-none">Nothing needs you.</p> : shown.map(ask => {
@@ -537,7 +548,7 @@ function AsksPanel({ threadId, asks, holds, quests, revealAskId, revealVersion, 
         return (
           <div className={`tw-ask k-${ask.releaseHoldId ? "hold" : ask.kind} ${isOpen ? "open" : ""}`} key={ask.id} {...(done ? {} : { "data-ask": "" })}>
             {!done && (
-              <button type="button" className="tw-ask-row act" aria-expanded={isOpen} onClick={() => setExpanded(isOpen ? null : ask.id)}>
+              <button type="button" className="tw-ask-row act" aria-expanded={isOpen} onClick={() => toggle(ask.id)}>
                 {/* The Keeper's ask to release a hold is the hold, so it reads as one, not as a blocker. */}
                 <span className="tw-ak">{ask.releaseHoldId ? "Checker handoff" : KIND_WORD[ask.kind]}</span>
                 <span className="tw-aq" title={ask.question}>{ask.question}</span>
@@ -549,11 +560,11 @@ function AsksPanel({ threadId, asks, holds, quests, revealAskId, revealVersion, 
             {/* The row keeps the question to one line; the panel prints it in full, wrapped, so it reads before you answer. */}
             {isOpen && !done && <p className="tw-aq-open" data-content>{ask.question}</p>}
             {isOpen && !done && ask.kind === "greenlight" && <p className="m small tw-same">The same seal as the quest map card in the chat: sealing either one seals both.</p>}
-            {(isOpen || done) && <AskCard ask={ask} via="banner" headless={!done} onFold={() => setExpanded(null)} onAnswered={a => setReceipts(r => [...r, a])} />}
+            {(isOpen || done) && <AskCard ask={ask} via="banner" headless={!done} onFold={() => toggle(ask.id)} onAnswered={a => setReceipts(r => [...r, a])} />}
           </div>
         );
       })}
-      {waiting.map(q => { const hold = activeHold(q)!, key = holdKey(hold); return <HoldItem key={key} quest={q} hold={hold} open={expanded === key} onToggle={() => setExpanded(expanded === key ? null : key)} onReleased={h => setReleased(r => [...r, { quest: q, hold: h }])} />; })}
+      {waiting.map(q => { const hold = activeHold(q)!, key = holdKey(hold); return <HoldItem key={key} quest={q} hold={hold} open={expanded === key} onToggle={() => toggle(key)} onReleased={h => setReleased(r => [...r, { quest: q, hold: h }])} />; })}
       {released.map(r => <HoldReceipt key={holdKey(r.hold)} quest={r.quest} hold={r.hold} />)}
       <div className="tw-pf">{asks.length > 0 ? <span className="m small">Answering here clears the ask everywhere: the common room, the phone and the chat pointer.</span> : waiting.length > 0 ? <span className="m small">Releasing here clears the hold everywhere: the common room and the quest page.</span> : <span />}<button type="button" className="btn sm" onClick={onClose}>Close</button></div>
     </div>

@@ -97,6 +97,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Fixed
 
+- Fold closes the Keeper’s ask panel when it contains just one item, including when you opened it from the Ledger. When there is more than one item, Fold leaves the list available. Close and Escape dismiss the panel and return focus to the widget row.
 - Long quest summaries in the Keeper’s composer banner now end in an ellipsis. Crowded rows wrap instead of covering progress marks or controls, and the Journal count stays readable beside other thread chips.
 - Expandable sections in Tavern Settings now show a chevron that turns when you open them.
 - Ranger's tests use the host's temporary directory for scratch writes and a separate checkout to check which Git commands can write to it.
