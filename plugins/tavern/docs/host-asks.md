@@ -49,3 +49,7 @@ Upstream bb core capabilities or fixes that Tavern tracks, paired with Tavern's 
 ## 12. Let a composer banner draw over the transcript
 - **Ask:** Offer a thread-scoped layer above the transcript and below the scroll-to-latest control. Let a plugin reserve clearance at the bottom for the latest message. Empty overlay space should pass pointer and scroll input through to chat; only the plugin's controls should take focus or clicks.
 - **Mitigation:** Tavern keeps the character in a compact, transparent banner and leaves bb's composer fade alone. In bb 0.50.1 the sticky footer still paints over chat, and the banner slot has no transcript layer or scroll clearance. No message is covered at the bottom, but chat cannot show through that footer.
+
+## 13. Place a thread strip above the composer widget stack
+- **Ask:** Provide an opt-in, thread-scoped slot directly below the conversation and above the entire composer widget stack, including banners from other plugins. Keep ordinary banners in the existing stack. Let decorative areas pass pointer and scroll input through to chat, while the slot's controls can take focus and clicks.
+- **Mitigation:** Tavern keeps the character and its own widget in one bare composer banner, with the character immediately above the Keeper or member row. Other plugins' banners can still appear first because bb orders banners by plugin ID and offers no priority setting. Only the actor is clickable in the strip; Tavern leaves bb's layout and other plugins' banners alone.

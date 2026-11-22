@@ -106,6 +106,7 @@ Machine rules put a project's party members on their own new machines through th
 - Expandable sections in Tavern Settings now show a chevron that turns when you open them.
 - Ranger's tests use the host's temporary directory for scratch writes and a separate checkout to check which Git commands can write to it.
 - The character strip takes up less space and lets bb fade scrolling chat into the composer instead of cutting it off at a hard edge.
+- Tavern's host requests now explain why other composer widgets can appear above the character strip and what bb needs to add to place the strip directly under the conversation.
 - The map fills the available space again when you close the quest filter, and Everyone on the map stays within the page. The filter hides finished rows until you choose Show finished quests.
 - Quests whose Keeper thread is archived or deleted leave the active board. Find them under Needs a Keeper in the common room to stop them. Unarchiving the Keeper’s thread brings its quests back to the board.
 - New Keepers use free characters first, and live Keepers who share a character get distinct names. On the next reload, this also applies to live child leads: duplicate names get a suffix such as Moss II, and Tavern updates the thread titles it manages. A returning Keeper takes the suffix instead of renaming a Keeper that stayed live.
