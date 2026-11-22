@@ -383,6 +383,36 @@
       }
     },
     {
+      "id": "press",
+      "displayName": "Press",
+      "description": "Compact a thread at the points you choose instead of at the end of the window. Press watches context usage, phase boundaries, tool-output volume, turn count, idle time and thrash signals, applies vetoes so it never compacts mid-turn, and records every decision. A companion pi extension writes the summary so constraints stay verbatim and state stays mechanical.",
+      "icon": {
+        "url": "plugins/press/icons/press.svg"
+      },
+      "tags": [
+        "compaction",
+        "context",
+        "tokens",
+        "threads",
+        "pi",
+        "cost"
+      ],
+      "author": {
+        "name": "Kalindu De Costa",
+        "github": "kalindudc"
+      },
+      "category": "thread-content",
+      "overview": "Compaction is the one thing every long thread does badly: it fires when the window is nearly full, so the summary is the most expensive request of the session and the most likely to lose what matters.\n\nPress splits the job in two. The plugin decides **when**; a companion pi extension decides **what the summary is**.\n\n## What you get\n\n- **Compaction points you choose.** A soft and a hard window percentage, phase boundaries (a plan approved, tests green, a pull request opened), an agent hint, tool-output volume, turns since the last compaction, idle time, and thrash signals such as the same file read three times or the same command failing twice.\n- **Vetoes that keep it out of the way.** Never mid-turn, a cooldown, a minimum number of turns between compactions, a token floor, and no retry straight after a failed compaction.\n- **Three modes.** `observe` records what it would have done, `advisor` proposes and waits for you, `auto` acts. The default is `advisor`.\n- **A decision log.** Every evaluation that reaches a trigger or a veto is one row: the point, the reason, the percentage, the estimate, and the outcome once the compaction lands or fails. `bb press log` reads it and `bb press status` shows one line per thread.\n- **A ledger per workspace.** `.bb/press/ledger.json` holds the constraints the user stated, the files and commands that matter, the failing tests, and a three-line resume contract. It is plain JSON you can read and fix.\n- **The composer.** `pi install <this-plugin>/composer` makes pi write the summary from that ledger: constraints verbatim, state extracted by rules rather than paraphrased, the model's narrative, and a resume block. On any error it falls back to pi's own summary.\n- **A row in the thread context card.** The thread's context percentage and the point that would fire next, so you can see a thread filling up before it is a problem.\n- **Compaction always goes through Press.** `/press [focus]` is Press's own command in a pi session. `/compact` still works and still produces a Press summary, because the composer hooks every compaction pi runs, and Press's hard window fires well before pi's own threshold.\n\n## Why it is built this way\n\nMeasured on real coding sessions, a compaction summary keeps at most 16% of the recurring details a task needs, while mechanical extraction keeps 79%. Instructions about how to work are dropped about six times more often than specifications of what to build, and a summary can turn an open question into an apparent conclusion.\n\nSo the parts that must survive are extracted, not summarised, and the summary is asked to write \"unverified\" rather than guess.\n\n## A compaction point\n\nThe plugin compacts when a point fires and no veto blocks it. Each point answers one question:\n\n- `window` - is the context near the limit? The hard percentage outranks every veto; the soft one only asks.\n- `phase` - did a phase just end? A plan approved, tests green, a pull request opened. The prefix cache breaks at a task switch anyway.\n- `agent` - did the agent say so? `bb press point` from any agent records a hint.\n- `volume` - has tool output piled up? The largest input source in a coding session.\n- `turns` - has it been too many turns? Long threads drift even at a flat token count.\n- `idle` - is the thread waiting? Compacting while nobody is looking costs no wall-clock time.\n- `thrash` - is the agent re-reading the same file or re-running the same failing command? That is lost state showing before the token count does.\n\n## Limits\n\n- Press asks the provider to compact; it never rewrites a transcript itself. Providers that expose no manual compaction are logged and skipped.\n- The composer is a pi extension. Codex and Claude Code compact inside their own runtimes.\n- `keepRecentTurns` is advisory: pi still chooses the cut point.\n- Needs bb 0.48.1 or later.",
+      "source": {
+        "git": {
+          "url": "https://github.com/kalindudc/bb-marketplace.git",
+          "subdir": "plugins/press",
+          "range": ">=0.1.0 <1.0.0",
+          "tagPrefix": "press/"
+        }
+      }
+    },
+    {
       "id": "retitle",
       "displayName": "Retitle",
       "description": "Gives a thread a title when bb's automatic title fails or times out, using the same Shopify AI model. `bb retitle <thread>` titles any thread again, and `bb retitle --untitled` backfills threads bb left untitled.",

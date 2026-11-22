@@ -1,0 +1,90 @@
+// Generates tests/fixtures/synthetic-session.jsonl — a tiny synthetic pi session
+// covering every row/content shape the parser must handle. No real session data.
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const outDir = join(here, 'fixtures');
+mkdirSync(outDir, { recursive: true });
+
+const rows = [
+  { type: 'session', version: 3, id: 'sess-1', timestamp: '2026-01-01T00:00:00.000Z', cwd: '/tmp/proj' },
+  { type: 'model_change', id: 'm1', parentId: null, timestamp: '2026-01-01T00:00:00.500Z', provider: 'test', modelId: 'test/model' },
+  { type: 'thinking_level_change', id: 't1', parentId: 'm1', timestamp: '2026-01-01T00:00:00.600Z', thinkingLevel: 'high' },
+  { type: 'unknown_future_type', id: 'u1', whatever: true },
+  {
+    type: 'message', id: 'r1', parentId: 't1', timestamp: '2026-01-01T00:00:01.000Z',
+    message: {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Fix the flaky build. You must never commit directly to main. Do you know why the test fails?' },
+        { type: 'image', data: 'x' },
+      ],
+    },
+  },
+  {
+    type: 'message', id: 'r2', parentId: 'r1', timestamp: '2026-01-01T00:00:02.000Z',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', text: 'internal reasoning, must be omitted from serialisation' },
+        { type: 'text', text: 'I will inspect the failing test first.' },
+        { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'src/app.ts' } },
+        { type: 'toolCall', id: 'call-2', name: 'bash', arguments: { command: 'npm test', timeout: 30 } },
+        { type: 'toolCall', id: 'call-3', name: 'edit', arguments: { path: 'src/app.ts', oldText: 'a', newText: 'b' } },
+      ],
+    },
+  },
+  {
+    type: 'message', id: 'r3', parentId: 'r2', timestamp: '2026-01-01T00:00:03.000Z',
+    message: {
+      role: 'toolResult', toolCallId: 'call-1', toolName: 'read', isError: false, durationMs: 5,
+      content: [{ type: 'text', text: 'sha256:0000000000000000000000000000000000000000000000000000000000000000\n1: function app() {}' }],
+    },
+  },
+  {
+    type: 'message', id: 'r4', parentId: 'r3', timestamp: '2026-01-01T00:00:04.000Z',
+    message: {
+      role: 'toolResult', toolCallId: 'call-2', toolName: 'bash', isError: true, durationMs: 100,
+      content: [{ type: 'text', text: 'Error: something broke\nexit code 1' }],
+    },
+  },
+  {
+    type: 'message', id: 'r5', parentId: 'r4', timestamp: '2026-01-01T00:00:05.000Z',
+    message: {
+      role: 'toolResult', toolCallId: 'call-3', toolName: 'edit', isError: false, durationMs: 5,
+      content: [{ type: 'text', text: 'ok' }],
+    },
+  },
+  {
+    type: 'message', id: 'r6', parentId: 'r5', timestamp: '2026-01-01T00:00:06.000Z',
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: 'Branch is feat/fix. Always run tests before reporting. Also keep src/App.ts untouched.' }],
+    },
+  },
+  {
+    type: 'message', id: 'r7', parentId: 'r6', timestamp: '2026-01-01T00:00:07.000Z',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'Running git status.' },
+        { type: 'unknown_block_type', foo: 'bar' },
+        { type: 'toolCall', id: 'call-4', name: 'bash', arguments: { command: 'git status && git log -1 --oneline' } },
+      ],
+    },
+  },
+  {
+    type: 'message', id: 'r8', parentId: 'r7', timestamp: '2026-01-01T00:00:08.000Z',
+    message: {
+      role: 'toolResult', toolCallId: 'call-4', toolName: 'bash', isError: false, durationMs: 20,
+      content: [{ type: 'text', text: 'On branch feat/fix\nabc1234 first commit' }],
+    },
+  },
+  { type: 'message', id: 'r9', parentId: 'r8', timestamp: '2026-01-01T00:00:09.000Z', message: { role: 'system', content: '' } },
+];
+
+const fixture = rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
+writeFileSync(join(outDir, 'synthetic-session.jsonl'), fixture);
+process.stdout.write(`wrote ${join(outDir, 'synthetic-session.jsonl')} (${rows.length} rows)\n`);

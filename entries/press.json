@@ -1,0 +1,21 @@
+{
+  "id": "press",
+  "displayName": "Press",
+  "description": "Compact a thread at the points you choose instead of at the end of the window. Press watches context usage, phase boundaries, tool-output volume, turn count, idle time and thrash signals, applies vetoes so it never compacts mid-turn, and records every decision. A companion pi extension writes the summary so constraints stay verbatim and state stays mechanical.",
+  "icon": { "url": "plugins/press/icons/press.svg" },
+  "tags": ["compaction", "context", "tokens", "threads", "pi", "cost"],
+  "author": {
+    "name": "Kalindu De Costa",
+    "github": "kalindudc"
+  },
+  "category": "thread-content",
+  "overview": "./plugins/press/PLUGIN_OVERVIEW.md",
+  "source": {
+    "git": {
+      "url": "https://github.com/kalindudc/bb-marketplace.git",
+      "subdir": "plugins/press",
+      "range": ">=0.1.0 <1.0.0",
+      "tagPrefix": "press/"
+    }
+  }
+}

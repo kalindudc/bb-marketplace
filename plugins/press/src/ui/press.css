@@ -1,0 +1,75 @@
+.press-panel, .press-settings, .press-chat, .press-chip {
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+.press-panel { padding: 12px; font-size: 11px; line-height: 1.4; }
+.press-panel :where(h2,h3,p,dl,dt,dd), .press-settings :where(h3,p,dl,dt,dd) { margin: 0; }
+.press-panel-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.press-panel-heading h2, .press-section h3 { font-size: 11px; font-weight: 650; }
+.press-panel-heading strong { font-size: 22px; font-weight: 650; }
+.press-meter { height: 5px; margin-top: 5px; overflow: hidden; background: var(--muted); }
+.press-meter span { display: block; height: 100%; background: var(--primary); }
+.press-panel .press-usage { margin-top: 5px; color: var(--muted-foreground); }
+.press-section { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--border); }
+.press-section h3 { margin-bottom: 5px; }
+.press-stat { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(0, auto); align-items: baseline; gap: 6px; padding: 3px 0; }
+.press-stat dt { color: var(--muted-foreground); }
+.press-stat dd { text-align: right; overflow-wrap: anywhere; }
+.press-control-mode { align-items: center; }
+.press-segments { display: flex; border: 1px solid var(--border); padding: 1px; gap: 1px; }
+.press-segments label { position: relative; display: grid; align-items: center; min-height: 24px; padding: 1px 5px; cursor: pointer; }
+.press-segments input, .press-point input { opacity: 0; position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.press-segments label:has(input:checked) { background: var(--accent); color: var(--accent-foreground); }
+.press-segments label:has(input:focus-visible), .press-point:has(input:focus-visible) { outline: 2px solid var(--ring, var(--primary)); outline-offset: -2px; }
+.press-segments label:has(input:disabled), .press-point:has(input:disabled), .press-compact:disabled { opacity: .65; }
+.press-compact { width: 100%; min-height: 28px; margin-top: 5px; background: var(--primary); color: var(--primary-foreground); font-weight: 650; border-radius: 3px; }
+.press-compact:enabled { cursor: pointer; }
+.press-compact:enabled:hover { filter: brightness(1.08); }
+.press-panel .press-feedback { margin: 5px 0; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.press-point { position: relative; display: flex; align-items: center; justify-content: space-between; min-height: 25px; gap: 6px; }
+.press-point span { display: flex; align-items: center; width: 22px; height: 12px; padding: 1px; border-radius: 10px; border: 1px solid var(--muted-foreground); }
+.press-point span::before { content: ""; display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted-foreground); }
+.press-point input:checked + span { justify-content: flex-end; background: var(--primary); border-color: var(--primary); }
+.press-point input:checked + span::before { background: var(--primary-foreground); }
+.press-history { border-top: 1px solid var(--border); }
+.press-history:last-child { border-bottom: 1px solid var(--border); }
+.press-history summary { min-height: 27px; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; list-style: none; cursor: pointer; }
+.press-history summary::-webkit-details-marker { display: none; }
+.press-history small { margin-left: auto; color: var(--muted-foreground); font-size: 10px; }
+.press-history[open] .press-chevron { transform: rotate(180deg); }
+.press-summary { text-align: left; max-height: 260px; overflow: auto; overflow-wrap: anywhere; border-top: 1px solid var(--border); padding: 8px 0 10px; font-size: 11px; line-height: 1.5; }
+.press-chip { background: transparent; color: var(--muted-foreground); white-space: nowrap; min-height: 24px; padding: 0 5px; border-radius: 3px; font-size: 11px; cursor: pointer; }
+.press-chip:hover { color: var(--foreground); background: var(--accent); }
+.press-footer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 20px;
+  line-height: 16px;
+  padding: 0 7px;
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--primary) 7%, var(--muted));
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.press-ring-track { stroke: var(--muted-foreground); opacity: .45; }
+.press-ring-arc { stroke: var(--primary); transition: stroke-dashoffset 300ms ease-out; }
+@media (prefers-reduced-motion: reduce) { .press-ring-arc { transition: none; } }
+/* Removing the portaled chip makes the native control available again without JS or a layout shim. */
+[data-follow-up-composer-footer] :has(> [data-press-chip] > .press-footer-chip) > button[aria-label^="Context window"] {
+  display: none;
+}
+.press-chip:focus-visible, .press-compact:focus-visible, .press-chat button:focus-visible, .press-history summary:focus-visible { outline: 2px solid var(--ring, var(--primary)); outline-offset: -1px; }
+.press-chat { text-align: left; font-size: 11px; }
+.press-chat-line { min-height: 26px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; color: var(--muted-foreground); }
+.press-chat-line span { display: inline-flex; align-items: center; gap: 5px; }
+.press-chat-line svg { flex: none; }
+.press-chat-line button, .press-settings a { text-decoration: underline; text-underline-offset: 2px; cursor: pointer; color: var(--foreground); }
+.press-chat-line button { min-height: 24px; }
+.press-settings { font-size: 13px; line-height: 1.45; }
+.press-settings > p { color: var(--muted-foreground); }
+.press-settings section { margin: 14px 0; }
+.press-settings h3 { font-size: 13px; font-weight: 650; margin-bottom: 6px; }
+.press-setting { display: grid; grid-template-columns: minmax(0, 2fr) minmax(65px, 1fr); align-items: baseline; gap: 12px; padding: 7px 0; border-top: 1px solid var(--border); }
+.press-setting small { display: block; color: var(--muted-foreground); font-size: 11px; }
+.press-setting dd { text-align: right; overflow-wrap: anywhere; }

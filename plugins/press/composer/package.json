@@ -1,0 +1,30 @@
+{
+  "name": "pi-press-composer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Writes a compaction summary that keeps constraints verbatim and state mechanically. The pi half of Press.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "compaction",
+    "context",
+    "press"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=1.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
