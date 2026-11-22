@@ -18,6 +18,7 @@ import { PlacementStore } from "../placement/store";
 import { summariesToday } from "../summaries";
 import { actAskKind, watchActWords } from "../../scope/act-routing";
 import { leadDescendants } from "./leads";
+import { keeperRecoveryOptions, needsKeeperReview } from "../ask-effects";
 
 export const clock = localClock;
 const quoted = (value: string) => JSON.stringify(value);
@@ -316,7 +317,7 @@ export function renderRestatement(
     ...(childUpdates.length ? [section("Child summaries and hand-backs", childUpdates, 1000, "more child updates; see the child quest")] : []),
     ...(summaries.length ? ["Summary reminder: aim for at most 6 summaries per quest per day."] : []),
     ...(todayLines.length ? [section("Summaries today", todayLines, 450, "more quests have at least 4 summaries today")] : []),
-    ...(delegated.length ? [section(delegated.every(a => k.settings(a.boardQuestId).keepers.alwaysAsk.includes(a.kind as never)) ? "Yours to decide (delegated)" : "Yours to decide", delegated.map(a => `${a.id} [${a.kind}]: ${quoted(short(a.question, 160))}; holds ${a.holds.join(",") || "none"}; answer with tavern_decide askId and optionId, or tavern_ask unsure:true`), priorities ? 1200 : 2400, "more delegated asks; call tavern_status section=asks", delegated.length)] : []),
+    ...(delegated.length ? [section(delegated.every(a => k.settings(a.boardQuestId).keepers.alwaysAsk.includes(a.kind as never)) ? "Yours to decide (delegated)" : "Yours to decide", delegated.map(a => `${a.id} [${a.kind}]: ${quoted(short(a.question, 160))}; holds ${a.holds.join(",") || "none"}; ${a.effect && needsKeeperReview(a.effect) ? "review, then use tavern_ask heldCommunicationAskId or dismiss:true" : a.effect && keeperRecoveryOptions(a.effect) ? `use tavern_decide askId with optionId ${keeperRecoveryOptions(a.effect)!.join(" or ")}` : "answer with tavern_decide askId and optionId, or tavern_ask unsure:true"}`), priorities ? 1200 : 2400, "more delegated asks; call tavern_status section=asks", delegated.length)] : []),
     section(
       "Open asks",
       asks.map(

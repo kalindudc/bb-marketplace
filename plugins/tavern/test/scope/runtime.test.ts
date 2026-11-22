@@ -131,6 +131,37 @@ describe("provider-neutral watcher", () => {
     expect(new ScopeStore(store.dataDir).violations()).toHaveLength(1);
     await harness.lifecycle.dispose();
   });
+  it("records a Pi guard refusal without stopping the member again", async () => {
+    const { store, s } = fixture(); store.arm(s);
+    const onViolation = vi.fn();
+    const item = { type: "toolCall", tool: "write", arguments: {}, status: "failed",
+      result: "[Tavern scope blocked] Blocked write: could not read the write target from the call.\nTavern scope rule: write-target-missing" };
+    const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { stop: async () => ({}), events: { list: async () => [
+      { id: "e1", seq: 1, type: "item/completed", createdAt: Date.now(), data: { item } },
+    ] } } } });
+    registerWatcher(bb, store, { onViolation });
+    await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1", providerId: "pi" }), sequence: 1 });
+    expect(onViolation).toHaveBeenCalledWith(expect.objectContaining({ prevented: true, stopped: false, ruleId: "write-target-missing", reason: expect.stringContaining("could not read the write target") }), undefined);
+    expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
+    await harness.lifecycle.dispose();
+  });
+  it.each([
+    { type: "fileChange", status: "completed", changes: [] },
+    { type: "toolCall", status: "completed", tool: "write", arguments: {} },
+  ])("refuses a Pi file change without a recorded path: %j", async item => {
+    const { store } = fixture();
+    const scope = bindPaths({ ...scopeForClass("wanderer"), threadId: "t1", issuedAt: 1 }, { home: temp(), tmp: [tmpdir()], scopesDir: store.directory });
+    store.write("t1", scope); store.arm(scope);
+    const onViolation = vi.fn();
+    const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { stop: async () => ({}), events: { list: async () => [
+      { id: "e1", seq: 1, type: "item/completed", createdAt: Date.now(), data: { item } },
+    ] } } } });
+    registerWatcher(bb, store, { onViolation });
+    await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1", providerId: "pi" }), sequence: 1 });
+    expect(store.violations()).toEqual([expect.objectContaining({ ruleId: "write-target-missing", stopped: true, reason: expect.stringContaining("could not read the write target from the call") })]);
+    expect(store.violations()[0]!.reason).not.toMatch(/undefined|outside allowed roots/);
+    await harness.lifecycle.dispose();
+  });
   it("stops pi's first tool item when the guard has not armed, but not phase-2 providers", async () => {
     const { store } = fixture();
     const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { stop: async () => ({}), events: { list: async () => [{ id: "e1", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { type: "fileRead", path: "/tmp/x" } } }] } } } });

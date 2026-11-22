@@ -3,6 +3,7 @@ import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { seedQuest, planInput, waypointEntry } from "./support";
 import { requireUserAct } from "../../src/server/authority";
+import { registerTools } from "../../src/server/tools";
 const receipt = (act: "delegateQuest" | "preapproveQuest" | "revokeQuestAuthority") => requireUserAct({ experimental_caller: { kind: "client" } } as never, act);
 const options = [{ id: "approve", label: "Approve", detail: "", recommended: false }, { id: "deny", label: "Deny", detail: "", recommended: false }];
 it("records delegated decisions with Undo, refuses after revoke and lets the Keeper ask when unsure", async () => {
@@ -32,6 +33,25 @@ it("accepts only the assigned Warden’s current exact-act evidence", async () =
   expect(() => f.k.authority.assertVerdict({ ...ask, target: { commit: "b".repeat(40) } })).toThrow(/exact/);
   vi.mocked(f.port.linkedEntries).mockReturnValue([{ ...entry, status: "doing", review: null }]);
   expect(() => f.k.authority.assertVerdict(ask)).toThrow(/current/);
+});
+it("gives placement recovery to the Keeper without turning a retry into stop authority", async () => {
+  const f = setup(), q = await seedQuest(f.k, "lead", "Quest", "Quest");
+  const ask = f.k.ask("lead", { boardQuestId: q.id, kind: "blocker", effect: { type: "placement-blocker" },
+    question: "Placement failed", why: "No worker", options: [{ id: "retry", label: "Retry", detail: "", recommended: true }, { id: "stop", label: "Stop", detail: "", recommended: false }],
+    holds: [], meanwhile: "Wait" }, {}, true);
+  expect(ask.lane).toBe("keeper");
+  expect(f.k.store.openAsks("lead", undefined, true)).not.toContainEqual(ask);
+  registerTools(f.bb, f.runtime);
+  const decide = (optionId: string, input: Record<string, unknown> = {}) => f.harness.behavior.invokeAgentTool("tavern_decide", {
+    boardQuestId: q.id, askId: ask.id, optionId, source: "keeper", reversible: true, unsure: false,
+    text: "Retry this placement", why: "The worker is available", consequence: { change: "Check placement again", audience: "Keeper", undo: "Stop retries" }, ...input,
+  }, { threadId: "lead" });
+  await expect(decide("stop")).rejects.toThrow(/cannot resolve/i);
+  await expect(decide("retry", { unsure: true })).rejects.toThrow(/unsure:false/);
+  expect(f.k.store.get("asks", ask.id)?.state).toBe("open");
+  await decide("retry");
+  expect(f.k.store.get("asks", ask.id)?.answer).toMatchObject({ by: "keeper", optionId: "retry", note: "The worker is available" });
+  expect(f.k.quest(q.id).phase).not.toBe("stopped");
 });
 it("automatically retries one real placement blocker then stops on the next", async () => {
   const f = setup(), q = await seedQuest(f.k, "lead", "Quest", "Quest");

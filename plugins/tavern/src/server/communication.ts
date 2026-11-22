@@ -62,7 +62,7 @@ export function recordCommunication(k: Keeper, hold: CommunicationHold) {
   const acknowledge = { id: "acknowledge", label: "I have the draft", detail: "Records your answer. Nothing gets sent by the agent.", recommended: false };
   const deny = { id: "deny", label: draft ? "Decline" : "Dismiss", detail: draft ? "Nothing is drafted." : "Nothing is sent.", recommended: false };
   return k.ask(keeperId, {
-    boardQuestId: member.boardQuestId, kind: draft ? "drafts-as-you" : "sends-as-you", effect: { type: "communication-hold", hold }, sendTarget: hold.target ?? undefined,
+    boardQuestId: member.boardQuestId, kind: draft ? "drafts-as-you" : "sends-as-you", effect: { type: "communication-hold", hold, keeperReview: true }, sendTarget: hold.target ?? undefined,
     question: draft ? `Allow ${k.name(member)} to make this draft?` : `A message from ${k.name(member)} is yours to post`,
     why: draft ? "Tavern stopped the draft before it ran." : "Tavern stopped the send. Only you can post this message.",
     options: [...(draft ? (hold.callDigest ? [approve] : []) : [acknowledge]), deny],

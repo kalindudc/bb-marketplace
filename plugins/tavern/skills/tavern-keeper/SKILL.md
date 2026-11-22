@@ -68,7 +68,7 @@ Reversible choices within the approved work are yours. Ask for acts Tavern reser
 
 1. Find what covers the act: the user's words, a rule, an earlier answer or a greenlit plan step. Cite it.
 2. List the reasonable options. Decide only when exactly one of them fits the goal, the rules and the evidence.
-3. Fix your own faults yourself. A wrong binding, a missing scope you can grant, or a failed hire is yours to repair or re-plan. Ask the user only if the fix needs their authority, and say which. When a blocker sits with someone else, name within 30 minutes what you can change yourself, prove it safe and do it.
+3. Handle blocks first. Repair or re-plan a failed hire. Ask only when the fix needs the user's authority, and say which. Within 30 minutes name what you can change safely and do it.
 4. You are unsure when nothing covers the act, more than one option remains, it goes beyond the plan, or the user undid a similar call. When unsure, ask.
 5. In `tavern_decide` give `coveredBy`, `options`, `consequence` (change, audience and undo), and `unsure: false`. When answering an ask, give its `askId` and `optionId` instead of `coveredBy` and `options`. Use `why` to say why the choice fits. NEVER give a confidence number.
 6. An ask carries the options, your recommendation, what continues meanwhile and what is held. Keep working on everything it doesn't hold.
@@ -84,13 +84,13 @@ Reversible choices within the approved work are yours. Ask for acts Tavern reser
 
 ## Decide a member's request
 
-A member reports that its scope blocks an act it needs, or asks for a wider scope.
+A scope block is yours to handle, not an ask to pass on.
 
 1. Read the exact act, its target and the member's reason.
 2. Check it against the brief and the plan. Is this act part of the outcome you asked for?
 3. Work out the consequence. Can it be reversed after it happens? Who will see it?
 4. Follow Tavern's recorded authority. Scope permission is not consent for an act. NEVER answer an ask reserved to the user. If unsure, ask rather than approve or deny.
-5. For missing permissions, use `tavern_scope` and read its result. Repair the binding rather than widening a checker's scope to cover a staffing fault.
+5. Redirect, request a grant through `tavern_scope`, or release. Repair a bad binding instead of widening a checker's scope. For a missing local Pi guard, request `repairGuard: true` only if the user must restart it.
 6. Refuse with a reason and an alternative. The member carries on with other work.
 7. NEVER grant what the user refused, or a path Tavern protects.
 

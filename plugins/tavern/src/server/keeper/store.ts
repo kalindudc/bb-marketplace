@@ -328,7 +328,7 @@ const initialRuntime = (): Runtime => ({
   lastStrikeAt: null,
 });
 
-import { legacyAskEffect } from "../ask-effects";
+import { hasUserAskOutcome, legacyAskEffect } from "../ask-effects";
 import { consumesQuestWrite } from "./quest-lifecycle";
 import { undoAskProjection } from "../undo-record";
 import { currentAskNames } from "../quest-names";
@@ -670,7 +670,7 @@ export class KeeperStore {
         )
         .all(...args) as { data: string }[]
     ).map((row) => this.decode("asks", row.data));
-    return visibleOnly ? asks.map(undoAskProjection(this)).filter(ask => ask.lane !== "keeper").map(ask => currentAskNames(this, ask)) : asks;
+    return visibleOnly ? asks.map(undoAskProjection(this)).filter(ask => ask.lane !== "keeper" && ask.lane !== "tavern" && hasUserAskOutcome(ask, ask.effect!)).map(ask => currentAskNames(this, ask)) : asks;
   }
   activeRules(
     keeperId: string,
@@ -1040,6 +1040,13 @@ export class KeeperStore {
       `WHERE keeper_thread_id IN (${owners.map(() => "?").join(",")}) AND id>? ${visibleOnly ? `AND ${visibleEventSql}` : ""} ORDER BY id ASC LIMIT ?`,
       [...owners, after, limit],
     );
+  }
+  recentScopeBlocks(keeperThreadId: string, limit: number, questId?: string) {
+    const owners = this.keeperEventOwners(keeperThreadId);
+    return this.readEvents(`WHERE keeper_thread_id IN (${owners.map(() => "?").join(",")})
+      AND type IN ('scope.violation','blocker.moved') AND coalesce(json_extract(data,'$.mode'),'enforce') <> 'watch'
+      AND (type='scope.violation' OR json_extract(data,'$.effectType')='scope-blocker')
+      ${questId ? "AND board_quest_id=?" : ""} AND ${visibleEventSql} ORDER BY id DESC LIMIT ?`, [...owners, ...(questId ? [questId] : []), limit]);
   }
   momentEvents(keeperThreadId: string, ids: number[]) {
     if (!ids.length) return [];

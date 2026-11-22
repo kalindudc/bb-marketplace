@@ -11,7 +11,7 @@ import { isCloseEffect, type PullRequestChoices } from "../../shared/closing";
 import { WaiverRows } from "./waiver-rows";
 
 const KIND: Record<Ask["kind"], string> = { greenlight: "Greenlight", decision: "Decision", conclude: "Conclude", production: "Production", "cluster-write": "Cluster write", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", "drafts-as-you": "Draft as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
-const VIA: Record<string, string> = { banner: "in the thread", page: "in the common room", phone: "on the phone", chat: "in the chat", cli: "from the CLI", timer: "by its default" };
+const VIA: Record<string, string> = { banner: "in the thread", page: "in the common room", phone: "on the phone", chat: "in the chat", cli: "from the CLI", timer: "by its default", tavern: "by Tavern" };
 const holdsText = (holds: string[]) => holds.length === 0 ? "No other work" : holds.map(h => /^w\d+$/.test(h) ? `waypoint ${h.slice(1)}` : h).join(", ");
 
 const RULE_WORDS: Record<string, string> = {
@@ -83,7 +83,8 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
   const communication = ask.effect?.type === "communication-hold" ? ask.effect.hold : null;
   const readiness = experimental_useRpcQuery({ contract: rpcContract, method: "clusterRunStatus", input: { askId: ask.id }, enabled: cluster && ask.state === "open" });
   const shellGrant = ask.effect?.type === "grant-shell-act" ? ask.effect : null;
-  const [optionId, setOption] = useState<string | null>(ask.kind === "decision" && !shellGrant ? ask.options.find(o => o.recommended)?.id ?? null : null);
+  const repair = ask.effect?.type === "repair-guard";
+  const [optionId, setOption] = useState<string | null>(repair ? "done" : ask.kind === "decision" && !shellGrant ? ask.options.find(o => o.recommended)?.id ?? null : null);
   const [note, setNote] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [receipt, setReceipt] = useState<{ label: string; at: number; note: string | null; pullRequestErrors?: string[]; clusterGrantError?: string } | null>(null);
@@ -93,7 +94,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
   const lead = ask.effect?.type === "lead-plan" ? ask.effect.request : null;
   const answer = experimental_useRpcMutation({ contract: rpcContract, method: "answerAsk" });
   if (ask.state !== "open" || receipt) {
-    const label = receipt?.label ?? ask.options.find(o => o.id === ask.answer?.optionId)?.label ?? ask.answer?.optionId ?? "";
+    const label = ask.answer?.by === "tavern" ? "" : receipt?.label ?? ask.options.find(o => o.id === ask.answer?.optionId)?.label ?? ask.answer?.optionId ?? "";
     const at = receipt?.at ?? ask.answer?.at ?? null;
     const receiptNote = receipt?.note ?? ask.answer?.note ?? null;
     return (
@@ -115,7 +116,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
   const missingGrant = ask.kind === "scope" && !ask.scopeChange;
   const clusterReady = !cluster || optionId === "deny" || readiness.data?.guarded === true;
   const canSend = clusterReady && (ask.kind !== "sends-as-you" || ask.draft !== null || communication !== null) && !(missingGrant && optionId !== null && GRANTING(optionId));
-  const action = shellGrant && (optionId === "once" || optionId === "quest") ? "Grant this command" : shellGrant ? "Send answer" : early && optionId === "close-early" ? "Close early" : communication || ask.effect?.type === "pull-request-draft" ? "Record answer" : ask.kind === "sends-as-you" ? "Record answer" : lead ? (ask.options.find(option => option.id === optionId)?.label ?? "Send answer") : ask.kind === "greenlight" ? "Form the party (greenlight)" : ask.kind === "scope" && optionId !== null && GRANTING(optionId) ? "Grant this scope" : cluster && optionId === "approve" ? "Approve" : cluster && optionId === "confirm-run" ? "Run it now" : "Send answer";
+  const action = repair ? "Done" : shellGrant && (optionId === "once" || optionId === "quest") ? "Grant this command" : shellGrant ? "Send answer" : early && optionId === "close-early" ? "Close early" : communication || ask.effect?.type === "pull-request-draft" ? "Record answer" : ask.kind === "sends-as-you" ? "Record answer" : lead ? (ask.options.find(option => option.id === optionId)?.label ?? "Send answer") : ask.kind === "greenlight" ? "Form the party (greenlight)" : ask.kind === "scope" && optionId !== null && GRANTING(optionId) ? "Grant this scope" : cluster && optionId === "approve" ? "Approve" : cluster && optionId === "confirm-run" ? "Run it now" : "Send answer";
   async function submit() {
     if (!optionId || !canSend) return;
     setError(null);
@@ -187,7 +188,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
           </select>
         </li>)}</ul>
       </fieldset> : null}
-      <fieldset className="opts">
+      {!repair && <fieldset className="opts">
         <legend className="sr">Your answer</legend>
         {ask.options.map(o => (
           <label key={o.id} className="opt">
@@ -195,7 +196,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
             <span className="ol"><b>{o.label}{o.recommended && <span className="rec"> · recommended</span>}</b>{o.detail && <span className="m">{o.detail}</span>}</span>
           </label>
         ))}
-      </fieldset>
+      </fieldset>}
       {/* Inline and visible, never a collapsed details: a decision answered without its note is a decision the Keeper cannot read. */}
       <label className="ask-notefield">
         <span>Add a note for the Keeper <span className="m">(optional)</span></span>
@@ -205,7 +206,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
       <QueryState error={error} />
       <div className="ask-f">
         <button type="button" className={`btn ${ask.kind === "greenlight" ? "pri seal" : "pri"}`} disabled={!optionId || answer.isPending || !canSend} aria-describedby={describeEffects ? `${name}-effect` : undefined} onClick={() => void submit()}>{ask.kind === "greenlight" && <Glyph name="wax-seal" />}{answer.isPending ? "Sending…" : action}</button>
-        {describeEffects && <span className="ask-effect" id={`${name}-effect`}>{communication || ask.kind === "sends-as-you" ? "Records your choice. Nothing is sent by the agent." : cluster || shellGrant ? "Records your choice; it does not run the command." : "Applies your choice and tells the Keeper."}</span>}
+        {describeEffects && <span className="ask-effect" id={`${name}-effect`}>{repair ? "Checks whether the guard loaded. It does not run the blocked call." : communication || ask.kind === "sends-as-you" ? "Records your choice. Nothing is sent by the agent." : cluster || shellGrant ? "Records your choice; it does not run the command." : "Applies your choice and tells the Keeper."}</span>}
         {onFold && <>
           <button type="button" className="btn" aria-describedby={describeEffects ? `${name}-fold-effect` : undefined} onClick={onFold}>Not now</button>
           {describeEffects && <span className="ask-effect" id={`${name}-fold-effect`}>Hides the form without answering.</span>}

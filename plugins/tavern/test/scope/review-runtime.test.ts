@@ -83,7 +83,7 @@ it("follows bb's pi start-before-preflight, failed-completion sequence without s
   const f = setup("pi"); f.store.arm(f.scope);
   f.setRows([f.started]); await f.emit(1); expect(f.stops()).toBe(0);
   f.setRows([f.started, { ...f.started, id: "completed", seq: 2, type: "item/completed", data: { item: { ...f.started.data.item, status: "failed", exitCode: 1, aggregatedOutput: BLOCK_MARKER + " Blocked git push. Report the need with tavern_report status needs-decision." } } }]);
-  await f.emit(2); expect(f.stops()).toBe(0); expect(f.store.violations()).toEqual([]);
+  await f.emit(2); expect(f.stops()).toBe(0); expect(f.store.violations()).toMatchObject([{ prevented: true, stopped: false }]);
 });
 it("skips the external bash-guard completion captured from Vex events 47/48", async () => {
   const f = setup("pi"); f.store.arm(f.scope);
@@ -116,10 +116,10 @@ it("recognizes a failed external guard result in structured tool content", async
   f.setRows([{ ...f.started, type: "item/completed", seq: 2, data: { item: { id: "call1", type: "toolCall", tool: "bash", arguments: { command: "git push origin main" }, status: "failed", result: { content: [{ type: "text", text: "[CRITICAL] Command blocked automatically\n\nCommand:\n  git push origin main" }] } } } }]);
   await f.emit(2); expect(f.stops()).toBe(0); expect(f.store.violations()).toEqual([]);
 });
-it("skips bb host-daemon native fileChange.error on a preflight-blocked write", async () => {
+it("records bb host-daemon fileChange.error without stopping the preflight-blocked write again", async () => {
   const f = setup("pi"); f.store.arm(f.scope);
   f.setRows([{ ...f.started, type: "item/completed", seq: 2, data: { item: { id: "call1", type: "fileChange", status: "failed", approvalStatus: null, changes: [{ path: "/outside/file", kind: "add" }], error: BLOCK_MARKER + " Blocked write to /outside/file." } } }]);
-  await f.emit(2); expect(f.stops()).toBe(0); expect(f.store.violations()).toEqual([]);
+  await f.emit(2); expect(f.stops()).toBe(0); expect(f.store.violations()).toMatchObject([{ prevented: true, stopped: false }]);
 });
 it("records a held act without stopping the member or opening a violation", async () => {
   const f = setup("pi"); f.store.arm(f.scope);

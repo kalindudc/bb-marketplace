@@ -18,7 +18,7 @@ it("moves one charge and its unread work without changing source bytes or histor
   const manifest = captureRequestSources(k, "lead", quest.id);
   k.bind("maker", "smith", null, "project", { keeperThreadId: "lead", boardQuestId: quest.id, waypointId: null, title: "Work", errand: false,
     brief: { outcome: "Work", mode: "make-it-work", doneWhen: "Evidence", outOfScope: "Publish", context: [], questions: [], timeboxMinutes: null }, requestSources: manifest });
-  const ask = k.ask("lead", { kind: "decision", effect: { type: "answer-blocker" }, question: "Which option?", why: "Both apply", options: [{ id: "keep", label: "Keep", detail: "Leave it", recommended: true }, { id: "change", label: "Change", detail: "Change it", recommended: false }], holds: [], meanwhile: "Work continues" });
+  const ask = k.ask("lead", { kind: "decision", effect: { type: "decision" }, question: "Which option?", why: "Both apply", options: [{ id: "keep", label: "Keep", detail: "Leave it", recommended: true }, { id: "change", label: "Change", detail: "Change it", recommended: false }], holds: [], meanwhile: "Work continues" });
   const placements = new PlacementStore(k.store.db);
   const placement = placements.reserve(placementRecord({ keeperThreadId: "lead", questId: quest.id, memberThreadId: "maker" }), { maxMakers: 10, maxCheckers: 10 });
   k.store.db.prepare("INSERT INTO questlog_logs(thread_id,hydrated) VALUES(?,1)").run("lead");

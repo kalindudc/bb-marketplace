@@ -912,84 +912,56 @@ export class BackendScopes {
     });
     if (saved) k.changed(member.threadId, member.boardQuestId);
   }
-  async violation(violation: Violation) {
+  violation(violation: Violation) {
     const k = this.runtime.keeper;
     const member = k.member(violation.threadId);
     if (!member) return;
     const key = `${member.threadId}:${violation.eventId}`;
-    if (k.store.get("scopeViolations", key)) return;
-    const keeperThreadId =
-      member.role === "keeper" ? member.threadId : member.keeperThreadId;
-    k.store.put("scopeViolations", key, violation);
-    k.activity(
-      member.threadId,
-      member.role === "keeper"
-        ? "waiting"
-        : violation.stopped
-          ? "idle"
-          : "waiting",
-    );
+    const keeperThreadId = member.role === "keeper" ? member.threadId : member.keeperThreadId;
+    const saved = k.store.atomic(() => {
+      if (k.store.get("scopeViolations", key)) return false;
+      k.store.put("scopeViolations", key, violation);
+      const memberName = k.name(member);
+      k.store.event(k.now(), keeperThreadId, member.boardQuestId, "scope.violation",
+        `${memberName}: ${violation.reason}${violation.stopError ? `; STOP FAILED: ${violation.stopError}` : ""}`,
+        { ...violation, memberName }, { kind: "tavern" });
+      return true;
+    });
+    if (!saved) return;
+    if (!violation.prevented && violation.mode !== "watch")
+      k.activity(member.threadId, member.role !== "keeper" && violation.stopped ? "idle" : "waiting");
     this.runtime.bb.log.warn(
       `Tavern scope violation ${member.threadId}: ${violation.ruleId}; stopped=${violation.stopped}${violation.stopError ? `; ${violation.stopError}` : ""}`,
     );
-    k.store.event(
-      k.now(),
-      keeperThreadId,
-      member.boardQuestId,
-      "scope.violation",
-      `${this.runtime.keeper.name(member)}: ${violation.reason}${violation.stopError ? `; STOP FAILED: ${violation.stopError}` : ""}`,
-      { ...violation },
-      { kind: "tavern" },
-    );
-    if (keeperThreadId) {
-      const open = k.store
-        .openAsks(keeperThreadId)
-        .find(
-          (ask) =>
-            ask.kind === "blocker" &&
-            ask.effect?.type === "scope-blocker" && ask.effect.memberThreadId === member.threadId,
-        );
-      if (!open) {
-        const ask = k.ask(
-          keeperThreadId,
-          { effect: { type: "scope-blocker", memberThreadId: member.threadId },
-            boardQuestId: member.boardQuestId,
-            kind: "blocker",
-            question: `Scope blocked ${this.runtime.keeper.name(member)}`,
-            why: `${violation.ruleId}: ${violation.reason}${violation.stopError ? `; stop failed: ${violation.stopError}` : ""}. Full evidence is in the ledger.`.slice(
-              0,
-              200,
-            ),
-            options: [
-              {
-                id: "review",
-                label: "Review the blocked call",
-                detail:
-                  "Inspect the evidence and scope; this does not grant new permissions",
-                recommended: true,
-              },
-            ],
-            meanwhile:
-              "Keep unrelated work moving while the Keeper checks what happened.",
-            holds: member.waypointId ? [member.waypointId] : [],
-          },
-          { scopeThreadId: member.threadId },
-          true,
-        );
-
-      }
-      await this.runtime.push(
-        keeperThreadId,
-        violation.stopped
-          ? "Tavern scope blocked a member"
-          : "Urgent: Tavern could not stop a scope violation",
-        violation.stopError ?? violation.reason,
-      );
-    }
     k.changed(member.threadId, member.boardQuestId);
+  }
+  requestGuardRepair(keeperThreadId: string, memberRef: string) {
+    const k = this.runtime.keeper;
+    k.require(keeperThreadId, "keeper");
+    const member = memberRef === keeperThreadId ? k.member(keeperThreadId)! : k.resolvePartyMember(keeperThreadId, memberRef);
+    const memberThreadId = member.threadId;
+    const lastBlock = k.store.scopeViolations([memberThreadId]).reverse().find(event => event.mode !== "watch" && !event.prevented);
+    if (lastBlock?.ruleId !== "guard-not-loaded" || lastBlock.providerId !== "pi" || this.api.localScopeRecord(memberThreadId)?.scope.mode !== "enforce")
+      throw new Error("No missing local Pi guard was recorded for this thread.");
+    if (this.api.locallyArmed(memberThreadId)) throw new Error("The guard is already armed; no repair ask is needed.");
+    const existing = k.store.openAsks(keeperThreadId).find(a => a.effect?.type === "repair-guard" && a.effect.memberThreadId === memberThreadId);
+    if (existing) return existing;
+    return k.ask(keeperThreadId, {
+      boardQuestId: member.boardQuestId, kind: "blocker", effect: { type: "repair-guard", memberThreadId },
+      question: `Restart ${k.name(member)}’s Pi session on this machine`,
+      why: "Tavern’s guard did not load. Restart the session, then select Done so Tavern can check it.",
+      options: [{ id: "done", label: "Done", detail: "Check that the guard loaded without changing scope or rerunning the blocked call.", recommended: true }],
+      meanwhile: "The blocked call stays refused. Unrelated work can continue.", holds: member.waypointId ? [member.waypointId] : [],
+    }, { memberThreadId }, true);
   }
   clearScope(threadId: string) {
     const k = this.runtime.keeper;
+    const member = k.member(threadId);
+    if (member) {
+      const keeperThreadId = member.keeperThreadId ?? threadId;
+      const repair = k.store.openAsks(keeperThreadId).find(ask => ask.effect?.type === "repair-guard" && ask.effect.memberThreadId === threadId);
+      if (repair && k.withdrawAsk(repair.id, "scope-cleared")) k.changed(keeperThreadId, member.boardQuestId);
+    }
     const record = this.api.localScopeRecord(threadId);
     removeShellGrantProjection(this.api.scopeFile(threadId));
     this.api.clearScope(threadId);

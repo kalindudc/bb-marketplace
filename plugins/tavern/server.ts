@@ -106,6 +106,7 @@ export default async function tavern(bb: BbPluginApi) {
   keeper = new Keeper(store, journal, Date.now, (tags) =>
     bb.rpc.experimental_invalidate(tags),
   );
+  keeper.moveNoticeAsks();
   runtime = new TavernRuntime(
     bb,
     keeper,

@@ -53,9 +53,9 @@ it("does not demand a local Pi marker and evaluates only completion", async () =
   await f.emit(2); expect(f.prepare).toHaveBeenCalledOnce(); expect(f.isArmed).not.toHaveBeenCalled(); expect(f.stop).toHaveBeenCalledOnce();
   expect(f.store.violations()).toMatchObject([{ ruleId: "git-push-main", seq: 2, stopped: true }]);
 });
-it("skips an observed preflight block before any remote or local inspection", async () => {
+it("records a preflight block without remote or local inspection", async () => {
   const f = setup("pi"); f.setRows([f.row(2, "item/completed", { status: "failed", error: engine.BLOCK_MARKER + " blocked before execution" })]); await f.emit(2);
-  expect(f.prepare).not.toHaveBeenCalled(); expect(f.stop).not.toHaveBeenCalled(); expect(f.store.violations()).toEqual([]); expect(f.store.progress("member").cursor).toBe(2);
+  expect(f.prepare).not.toHaveBeenCalled(); expect(f.stop).not.toHaveBeenCalled(); expect(f.store.violations()).toMatchObject([{ prevented: true, stopped: false }]); expect(f.store.progress("member").cursor).toBe(2);
 });
 it("persists an unavailable observation without consuming the event, then retries the same sequence", async () => {
   const f = setup(); f.setExecution({ kind: "unavailable", reason: "The member host is reconnecting." }); await f.emit();

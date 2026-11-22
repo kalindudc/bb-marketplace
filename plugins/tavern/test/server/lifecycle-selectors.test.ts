@@ -80,7 +80,7 @@ it("unpause skips gone and manually stopped Keepers and closes old failure asks 
   patchThreadFixture(f.k.store, "gone", { archivedAt: f.time() });
   f.k.bind("quiet", "keeper", "wren", "project");
   f.k.store.patch("quiet", { manualStopAt: f.time() });
-  const ask = f.k.ask("lead", { effect: {type:"answer-blocker"}, kind: "blocker", question: "Retry?", why: "Failed", options: [{ id: "retry", label: "Retry", detail: "", recommended: true }], meanwhile: "Wait", holds: [] });
+  const ask = f.k.ask("lead", { effect: {type:"retry-provider"}, kind: "blocker", question: "Retry?", why: "Failed", options: [{ id: "retry", label: "Retry", detail: "", recommended: true }], meanwhile: "Wait", holds: [] });
   f.k.store.patch("lead", { failureCount: 2, failureAskId: ask.id, tickRefusalCount: 2 });
   const base = f.runtime.config();
   let paused = true;

@@ -1,6 +1,6 @@
 import { readFileSync, rmSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { authorityDecision, communicationAct, evaluate, blocked, toolAllowed, clusterWriteBlock, hasClusterWrite, type ScopeCall } from "../../src/scope/engine";
+import { authorityDecision, communicationAct, evaluate, blocked, BLOCK_MARKER, toolAllowed, clusterWriteBlock, hasClusterWrite, type ScopeCall } from "../../src/scope/engine";
 import { scopeFileSchema, scopeRenderedFileSchema, type Scope } from "../../src/scope/schema";
 import { armedFile, armScope, MessagePolicyError, readMessagePolicy, type NativeScopeReceipt } from "../../src/scope/store";
 import { prepareCall } from "../../src/scope/prepare";
@@ -127,7 +127,7 @@ export default function tavernGuard(pi: PiGuardApi): void {
       const fallback = lastReadableScope ?? scopeForClass("keeper");
       if (!communicationAct(fallback, input) && (mode !== "enforce" || emergency.includes(name))) return;
       const decision = blocked("tool " + name, "scope-invalid", "the scope file is missing, invalid or its worktree cannot be resolved: " + String(error) + "; ask the Keeper to repair it");
-      return { block: true, reason: !decision.allow ? decision.reason : "" };
+      return { block: true, reason: !decision.allow ? `${decision.reason}\nTavern scope rule: ${decision.ruleId}` : "" };
     }
     const switched = previousMode === "off";
     try {
@@ -152,13 +152,13 @@ export default function tavernGuard(pi: PiGuardApi): void {
         if (!preview) return { block: true, reason };
         try { holdCommunication(file, scope, input, preview); }
         catch { return { block: true, reason: reason + " Tavern could not record the held call." }; }
-        return { block: true, reason: preview.act === "draft" ? reason + " Tavern asked for approval. Once approved, repeat the exact call." : reason };
+        return { block: true, reason: preview.act === "draft" ? reason + " Tavern recorded this for the Keeper. Repeat the exact call only after approval." : reason };
       };
       const callAuthority = { ...inspected, draftApproved: !!draftReceipt };
       const authority = authorityDecision(scope, callAuthority);
       const grant = authority && !authority.allow && authority.ruleId === "cluster-write" && name.toLowerCase() === "bash" && event.toolCallId
         ? availableActGrant(file, scope.threadId, "cluster-write", source) : undefined;
-      if (authority && !authority.allow && !grant) return authority.ruleId === "send-guard" || authority.ruleId === "draft-guard" ? refuse(authority.reason) : { block: true, reason: authority.reason };
+      if (authority && !authority.allow && !grant) return authority.ruleId === "send-guard" || authority.ruleId === "draft-guard" ? refuse(authority.reason) : { block: true, reason: authority.reason.startsWith(BLOCK_MARKER) ? `${authority.reason}\nTavern scope rule: ${authority.ruleId}` : authority.reason };
       if (grant) {
         const remaining = authorityDecision(scope, { ...callAuthority, clusterWriteApproved: true });
         if (remaining && !remaining.allow) return { block: true, reason: remaining.reason };
@@ -188,7 +188,7 @@ export default function tavernGuard(pi: PiGuardApi): void {
       const shellGrants = !nativeReceipt && !legacyEnv.length && event.toolCallId && ["bash", "Bash"].includes(name) ? readShellGrants(file, scope) : undefined;
       const decision = evaluate(scope, { ...call, draftApproved: !!draftReceipt, clusterWriteApproved: !!grant, shellGrants, prGrantAvailable: id => !!event.toolCallId && pullRequestGrantAvailable(file, id) });
       if (!decision.allow) return decision.ruleId === "send-guard" || decision.ruleId === "draft-guard" ? refuse(decision.reason) : { block: true, reason: decision.reason +
-        (decision.act ? "\nWorking directory: " + JSON.stringify(ctx.cwd) : "") + (switched ? "\n" + modeNote : "") };
+        (decision.act ? "\nWorking directory: " + JSON.stringify(ctx.cwd) : "") + (switched ? "\n" + modeNote : "") + "\nTavern scope rule: " + decision.ruleId };
       if (decision.prGrant) {
         const receipt = randomUUID();
         if (!claimPullRequestGrant(file, decision.prGrant, receipt))

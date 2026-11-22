@@ -146,7 +146,7 @@ export function Guardrails({ detail, registry, members, bare = false, compact = 
     {compact && scopes.length > 0 && <button type="button" className="tv-fold act" aria-expanded={showEach} onClick={() => setShowEach(!showEach)}><ExpandsMark open={showEach} />{showEach ? "Show summary" : "Show each member"}</button>}
     {violations.length > 0 && <ol className="tv-evs tv-viol">{violations.slice(0, 8).map((v) => <li key={`${v.eventId}-${v.seq}`} className={`tv-ev ${v.mode === "watch" ? "t-plain" : v.stopped ? "t-bad" : "t-warn"}`}>
       <PageGlyph name={v.mode === "watch" ? "eye" : v.stopped ? "stop" : "fail"} size={13} className="tv-ev-g" />
-      <span className="tv-ev-b"><span className="tv-ev-h"><b>{name(v.threadId)}</b> <span>{v.mode === "watch" ? "tripped a rule · recorded, not stopped" : v.stopped ? `was stopped in ${v.latencyMs} ms` : `tripped a rule; the stop failed${v.stopError ? `: ${v.stopError}` : ""}`}</span></span><span className="tv-ev-d" title={`${v.ruleId}: ${v.reason}`}><code>{v.ruleId}</code> {v.reason}</span></span>
+      <span className="tv-ev-b"><span className="tv-ev-h"><b>{name(v.threadId)}</b> <span>{v.mode === "watch" ? "tripped a rule · recorded, not stopped" : v.prevented ? "had a call blocked before it ran" : v.stopped ? `was stopped in ${v.latencyMs} ms` : `tripped a rule; the stop failed${v.stopError ? `: ${v.stopError}` : ""}`}</span></span><span className="tv-ev-d" title={`${v.ruleId}: ${v.reason}`}><code>{v.ruleId}</code> {v.reason}</span></span>
       <Ago at={v.at} />
     </li>)}</ol>}
   </>;

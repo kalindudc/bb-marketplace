@@ -94,7 +94,7 @@ it("teaches deadlines, treats stalls as hints, and describes today's scope reque
   const progress = sections.get("Track progress");
   expect(progress).toContain("A wait names what unblocks it and what blocks it, and has a deadline.");
   expect(progress).toContain("Treat stalls as hints.");
-  expect(sections.get("Decide a member's request")).toContain("A member reports that its scope blocks an act it needs, or asks for a wider scope.");
+  expect(sections.get("Decide a member's request")).toContain("A scope block is yours to handle, not an ask to pass on.");
 });
 it("resolves the reference from the skill, never the user's project", () => {
   expect(sections.get("Reference")).toContain("../../docs/keeper-reference.md");

@@ -25,7 +25,7 @@ it("never delegates sending and routes a draft only for a named target", async (
   f.a.revoke(f.q.id, grant.id, requireUserAct(client, "revokeQuestAuthority"));
   expect(lane("room-1")).toBe("user");
 });
-it("records one send handoff, even when the target is unknown, with no executable answer", async () => {
+it("keeps an incomplete send handoff with the Keeper and never grants a send", async () => {
   const f = await fixture();
   const hold = { id: randomUUID(), act: "send" as const, threadId: "lead", tool: "fixture_send", target: null, body: "First\n\nLast", callDigest: "1".repeat(64), rulesDigest: "2".repeat(64), scopeIssuedAt: 1, at: f.time() };
   recordCommunication(f.k, hold);
@@ -33,11 +33,11 @@ it("records one send handoff, even when the target is unknown, with no executabl
   const asks = f.k.store.openAsks("lead").filter(ask => ask.kind === "sends-as-you");
   expect(asks).toHaveLength(1);
   const [ask] = asks;
-  expect(ask).toMatchObject({ lane: "user", proceedAt: null, effect: { hold: { body: hold.body, target: null } } });
+  expect(ask).toMatchObject({ lane: "keeper", proceedAt: null, effect: { hold: { body: hold.body, target: null } } });
   expect(ask.options.map(option => option.id)).toEqual(["acknowledge", "deny"]);
   expect(() => f.k.answerAsk(ask.id, "approve", null, "page", "user")).toThrow();
-  f.k.answerAsk(ask.id, "acknowledge", null, "page", "user", "client (unattested)", {}, requireUserAct(client, "answerAsk"));
-  expect(f.k.store.get("asks", ask.id)?.answer?.optionId).toBe("acknowledge");
+  expect(() => f.k.reviewHeldCommunication("lead", ask.id)).toThrow(/recipient.*message/);
+  expect(f.k.store.get("asks", ask.id)?.state).toBe("open");
   expect(f.k.store.all("shellGrants")).toEqual([]);
   expect(f.k.store.all("decisions")).toEqual([]);
 });

@@ -283,6 +283,7 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
         return store.records.get(threadId) !== before;
       });
     },
+    locallyArmed,
     localScopeRecord: (threadId: string) => {
       const record = store.records.get(threadId);
       return record?.scope && !record.error && !record.binding ? { file: record.file, scope: record.scope } : null;

@@ -2,7 +2,7 @@ import type { KeeperStore } from "./keeper/store";
 import { fromStoppedKeeper, type Attention, type AttentionCounts, type AttentionItem, type SinceVisit } from "../shared/attention";
 import type { Ask, BoardQuest, Decision, KeeperNote, Rule, Summary } from "../shared/schema";
 import { AUTHORITY } from "./authority";
-import { ASK_EFFECTS, legacyAskEffect } from "./ask-effects";
+import { ASK_EFFECTS, hasUserAskOutcome, legacyAskEffect } from "./ask-effects";
 import { undoAskProjection } from "./undo-record";
 import { isLiveKeeper, isOpenQuest } from "./liveness";
 import { UNSEEN_SUMMARY_SQL } from "./summaries";
@@ -14,9 +14,9 @@ export const DECIDED_FOR_YOU_SQL = "(json_extract(r.data,'$.source')='keeper' OR
 
 export type AttentionScope = { keeperThreadId?: string; boardQuestId?: string };
 export function askNeedsUser(store: KeeperStore, ask: Ask) {
-  if (ask.lane === "keeper") return false;
+  if (ask.lane === "keeper" || ask.lane === "tavern") return false;
   const effect = ask.effect ?? legacyAskEffect(ask, store.get("askMeta", ask.id), store.runtime(ask.keeperThreadId));
-  return AUTHORITY[ASK_EFFECTS[effect.type].act].level === "user-explicit";
+  return hasUserAskOutcome(ask, effect) && AUTHORITY[ASK_EFFECTS[effect.type].act].level === "user-explicit";
 }
 export function decisionUndoProjection(store: KeeperStore) {
   const open = new Map<string, boolean>();

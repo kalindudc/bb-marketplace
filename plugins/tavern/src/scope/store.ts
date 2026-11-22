@@ -10,7 +10,7 @@ import type { ActKind } from "./acts";
 export interface ActAudit { threadId: string; providerId: string; at: number; eventId: string; seq: number; kind: ActKind; call: ScopeCall; mode: "watch" | "enforce" }
 
 export interface ScopeRecord { file: string; scope: Scope | null; template?: Scope; error?: string; mode?: Scope["mode"]; binding?: ScopeControllerBinding; presetProvenance?: { id: Scope["preset"]; version: string } }
-export interface Violation { threadId: string; providerId: string; at: number; eventId: string; seq: number; ruleId: string; reason: string; call?: ScopeCall; latencyMs: number; stopped: boolean; stopError?: string; mode?: "enforce" | "watch"; act?: ActKind }
+export interface Violation { threadId: string; providerId: string; at: number; eventId: string; seq: number; ruleId: string; reason: string; call?: ScopeCall; latencyMs: number; stopped: boolean; prevented?: true; stopError?: string; mode?: "enforce" | "watch"; act?: ActKind }
 export const scopeObservationBindingSchema = scopeHostBindingSchema.extend({ hostId: z.string().min(1).max(200), cwd: z.string().min(1).max(32768) }).strict();
 export type ScopeObservationBinding = z.infer<typeof scopeObservationBindingSchema>;
 const observationHoldSchema = z.object({

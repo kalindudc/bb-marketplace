@@ -214,7 +214,7 @@ describe("Closing time runtime", () => {
     let attention = { ...base.attention, notify: "none" as const };
     const config = vi.spyOn(f.runtime, "config").mockImplementation(() => ({ ...base, attention }));
     await f.close();
-    const ask = f.k.ask("lead", { effect: {type:"answer-blocker"}, boardQuestId: f.quest.id, kind: "blocker", question: "Blocked?", why: "Needs you", options: [{ id: "no", label: "Wait", detail: "Wait", recommended: true }], meanwhile: "Wait", holds: [] });
+    const ask = f.k.ask("lead", { effect: {type:"decision"}, boardQuestId: f.quest.id, kind: "decision", question: "Which option?", why: "Needs you", options: [{ id: "no", label: "Wait", detail: "Wait", recommended: true }, { id: "change", label: "Change", detail: "Change the outcome", recommended: false }], meanwhile: "Wait", holds: [] });
     await f.runtime.push("lead", ask.question, ask.why, ask.id);
     expect(f.harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(0);
     expect(f.k.store.events().filter(e => e.type === "alert.push").map(e => e.data)).toEqual([expect.objectContaining({ outcome: "held", reason: "mode-none" })]);

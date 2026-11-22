@@ -40,9 +40,12 @@ export function assertUndoLane(store: KeeperStore, threadId: string, kind: Ask["
   if (shift) throw new Error(keeperUndoLaneWords(shift));
 }
 
+import { keeperOwnsBlock } from "./ask-effects";
+
 export function undoAskProjection(store: KeeperStore) {
   const shifts = new Map<string, UndoLane[]>();
   return (ask: Ask): Ask => {
+    if (ask.state === "open" && ask.effect && keeperOwnsBlock(ask.effect)) return ask.lane === "keeper" ? ask : { ...ask, lane: "keeper" };
     if (ask.kind === "sends-as-you" && ask.state === "open") return { ...ask, lane: "user", options: ask.options.filter(option => option.id !== "delegate") };
     if (ask.state !== "open" || ask.lane !== "keeper" && !ask.options.some(o => o.id === "delegate")) return ask;
     let rows = shifts.get(ask.keeperThreadId);

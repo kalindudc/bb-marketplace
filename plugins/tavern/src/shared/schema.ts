@@ -533,15 +533,16 @@ export const askEffectSchema = z.discriminatedUnion("type", [
   settleWaypointSchema.omit({ boardQuestId: true }).extend({ type: z.literal("settle-waypoint"), planVersion: z.number().int().positive() }),
   z.object({ type: z.literal("soft-limit"), limit: z.enum(["party", "rangers"]), text: z.string().min(1).max(400), reason: z.string().max(600) }),
   z.object({ type: z.literal("pull-request-draft"), operation: pullRequestDraftOperationSchema }),
-  z.object({ type: z.literal("communication-hold"), hold: communicationHoldSchema }).strict(),
+  z.object({ type: z.literal("communication-hold"), hold: communicationHoldSchema, keeperReview: z.literal(true).optional() }).strict(),
   z.object({ type: z.literal("retry-stop"), memberThreadId: threadId.optional(), hireTokens: z.array(z.string()).optional() }),
   z.object({ type: z.literal("retry-brief"), threadId, briefId: id }),
   z.object({ type: z.literal("grant-scope"), memberThreadId: threadId }),
   z.object({ type: z.literal("grant-shell-act"), memberThreadId: threadId, target: shellGrantTargetSchema, heldEventId: z.string().min(1).max(420).optional() }).strict(),
   z.object({ type: z.literal("scope-blocker"), memberThreadId: threadId }),
+  z.object({ type: z.literal("repair-guard"), memberThreadId: threadId }),
   z.object({ type: z.literal("detection-hire"), binding: z.object({ fingerprint: z.string(), providerId: z.string(), model: z.string(), characterId: z.string().nullable(), displayName: z.string(), token: z.string().optional() }) }),
   z.object({ type: z.literal("decision"), outcomes: z.array(z.object({ optionId: z.string(), outcome: z.enum(["approve", "decline"]) })).optional() }),
-  ...(["retry-provider", "retry-tick", "placement-blocker", "answer-blocker"] as const).map(type => z.object({ type: z.literal(type) })),
+  ...(["retry-provider", "retry-tick", "placement-blocker", "answer-blocker", "registry-blocker"] as const).map(type => z.object({ type: z.literal(type) })),
 ]);
 export type AskEffect = z.infer<typeof askEffectSchema>;
 export const askSchema = z.object({
@@ -587,11 +588,11 @@ export const askSchema = z.object({
       surface: z.string().optional(),
       optionId: z.string(),
       note: z.string().max(2000).nullable(),
-      by: z.enum(["user", "default", "keeper", "preapproval"]),
+      by: z.enum(["user", "default", "keeper", "preapproval", "tavern"]),
       preapproval: z.object({ id: z.string(), at: epochMs, surface: z.string() }).optional(),
       keeperAuthority: z.literal("keepers.alwaysAsk").optional(),
     draftDelegationId: id.optional(),
-      via: z.enum(["banner", "page", "phone", "chat", "cli", "timer"]),
+      via: z.enum(["banner", "page", "phone", "chat", "cli", "timer", "tavern"]),
       at: epochMs,
     })
     .nullable(),

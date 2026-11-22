@@ -8,6 +8,23 @@ import { fixtureAsk, fixtureGreenlight, fixtureRegistry } from "../../../src/ui/
 import { KeepersSection } from "../../../src/ui/page/settings";
 import { settingsView } from "../../../src/ui/page/fixtures-insights";
 
+it("offers a single Done button to check a restarted guard", async () => {
+  const ask = { ...fixtureAsk, kind: "blocker" as const, effect: { type: "repair-guard" as const, memberThreadId: "member" },
+    question: "Restart Robin’s Pi session on this machine", why: "Tavern’s guard did not load. Restart the session, then select Done so Tavern can check it.",
+    draft: null, holds: [], meanwhile: "The blocked call stays refused. Unrelated work can continue.", options: [{ id: "done", label: "Done", detail: "", recommended: true }] };
+  const calls: unknown[] = [];
+  const slot = renderSlot({ component: AskCard }, { ask }, { experimental_rpcContract: rpcContract, rpc: {
+    answerAsk: input => { calls.push(input); return { ok: true }; },
+  } });
+  try {
+    expect(slot.queryByRole("radio")).toBeNull();
+    if (process.env.TAVERN_LAYOUT_HARNESS === "1") process.stdout.write(`GUARD_REPAIR=${JSON.stringify(slot.container.innerHTML)}\n`);
+    fireEvent.click(slot.getByRole("button", { name: "Done" }));
+    await slot.findByText("Answered");
+    expect(calls).toMatchObject([{ askId: ask.id, optionId: "done" }]);
+  } finally { slot.lifecycle.unmount(); }
+});
+
 const command = "kubectl --context 'demo context' apply -f 'sample manifest.yaml' --namespace=tools";
 
 const clusterAsk = { ...fixtureAsk, kind: "cluster-write" as const, draft: null, question: "Apply the sample change?", why: "You approve every cluster write.", target: { command }, clusterTargets: [{ context: "demo context", namespace: "tools" }, { context: "other", namespace: "apps" }], change: "Updates the sample deployment.", undo: "Restore the previous manifest." };

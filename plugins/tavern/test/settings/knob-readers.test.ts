@@ -133,10 +133,13 @@ it("uses the shorter configured class-file wait and the chosen blocker delay", a
   f.advance(5_000);
   expect(await f.runtime.dispatch(dispatch049())).toEqual({action: "proceed"});
   expect(f.k.store.runtime("lead").classNotice?.message).toContain("after 5 seconds");
+  const notices = () => f.k.store.events("lead").filter(event => event.type === "blocker.moved");
   f.runtime["registryFailureBlocker"](f.member.threadId, f.member, null, "class root unreachable", f.time() - 59_999);
+  expect(notices()).toHaveLength(0);
   expect(f.k.store.openAsks("lead")).toHaveLength(0);
   f.runtime["registryFailureBlocker"](f.member.threadId, f.member, null, "class root unreachable", f.time() - 60_000);
-  expect(f.k.store.openAsks("lead")).toHaveLength(1);
+  expect(notices()).toMatchObject([{ data: { reason: "class root unreachable" } }]);
+  expect(f.k.store.openAsks("lead")).toHaveLength(0);
 });
 
 it("reads the configured tuner evidence window", () => {

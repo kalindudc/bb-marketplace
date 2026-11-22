@@ -32,6 +32,11 @@ describe("a finished member's guardrail (isZeroDuration, captured live)", () => 
     expect(guardRecordWords(vex, violations, { archived: true, now: NOW }).now).toBe("Not armed: the member's thread is archived");
     expect(guardRecordWords({ ...vex, armed: true }, violations, { now: NOW }).now).toBeNull();
   });
+  it("counts a call prevented before it ran as a block, not a failed stop", () => {
+    const v = violations[0]!;
+    const w = guardRecordWords(vex, [{ ...v, prevented: true, stopped: false }], { now: NOW });
+    expect(w.evidence).toMatchObject({ tone: "done", text: expect.stringContaining("Guard blocked 1 call") });
+  });
   it("counts watched breaks and failed stops apart from blocks", () => {
     const v = violations[0]!;
     const w = guardRecordWords(vex, [{ ...v, mode: "watch" }, { ...v, seq: 2, stopped: false, at: v.at + 60_000 }], { now: NOW });

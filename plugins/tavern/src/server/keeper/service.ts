@@ -8,7 +8,7 @@ import { KeeperSuccessionStore } from "./succession-store";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { KeeperCallKind } from "../../shared/undo-lane";
-import { applyAskEffect, scopeAskMember, type EffectHandlers, type AskEffect } from "../ask-effects";
+import { applyAskEffect, hasUserAskOutcome, isNoticeEffect, keeperOwnsBlock, keeperRecoveryOptions, needsKeeperReview, scopeAskMember, type EffectHandlers, type AskEffect } from "../ask-effects";
 import { issueShellGrant, settleShellGrant } from "../shell-grants";
 import type { RequestSources } from "../../shared/request-source";
 import { briefSteers } from "../request-sources";
@@ -1231,6 +1231,30 @@ export class Keeper {
       return stopped;
     });
   }
+  private moveNoticeAsk(ask: Ask) {
+    const effect = ask.effect!;
+    const at = this.now();
+    const moved: Ask = { ...ask, lane: "keeper", state: "answered", answer: {
+      by: "tavern", via: "tavern", at, optionId: "moved-to-keeper", note: "Moved to the Keeper.",
+    } };
+    this.store.put("asks", ask.id, moved);
+    this.store.event(at, ask.keeperThreadId, ask.boardQuestId, "blocker.moved", `${ask.question}: ${ask.why}`, {
+      askId: ask.id, effectType: effect.type, memberThreadId: scopeAskMember(effect), reason: ask.why,
+    }, { kind: "tavern" });
+    return moved;
+  }
+  moveNoticeAsks() {
+    this.store.atomic(() => {
+      for (const ask of this.store.openAsks()) {
+        if (isNoticeEffect(ask.effect!)) this.moveNoticeAsk(ask);
+        else if (keeperRecoveryOptions(ask.effect!) && ask.lane !== "keeper") {
+          this.store.put("asks", ask.id, { ...ask, lane: "keeper" });
+          this.store.event(this.now(), ask.keeperThreadId, ask.boardQuestId, "blocker.assigned", ask.question,
+            { askId: ask.id, reason: ask.why }, { kind: "tavern" });
+        }
+      }
+    });
+  }
   ask(
     threadId: string,
     input: AskInput & { effect: AskEffect },
@@ -1291,7 +1315,7 @@ export class Keeper {
     if (input.kind === "greenlight" && input.effect.type !== "greenlight" && (input.effect.type !== "lead-plan" || !trusted))
       throw new Error("A greenlight ask needs its typed plan version; propose the plan instead.");
     if (input.kind === "conclude" && !isCloseEffect(input.effect)) throw new Error("A conclude ask needs its typed draft; tell the quest result instead.");
-    if ((input.effect.type === "placement-blocker" || input.effect.type === "communication-hold") && !trusted) throw new Error("Only Tavern may open this typed ask");
+    if (["placement-blocker", "communication-hold", "repair-guard"].includes(input.effect.type) && !trusted) throw new Error("Only Tavern may open this typed ask");
     if (input.kind === "drafts-as-you" && input.effect.type !== "communication-hold") throw new Error("Call the draft tool first so Tavern can record the exact arguments.");
     if (input.kind === "sends-as-you" && input.effect.type === "decision") input = { ...input,
       options: [{ id: "acknowledge", label: "I have the draft", detail: "Records your answer. The agent does not send anything.", recommended: false }, { id: "deny", label: "Dismiss", detail: "Nothing is sent.", recommended: false }],
@@ -1354,7 +1378,14 @@ export class Keeper {
       answer: null,
       createdAt: this.now(),
     });
+    if (isNoticeEffect(input.effect)) {
+      const moved = this.store.atomic(() => this.moveNoticeAsk(ask));
+      this.changed(threadId, questId);
+      return moved;
+    }
     const projected = undoAskProjection(this.store)(ask);
+    const recovery = keeperRecoveryOptions(input.effect);
+    const keeperBlock = keeperOwnsBlock(input.effect);
     this.store.atomic(() => {
       this.store.put("asks", ask.id, ask);
       if (ask.kind === "conclude" && questId && this.quest(questId).phase !== "closing") {
@@ -1363,10 +1394,10 @@ export class Keeper {
         this.now(),
         threadId,
         questId,
-        "ask.opened",
+        keeperBlock ? "blocker.assigned" : "ask.opened",
         ask.question,
-        { askId: ask.id, lane: projected.lane, keeperName: this.name(callingKeeper), ...eventData },
-        { kind: "agent", threadId },
+        { askId: ask.id, lane: projected.lane, keeperName: this.name(callingKeeper), ...(keeperBlock ? { reason: ask.why, options: recovery } : {}), ...eventData },
+        keeperBlock ? { kind: "tavern" } : { kind: "agent", threadId },
       );
     });
     const standing = this.authority.match(ask);
@@ -1377,12 +1408,40 @@ export class Keeper {
         const current = this.store.get("asks", ask.id);
         if (current?.state !== "open") return;
         if (this.authority.match(current)) return this.routineAskOpened(current);
-        if (this.authority.lane(current) === "user") return this.askOpened(currentAskNames(this.store, undoAskProjection(this.store)(current)));
+        if (hasUserAskOutcome(current, current.effect!) && this.authority.lane(current) === "user") return this.askOpened(currentAskNames(this.store, undoAskProjection(this.store)(current)));
       })
       .catch((error) =>
         console.warn(`Tavern ask notification ${ask.id}: ${String(error)}`),
       );
     return projected;
+  }
+  reviewHeldCommunication(threadId: string, askId: string, dismiss = false) {
+    this.require(threadId, "keeper");
+    const ask = this.store.get("asks", askId);
+    const effect = ask?.effect;
+    if (ask?.keeperThreadId !== threadId || ask.state !== "open" || effect?.type !== "communication-hold" || !effect.keeperReview)
+      throw new Error("No matching held communication for this Keeper to review.");
+    const { hold } = effect;
+    if (dismiss) {
+      this.withdrawAsk(ask.id, "turn-recovered", this.now(), { kind: "agent", threadId }, "Keeper dismissed the held message.");
+      this.changed(threadId, ask.boardQuestId);
+      return null;
+    }
+    if (!hold.target?.trim() || !hold.body?.trim() || hold.act === "draft" && !hold.callDigest)
+      throw new Error("The held call does not contain an exact recipient and message. Ask the member for the missing details or dismiss the hold.");
+    if (ask.boardQuestId) this.guard(threadId, ask.boardQuestId);
+    this.clusterRunner(threadId, ask.boardQuestId, hold.threadId);
+    const reviewed: Ask = { ...ask, effect: { type: "communication-hold", hold } };
+    const lane = this.authority.lane(reviewed);
+    const routed = this.store.atomic(() => {
+      const saved = this.store.put("asks", ask.id, { ...reviewed, lane });
+      this.store.event(this.now(), threadId, ask.boardQuestId, "ask.opened", ask.question, { askId, lane }, { kind: "agent", threadId });
+      return saved;
+    });
+    this.changed(threadId, ask.boardQuestId);
+    if (lane === "user") void Promise.resolve().then(() => this.askOpened(routed))
+      .catch(error => console.warn(`Tavern ask notification ${askId}: ${String(error)}`));
+    return routed;
   }
   clusterRunner(keeperThreadId: string, questId: string | null, runThreadId: string) {
     const runner = this.member(runThreadId);
@@ -1396,7 +1455,7 @@ export class Keeper {
     askId: string,
     optionId: string,
     note: string | null,
-    via: NonNullable<Ask["answer"]>["via"],
+    via: Exclude<NonNullable<Ask["answer"]>["via"], "tavern">,
     by: "user" | "default" | "keeper" | "preapproval",
     surface?: string,
     effects: Partial<EffectHandlers> = {},
@@ -1404,6 +1463,7 @@ export class Keeper {
   ) {
     const ask = this.store.get("asks", askId);
     if (!ask) throw new Error("Unknown ask");
+    if (ask.effect && needsKeeperReview(ask.effect)) throw new Error("The Keeper must review the held communication first.");
     const heldCommunication = ask.effect?.type === "communication-hold" ? ask.effect.hold : undefined;
     if (ask.kind === "sends-as-you" && (by !== "user" || optionId === "delegate" || heldCommunication && !["acknowledge", "deny"].includes(optionId)))
       throw new Error("Only the user can acknowledge or dismiss a send handoff.");
@@ -1433,6 +1493,8 @@ export class Keeper {
     if (by === "keeper") {
       assertUndoLane(this.store, ask.keeperThreadId, ask.kind);
       if (this.authority.lane(ask) !== "keeper") throw new Error("This ask belongs to the user; ask them to decide.");
+      const recovery = keeperRecoveryOptions(ask.effect!);
+      if (recovery && !recovery.includes(optionId)) throw new Error("The Keeper cannot resolve this recovery with that option.");
       const outcome = ask.effect?.type === "decision" ? ask.effect.outcomes?.find(answer => answer.optionId === optionId)?.outcome : undefined;
       if (outcome !== "decline" && !(ask.effect?.type === "grant-shell-act" && optionId === "deny")) this.authority.assertVerdict(ask);
     }

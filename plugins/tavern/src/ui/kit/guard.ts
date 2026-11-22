@@ -35,7 +35,7 @@ export function guardRecordWords(scope: MemberScope, violations: readonly Violat
   const own = violations.filter(v => v.threadId === scope.threadId);
   const watched = own.filter(v => v.mode === "watch");
   const enforced = own.filter(v => v.mode !== "watch");
-  const blocked = enforced.filter(v => v.stopped), failed = enforced.filter(v => !v.stopped);
+  const blocked = enforced.filter(v => v.stopped || v.prevented), failed = enforced.filter(v => !v.stopped && !v.prevented);
   const parts: string[] = [];
   let tone: GuardEvidence["tone"] = "none";
   if (blocked.length) {

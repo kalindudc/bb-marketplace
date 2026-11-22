@@ -160,7 +160,8 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
   };
   if (call.kind === "write" || ["write", "edit", "apply_patch", "multiedit"].includes(name)) {
     const path = call.input.path ?? call.input.file_path;
-    if (typeof path !== "string" || !canWrite(path, call.cwd)) return blocked(`write to ${String(path)}`, "write-path", "the write target is outside allowed roots, protected or cannot be checked");
+    if (typeof path !== "string" || !path.trim() || path.includes("\0")) return blocked(call.toolName, "write-target-missing", "could not read the write target from the call; a valid path is required");
+    if (!canWrite(path, call.cwd)) return blocked(`write to ${path}`, "write-path", "the write target is outside allowed roots, protected or cannot be checked");
   }
   const source = call.input.command ?? call.input.cmd;
   if (typeof source !== "string") return call.kind === "bash" ? blocked("shell call", "shell-input", "the command cannot be checked") : allowed;

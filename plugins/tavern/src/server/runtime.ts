@@ -23,7 +23,8 @@ import { actorSchema, classKind, type Actor, type Brief, type LeadLink, type Mem
 import { TICK_PREFIX } from "../shared/text";
 import { settled, verifiedWaypoint } from "../shared/waypoint";
 import { isCloseEffect, unsettledWaypointSchema, waiverLine, type PullRequestChoices } from "../shared/closing";
-import type { AskEffect } from "./ask-effects";
+import { keeperRecoveryOptions, type AskEffect } from "./ask-effects";
+import { askNeedsUser } from "./attention";
 import { closeAnsweredPullRequests, previewPullRequests, recordPullRequestChoices, StaleClosingCard } from "./conclude-pull-requests";
 import { tags } from "../shared/contract";
 import { Keeper, partyCounts, type PlanInput } from "./keeper/service";
@@ -559,7 +560,6 @@ export class TavernRuntime {
       }, undefined, true);
       patchMemberDetails(k.store, threadId, { delivery: { ...pending, blockerAskId: ask.id } });
       k.store.event(k.now(), member.keeperThreadId, member.boardQuestId, "member.brief-blocked", why, { memberThreadId: threadId, briefId: pending.id, askId: ask.id, attempts: pending.attempts, receiptChecks: checks });
-      void this.push(member.keeperThreadId!, ask.question, ask.why);
     });
     k.changed(threadId, member.boardQuestId);
   }
@@ -787,7 +787,7 @@ export class TavernRuntime {
     askId: string,
     optionId: string,
     note: string | null,
-    via: NonNullable<Ask["answer"]>["via"],
+    via: Exclude<NonNullable<Ask["answer"]>["via"], "tavern">,
     clientAction = false,
     surface = "client (unattested)",
     receipt?: UserActReceipt,
@@ -803,9 +803,23 @@ export class TavernRuntime {
       return await this.answerCurrentAsk(ask, optionId, note, via, clientAction, surface, receipt, preapproved, pullRequestChoices);
     } finally { done(); }
   }
+  async resolveKeeperBlocker(threadId: string, askId: string, optionId: string, note: string | null = null) {
+    const k = this.keeper;
+    k.require(threadId, "keeper");
+    const ask = k.store.get("asks", askId);
+    if (!ask?.effect || ask.keeperThreadId !== threadId || ask.state !== "open" || !keeperRecoveryOptions(ask.effect)?.includes(optionId))
+      throw new Error("This Keeper cannot resolve that block with the selected option.");
+    this.stopAll.assertRunning();
+    this.away.assertWork(ask.boardQuestId, threadId);
+    this.succession.state.assertMutable(threadId);
+    const done = this.succession.track(threadId);
+    try {
+      await this.answerCurrentAsk(ask, optionId, note, "chat", false, "Keeper tool", undefined, false, [], true);
+    } finally { done(); }
+  }
   private async answerCurrentAsk(
-    ask: Ask, optionId: string, note: string | null, via: NonNullable<Ask["answer"]>["via"],
-    clientAction: boolean, surface: string, receipt: UserActReceipt | undefined, preapproved: boolean, pullRequestChoices: PullRequestChoices,
+    ask: Ask, optionId: string, note: string | null, via: Exclude<NonNullable<Ask["answer"]>["via"], "tavern">,
+    clientAction: boolean, surface: string, receipt: UserActReceipt | undefined, preapproved: boolean, pullRequestChoices: PullRequestChoices, keeperAnswer = false,
   ) {
     const askId = ask.id;
     if (ask.effect?.type === "release-hold" && !clientAction) throw new Error("Releasing a checker-handoff hold requires an explicit client action; the Keeper cannot answer it.");
@@ -839,7 +853,7 @@ export class TavernRuntime {
       "placement-blocker": () => {
         if (!ask.boardQuestId) throw new Error("A placement blocker needs its quest");
         if (optionId === "stop") after.push(() => this.stop(ask.boardQuestId!));
-        else if (optionId === "retry") this.keeper.reanchor(ask.keeperThreadId, "One pre-approved placement retry; repeat the exact failed hire");
+        else if (optionId === "retry") this.keeper.reanchor(ask.keeperThreadId, "Repeat the exact failed hire only after checking its placement");
       },
       "retry-provider": () => {
         if (optionId !== "retry") return;
@@ -859,7 +873,8 @@ export class TavernRuntime {
             if (memberDetails(k.store, effect.threadId).delivery?.id === pending.id) await this.sendInitialBrief(effect.threadId, pending.text);
             k.changed(effect.threadId, ask.boardQuestId);
           });
-        } else if (optionId === "release") after.push(() => this.release(ask.keeperThreadId, effect.threadId, "User released an unbriefed member", { kind: "ask-answer", id: ask.id }));
+        } else if (optionId === "release") after.push(() => this.release(ask.keeperThreadId, effect.threadId,
+          keeperAnswer ? "Brief delivery could not be confirmed" : "User released an unbriefed member", keeperAnswer ? undefined : { kind: "ask-answer", id: ask.id }));
       },
       "retry-stop": effect => {
         if (effect.type !== "retry-stop" || !ask.boardQuestId || optionId !== "retry") return;
@@ -869,6 +884,12 @@ export class TavernRuntime {
           catch (error) { this.bb.log.warn(`Tavern stopping hire recovery: ${String(error)}`); }
         });
         after.push(() => this.retryStops(ask.keeperThreadId, questId, true));
+      },
+      "repair-guard": effect => {
+        if (effect.type !== "repair-guard" || optionId !== "done" || !clientAction || receipt?.act !== "answerAsk")
+          throw new Error("Guard repair needs your explicit Done answer on the card.");
+        if (this.scopes?.api.localScopeRecord(effect.memberThreadId)?.scope.mode !== "enforce" || !this.scopes.api.locallyArmed(effect.memberThreadId))
+          throw new Error("The guard is not armed yet. Restart the Pi session and check again.");
       },
       "grant-scope": () => {
         if (this.scopes) after.push(() => this.scopes!.answer(this.keeper.store.get("asks", askId)!));
@@ -880,7 +901,7 @@ export class TavernRuntime {
     };
     const mintClusterGrant = cluster && optionId === "confirm-run" && this.keeper.store.get("asks", askId)?.state === "open";
     try {
-      this.keeper.answerAsk(askId, optionId, note, via, preapproved ? "preapproval" : "user", surface, effects, receipt);
+      this.keeper.answerAsk(askId, optionId, note, via, keeperAnswer ? "keeper" : preapproved ? "preapproval" : "user", surface, effects, receipt);
     } catch (error) {
       if (error instanceof StaleClosingCard) {
         this.keeper.withdrawStaleClosing(ask, error.message);
@@ -1185,9 +1206,9 @@ export class TavernRuntime {
     const keeperId = member?.keeperThreadId ?? hire?.owner.keeperThreadId;
     if (!keeperId || !isKeeperIdentity(this.keeper.store, this.keeper.member(keeperId))) return;
     const state = this.keeper.store.runtime(threadId);
-    if (state.registryFailureAskId && this.keeper.store.get("asks", state.registryFailureAskId)?.state === "open") return;
+    if (state.registryFailureAskId) return;
     const name = member ? this.keeper.name(member) : hire?.owner.displayName ?? "The hired member";
-    const ask = this.keeper.ask(keeperId, { effect: { type: "answer-blocker" }, kind: "blocker", question: `${name} is waiting for its project class files`, why: problem.slice(0, 200), options: [{ id: "retry", label: "Retry", detail: "Repair the project lookup or class files; admission retries without running unscoped.", recommended: true }], meanwhile: "This member remains held. Other admitted work may continue.", holds: [] }, undefined, true);
+    const ask = this.keeper.ask(keeperId, { effect: { type: "registry-blocker" }, kind: "blocker", question: `${name} is waiting for its project class files`, why: problem.slice(0, 200), options: [{ id: "retry", label: "Retry", detail: "Repair the project lookup or class files; admission retries without running unscoped.", recommended: true }], meanwhile: "This member remains held. Other admitted work may continue.", holds: [] }, undefined, true);
     this.keeper.store.patch(threadId, { registryFailureAskId: ask.id });
   }
   private projectClassNotice(threadId: string, classId: string, projectId: string) {
@@ -3389,6 +3410,8 @@ export class TavernRuntime {
   }
   async push(threadId: string, title: string, body: string, askId?: string) {
     const id = askId ?? this.keeper.store.openAsks(threadId).find(ask => ask.question === title && ask.why === body)?.id;
+    const ask = id ? this.keeper.store.get("asks", id) : null;
+    if (ask && (ask.state !== "open" || !askNeedsUser(this.keeper.store, ask))) return;
     const notificationId = id ? this.away.notificationKey(id) : null;
     if (notificationId && (this.notifiedAsks.has(notificationId) || this.away.notified(notificationId))) return;
     const attention = this.config().attention;
@@ -3402,7 +3425,6 @@ export class TavernRuntime {
       if (start < end ? minute >= start && minute < end : minute >= start || minute < end) return this.alerts.hold(threadId, id, notificationId, "quiet-hours");
     }
     if (this.away.store.snapshot().status.closed) {
-      const ask = id ? this.keeper.store.get("asks", id) : null;
       if (!ask || !this.away.shouldNotify(ask.kind, ask.createdAt)) return this.alerts.hold(threadId, id, notificationId, "closed-window");
     }
     if (notificationId) {

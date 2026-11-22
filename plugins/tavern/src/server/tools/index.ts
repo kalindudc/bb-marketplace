@@ -22,6 +22,7 @@ import {
 import type { TavernRuntime } from "../runtime";
 import { LIMITS } from "../limits";
 import { readStatus, statusInput } from "../status";
+import { keeperRecoveryOptions } from "../ask-effects";
 import { readRequestSources } from "../request-sources";
 import { requestSourceReadSchema } from "../../shared/request-source";
 import { scopeOverrideSchema } from "../../scope/schema";
@@ -225,7 +226,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         if (error instanceof PlacementHireBlocked && error.outcome === "unknown") return error.message;
         if (error instanceof PlacementHireBlocked && input.boardQuestId) {
           const ask = k.ask(threadId, { boardQuestId: input.boardQuestId, kind: "blocker", effect: { type: "placement-blocker" }, question: "Placement blocked this hire", why: error.message.slice(0, 200), options: [{ id: "retry", label: "Retry once", detail: "Repeat this exact hire without changing its placement.", recommended: false }, { id: "stop", label: "Stop the quest", detail: "Stop rather than bypass placement.", recommended: false }], meanwhile: "No alternate placement is approved.", holds: input.waypointId ? [input.waypointId] : [] }, {}, true);
-          return `Not hired. ${error.message}\n::tavern-ask{id="${ask.id}"}`;
+          return `Not hired. ${error.message}\nRecovery ${ask.id} is in tavern_status. Fix placement before retrying; ask the user only for a decision you cannot make.`;
         }
         if (error instanceof PlacementHireBlocked)
           return `Not hired. ${error.message}\n${error.placement ? `Do not hire again; the user can press Retry on placement ${error.placement.placementId}.` : "Retry this exact hire after the blocker is resolved; no machine was allocated."}`;
@@ -284,14 +285,17 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_scope",
     "Updated a member scope",
-    "Narrow or request a wider scope for one member of your own party. memberThreadId accepts its unique live display name or thread id. Give the reason. Temporary paths (/tmp, /private/tmp and the host TMPDIR) and the member’s own thread storage are already writable with native write/edit and inspected shell writers; do not request them. Only grants covered by the user-controlled repo policy apply without an ask. Other widening requires an explicit, never-timed scope answer; scope permission never approves a merge, deploy, delete, send or production action. tools.allow accepts tool names or valid patterns, not shell commands such as npm test or node --test: commands are governed by the preset and shell rules. A denied widening means no widening, not a new ban on commands already allowed. Narrowing applies immediately; initial briefs wait for their scope grant and new re-briefs wait while widening is pending. Never deliver dependent work through another channel. Only the user's explicit remember-for-this-repo choice persists approved shell grants.",
-    z.object({
-      memberThreadId: id,
-      override: scopeOverrideSchema,
-      reason: z.string().trim().min(1).max(500),
-    }),
+    "Narrow or request scope for your own member by unique name or thread id, with a reason. Temporary paths and the member’s own thread storage already allow native write/edit and inspected shell writers; do not request them. Only grants covered by the user-controlled repo policy apply without an ask. Other widening requires an explicit, never-timed scope answer; scope permission never approves a merge, deploy, delete, send or production action. tools.allow accepts tool names or valid patterns, not shell commands such as npm test or node --test: commands are governed by the preset and shell rules. A denied widening means no widening, not a new ban on commands already allowed. Narrowing applies immediately; initial briefs wait for their scope grant and new re-briefs wait while widening is pending. Never deliver dependent work through another channel. Only the user's remember-for-this-repo choice persists grants. Handle scope blocks yourself: inspect tavern_status, redirect, request scope, or release. Use repairGuard:true only if a local Pi guard needs the user to restart it.",
+    z.union([
+      z.object({ memberThreadId: id, override: scopeOverrideSchema, reason: z.string().trim().min(1).max(500) }).strict(),
+      z.object({ memberThreadId: id, repairGuard: z.literal(true) }).strict(),
+    ]).meta({ type: "object" }),
     (input, threadId) => {
       if (!runtime.scopes) throw new Error("Tavern scopes are not registered");
+      if ("repairGuard" in input) {
+        const ask = runtime.scopes.requestGuardRepair(threadId, input.memberThreadId);
+        return `Only the user can restart the Pi session.\n::tavern-ask{id="${ask.id}"}`;
+      }
       return runtime.scopes.override(
         threadId,
         input.memberThreadId,
@@ -359,8 +363,8 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_ask",
     "Opened an ask",
-    "Open a non-blocking ask. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. For Kubernetes, Terraform, Helm and kapp writes use cluster-write with target.command, change, undo when known and runThreadId when a member runs it; every run needs approval and confirmation on the card. For other held shell acts pass shellGrant.heldEventId from the tick; Tavern supplies the lane and options. Sends-as-you needs the full recipient and draft. For checker-handoff release, use blocker, boardQuestId and releaseCheckerHandoff:true; Tavern pins the hold. Include options, a recommendation, what continues and the held waypoints. Use untimed decision for clarification. Never use a native question tool or infer approval from chat or a timer. An answer does not execute an act or supply credentials.",
-    askSchema
+    "Ask only for a choice the user must make. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. For Kubernetes, Terraform, Helm and kapp writes use cluster-write with target.command, change, undo when known and runThreadId when a member runs it; every run needs approval and confirmation on the card. Use shellGrant.heldEventId for held shell acts, or heldCommunicationAskId after reviewing a held message. Set dismiss:true to discard that hold. Sends-as-you needs the full recipient and draft. For checker-handoff release, use blocker, boardQuestId and releaseCheckerHandoff:true; Tavern pins the hold. Include options, a recommendation, what continues and the held waypoints. Use untimed decision for clarification or a block you cannot resolve. Never use a native question tool or infer approval from chat or a timer. An answer does not execute an act or supply credentials.",
+    z.union([askSchema
       .pick({
         question: true,
         why: true,
@@ -384,8 +388,15 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
           z.object({ heldEventId: z.string().min(1).max(420) }).strict(),
           z.object({ memberThreadId: z.string().min(1).max(200), command: z.string().min(1).max(8000) }).strict(),
         ]).optional(),
-      }),
+      }).strict(),
+      z.object({ heldCommunicationAskId: id, dismiss: z.literal(true).optional() }).strict(),
+    ]).meta({ type: "object" }),
     (input, threadId) => {
+      if ("heldCommunicationAskId" in input) {
+        const ask = k.reviewHeldCommunication(threadId, input.heldCommunicationAskId, input.dismiss);
+        if (!ask) return "Held message dismissed. Nothing was sent or drafted.";
+        return ask.lane === "user" ? `Held message reviewed.\n::tavern-ask{id="${ask.id}"}` : "Held message reviewed; use tavern_decide in your delegated lane.";
+      }
       if (input.shellGrant) {
         if (!runtime.scopes) throw new Error("Shell grants are unavailable.");
         if (input.proceedInMinutes != null) throw new Error("Shell grant asks never default.");
@@ -400,9 +411,9 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         throw new Error(
           "Greenlight asks are created by tavern_plan so they bind to a specific plan version",
         );
-      const ask = k.ask(threadId, { ...input, effect: input.kind === "blocker" ? { type: "answer-blocker" } : { type: "decision" } });
-      if (ask.kind === "blocker")
-        void runtime.push(threadId, ask.question, ask.why);
+      if (input.kind === "blocker" && !input.releaseCheckerHandoff)
+        throw new Error("Handle the block first. If only the user can decide, use an untimed decision with the choices that would unblock it.");
+      const ask = k.ask(threadId, { ...input, effect: { type: "decision" } });
       return `Ask recorded. Continue the work that does not depend on it. Write on its own line:\n::tavern-ask{id="${ask.id}"}`;
     },
   );
@@ -412,7 +423,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_decide",
     "Recorded a decision",
-    "Record a reversible decision with Undo. Give coveredBy, options, consequence and unsure:false; use leadPlan for a linked plan. For your lane's ask give askId, optionId, consequence and unsure:false; Tavern gets the citation and options from the ask. If unsure, ask the user. Never claim the user's consent without an answered ask; give its sourceRef. exceeds: party or rangers allows one extra hire within hard limits.",
+    "Record a reversible decision with Undo. Give coveredBy, options, consequence and unsure:false; use leadPlan for a linked plan. For your lane's ask give askId, optionId, consequence and unsure:false; Tavern gets the citation and options from the ask. If unsure, ask the user. Never claim the user's consent without an answered ask; give its sourceRef. exceeds: party or rangers permits one extra hire within hard limits.",
     z.union([
       decisionInput.extend(decisionSchema.pick({ coveredBy: true, options: true }).required().shape)
         .extend(decisionSchema.pick({ exceeds: true, leadPlan: true }).shape).strict(),
@@ -421,7 +432,13 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     ]).meta({ type: "object" }),
     async (input, threadId) => {
       if ("askId" in input) {
-        const effect = k.store.get("asks", input.askId)?.effect;
+        const ask = k.store.get("asks", input.askId), effect = ask?.effect;
+        if (ask && effect && keeperRecoveryOptions(effect)) {
+          if (input.source !== "keeper" || input.unsure || !input.reversible || ask.boardQuestId !== (input.boardQuestId ?? null) || (input.kind && input.kind !== ask.kind))
+            throw new Error("Keeper recovery needs the exact quest and option, source keeper, reversible:true and unsure:false.");
+          await runtime.resolveKeeperBlocker(threadId, input.askId, input.optionId, input.why);
+          return "Keeper recovery recorded. Check tavern_status for the outcome.";
+        }
         if (effect?.type === "conclude" && effect.draft.lead) {
           if (input.source !== "keeper") throw new Error("The hiring Keeper receives the child outcome as its own call.");
           return runtime.answerLeadConclude(threadId, input.askId, input.boardQuestId, input.optionId, input.why, input.consequence, input.unsure);
@@ -543,12 +560,6 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       }),
     async (input, threadId) => {
       const report = k.report(threadId, input);
-      if (report.status === "blocked" && !report.wait && report.keeperThreadId)
-        void runtime.push(
-          report.keeperThreadId,
-          "Party member blocked",
-          report.outcome,
-        );
       const member = k.member(threadId)!;
       if (member.classId === "ranger" && report.status === "done") {
         const state = k.store.runtime(threadId);

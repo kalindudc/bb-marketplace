@@ -557,7 +557,7 @@ function ScopePanel({ data }: { data: ThreadDecor }) {
     </div> : null}
     {watch && <p className="m small">{watch}</p>}
     {otherWatch > 0 && <p className="m small">{plural(otherWatch, "other Watch observation")}. Nothing was stopped.</p>}
-    {violations.length > 0 && <ul className="tw-viol" aria-label="Rule breaks">{violations.map(v => <li key={`${v.eventId}-${v.seq}`} className={v.stopped ? "stopped" : "missed"}><span className="vs">{v.stopped ? "Stopped" : "Not stopped"}</span><span className="vr">{v.reason} <code>{v.ruleId}</code>{v.stopError ? <span className="m"> · {v.stopError}</span> : null}</span><TimeAgo at={v.at} /></li>)}</ul>}
+    {violations.length > 0 && <ul className="tw-viol" aria-label="Rule breaks">{violations.map(v => <li key={`${v.eventId}-${v.seq}`} className={v.prevented || v.stopped ? "stopped" : "missed"}><span className="vs">{v.prevented ? "Blocked before running" : v.stopped ? "Stopped" : "Not stopped"}</span><span className="vr">{v.reason} <code>{v.ruleId}</code>{v.stopError ? <span className="m"> · {v.stopError}</span> : null}</span><TimeAgo at={v.at} /></li>)}</ul>}
     {ms.restartNeeded ? <p className="m small"><b>Restart needed.</b> {ms.restartNeeded}</p> : <p className="m small">A scope change applies to the next guarded call.</p>}
   </section>;
 }

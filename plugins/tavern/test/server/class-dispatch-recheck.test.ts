@@ -168,7 +168,7 @@ describe("registry dispatch recheck", () => {
     await second;
   });
 
-  it.each(["member", "hire"] as const)("keeps a %s waiting after several minutes and opens only one blocker for its Keeper", async start => {
+  it.each(["member", "hire"] as const)("keeps a %s waiting after several minutes and records one notice for its Keeper", async start => {
     const f = setup();
     if (start === "member") bindWorker(f);
     else f.k.store.put("hires", "token", { classId: "smith", characterId: null, projectId: "project", createdAt: f.time(), owner: { keeperThreadId: "lead", boardQuestId: null, waypointId: null, errand: true, title: "Build", brief } });
@@ -180,7 +180,8 @@ describe("registry dispatch recheck", () => {
     f.advance(300_001);
     expect.soft(await f.runtime.dispatch(ctx)).toMatchObject({ action: "wait" });
     expect.soft(await f.runtime.dispatch(ctx)).toMatchObject({ action: "wait" });
-    expect(f.k.asks("lead")).toMatchObject([{ kind: "blocker", state: "open", why: expect.stringContaining("Registry offline") }]);
+    expect(f.k.asks("lead")).toMatchObject([{ kind: "blocker", state: "answered", answer: { by: "tavern" }, why: expect.stringContaining("Registry offline") }]);
+    expect(f.k.store.events("lead").filter(event => event.type === "blocker.moved")).toHaveLength(1);
     f.bb.sdk.projects.get = async () => ({ sources: [] }) as never;
     expect(await f.runtime.dispatch(ctx)).toEqual({ action: "proceed" });
     expect(f.k.asks("lead").filter(ask => ask.state === "open")).toHaveLength(0);

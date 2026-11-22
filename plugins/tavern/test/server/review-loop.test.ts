@@ -623,27 +623,30 @@ describe("remaining review coverage", () => {
     k.confirmRule(rule.id, true);
     expect(k.rules("lead").some((r) => r.id === rule.id)).toBe(true);
   });
-  it("pushes only blocker asks and blocked or decision-needed reports", async () => {
+  it("does not push a member block or a review-only blocker to the user", async () => {
     const { runtime, k, harness } = setup();
     registerTools(runtime.bb, runtime);
     bind(k);
     await harness.behavior.invokeAgentTool("tavern_ask", askInput, {
       threadId: "lead",
     });
-    await harness.behavior.invokeAgentTool("tavern_report", report, {
+    await harness.behavior.invokeAgentTool("tavern_report", { ...report, status: "needs-decision" }, {
       threadId: "child",
     });
     expect(harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(0);
-    await harness.behavior.invokeAgentTool(
+    await expect(harness.behavior.invokeAgentTool(
       "tavern_ask",
       { ...askInput, kind: "blocker" },
       { threadId: "lead" },
-    );
+    )).rejects.toThrow(/handle the block first/i);
     await harness.behavior.invokeAgentTool(
       "tavern_report",
       { ...report, status: "blocked" },
       { threadId: "child" },
     );
-    expect(harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(2);
+    await harness.behavior.invokeAgentTool("tavern_report", report, { threadId: "child" });
+    expect(harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(0);
+    expect(k.store.query("reports", "keeperThreadId", "lead").map(report => report.status)).toEqual(["needs-decision", "blocked", "done"]);
+    expect(k.store.events("lead").filter(event => event.type === "report.filed")).toContainEqual(expect.objectContaining({ data: expect.objectContaining({ status: "blocked" }) }));
   });
 });

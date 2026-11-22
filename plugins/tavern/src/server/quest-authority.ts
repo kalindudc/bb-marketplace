@@ -6,6 +6,7 @@ import { verifiedWaypoint } from "../shared/waypoint";
 import type { Keeper } from "./keeper/service";
 import { QUEST_LANES, authorize, commitUserAct, type UserActReceipt } from "./authority";
 import { readUndoLanes } from "./undo-record";
+import { keeperOwnsBlock } from "./ask-effects";
 import type { UndoKind } from "../shared/undo-lane";
 export type StandingAnswer = { questId: string; grant: Preapproval; optionId: string; placement: boolean };
 export class QuestAuthority {
@@ -59,6 +60,7 @@ export class QuestAuthority {
     k.changed(q.keeperThreadId, q.id);
   }
   baseLane(ask: Pick<Ask, "kind" | "boardQuestId" | "effect" | "sendTarget"> & { unsure?: boolean }): "user" | "keeper" {
+    if (ask.effect && keeperOwnsBlock(ask.effect)) return "keeper";
     if (ask.kind === "cluster-write" || ask.kind === "sends-as-you" || ask.unsure || !ask.boardQuestId) return "user";
     const q = this.keeper.store.get("quests", ask.boardQuestId);
     if (!q || ["done", "stopping", "stopped"].includes(q.phase)) return "user";
@@ -101,6 +103,7 @@ export class QuestAuthority {
   }
   lane(ask: Parameters<QuestAuthority["baseLane"]>[0]): "user" | "keeper" {
     if (this.baseLane(ask) === "user") return "user";
+    if (!ask.boardQuestId || ask.effect && keeperOwnsBlock(ask.effect)) return "keeper";
     const k = this.keeper, keeperId = k.quest(ask.boardQuestId!).keeperThreadId;
     return readUndoLanes(k.store, keeperId).some(shift => shift.kind === ask.kind) ? "user" : "keeper";
   }

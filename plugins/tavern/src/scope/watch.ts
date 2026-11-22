@@ -36,10 +36,14 @@ export function callsFromItem(item: Item, fallbackCwd: string): ScopeCall[] {
   const cwd = typeof item.cwd === "string" ? item.cwd : fallbackCwd;
   if (item.type === "commandExecution") return [{ kind: "bash", toolName: "bash", input: { command: item.command }, cwd }];
   if (item.type === "fileRead") return [{ kind: "read", toolName: "read", input: { path: item.path }, cwd }];
-  if (item.type === "fileChange") return Array.isArray(item.changes) ? item.changes.flatMap(change => {
-    const value = change as Record<string, unknown>;
-    return [value.path, value.movePath].filter(path => typeof path === "string").map(path => ({ kind: "write" as const, toolName: "write", input: { path }, cwd }));
-  }) : [{ kind: "write", toolName: "write", input: {}, cwd }];
+  if (item.type === "fileChange") {
+    const write = (path?: unknown): ScopeCall => ({ kind: "write", toolName: "write", input: path === undefined ? {} : { path }, cwd });
+    return Array.isArray(item.changes) && item.changes.length ? item.changes.flatMap(change => {
+      if (!change || typeof change !== "object") return [write()];
+      const { path, movePath } = change as Record<string, unknown>;
+      return movePath === undefined ? [write(path)] : [write(path), write(movePath)];
+    }) : [write()];
+  }
   if (item.type === "toolCall") {
     const bare = String(item.tool);
     const server = typeof item.server === "string" ? item.server : undefined;
@@ -113,6 +117,12 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
       catch (error) { bb.log.warn("Tavern scope observation notification failed: " + String(error)); }
     }
   };
+  const notify = async (violation: Violation, binding?: ScopeObservationBinding) => {
+    store.record(violation);
+    if (violation.mode !== "enforce") return;
+    try { await deps.onViolation(violation, binding); }
+    catch (error) { bb.log.warn("Tavern scope notification failed: " + String(error)); }
+  };
   const contain = async (threadId: string, providerId: string, eventId: string, seq: number, createdAt: number, decision: Decision, call?: ScopeCall, binding?: ScopeObservationBinding): Promise<Violation | undefined> => {
     if (decision.allow) return;
     const record = store.records.get(threadId), mode = modeFor(threadId);
@@ -127,12 +137,8 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
     const ask = decision.act && actAskKind(decision.act);
     const reason = decision.act && ask ? `${decision.act} needed a ${ask} ask; detected after dispatch.` : decision.reason;
     const violation: Violation = { threadId, providerId, at, eventId, seq, ruleId: decision.ruleId, reason, ...(decision.act ? { act: decision.act } : {}), call, mode, stopped: mode === "enforce" && !stopError, stopError, latencyMs: Math.max(0, at - createdAt) };
-    store.record(violation);
+    await notify(violation, binding);
     if (mode === "watch" && decision.act) deps.onActObservation?.({ threadId, eventId, at, mode, act: decision.act });
-    if (mode === "enforce") {
-      try { await deps.onViolation(violation, binding); }
-      catch (error) { bb.log.warn("Tavern scope notification failed: " + String(error)); }
-    }
     return violation;
   };
   const check = async (threadId: string, providerId: string, sequence: number) => {
@@ -217,6 +223,14 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
             const cwd = typeof reportedCwd === "string" ? reportedCwd : rawCalls[0]?.cwd;
             const exact = typeof command === "string" && command.length <= 8000 && cwd?.startsWith("/") && cwd.length <= 4000;
             deps.onActObservation?.({ threadId, eventId: row.id, at: row.createdAt, mode: "enforce", act, preflight: true, ...(exact ? { command, cwd } : {}) });
+          } else if (item.approvalStatus !== "denied" && modeFor(threadId) === "enforce") {
+            const reason = resultTexts(item).find(text => text.startsWith(BLOCK_MARKER));
+            if (reason) {
+              const at = Date.now(), call = rawCalls[0];
+              const rule = /\nTavern scope rule: ([\w:.-]{1,120})$/.exec(reason);
+              await notify({ threadId, providerId, eventId: row.id, seq: row.seq, at, ruleId: rule?.[1] ?? "guard-preflight", reason: reason.slice(0, rule?.index ?? 2000).slice(0, 2000),
+                ...(call ? { call: { ...call, input: {} } } : {}), mode: "enforce", prevented: true, stopped: false, latencyMs: Math.max(0, at - row.createdAt) });
+            }
           }
           advance(); continue;
         }
@@ -263,7 +277,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
         const calls = callsFromItem(item, deps.cwdForThread?.(threadId) ?? process.cwd());
         if (providerId === "pi") {
           if (modeFor(threadId) === "enforce" && !store.isArmed(threadId)) {
-            await contain(threadId, providerId, row.id, row.seq, row.createdAt, blocked("tool call", "guard-not-loaded", "guard not loaded; restart pi after repairing Tavern's guard"));
+            await contain(threadId, providerId, row.id, row.seq, row.createdAt, blocked("tool call", "guard-not-loaded", "guard not loaded; restart Pi after repairing Tavern's guard"), calls[0]);
             if (stopped.has(threadId)) break;
             continue;
           }

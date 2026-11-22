@@ -21,11 +21,11 @@ export function legacyAskEffect(ask: Ask, meta: Records["askMeta"] | null, runti
   return { type: "decision" };
 }
 export function scopeAskMember(effect: Ask["effect"]): string | undefined {
-  if (effect?.type === "scope-blocker" || effect?.type === "grant-scope") return effect.memberThreadId;
+  if (effect?.type === "scope-blocker" || effect?.type === "grant-scope" || effect?.type === "repair-guard") return effect.memberThreadId;
 }
 
 export type EffectHandlers = { [K in AskEffect["type"]]: (effect: AskEffect) => void };
-export const ASK_EFFECTS: Record<AskEffect["type"], { act: Act; handler: keyof EffectHandlers; answerOnly?: true }> = {
+export const ASK_EFFECTS: Record<AskEffect["type"], { act: Act; handler: keyof EffectHandlers; answerOnly?: true; noticeOnly?: true; keeperRecovery?: readonly string[] }> = {
   greenlight: { act: "greenlight", handler: "greenlight" },
   "lead-plan": { act: "greenlight", handler: "lead-plan" },
   conclude: { act: "conclude", handler: "conclude" },
@@ -35,25 +35,37 @@ export const ASK_EFFECTS: Record<AskEffect["type"], { act: Act; handler: keyof E
   "soft-limit": { act: "answerAsk", handler: "soft-limit" },
   "communication-hold": { act: "answerAsk", handler: "communication-hold", answerOnly: true },
   "pull-request-draft": { act: "answerAsk", handler: "pull-request-draft", answerOnly: true },
-  "retry-stop": { act: "answerAsk", handler: "retry-stop" },
-  "retry-brief": { act: "answerAsk", handler: "retry-brief" },
+  "retry-stop": { act: "answerAsk", handler: "retry-stop", keeperRecovery: ["retry"] },
+  "retry-brief": { act: "answerAsk", handler: "retry-brief", keeperRecovery: ["retry", "release"] },
   "grant-scope": { act: "answerAsk", handler: "grant-scope" },
   "grant-shell-act": { act: "answerAsk", handler: "grant-shell-act" },
   "retry-provider": { act: "answerAsk", handler: "retry-provider" },
   "retry-tick": { act: "answerAsk", handler: "retry-tick" },
-  "placement-blocker": { act: "answerAsk", handler: "placement-blocker", answerOnly: true },
+  "placement-blocker": { act: "answerAsk", handler: "placement-blocker", keeperRecovery: ["retry"] },
   "answer-blocker": { act: "answerAsk", handler: "answer-blocker", answerOnly: true },
+  "registry-blocker": { act: "answerAsk", handler: "registry-blocker", noticeOnly: true },
   decision: { act: "answerAsk", handler: "decision", answerOnly: true },
-  "scope-blocker": { act: "answerAsk", handler: "scope-blocker", answerOnly: true },
+  "scope-blocker": { act: "answerAsk", handler: "scope-blocker", noticeOnly: true },
+  "repair-guard": { act: "answerAsk", handler: "repair-guard" },
   "detection-hire": { act: "answerAsk", handler: "detection-hire", answerOnly: true },
 };
+export const isNoticeEffect = (effect: AskEffect) => ASK_EFFECTS[effect.type].noticeOnly === true;
+export const keeperRecoveryOptions = (effect: AskEffect) => ASK_EFFECTS[effect.type].keeperRecovery;
+export const needsKeeperReview = (effect: AskEffect) => effect.type === "communication-hold" && effect.keeperReview === true;
+export const keeperOwnsBlock = (effect: AskEffect) => isNoticeEffect(effect) || !!keeperRecoveryOptions(effect) || needsKeeperReview(effect);
+
+export function hasUserAskOutcome(ask: Pick<Ask, "options">, effect: AskEffect): boolean {
+  return !keeperOwnsBlock(effect) && (effect.type !== "answer-blocker" || ask.options.length > 1);
+}
+
 export function applyAskEffect(effect: AskEffect, handlers: Partial<EffectHandlers>, receipt: { by: "user" | "default" | "keeper" | "preapproval"; id: string }) {
   if (receipt.by === "default" && effect.type !== "decision") throw new Error("Only a reversible plain decision may default");
   const row = ASK_EFFECTS[effect.type];
+  if (row.noticeOnly) throw new Error("This block belongs to the Keeper, not to a user answer.");
   if (receipt.by === "preapproval" && effect.type === "close-early") throw new Error("Closing early requires your explicit answer");
   if (effect.type === "lead-plan" && receipt.by !== "user") throw new Error("This lead plan needs your explicit answer.");
   if (receipt.by === "preapproval" && effect.type === "grant-shell-act") throw new Error("Pre-approval cannot issue a shell grant");
-  if (receipt.by === "keeper" && effect.type !== "decision" && !(effect.type === "communication-hold" && effect.hold.act === "draft") && effect.type !== "pull-request-draft" && effect.type !== "grant-shell-act") throw new Error("Keeper answers cannot apply user-only transitions");
+  if (receipt.by === "keeper" && !row.keeperRecovery && effect.type !== "decision" && !(effect.type === "communication-hold" && effect.hold.act === "draft") && effect.type !== "pull-request-draft" && effect.type !== "grant-shell-act") throw new Error("Keeper answers cannot apply user-only transitions");
   authorize(receipt.by === "default" || receipt.by === "keeper" ? "defaultDecision" : row.act, { level: receipt.by === "default" || receipt.by === "keeper" ? "keeper" : "user-explicit", receipt: receipt.id });
   const handler = handlers[row.handler];
   if (!handler) {

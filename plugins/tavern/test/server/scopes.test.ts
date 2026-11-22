@@ -27,6 +27,8 @@ import { evaluate } from "../../src/scope/engine";
 import { armScope } from "../../src/scope/store";
 import { holdCommunication, readCommunicationHolds } from "../../src/scope/communication-holds";
 import { claimShellGrant } from "../../src/scope/shell-grants";
+import { AttentionSnapshot } from "../../src/server/attention";
+import { readStatus, statusInput } from "../../src/server/status";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -126,9 +128,14 @@ describe("backend scope integration", () => {
     holdCommunication(local.file, local.scope, call, preview);
     await scopes.drainCommunication("lead");
     expect(f.k.store.openAsks("lead").filter(ask => ask.kind === "sends-as-you")).toEqual([
-      expect.objectContaining({ effect: { type: "communication-hold", hold: expect.objectContaining(preview) }, lane: "user" }),
+      expect.objectContaining({ effect: { type: "communication-hold", keeperReview: true, hold: expect.objectContaining(preview) }, lane: "keeper" }),
     ]);
     expect(readCommunicationHolds(local.file)).toEqual([]);
+    expect(new AttentionSnapshot(f.k.store).asks).toEqual([]);
+    const hold = f.k.store.openAsks("lead").find(ask => ask.kind === "sends-as-you")!;
+    expect(() => f.k.reviewHeldCommunication("child", hold.id)).toThrow();
+    f.k.reviewHeldCommunication("lead", hold.id);
+    expect(new AttentionSnapshot(f.k.store).asks.map(ask => ask.id)).toEqual([hold.id]);
     config.mockReturnValue({ ...original, scopes: { mode: "off", sendTools: [] } });
     f.runtime.settingsChanged();
     expect(scopes.api.localScopeRecord("lead")!.scope).not.toHaveProperty("sendTools");
@@ -147,7 +154,11 @@ describe("backend scope integration", () => {
     const ask = f.k.store.openAsks("lead", f.q.id).find(item => item.kind === "drafts-as-you")!;
     const send = vi.spyOn(f.bb.sdk.threads, "send");
     registerRpc(f.bb, f.runtime);
-    await f.harness.invokeRpc("answerAsk", { askId: ask.id, optionId: "approve", note: null, via: "page" });
+    expect(new AttentionSnapshot(f.k.store).asks).toEqual([]);
+    const answer = () => f.harness.invokeRpc("answerAsk", { askId: ask.id, optionId: "approve", note: null, via: "page" });
+    await expect(answer()).rejects.toThrow(/Keeper must review/);
+    f.k.reviewHeldCommunication("lead", ask.id);
+    await answer();
     await vi.waitFor(() => expect(send.mock.calls.some(([input]) => input.threadId === "child" && JSON.stringify(input).includes("exact call"))).toBe(true));
     f.advance(360_000);
     scopes.refreshCommunication("child");
@@ -163,6 +174,7 @@ describe("backend scope integration", () => {
       { act: "draft", tool: "fixture_draft", target: "room", body: "new" });
     await scopes.drainCommunication("child");
     const next = f.k.store.openAsks("lead", f.q.id).find(item => item.kind === "drafts-as-you")!;
+    f.k.reviewHeldCommunication("lead", next.id);
     await f.harness.invokeRpc("answerAsk", { askId: next.id, optionId: "approve", note: null, via: "page" });
     expect(scopes.api.localScopeRecord("child")!.scope.communicationAuthority?.receipts).toEqual([expect.objectContaining({ askId: next.id })]);
     await f.runtime.closeAfterRevokingClusterGrants(() => {});
@@ -575,7 +587,7 @@ describe("backend scope integration", () => {
     await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("No machine rule places Smith members for this project, and this Keeper runs on another machine. Add a rule in Settings, Where work runs.");
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
   });
-  it("records a violation as an external tick fact, opens only one blocker and exposes scope state in RPCs", async () => {
+  it("records one Keeper notice and no user ask, while keeping the evidence visible", async () => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);
     registerRpc(f.bb, f.runtime);
@@ -593,8 +605,10 @@ describe("backend scope integration", () => {
     };
     await f.runtime.scopes!.violation(violation);
     await f.runtime.scopes!.violation(violation);
-    expect(f.k.store.openAsks("lead").filter((a) => a.kind === "blocker")).toHaveLength(1);
-    expect(f.k.store.events("lead").filter((e) => e.type === "scope.violation")).toHaveLength(1);
+    expect(f.k.store.openAsks("lead").filter((a) => a.kind === "blocker")).toHaveLength(0);
+    expect(new AttentionSnapshot(f.k.store).asks).toEqual([]);
+    expect(f.k.store.events("lead").filter((e) => e.type === "scope.violation")).toMatchObject([{ data: violation }]);
+    expect(readStatus(f.runtime, "lead", statusInput.parse({}))).toMatchObject({ scopeBlocks: [{ data: violation }] });
     expect(f.k.member("child")?.state).toBe("waiting");
     const decor = (await f.harness.invokeRpc("decor", { threadId: "child" })) as {
       scope: unknown;
@@ -610,7 +624,7 @@ describe("backend scope integration", () => {
       expect(result.scopes.length).toBeGreaterThan(0);
       expect(result.violations).toHaveLength(1);
     }
-    expect(f.harness.inspection.sdk.callsTo("plugins.callRpc").length).toBeGreaterThan(0);
+    expect(f.harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(0);
     f.k.store.patch("lead", { userAt: null });
     await f.runtime.tick("lead");
     const ticks = f.harness.inspection.sdk
@@ -618,24 +632,41 @@ describe("backend scope integration", () => {
       .filter((call) => (call.args[0] as { threadId: string }).threadId === "lead");
     expect(JSON.stringify(ticks)).toContain("STOP FAILED");
   });
-  it.each(["answered", "withdrawn"] as const)("releases a working errand's scope-blocker hold once the ask is %s", async closed => {
-    const f = await fixture();
-    await f.runtime.hire("lead", "project", { ...f.input, classId: "wanderer", boardQuestId: null, waypointId: null, errand: true });
+  it("lets the Keeper request one manual Pi repair and keeps Done open until the guard is armed", async () => {
+    const f = await fixture(true);
+    await f.runtime.hire("lead", "project", f.input);
     registerRpc(f.bb, f.runtime);
-    const invalidate = vi.spyOn(f.bb.rpc, "experimental_invalidate");
-    const violation = { threadId: "child", providerId: "pi", at: f.time(), eventId: "held-errand", seq: 3,
-      ruleId: "example-rule", reason: "Blocked command", stopped: false, latencyMs: 1 };
-    await f.runtime.scopes!.violation(violation);
-    f.k.activity("child", "working");
-    const ask = f.k.store.openAsks("lead").find(a => a.effect?.type === "scope-blocker")!;
-    const decor = () => f.harness.invokeRpc("decor", { threadId: "child" });
-    expect(await decor()).toMatchObject({ member: { state: "working" }, openScopeAsk: true, violations: [violation] });
-    invalidate.mockClear();
-    if (closed === "answered") await f.harness.invokeRpc("answerAsk", { askId: ask.id, optionId: "review", note: null, via: "page" });
-    else f.k.withdrawAsk(ask.id, "turn-recovered");
-    expect(f.k.store.get("asks", ask.id)?.state).toBe(closed);
-    expect(await decor()).toMatchObject({ member: { state: "working" }, openScopeAsk: false, violations: [violation] });
-    expect(invalidate.mock.calls.flatMap(([tags]) => tags)).toContain("tavern:thread:child");
+    registerTools(f.bb, f.runtime);
+    const scopes = f.runtime.scopes!;
+    const violation = { threadId: "child", providerId: "pi", at: f.time(), eventId: "missing-guard", seq: 3,
+      ruleId: "guard-not-loaded", reason: "Guard not loaded", mode: "enforce" as const, stopped: true, latencyMs: 1 };
+    await scopes.violation(violation);
+    expect(new AttentionSnapshot(f.k.store).asks).toEqual([]);
+    expect(() => scopes.requestGuardRepair("child", "child")).toThrow();
+    const result = await f.harness.behavior.invokeAgentTool("tavern_scope", { memberThreadId: "child", repairGuard: true }, { threadId: "lead" });
+    const ask = f.k.store.openAsks("lead").find(a => a.effect?.type === "repair-guard")!;
+    expect(result).toContain(`::tavern-ask{id="${ask.id}"}`);
+    expect(scopes.requestGuardRepair("lead", "child").id).toBe(ask.id);
+    expect(new AttentionSnapshot(f.k.store).asks).toEqual([expect.objectContaining({
+      id: ask.id, question: expect.stringMatching(/Restart .*Pi session/), options: [expect.objectContaining({ id: "done", label: "Done" })],
+    })]);
+    const done = () => f.harness.invokeRpc("answerAsk", { askId: ask.id, optionId: "done", note: null, via: "page" });
+    await expect(done()).rejects.toThrow(/not armed/i);
+    expect(f.k.store.get("asks", ask.id)?.state).toBe("open");
+    const local = scopes.api.localScopeRecord("child")!;
+    armScope(local.file, local.scope);
+    await done();
+    expect(f.k.store.get("asks", ask.id)).toMatchObject({ state: "answered", answer: { optionId: "done", by: "user" } });
+    expect(new AttentionSnapshot(f.k.store).asks).toEqual([]);
+  });
+
+  it("still presents a real scope-grant choice to the user", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    await f.runtime.scopes!.override("lead", "child", { allowRules: ["git-push-main"] }, "Requested push");
+    expect(new AttentionSnapshot(f.k.store).asks).toEqual([expect.objectContaining({
+      effect: { type: "grant-scope", memberThreadId: "child" }, options: expect.arrayContaining([expect.objectContaining({ id: "approve" }), expect.objectContaining({ id: "deny" })]),
+    })]);
   });
 
   it("does not project a closed widening ask as pending", async () => {

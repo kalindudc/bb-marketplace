@@ -95,11 +95,12 @@ export function LeftRow({ waypoint: w, skipped }: { waypoint: Waypoint; skipped?
 }
 
 import { preapprovalWords } from "../../shared/quest-authority";
-const VIA: Record<NonNullable<Ask["answer"]>["via"], string> = { banner: "from the banner", page: "on the Tavern page", phone: "on your phone", chat: "in chat", cli: "from the CLI", timer: "by its timer" };
+const VIA: Record<NonNullable<Ask["answer"]>["via"], string> = { banner: "from the banner", page: "on the Tavern page", phone: "on your phone", chat: "in chat", cli: "from the CLI", timer: "by its timer", tavern: "by Tavern" };
 /** Why Tavern withdrew an ask, where the server recorded it. Keyed by string so a cause the schema adds later still reads "withdrawn". */
 const WITHDRAWN: Record<string, string> = { "quest-stopped": "withdrawn when it stopped", "quest-returned": "withdrawn when the quest returned", "backup-restored": "withdrawn when this backup was restored", "closing-stale": "withdrawn because the closing details changed" };
 /** How an ask ended, in words: the option chosen, by whom and how; withdrawn or still open otherwise. */
 export function askOutcome(ask: Ask): string {
+  if (ask.answer?.by === "tavern") return ask.answer.note ?? "Answered by Tavern";
   const label = ask.answer ? ask.options.find((o) => o.id === ask.answer!.optionId)?.label ?? "an option no longer listed" : null;
   if (ask.answer?.surface === "client (unattested)" && label) return `You chose “${label}”; answered from a client Tavern could not attribute`;
   if (ask.answer?.preapproval) return `${label}: ${preapprovalWords(ask.answer.preapproval)}`;
