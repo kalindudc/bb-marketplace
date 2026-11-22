@@ -17,6 +17,7 @@ import {
   noteDraftSchema,
   summaryDraftSchema,
   gateInputSchema,
+  questNamesSchema,
 } from "../../shared/schema";
 import type { TavernRuntime } from "../runtime";
 import { LIMITS } from "../limits";
@@ -116,7 +117,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_route",
     "Read the user's message",
-    "Record how the oldest unrouted user message was read. notes is REQUIRED on every route kind; use [] after considering facts, promises and hand-backs (include need; see tavern_note). The goal itself is never a note: open a board quest for it, and record only separate facts, commitments or hand-backs as notes. A steer can name one boardQuestId or several boardQuestIds when the user means multiple goals. Asides and questions must not name quests. Route the user's own standing rule as rule. For a new quest, route first then open it with tavern_quest. Record an explicit checker-handoff hold with checkerHandoffHold: { reason }. It stays held until a user control releases it; a reporting promise never releases it. Route queued messages in order before quest writes. steer: apply the change to every named quest; if targets are unclear, ask one short question and change nothing. A still-applicable steer or new-quest route survives later questions, asides and queued messages until its following Keeper turn ends; never re-route a newer message to regain authority for it. question: answer from the ledger or knowledge and change nothing. aside: do quick work directly, otherwise hire an errand helper with errand:true, without a board quest or waypoint; never change board quests. new-quest: open the concrete goal with tavern_quest and scout; a greeting or class selection is not a goal. rule: save the user's standing rule verbatim with tavern_rule and source:message, active for this Keeper by default; global only when the user explicitly names all Keepers or all Tavern threads. Keeper proposals wait for ledger confirmation. Keep facts verbatim and give promises deadlines.",
+    "Record how the oldest unrouted user message was read. notes is REQUIRED on every route kind: separate facts, promises and hand-backs with need (see tavern_note), or []. The goal itself is never a note: open a quest for it. A steer can name one boardQuestId or several boardQuestIds when the user means multiple goals. Asides and questions must not name quests. Route the user's own standing rule as rule. Record an explicit checker-handoff hold with checkerHandoffHold: { reason }. It stays held until a user control releases it; a reporting promise never releases it. Route queued messages before quest writes. steer: apply to every named quest; ask and change nothing if targets are unclear. A still-applicable steer or new-quest route survives later messages until its following Keeper turn ends; never re-route to regain it. question: answer from the ledger or knowledge and change nothing. aside: do quick work directly, otherwise hire an errand helper with errand:true, without a board quest or waypoint; never change board quests. new-quest: open the concrete goal with tavern_quest and scout; a greeting or class selection is not a goal. rule: save the user's standing rule verbatim with tavern_rule and source:message, active for this Keeper by default; global only when the user explicitly names all Keepers or all Tavern threads. Keeper proposals wait for ledger confirmation. Keep facts verbatim and give promises deadlines.",
     z.object({
       kind: z.enum(ROUTE_KINDS),
       boardQuestId: optionalQuest,
@@ -169,13 +170,15 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   );
   register(
     "tavern_quest",
-    "Opened a board quest",
-    "Open a goal on the board in scout phase. Your own checklist is managed with journal.",
-    z.object({
-      title: z.string().min(1).max(200),
-      short: z.string().min(1).max(40),
-    }),
-    (input, threadId) => k.openQuest(threadId, input.title, input.short),
+    "Named a board quest",
+    "Open a routed goal in scout phase (op: open, the default). To rename your own unarchived quest, pass op: rename, boardQuestId, title and short. Use journal for your checklist.",
+    questNamesSchema.extend({ op: z.enum(["open", "rename"]).default("open"), boardQuestId: id.optional() }).strict()
+      .refine(input => (input.op === "rename") === (input.boardQuestId !== undefined), {
+        path: ["boardQuestId"], message: "Pass boardQuestId only when renaming an existing quest.",
+      }),
+    (input, threadId) => input.boardQuestId !== undefined
+      ? runtime.renameKeeperQuest(threadId, input.boardQuestId, input)
+      : k.openQuest(threadId, input.title, input.short),
   );
   register(
     "tavern_reopen",

@@ -5,6 +5,7 @@ import { awayDigestInputSchema, type AwayDigest } from "../../shared/away-rpc";
 import { askSchema, eventSchema, readStoredActor } from "../../shared/schema";
 import type { Keeper } from "../keeper/service";
 import { nonAlertEventSql } from "../news";
+import { currentAskNames } from "../quest-names";
 import type { AwayStore } from "./store";
 
 type EventRow = { id: number; at: number; keeper_thread_id: string | null; board_quest_id: string | null; actor: string; type: string; text: string; data: string };
@@ -33,7 +34,7 @@ export function readAwayDigest(k: Keeper, store: AwayStore, input: z.input<typeo
     const waited = new Set([...startedWaiting, ...waitingAtEnd, ...during.map(row => z.object({ askId: z.string() }).passthrough().parse(JSON.parse(row.data)).askId)]);
     const allAsks = (db.prepare("SELECT data FROM tavern_records WHERE kind='asks' AND id IN (SELECT value FROM json_each(?)) ORDER BY id").all(JSON.stringify([...waited])) as { data: string }[]).map(row => askSchema.parse(JSON.parse(row.data)));
     const waiting = new Set(waitingAtEnd), remainingAsks = allAsks.filter(ask => parsed.askCursor === null || ask.id > parsed.askCursor);
-    const asks = remainingAsks.slice(0, parsed.limit).map(ask => ({ ask, waitingAtEnd: waiting.has(ask.id) }));
+    const asks = remainingAsks.slice(0, parsed.limit).map(ask => ({ ask: currentAskNames(k.store, ask), waitingAtEnd: waiting.has(ask.id) }));
     const groups = db.prepare(`SELECT board_quest_id AS questId, COUNT(*) AS events, SUM(type='report.filed') AS reports, SUM(type='decision.made') AS decisions FROM tavern_events WHERE id>? AND id<=? AND type NOT LIKE 'away.%' AND ${nonAlertEventSql} GROUP BY board_quest_id`).all(range.after, range.through) as { questId: string | null; events: number; reports: number; decisions: number }[];
     const ids = new Set([...window.quests.map(quest => quest.questId), ...groups.flatMap(group => group.questId === null ? [] : [group.questId]), ...allAsks.flatMap(ask => ask.boardQuestId === null ? [] : [ask.boardQuestId])]);
     const wrapped = db.prepare("SELECT board_quest_id AS questId,data FROM tavern_events WHERE id>? AND id<=? AND type='quest.wrapped' ORDER BY id DESC").all(range.after, range.through) as { questId: string; data: string }[];

@@ -581,6 +581,12 @@ export class TavernRuntime {
       return { briefPending: true };
     }
   }
+  renameKeeperQuest(threadId: string, id: string, names: { title: string; short: string }) {
+    this.keeper.owned(threadId, id);
+    this.stopAll.assertRunning();
+    this.away.assertWork(id, threadId);
+    return this.keeper.renameQuest(id, names, { kind: "agent", threadId });
+  }
   async setQuestHeld(id: string, hold: boolean, actor: Actor, messageId?: string, receipt?: UserActReceipt) {
     const quest = commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => this.keeper.setQuestHeld(id, hold, actor, messageId));
     if (!hold) await this.retryInitialBriefs(quest.keeperThreadId);

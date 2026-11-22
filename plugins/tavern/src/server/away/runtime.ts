@@ -1,6 +1,7 @@
 import { isMemberMachineGone, MACHINE_RELEASED, memberDetails, memberHost, patchMemberDetails, transitionMember } from "../member-engagement";
 import { wasReleased } from "../../shared/member-engagement";
 import { commitUserAct, type UserActReceipt } from "../authority";
+import { currentAskNames } from "../quest-names";
 import { randomUUID } from "node:crypto";
 import { hasAwayDenials, localAwayPrevention, narrowAwayScope } from "./denials";
 import type { Scope } from "../../scope";
@@ -358,7 +359,7 @@ export class AwayRuntime {
     for (const row of rows) {
       const ask = askSchema.parse(JSON.parse(row.data));
       if (!this.shouldNotify(ask.kind, ask.createdAt)) continue;
-      await this.runtime.push(ask.keeperThreadId, ask.question, ask.why, ask.id);
+      await this.runtime.push(ask.keeperThreadId, currentAskNames(this.k.store, ask).question, ask.why, ask.id);
     }
   }
   facts(keeperThreadId: string) {

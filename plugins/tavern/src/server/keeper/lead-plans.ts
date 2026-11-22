@@ -6,6 +6,7 @@ import { assertChainPlan, assertLeadPathOpen, leadAncestors, subtreeSeats } from
 import { approvedPartyReceipt, transitionQuest } from "./quest-lifecycle";
 import type { Keeper } from "./service";
 import { planDiff } from "./plan-diff";
+import { currentLeadPlanNames } from "../quest-names";
 
 const checkRank = { none: 0, keeper: 1, warden: 2, you: 3 } as const;
 const planId = (questId: string, version: number) => `${questId}:${version}`;
@@ -96,7 +97,8 @@ function pending(k: Keeper, childQuestId: string, version: number) {
   const plan = k.store.get("plans", planId(childQuestId, version));
   if (!plan) throw new Error("The exact child plan is missing.");
   assertChainPlan(k, child, plan);
-  if (!isDeepStrictEqual(review(k, child, plan, path, record.request.why), record.request))
+  // Quest labels are presentation, not part of the approved plan or limits.
+  if (!isDeepStrictEqual(review(k, child, plan, path, record.request.why), currentLeadPlanNames(k.store, record.request)))
     throw new Error("The approved limits or the requested party changed. Ask for a fresh child plan.");
   return { child, parent, plan, record, path };
 }
