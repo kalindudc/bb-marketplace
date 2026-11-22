@@ -6,7 +6,7 @@ import { approvedDrafts, invalidateDrafts } from "./communication";
 import { hasLiveName, isKeeperIdentity, isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
 import { assertChainHire, assertLeadPathOpen, currentLead, holdsLeadSeat, leadAuthorization, recordLeadOutcome, reserveLead } from "./keeper/leads";
 import { assertLeadRetirementReady, confirmLeadRetirement, finishLeadRetirement, recordForcedLeadPullRequestOwners, requestForcedLeadStop, requestLeadRetirement } from "./keeper/lead-retirement";
-import { archiveDisposition, assertMemberMachineForBrief, MACHINE_RELEASED, memberDetails, memberHost, outstandingArchivedPlacement, patchMemberDetails, transitionMember, type EngagementReceipt, type MemberOperation } from "./member-engagement";
+import { archiveDisposition, assertMemberMachineForBrief, MACHINE_RELEASED, memberDetails, memberHost, openBriefBlocker, outstandingArchivedPlacement, patchMemberDetails, transitionMember, withdrawBriefBlocker, type EngagementReceipt, type MemberOperation } from "./member-engagement";
 import { wasReleased } from "../shared/member-engagement";
 import { AwayRuntime } from "./away/runtime";
 import { isDeepStrictEqual } from "node:util";
@@ -138,6 +138,7 @@ type Hire = {
 };
 type Thread = PluginThreadEventPayloads["thread.active"]["thread"];
 type QueuedMessage = PluginThreadEventPayloads["message.queued"]["entry"];
+const briefMessageId = (text: string) => /^\[Tavern brief\] id=([^\r\n]+)\n/.exec(text)?.[1];
 
 import { authorize, commitUserAct, type UserActReceipt } from "./authority";
 import { storedPhase, transitionQuest } from "./keeper/quest-lifecycle";
@@ -174,6 +175,7 @@ export class TavernRuntime {
   private previousSettings: TavernSettings | null = null;
   private maintenanceAt: number | null = null;
   private initialBriefs = new Map<string, Promise<{ briefPending: boolean }>>();
+  private replacingBriefs = new Set<string>();
   private notifiedAsks = new Set<string>();
   private queueResets = new Map<string, Promise<void>>();
   private memberObservations = new Map<string, Promise<void>>();
@@ -405,38 +407,91 @@ export class TavernRuntime {
     if (unavailable) {
       const reason = `${this.keeper.name(member)} is ${unavailable} and can't take new work; hire a replacement or re-plan.`;
       if (delivery) {
-        patchMemberDetails(this.keeper.store, threadId, { delivery: null });
-        this.keeper.store.event(this.keeper.now(), member.keeperThreadId, member.boardQuestId,
-          "member.brief-refused", reason, { memberThreadId: threadId, briefId: delivery.id });
+        this.keeper.store.atomic(() => {
+          patchMemberDetails(this.keeper.store, threadId, { delivery: null });
+          withdrawBriefBlocker(this.keeper.store, delivery, this.keeper.now());
+          this.keeper.store.event(this.keeper.now(), member.keeperThreadId, member.boardQuestId,
+            "member.brief-refused", reason, { memberThreadId: threadId, briefId: delivery.id });
+        });
         this.keeper.changed(threadId, member.boardQuestId);
       }
       throw new Error(reason);
     }
     return member;
   }
-  async sendRebrief(threadId: string, text: string): Promise<{ briefPending: boolean }> {
+  async sendRebrief(threadId: string, text: string, supersedeBriefId?: string): Promise<{ briefPending: boolean }> {
     this.stopAll.assertRunning();
     let member = this.requireBriefableMember(threadId);
     if (member.boardQuestId) {
       await this.spend.assert(member.boardQuestId);
       member = this.requireBriefableMember(threadId);
+      if (member.boardQuestId) this.keeper.assertQuestNotHeld(member.boardQuestId);
     }
-    if (member.boardQuestId) this.keeper.assertQuestNotHeld(member.boardQuestId);
     if (this.config().tavern.paused) throw new Error("Tavern is paused; no new brief was queued. Resume it before sending new work.");
     if (this.scopes?.pending(threadId)) throw new Error("The member is waiting for a scope decision; no new brief was queued.");
     if (!text.trim()) throw new Error("A brief cannot be empty");
-    let delivery = memberDetails(this.keeper.store, threadId).delivery;
-    if (delivery && (delivery.assignmentText ?? delivery.text) !== text) throw new Error("A different brief is already pending; do not overwrite an uncertain delivery.");
-    if (!delivery) {
-      const requestSources = captureRequestSources(this.keeper, member.keeperThreadId!, member.boardQuestId);
-      delivery = { id: `brief_${randomUUID()}`, text: `${text}\n\n${requestSourcePacket(this.keeper, requestSources)}`, assignmentText: text, requestSources, attempts: 0, nextAttemptAt: this.keeper.now(), attemptedAt: null, hostAfterSeq: null, error: null };
-      if (member.engagement === "resting") {
-        transitionMember(this.keeper.store, member, "briefing", "rebrief", { kind: "agent", threadId: member.keeperThreadId! }, { kind: "brief", id: delivery.id }, this.keeper.now(), { details: { delivery } });
-      } else patchMemberDetails(this.keeper.store, threadId, { delivery });
+    const current = () => memberDetails(this.keeper.store, threadId).delivery;
+    let delivery = current();
+    if (this.replacingBriefs.has(threadId)) throw new Error("The pending brief is already being replaced.");
+    if (supersedeBriefId) {
+      if (delivery?.id !== supersedeBriefId) throw new Error("Name the current pending brief to replace it; read tavern_status first.");
+      if (this.initialBriefs.has(threadId)) throw new Error("The old brief delivery is still in flight; retry after it settles. No fresh brief was queued.");
+      if (this.away.blocked(threadId)) throw new Error("Return from Closing time and send fresh instructions.");
+      this.replacingBriefs.add(threadId);
+      try {
+        const receipt = delivery.attemptedAt === null ? null : await this.briefReceipt(threadId, delivery);
+        if (receipt?.state === "accepted") {
+          this.finishInitialBrief(threadId, delivery.id);
+          throw new Error("The old brief was confirmed; send the follow-up without supersedeBriefId.");
+        }
+        const removedQueueIds: string[] = [];
+        for (const row of receipt?.rows ?? []) {
+          if (current()?.id !== delivery.id || this.stopAll.reason() || this.away.blocked(threadId))
+            throw new Error("The pending brief changed while checking it. No replacement was queued.");
+          await this.bb.sdk.threads.queuedMessages.delete({ threadId, queuedMessageId: row.id });
+          removedQueueIds.push(row.id);
+        }
+        if (removedQueueIds.length) {
+          const latest = await this.briefReceipt(threadId, delivery);
+          if (latest.state === "accepted") this.finishInitialBrief(threadId, delivery.id);
+          if (latest.state !== "absent") throw new Error("The old brief may have been accepted or requeued. No replacement was queued.");
+        }
+        this.stopAll.assertRunning();
+        member = this.requireBriefableMember(threadId);
+        if (current()?.id !== delivery.id || this.away.blocked(threadId) || this.scopes?.pending(threadId) || this.config().tavern.paused)
+          throw new Error("The pending brief or its work gates changed. No replacement was queued.");
+        if (member.boardQuestId) this.keeper.assertQuestNotHeld(member.boardQuestId);
+        delivery = this.queueRebrief(member, text, { old: delivery, receipt: receipt?.state ?? "not-attempted", removedQueueIds });
+      } finally { this.replacingBriefs.delete(threadId); }
+    } else if (delivery && (delivery.assignmentText ?? delivery.text) !== text) {
+      throw new Error("A different brief is already pending; do not overwrite an uncertain delivery.");
     }
-    return this.sendInitialBrief(threadId, delivery.text);
+    return this.sendInitialBrief(threadId, (delivery ?? this.queueRebrief(member, text)).text);
   }
+
+  private queueRebrief(member: Member, text: string, superseded?: { old: PendingBrief; receipt: string; removedQueueIds: string[] }): PendingBrief {
+    const k = this.keeper, { threadId, keeperThreadId, boardQuestId } = member, at = k.now();
+    const requestSources = captureRequestSources(k, keeperThreadId!, boardQuestId);
+    const actor = { kind: "agent" as const, threadId: keeperThreadId! };
+    const delivery: PendingBrief = { id: `brief_${randomUUID()}`, text: `${text}\n\n${requestSourcePacket(k, requestSources)}`, assignmentText: text, requestSources, createdAt: at, state: "queued", attempts: 0, nextAttemptAt: at, attemptedAt: null, hostAfterSeq: null, error: null };
+    k.store.atomic(() => {
+      if (member.engagement === "resting")
+        transitionMember(k.store, member, "briefing", "rebrief", actor, { kind: "brief", id: delivery.id }, at, { details: { delivery } });
+      else patchMemberDetails(k.store, threadId, { delivery });
+      if (superseded) {
+        withdrawBriefBlocker(k.store, superseded.old, at);
+        k.store.event(at, keeperThreadId, boardQuestId, "member.brief-superseded", "Keeper replaced an unconfirmed brief.", {
+          memberThreadId: threadId, oldBriefId: superseded.old.id, briefId: delivery.id,
+          evidence: { receipt: superseded.receipt, hostAfterSeq: superseded.old.hostAfterSeq, removedQueueIds: superseded.removedQueueIds },
+        }, actor);
+      } else k.store.event(at, keeperThreadId, boardQuestId, "member.brief-queued", "Keeper queued a brief for delivery.", { memberThreadId: threadId, briefId: delivery.id }, actor);
+    });
+    k.changed(threadId, boardQuestId);
+    return delivery;
+  }
+
   async sendInitialBrief(threadId: string, text: string): Promise<{ briefPending: boolean }> {
+    if (this.replacingBriefs.has(threadId)) return { briefPending: true };
     const running = this.initialBriefs.get(threadId);
     if (running) return running;
     const result = this.deliverPendingBrief(threadId, text);
@@ -453,14 +508,15 @@ export class TavernRuntime {
       if (before.engagement === "briefing") {
         const hire = this.keeper.store.hireForMember(threadId);
         transitionMember(this.keeper.store, before, "active", "brief-accepted", { kind: "tavern" }, { kind: "brief-acceptance", id: id ?? hire?.id ?? threadId }, this.keeper.now(),
-          { details: { delivery: null }, text: `${this.keeper.name(before)}'s brief was accepted` });
+          { details: { delivery: null, cancelledInitialBrief: false }, text: `${this.keeper.name(before)}'s brief was accepted` });
       } else {
         patchMemberDetails(this.keeper.store, threadId, { delivery: null });
+        if (pending) withdrawBriefBlocker(this.keeper.store, pending, this.keeper.now());
         this.keeper.store.event(this.keeper.now(), before.keeperThreadId, before.boardQuestId,
-          "member.briefed", `${this.keeper.name(before)}'s brief was accepted`, { memberThreadId: threadId });
+          "member.briefed", `${this.keeper.name(before)}'s brief was accepted`, { memberThreadId: threadId, briefId: id });
       }
       this.keeper.store.patch(threadId, { initialBriefAt: state.initialBriefAt ?? this.keeper.now(),
-        ...(id !== null && pending ? { assignmentText: pending.assignmentText ?? pending.text, requestSources: pending.requestSources ?? state.requestSources ?? null } : {}),
+        ...(id !== null && pending ? { lastAcceptedBriefId: id, assignmentText: pending.assignmentText ?? pending.text, requestSources: pending.requestSources ?? state.requestSources ?? null } : {}),
         ...(id !== null && pending && state.brief && state.initialBriefAt !== undefined ? { brief: { ...state.brief, context: [...state.brief.context, `Follow-up v${(state.briefVersion ?? 0) + 1}: ${pending.assignmentText ?? pending.text}`] } } : {}),
       });
       this.briefed(threadId);
@@ -482,73 +538,115 @@ export class TavernRuntime {
     this.keeper.changed(threadId);
   }
   private ensureBriefBlocker(threadId: string) {
-    const pending = memberDetails(this.keeper.store, threadId).delivery;
-    if (!pending || pending.attempts < this.config().keepers.briefRetryAttempts || this.config().tavern.paused) return;
-    if (pending.blockerAskId && this.keeper.store.get("asks", pending.blockerAskId)?.state === "open") return;
-    const member = this.keeper.member(threadId);
+    const k = this.keeper, pending = memberDetails(k.store, threadId).delivery;
+    const config = this.config(), limit = config.keepers.briefRetryAttempts;
+    if (!pending || config.tavern.paused || this.stopAll.reason() || openBriefBlocker(k.store, pending)) return;
+    const checks = pending.receiptChecks ?? 0;
+    if (!pending.cancelledQueueId && checks < limit && (pending.attempts < limit || pending.queuedOnHost)) return;
+    const member = k.member(threadId);
     if (!member?.keeperThreadId) throw new Error("An unbriefed member needs its owning Keeper");
-    this.keeper.store.atomic(() => {
-      const ask = this.keeper.ask(member.keeperThreadId!, { effect: { type: "retry-brief", threadId, briefId: pending.id },
+    const why = pending.cancelledQueueId ? "bb cancelled the queued brief."
+      : checks >= limit ? `bb could not confirm the brief after ${checks} receipt ${checks === 1 ? "check" : "checks"}.`
+      : `Delivery failed after ${pending.attempts} ${pending.attempts === 1 ? "attempt" : "attempts"}.`;
+    k.store.atomic(() => {
+      const ask = k.ask(member.keeperThreadId!, { effect: { type: "retry-brief", threadId, briefId: pending.id },
         boardQuestId: member.boardQuestId, kind: "blocker",
-        question: `${this.keeper.name(member)}'s brief needs help`,
-        why: `Delivery or confirmation failed after ${this.config().keepers.briefRetryAttempts} ${this.config().keepers.briefRetryAttempts === 1 ? "attempt" : "attempts"}. The member and its slot are retained. ${pending.error ?? "No acceptance receipt was found."}`,
-        options: [{ id: "retry", label: "Retry the brief", detail: "Allow another bounded delivery attempt", recommended: true },
+        question: `${k.name(member)}'s brief needs help`,
+        why: `${why} The member and its slot are retained. ${pending.error ?? ""}`.trim(),
+        options: [{ id: "retry", label: "Retry the brief", detail: "Reset the delivery and receipt-check budgets for this same brief. Check bb first; do not send a duplicate.", recommended: true },
           { id: "release", label: "Release the member", detail: "Stop it and free its slot after confirmation", recommended: false }],
         holds: member.waypointId ? [member.waypointId] : [], meanwhile: "Do not hire a duplicate for this slot; other work may continue.",
       }, undefined, true);
-
-      patchMemberDetails(this.keeper.store, threadId, { delivery: { ...pending, blockerAskId: ask.id } });
+      patchMemberDetails(k.store, threadId, { delivery: { ...pending, blockerAskId: ask.id } });
+      k.store.event(k.now(), member.keeperThreadId, member.boardQuestId, "member.brief-blocked", why, { memberThreadId: threadId, briefId: pending.id, askId: ask.id, attempts: pending.attempts, receiptChecks: checks });
       void this.push(member.keeperThreadId!, ask.question, ask.why);
     });
+    k.changed(threadId, member.boardQuestId);
   }
-  private async briefReceipt(threadId: string, pending: PendingBrief): Promise<"accepted" | "queued" | "absent"> {
+
+  private async briefReceipt(threadId: string, pending: PendingBrief): Promise<{ state: "accepted" | "queued" | "absent"; rows: QueuedMessage[] }> {
     const queued = await this.bb.sdk.threads.queuedMessages.list({ threadId });
-    const row = queued.find(row => row.originPluginId === this.bb.pluginId && JSON.stringify(row.content).includes(pending.id));
-    if (row) {
-      if (row.failureReason) throw new Error(`Queued brief failed: ${row.failureReason}; inspect the failed queue row before retrying.`);
-      return "queued";
-    }
+    const rows = queued.filter(row => row.originPluginId === this.bb.pluginId && briefMessageId(inputText(row.content)) === pending.id);
     let cursor = pending.hostAfterSeq ?? 0;
     for (let page = 0; page < LIMITS.briefEvidencePages; page++) {
       const events = await this.bb.sdk.threads.events.list({ threadId, afterSeq: String(cursor), types: ["client/turn/requested"], limit: "100", order: "asc" });
       if (events.some(event => {
-        const request = z.object({ originPluginId: z.literal(this.bb.pluginId), input: z.array(z.unknown()) }).safeParse(event.data);
-        return request.success && JSON.stringify(request.data.input).includes(pending.id);
-      })) return "accepted";
-      if (events.length < 100) return "absent";
+        const request = z.object({ originPluginId: z.literal(this.bb.pluginId), input: z.array(z.object({ type: z.string(), text: z.string().optional() })) }).safeParse(event.data);
+        return request.success && request.data.input.some(block => block.type === "text" && briefMessageId(block.text ?? "") === pending.id);
+      })) return { state: "accepted", rows: [] };
+      if (events.length < 100) return { state: rows.length ? "queued" : "absent", rows };
       cursor = events.at(-1)!.seq;
     }
     throw new Error("Brief acceptance history is incomplete; no duplicate brief was sent.");
   }
+
   private async deliverPendingBrief(threadId: string, text: string): Promise<{ briefPending: boolean }> {
     const member = this.requireBriefableMember(threadId);
-    if (this.keeper.checkerHandoffProblem(member.classId, member.boardQuestId)) return { briefPending: true };
-    if (this.away.blocked(threadId)) return { briefPending: true };
-    const state = this.keeper.store.runtime(threadId);
-    const currentDelivery = memberDetails(this.keeper.store, threadId).delivery;
+    const k = this.keeper, at = k.now();
+    const pendingResult = { briefPending: true };
+    const blocked = () => this.stopAll.reason() || this.config().tavern.paused || this.away.blocked(threadId) || this.scopes?.pending(threadId)
+      || this.keeper.checkerHandoffProblem(member.classId, member.boardQuestId) || member.boardQuestId && k.quest(member.boardQuestId).phase === "held";
+    if (this.keeper.checkerHandoffProblem(member.classId, member.boardQuestId) || this.away.blocked(threadId)) return pendingResult;
+    const state = k.store.runtime(threadId);
+    const details = memberDetails(k.store, threadId), currentDelivery = details.delivery;
     if (!currentDelivery && state.lastBriefAt !== undefined) return { briefPending: false };
-    const pending: PendingBrief = currentDelivery ?? { id: `brief_${randomUUID()}`, text, ...(state.initialBriefAt === undefined && state.requestSources ? { assignmentText: state.assignmentText ?? state.brief?.outcome ?? text, requestSources: state.requestSources } : {}), attempts: 0, nextAttemptAt: this.keeper.now(), attemptedAt: null, hostAfterSeq: null, error: null };
+    if (!currentDelivery && details.cancelledInitialBrief) return pendingResult;
+    let pending: PendingBrief = currentDelivery ?? { id: `brief_${randomUUID()}`, text, ...(state.initialBriefAt === undefined && state.requestSources ? { assignmentText: state.assignmentText ?? state.brief?.outcome ?? text, requestSources: state.requestSources } : {}), createdAt: at, state: "queued", attempts: 0, nextAttemptAt: at, attemptedAt: null, hostAfterSeq: null, error: null };
     if (pending.text !== text) throw new Error("A different initial brief is already pending; do not overwrite an uncertain delivery.");
-    if (!currentDelivery) patchMemberDetails(this.keeper.store, threadId, { delivery: pending });
-    if (this.stopAll.reason() || this.config().tavern.paused || this.scopes?.pending(threadId) || member.boardQuestId && this.keeper.quest(member.boardQuestId).phase === "held") return { briefPending: true };
-    if (this.keeper.now() < pending.nextAttemptAt) return { briefPending: true };
-    const attempt: PendingBrief = { ...pending, attempts: pending.attempts + 1,
-      nextAttemptAt: this.keeper.now() + Math.min(LIMITS.briefRetryMaxMs, LIMITS.briefRetryMs * 2 ** pending.attempts), error: null };
-    try {
-      if (pending.attemptedAt !== null) {
-        const receipt = await this.briefReceipt(threadId, pending);
-        if (receipt === "accepted") { this.finishInitialBrief(threadId, pending.id); return { briefPending: false }; }
-        if (receipt === "queued") {
-          patchMemberDetails(this.keeper.store, threadId, { delivery: { ...pending, nextAttemptAt: this.keeper.now() + LIMITS.briefRetryMs } });
-          return { briefPending: true };
+    if (!currentDelivery) patchMemberDetails(k.store, threadId, { delivery: pending });
+    const current = () => memberDetails(k.store, threadId).delivery;
+    const unchanged = () => current()?.id === pending.id && current()?.cancelledQueueId === pending.cancelledQueueId;
+    if (blocked() || at < pending.nextAttemptAt || openBriefBlocker(k.store, pending)) return pendingResult;
+    const limit = this.config().keepers.briefRetryAttempts;
+    const waitForReceipt = (receiptState: "queued" | "unconfirmed", error: string | null, queuedOnHost: boolean) => {
+      if (!unchanged() || blocked()) return pendingResult;
+      const receiptChecks = (pending.receiptChecks ?? 0) + 1;
+      k.store.atomic(() => {
+        patchMemberDetails(k.store, threadId, { delivery: { ...pending, state: receiptState, queuedOnHost, receiptChecks, error, nextAttemptAt: k.now() + LIMITS.briefRetryMs } });
+        if (receiptState === "unconfirmed" && pending.state !== receiptState) {
+          k.store.event(k.now(), member.keeperThreadId, member.boardQuestId, "member.brief-unconfirmed", "bb did not confirm the brief.", { memberThreadId: threadId, briefId: pending.id, receiptChecks });
         }
+      });
+      this.ensureBriefBlocker(threadId);
+      k.changed(threadId, member.boardQuestId);
+      return pendingResult;
+    };
+
+    if (pending.attemptedAt !== null && !pending.cancelledQueueId) {
+      try {
+        let receipt = await this.briefReceipt(threadId, pending);
+        if (!unchanged() || blocked()) return pendingResult;
+        if (receipt.state === "queued" && pending.retryRequested && receipt.rows.every(row => row.failureReason)) {
+          // A delayed cancellation for a discarded row must not cancel this retry of the same brief ID.
+          pending = { ...pending, hostQueueId: null };
+          patchMemberDetails(k.store, threadId, { delivery: pending });
+          for (const row of receipt.rows) {
+            if (!unchanged() || blocked()) return pendingResult;
+            await this.bb.sdk.threads.queuedMessages.delete({ threadId, queuedMessageId: row.id });
+          }
+          receipt = await this.briefReceipt(threadId, pending);
+          if (!unchanged() || blocked()) return pendingResult;
+        }
+        if (receipt.state === "accepted") { this.finishInitialBrief(threadId, pending.id); return { briefPending: false }; }
+        if (receipt.state === "queued") {
+          pending = { ...pending, hostQueueId: receipt.rows.length === 1 ? receipt.rows[0]!.id : undefined };
+          return waitForReceipt("queued", receipt.rows.find(row => row.failureReason)?.failureReason ?? null, true);
+        }
+        const wasQueued = pending.queuedOnHost ?? (pending.state === undefined && pending.error === null);
+        if (!pending.retryRequested && (wasQueued || pending.state === "delivering"))
+          return waitForReceipt("unconfirmed", "bb has neither the queued brief nor an acceptance receipt.", true);
+      } catch (error) {
+        return waitForReceipt("unconfirmed", String(error).slice(0, 1000), pending.queuedOnHost ?? (pending.state === undefined && pending.error === null));
       }
-      if (member.boardQuestId && !(await this.spend.allows(member.boardQuestId))) return { briefPending: true };
-      if (pending.attempts >= this.config().keepers.briefRetryAttempts) {
-        patchMemberDetails(this.keeper.store, threadId, { delivery: { ...pending, nextAttemptAt: this.keeper.now() + LIMITS.briefRetryMaxMs } });
-        this.ensureBriefBlocker(threadId);
-        return { briefPending: true };
-      }
+    }
+    if (pending.cancelledQueueId || pending.attempts >= limit) {
+      this.ensureBriefBlocker(threadId);
+      return pendingResult;
+    }
+    if (member.boardQuestId && !(await this.spend.allows(member.boardQuestId))) return pendingResult;
+    const attempt: PendingBrief = { ...pending, attempts: pending.attempts + 1, receiptChecks: 0, retryRequested: false, queuedOnHost: false,
+      nextAttemptAt: k.now() + Math.min(LIMITS.briefRetryMaxMs, LIMITS.briefRetryMs * 2 ** pending.attempts), error: null };
+    try {
       if (this.scopes) await this.scopes.ensure(member);
       const latest = await this.bb.sdk.threads.events.list({ threadId, limit: "1", order: "desc" });
       this.requireBriefableMember(threadId);
@@ -558,27 +656,35 @@ export class TavernRuntime {
         this.threadGone(threadId);
       }
       this.requireBriefableMember(threadId);
-      if (this.spend.held(member.boardQuestId) || this.away.blocked(threadId) || this.keeper.checkerHandoffProblem(member.classId, member.boardQuestId) || member.boardQuestId && this.keeper.quest(member.boardQuestId).phase === "held") return { briefPending: true };
+      if (!unchanged() || blocked() || this.spend.held(member.boardQuestId)) return pendingResult;
       attempt.hostAfterSeq = latest[0]?.seq ?? 0;
-      attempt.attemptedAt = this.keeper.now();
-      patchMemberDetails(this.keeper.store, threadId, { delivery: attempt });
-      if (this.stopAll.reason()) return { briefPending: true };
+      attempt.attemptedAt = k.now();
+      attempt.state = "delivering";
+      attempt.hostQueueId = null;
+      patchMemberDetails(k.store, threadId, { delivery: attempt });
+      k.changed(threadId, member.boardQuestId);
       const result = await this.bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text: `[Tavern brief] id=${pending.id}\n${text}`, mentions: [], visibility: "agent-only" }] });
-      if (result.delivery === "sent") { this.finishInitialBrief(threadId, pending.id); return { briefPending: false }; }
-      return { briefPending: true };
+      if (result.delivery === "sent") this.finishInitialBrief(threadId, pending.id);
+      if (k.store.runtime(threadId).lastAcceptedBriefId === pending.id) return { briefPending: false };
+      if (result.delivery === "queued" && unchanged()) {
+        patchMemberDetails(k.store, threadId, { delivery: { ...attempt, state: "queued", queuedOnHost: true, hostQueueId: result.queuedMessage?.id, nextAttemptAt: k.now() + LIMITS.briefRetryMs } });
+        k.changed(threadId, member.boardQuestId);
+      }
+      return pendingResult;
     } catch (error) {
       this.requireBriefableMember(threadId);
-      attempt.attempts = Math.min(attempt.attempts, this.config().keepers.briefRetryAttempts);
+      if (!unchanged()) return pendingResult;
+      attempt.state = "unconfirmed";
       attempt.error = String(error).slice(0, 1000);
-      this.keeper.store.atomic(() => {
-        patchMemberDetails(this.keeper.store, threadId, { delivery: attempt });
-        this.keeper.store.event(this.keeper.now(), member.keeperThreadId, member.boardQuestId, "member.unbriefed",
-          `${this.keeper.name(member)}'s brief delivery failed on attempt ${attempt.attempts}: ${attempt.error}`,
-          { memberThreadId: threadId, attempts: attempt.attempts, nextAttemptAt: attempt.nextAttemptAt, exhausted: attempt.attempts >= this.config().keepers.briefRetryAttempts });
+      k.store.atomic(() => {
+        patchMemberDetails(k.store, threadId, { delivery: attempt });
+        k.store.event(k.now(), member.keeperThreadId, member.boardQuestId, "member.unbriefed",
+          `${k.name(member)}'s brief delivery failed on attempt ${attempt.attempts}: ${attempt.error}`,
+          { memberThreadId: threadId, briefId: attempt.id, attempts: attempt.attempts, nextAttemptAt: attempt.nextAttemptAt, exhausted: attempt.attempts >= limit });
       });
-      this.keeper.changed(threadId, member.boardQuestId);
+      k.changed(threadId, member.boardQuestId);
       this.ensureBriefBlocker(threadId);
-      return { briefPending: true };
+      return pendingResult;
     }
   }
   renameKeeperQuest(threadId: string, id: string, names: { title: string; short: string }) {
@@ -745,8 +851,14 @@ export class TavernRuntime {
         const pending = memberDetails(this.keeper.store, effect.threadId).delivery;
         if (pending?.id !== effect.briefId) return;
         if (optionId === "retry") {
-          patchMemberDetails(this.keeper.store, effect.threadId, { delivery: { ...pending, attempts: 0, nextAttemptAt: this.keeper.now(), error: null, blockerAskId: null } });
-          after.push(() => this.sendInitialBrief(effect.threadId, pending.text));
+          const k = this.keeper, at = k.now();
+          patchMemberDetails(k.store, effect.threadId, { delivery: { ...pending, attempts: 0, receiptChecks: 0, nextAttemptAt: at, error: null, blockerAskId: null, cancelledQueueId: null, retryRequested: true } });
+          k.store.event(at, ask.keeperThreadId, ask.boardQuestId, "member.brief-retried", "Reset delivery and receipt checks for the same brief.", { memberThreadId: effect.threadId, briefId: pending.id, askId: ask.id, previousAttempts: pending.attempts, previousReceiptChecks: pending.receiptChecks ?? 0 });
+          after.push(async () => {
+            await this.initialBriefs.get(effect.threadId);
+            if (memberDetails(k.store, effect.threadId).delivery?.id === pending.id) await this.sendInitialBrief(effect.threadId, pending.text);
+            k.changed(effect.threadId, ask.boardQuestId);
+          });
         } else if (optionId === "release") after.push(() => this.release(ask.keeperThreadId, effect.threadId, "User released an unbriefed member", { kind: "ask-answer", id: ask.id }));
       },
       "retry-stop": effect => {
@@ -1466,6 +1578,19 @@ export class TavernRuntime {
       if (lateCheckerHold) return { action: "wait" as const, reason: lateCheckerHold };
       const admission = this.loop.admit(ctx);
       if (admission) return admission;
+      if (member.role === "member") {
+        const id = memberDetails(this.keeper.store, member.threadId).delivery?.id;
+        const briefs = ctx.queuedMessages.length
+          ? ctx.queuedMessages.map(row => row.originPluginId === this.bb.pluginId ? briefMessageId(inputText(row.content)) : undefined)
+          : [ctx.originPluginId === this.bb.pluginId ? briefMessageId(text) : undefined];
+        if (briefs.some(brief => brief && brief !== id)) {
+          if (briefs.every(brief => brief && brief !== id))
+            return { action: "reject" as const, message: "Tavern dropped a cancelled, replaced or already delivered brief." };
+          return { action: "wait" as const, reason: "A cancelled Tavern brief is grouped with other messages. Remove only the old brief or ungroup it to send the others." };
+        }
+        if (id && briefs.includes(id) && this.replacingBriefs.has(member.threadId))
+          return { action: "wait" as const, reason: "Tavern is checking the previous brief before replacing it." };
+      }
       if (tavernBrief && this.spend.held(questId)) return { action: "wait" as const, reason: "The quest reached its measured spend budget; only you can raise or remove it." };
       if (hire?.initialInput) this.spawnBriefDelivered(member.threadId);
       for (const input of this.userInputs(ctx, member, data)) this.keeper.receiveUser(...input);
@@ -2649,7 +2774,7 @@ export class TavernRuntime {
     });
     this.keeper.changed(thread.id, member.boardQuestId);
   }
-  async tell(threadId: string, memberThreadId: string, text: string) {
+  async tell(threadId: string, memberThreadId: string, text: string, supersedeBriefId?: string) {
     memberThreadId = this.keeper.resolvePartyMember(threadId, memberThreadId).threadId;
     this.keeper.require(threadId, "keeper");
     const member = this.keeper.member(memberThreadId);
@@ -2668,18 +2793,25 @@ export class TavernRuntime {
       );
     if (!text.trim()) throw new Error("A brief cannot be empty");
     if (this.config().tavern.paused) throw new Error("Tavern is paused; no new brief was queued.");
-    if (this.away.blocked(memberThreadId) && this.initialBriefs.has(memberThreadId)) throw new Error("The old brief delivery is still in flight; retry after it settles. No fresh brief was queued.");
+    this.stopAll.assertRunning();
+    if (this.away.blocked(memberThreadId)) {
+      if (this.initialBriefs.has(memberThreadId) || this.replacingBriefs.has(memberThreadId))
+        throw new Error("The old brief delivery is still in flight; retry after it settles. No fresh brief was queued.");
+      if (supersedeBriefId) throw new Error("Closing time held this member; send a fresh brief without supersedeBriefId after returning.");
+    }
     await this.away.beforeTell(memberThreadId);
     this.keeper.assertCheckerHandoff(member.classId, member.boardQuestId);
-    const delivery = await this.sendRebrief(memberThreadId, text);
+    const delivery = await this.sendRebrief(memberThreadId, text, supersedeBriefId);
     const pending = memberDetails(this.keeper.store, memberThreadId).delivery;
-    const status = !delivery.briefPending ? "delivered"
-      : pending!.error && pending!.attempts >= this.config().keepers.briefRetryAttempts ? "blocked"
-      : pending!.error ? "retrying" : "queued";
-    if (delivery.briefPending) {
+    const status = !delivery.briefPending ? "delivered" : !pending ? "cancelled"
+      : openBriefBlocker(this.keeper.store, pending) ? "blocked"
+      : pending.receiptChecks && pending.state === "unconfirmed" ? "unconfirmed"
+      : pending.state === "queued" && pending.queuedOnHost ? "queued"
+      : pending.error ? "retrying" : "pending";
+    if (delivery.briefPending && pending) {
       this.keeper.store.event(
         this.keeper.now(), threadId, member.boardQuestId, "member.told", text,
-        { memberThreadId, briefId: pending!.id, briefPending: true, delivery: status, attempts: pending!.attempts },
+        { memberThreadId, briefId: pending.id, briefPending: true, delivery: status, attempts: pending.attempts },
         { kind: "agent", threadId },
       );
     }
@@ -3328,8 +3460,13 @@ export class TavernRuntime {
       const text = inputText(entry.content);
       this.cancelTick(text);
       const pending = memberDetails(this.keeper.store, entry.threadId).delivery;
-      if (pending && text.startsWith(`[Tavern brief] id=${pending.id}\n`)) {
-        patchMemberDetails(this.keeper.store, entry.threadId, { delivery: { ...pending, attempts: this.config().keepers.briefRetryAttempts, nextAttemptAt: this.keeper.now(), error: "The queued brief was cancelled. It will not be sent again without an explicit retry." } });
+      if (pending && briefMessageId(text) === pending.id && !this.replacingBriefs.has(entry.threadId) &&
+          pending.cancelledQueueId !== entry.id && (pending.hostQueueId === undefined || pending.hostQueueId === entry.id)) {
+        const k = this.keeper, member = k.member(entry.threadId);
+        k.store.atomic(() => {
+          patchMemberDetails(k.store, entry.threadId, { delivery: { ...pending, state: "unconfirmed", cancelledQueueId: entry.id, error: null, nextAttemptAt: k.now() } });
+          k.store.event(k.now(), member?.keeperThreadId ?? null, member?.boardQuestId ?? null, "member.brief-queue-cancelled", "bb cancelled a queued brief; retry or replace it explicitly.", { memberThreadId: entry.threadId, briefId: pending.id, queueId: entry.id });
+        });
         this.ensureBriefBlocker(entry.threadId);
       }
     } else if (isUser(entry)) this.keeper.cancelUser(entry.threadId, entry.id);

@@ -162,6 +162,14 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
             {waiting.length > 0 && <><p className="lbl">Waiting on you <span className="anc">the Keeper handed back</span></p><KeeperNoteRows notes={waiting} short={short} label="Waiting on you" /></>}
             {proposed.length > 0 && <ul className="lg-rows lg-rules">{proposed.map(r => <RuleRow key={r.id} rule={r} variant="proposed" lead="Proposed · " quest={questTitle(r)} actions={<><button type="button" className="btn sm pri" disabled={confirm.isPending} aria-label={`Confirm the rule: ${r.text}`} onClick={() => setRule(r.id, true)}>Confirm</button><button type="button" className="btn sm" disabled={confirm.isPending} aria-label={`Dismiss the proposed rule: ${r.text}`} onClick={() => { setRule(r.id, false); setDismissed(d => [...d, r.id]); }}>Dismiss</button></>} />)}</ul>}
           </section>}
+          {!!data.memberBriefs?.length && <section className="lg-card" aria-label="Pending member briefs">
+            <h3>Pending member briefs</h3>
+            <ul className="lg-rows lg-briefs">{data.memberBriefs.map(({ memberThreadId, name, doing, pendingBrief: brief }) => <li key={memberThreadId}>
+              <p><b>{name}</b> · {{ queued: "Queued", delivering: "Delivering", unconfirmed: "Unconfirmed", blocked: "Blocked" }[brief.state]} · {plural(brief.attempts, "attempt")} · <TimeAgo at={brief.createdAt} /></p>
+              <p>Current work: {doing || "None recorded"}</p>
+              <p>Pending: {brief.firstLine || "No first line"} <span className="m">· {brief.id}</span></p>
+            </li>)}</ul>
+          </section>}
           {live.map((q, i) => (
             <section className={`lg-card lg-quest ${i === 0 && needsYou === 0 ? "glow" : ""}`} style={i === 0 && needsYou === 0 ? glowVars(`ledger:${q.id}`) as CSSProperties : undefined} key={q.id} aria-label={`Board quest: ${q.title}`}>
               <div className="lg-qh"><button type="button" className="lg-qt act" title={`Open the quest page: ${q.title}`} onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${q.id}` })}><b className="clamp">{q.title}</b><OpensMark /></button><span className="m">plan v{q.planVersion}</span><PhaseStrip phase={q.phase} /></div>

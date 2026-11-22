@@ -274,7 +274,24 @@ export const boardQuestDetailSchema = z.object({
 });
 export type BoardQuestDetail = z.infer<typeof boardQuestDetailSchema>;
 
+export const memberBriefRowSchema = z.object({
+  memberThreadId: threadId,
+  name: z.string(),
+  doing: z.string().nullable(),
+  pendingBrief: z.object({
+    id: z.string(),
+    state: z.enum(["queued", "delivering", "unconfirmed", "blocked"]),
+    attempts: z.number().int().nonnegative(),
+    receiptChecks: z.number().int().nonnegative(),
+    createdAt: z.number(),
+    ageMs: z.number().nonnegative(),
+    firstLine: z.string(),
+  }),
+});
+export type MemberBriefRow = z.infer<typeof memberBriefRowSchema>;
+
 export const ledgerSchema = z.object({
+  memberBriefs: z.array(memberBriefRowSchema).optional(),
   succession: successionViewSchema.nullable().optional(),
   asksNextCursor: z.string().nullable().optional(),
   attention: attentionSchema.optional(),

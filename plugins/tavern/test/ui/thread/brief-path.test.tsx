@@ -26,6 +26,25 @@ it("shows the missing steer in the member card and Ledger, but not in Needs you"
   } finally { f.close(); }
 });
 
+it("shows the pending brief separately from the member's current work", async () => {
+  const pending = { id: "brief_demo_pending", state: "blocked" as const, attempts: 1, receiptChecks: 5, ageMs: 65_000, createdAt: Date.now() - 65_000, firstLine: "Check the amended criteria" };
+  const slot = renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: {
+    ledger: () => ({ ...fixtureLedger, memberBriefs: [{ memberThreadId: member.threadId, name: "Juno II", doing: "Checking the first draft", pendingBrief: pending }] }),
+    decor: () => fixtureDecor, registry: () => registry,
+  } });
+  try {
+    const section = await slot.findByRole("region", { name: "Pending member briefs" });
+    expect(section.textContent).toContain("Juno II");
+    expect(section.textContent).toContain("Current work: Checking the first draft");
+    expect(section.textContent).toContain("Pending: Check the amended criteria");
+    expect(section.textContent).toContain("Blocked");
+    expect(section.textContent).toContain("1 attempt");
+    expect(section.textContent).toContain(pending.id);
+    expect(section.querySelector("time")?.dateTime).toBe(new Date(pending.createdAt).toISOString());
+    if (process.env.TAVERN_BRIEF_PATH_HARNESS === "1") process.stdout.write("PENDING_BRIEF=" + JSON.stringify(section.outerHTML) + "\n");
+  } finally { slot.lifecycle.unmount(); }
+});
+
 it.each([true, false])("adds path changes beside the count only when present (%s)", changed => {
   const f = mount({ changed, behind: false });
   try {

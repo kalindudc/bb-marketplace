@@ -2027,7 +2027,7 @@ export class Keeper {
         ...(reviewWaypoints.length ? { makerThreadId: threadId, reviewPlanVersion, reviewWaypoints } : {}),
         ...(reviewWaitNotice.length ? { reviewWaitNotice } : {}) };
       if (!late && input.status === "done" && m.engagement === "active") {
-        transitionMember(this.store, m, "resting", "done-report", { kind: "agent", threadId }, { kind: "report", id: report.id }, this.now(), { text, data });
+        transitionMember(this.store, m, memberDetails(this.store, threadId).delivery ? "briefing" : "resting", "done-report", { kind: "agent", threadId }, { kind: "report", id: report.id }, this.now(), { text, data });
       } else {
         if (!late && input.status !== "done") this.activity(threadId, "waiting");
         this.store.event(this.now(), m.keeperThreadId, m.boardQuestId, late ? "report.late" : "report.filed", text, data);

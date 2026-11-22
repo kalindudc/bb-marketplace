@@ -1,4 +1,4 @@
-import { isMemberMachineGone, MACHINE_RELEASED, memberDetails, memberHost, patchMemberDetails, transitionMember } from "../member-engagement";
+import { cancelMemberBrief, isMemberMachineGone, MACHINE_RELEASED, memberDetails, memberHost } from "../member-engagement";
 import { wasReleased } from "../../shared/member-engagement";
 import { commitUserAct, type UserActReceipt } from "../authority";
 import { currentAskNames } from "../quest-names";
@@ -35,8 +35,12 @@ export class AwayRuntime {
     this.holds = new AwayHolds(runtime.keeper.store.db);
   }
   private get k() { return this.runtime.keeper; }
-  private eligible(member: Member | null): member is Member {
-    return member?.role === "member" && member.state !== "failed" && isLiveMember(this.k.store, member, "work");
+  private eligible(member: Member | null, atClose = false): member is Member {
+    if (member?.role !== "member" || member.state === "failed") return false;
+    if (member.engagement === "briefing")
+      return !!memberDetails(this.k.store, member.threadId).delivery && (atClose || this.holds.get(member.threadId)?.resumeRequired === true)
+        && isLiveMember(this.k.store, member, "brief");
+    return isLiveMember(this.k.store, member, "work");
   }
   private preservationEligible(member: Member | null): member is Member {
     if (member?.role !== "member") return false;
@@ -47,7 +51,7 @@ export class AwayRuntime {
     const member = this.k.member(threadId);
     return this.eligible(member) || !!this.holds.get(threadId)?.reasons.some(reason => reason.kind === "content" && reason.preservation && reason.idleOnly) && this.preservationEligible(member);
   }
-  private members() { return this.k.store.all("members").filter(member => this.eligible(member)); }
+  private members(atClose = false) { return this.k.store.all("members").filter(member => this.eligible(member, atClose)); }
   private keepers() { return this.k.store.all("members").filter(member => isLiveKeeper(this.k.store, member, "automatic")); }
   private keepersWithWork() {
     const ids = new Set<string>();
@@ -120,9 +124,9 @@ export class AwayRuntime {
     const hold = this.holds.get(threadId);
     return member.engagement === "archived" || member.engagement === "archiving" || !!hold && (hold.resumeRequired || hold.stopPending) || this.policy(member.boardQuestId, member.threadId).mode === "held";
   }
-  private stage(input: Member) {
+  private stage(input: Member, atClose = false) {
     const member = this.k.member(input.threadId);
-    if (!this.eligible(member)) return;
+    if (!this.eligible(member, atClose)) return;
     const window = this.store.snapshot().window;
     if (!window || window.returnedAt !== null || this.policy(member.boardQuestId, member.threadId).mode !== "held") return;
     this.holds.requestAway(this.holdOwner(member), window.id);
@@ -175,7 +179,7 @@ export class AwayRuntime {
       this.runtime.memory.cancel(true);
     });
     await this.refreshLocalScopes();
-    for (const member of this.members()) this.stage(member);
+    for (const member of this.members(true)) this.stage(member, true);
     this.changed();
     for (const threadId of this.keepersWithWork()) affected.add(threadId);
     for (const member of this.keepers()) {
@@ -279,12 +283,20 @@ export class AwayRuntime {
       if (!current()) return;
       if (thread.status !== "idle" && thread.archivedAt === null && thread.deletedAt === null) throw new Error(`Interruption not confirmed: ${thread.status}`);
       await this.clearOwnQueue(threadId, current);
-      if (current()) this.holds.compareAndSet(hold, { stopPending: false, error: null });
+      if (current()) this.confirmInterruption(hold);
     } catch (error) {
       if (current()) this.holds.compareAndSet(hold, { error: String(error).slice(0, 1000) });
       this.runtime.bb.log.warn(`Tavern Closing time interruption ${threadId}: ${String(error)}`);
     }
     this.changed();
+  }
+  private confirmInterruption(hold: NonNullable<ReturnType<AwayRuntime["holds"]["get"]>>) {
+    this.k.store.atomic(() => {
+      if (this.holds.compareAndSet(hold, { stopPending: false, error: null })) {
+        const member = this.k.member(hold.threadId);
+        if (member) cancelMemberBrief(this.k.store, member, this.k.now(), { holdVersion: hold.version });
+      }
+    });
   }
   async beforeTell(threadId: string) {
     const member = this.k.member(threadId)!;
@@ -303,13 +315,7 @@ export class AwayRuntime {
       if (current.stopPending) throw new Error("The member's previous turn has not stopped; retry the interruption before sending work.");
       const details = memberDetails(this.k.store, threadId), pending = details.delivery;
       if (!this.holds.compareAndSet(current, { resumeRequired: false, reasons: [], cancelledBrief: pending ? { id: pending.id, text: pending.text } : current.cancelledBrief })) throw new Error("Member hold changed; retry the fresh instruction");
-      if (pending) {
-        const member = this.k.member(threadId)!;
-        if (member.engagement === "briefing" && details.rest) {
-          transitionMember(this.k.store, member, "resting", "rebrief-cancelled", { kind: "tavern" }, { kind: "brief-cancelled", id: pending.id, evidence: { holdVersion: current.version } }, this.k.now(), { details: { delivery: null } });
-        } else patchMemberDetails(this.k.store, threadId, { delivery: null });
-        if (pending.blockerAskId) this.k.withdrawAsk(pending.blockerAskId, "turn-recovered");
-      }
+      cancelMemberBrief(this.k.store, this.k.member(threadId)!, this.k.now(), { holdVersion: current.version });
     });
     this.changed();
   }

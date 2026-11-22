@@ -12,6 +12,7 @@ export type MemberOperation = {
 };
 export type MemberEngagementData = {
   delivery?: PendingBrief | null;
+  cancelledInitialBrief?: boolean;
   rest?: { since: number; reminded?: boolean; keep?: { until: number; why: string; decisionId: string } | null } | null;
   operation?: MemberOperation | null;
   release?: { reason: string; decisionId?: string; at?: number } | null;
@@ -33,7 +34,7 @@ export const MEMBER_TRANSITIONS = [
   ...rows(["briefing"], ["active"], "brief-accepted", ["tavern"], "brief-acceptance", "member.briefed"),
   ...rows(["resting"], ["briefing"], "rebrief", ["agent"], "brief", "member.rebrief-requested"),
   ...rows(["briefing"], ["resting"], "rebrief-cancelled", ["tavern"], "brief-cancelled", "member.brief-cancelled"),
-  ...rows(["active"], ["resting"], "done-report", ["agent"], "report", "report.filed"),
+  ...rows(["active"], ["resting", "briefing"], "done-report", ["agent"], "report", "report.filed"),
   ...rows(available, ["releasing"], "release-requested", ["agent"], "decision", "member.release-requested"),
   ...rows(available, ["releasing"], "release-answered", ["user"], "ask-answer", "member.release-requested"),
   ...rows(available, ["releasing"], "greenlight-undone", ["user"], "undo", "member.release-requested"),
@@ -56,6 +57,35 @@ export const consumesMemberWrite = (record: object) => writes.delete(record);
 export const memberDetails = (store: KeeperStore, id: string): MemberEngagementData => store.runtime(id).memberEngagement ?? {};
 export const patchMemberDetails = (store: KeeperStore, id: string, patch: Partial<MemberEngagementData>) =>
   store.patch(id, { memberEngagement: { ...memberDetails(store, id), ...patch } });
+
+export function openBriefBlocker(store: KeeperStore, pending: PendingBrief) {
+  const ask = pending.blockerAskId ? store.get("asks", pending.blockerAskId) : null;
+  return ask?.state === "open" && ask.effect?.type === "retry-brief" && ask.effect.briefId === pending.id ? ask : null;
+}
+
+export function withdrawBriefBlocker(store: KeeperStore, pending: PendingBrief, at: number) {
+  const ask = openBriefBlocker(store, pending);
+  if (!ask) return;
+  store.put("asks", ask.id, { ...ask, state: "withdrawn", withdrawnAt: at, withdrawnCause: "turn-recovered" });
+  store.event(at, ask.keeperThreadId, ask.boardQuestId, "ask.withdrawn", ask.question, { askId: ask.id, briefId: pending.id, cause: "turn-recovered" });
+}
+
+export function cancelMemberBrief(store: KeeperStore, member: Member, at: number, evidence: Record<string, unknown>) {
+  return store.atomic(() => {
+    const details = memberDetails(store, member.threadId);
+    const pending = details.delivery;
+    if (!pending) return;
+    if (member.engagement === "briefing" && details.rest) {
+      transitionMember(store, member, "resting", "rebrief-cancelled", { kind: "tavern" }, { kind: "brief-cancelled", id: pending.id, evidence }, at);
+    } else {
+      patchMemberDetails(store, member.threadId, { delivery: null,
+        ...(store.runtime(member.threadId).initialBriefAt === undefined ? { cancelledInitialBrief: true } : {}),
+      });
+      withdrawBriefBlocker(store, pending, at);
+      store.event(at, member.keeperThreadId, member.boardQuestId, "member.brief-cancelled", "Pending brief cancelled.", { memberThreadId: member.threadId, cancelledBriefId: pending.id, evidence });
+    }
+  });
+}
 
 export function outstandingArchivedPlacement(placements: PlacementStore, member: Member) {
   if (member.engagement !== "archived") return null;
@@ -210,9 +240,15 @@ export function transitionMember(store: KeeperStore, member: Member, to: Engagem
         }
       }
     }
-    if (to === "resting") details.rest ??= { since: at };
+    if (cause === "done-report" && (to === "briefing") !== !!previous.delivery) refuse("the pending brief and report destination do not match");
+    if (to === "resting" || cause === "done-report") details.rest ??= { since: at };
     if (to === "active") details.rest = null;
-    if (to !== "active" && to !== "briefing") details.delivery = null;
+    if ((cause === "brief-accepted" && previous.delivery) || (to !== "active" && to !== "briefing")) details.delivery = null;
+    const cleared = previous.delivery && !details.delivery ? previous.delivery : null;
+    if (cleared) {
+      if (cause !== "brief-accepted" && store.runtime(bound.threadId).initialBriefAt === undefined) details.cancelledInitialBrief = true;
+      withdrawBriefBlocker(store, cleared, at);
+    }
     if (["archived", "released", "stopped"].includes(to)) details.operation = null;
     if (cause === "unarchived") { details.archive = null; details.host = null; }
     const updated: Member = { ...bound, ...options.patch, engagement: to };
@@ -228,7 +264,7 @@ export function transitionMember(store: KeeperStore, member: Member, to: Engagem
     store.patch(bound.threadId, { memberEngagement: details });
     const event = cause === "archive-confirmed" && details.host?.deletedAt != null ? "thread.deleted" : row!.event;
     store.event(at, bound.keeperThreadId, bound.boardQuestId, event, options.text ?? `${bound.displayName ?? bound.classId}: ${from ?? "new"} to ${to}`, {
-      ...options.data, ...(machine ? { machine } : {}), ...(to === "archived" ? { archive: details.archive } : {}), memberThreadId: bound.threadId, engagement: { from, to }, cause, receipt,
+      ...options.data, ...(cleared && cause !== "brief-accepted" ? { cancelledBriefId: cleared.id } : {}), ...(machine ? { machine } : {}), ...(to === "archived" ? { archive: details.archive } : {}), memberThreadId: bound.threadId, engagement: { from, to }, cause, receipt,
     }, actor);
     return updated;
   });

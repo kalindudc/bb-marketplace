@@ -1,4 +1,5 @@
-import { memberDetails, memberHost } from "./member-engagement";
+import { memberDetails, memberHost, openBriefBlocker } from "./member-engagement";
+import type { MemberBriefRow } from "../shared/contract";
 import { memberActivityWord, wasReleased } from "../shared/member-engagement";
 import { z } from "zod";
 import { restingParty } from "./resting";
@@ -39,6 +40,21 @@ export const statusInput = z.object({
 });
 import { undoAskProjection } from "./undo-record";
 import { currentLeadPlanNames, currentAskNames } from "./quest-names";
+
+export function memberBriefRows(k: TavernRuntime["keeper"], threadId: string, boardQuestId?: string, memberThreadId?: string): MemberBriefRow[] {
+  const now = k.now();
+  return k.store.pendingMemberBriefs(threadId, boardQuestId, memberThreadId).map(({ member, pending }) => {
+    const createdAt = pending.createdAt ?? pending.attemptedAt ?? pending.nextAttemptAt;
+    return { memberThreadId: member.threadId, name: k.name(member), doing: member.doing,
+      pendingBrief: {
+        id: pending.id, state: openBriefBlocker(k.store, pending) ? "blocked"
+          : pending.state ?? (pending.attemptedAt === null ? "queued" : "unconfirmed"),
+        attempts: pending.attempts, receiptChecks: pending.receiptChecks ?? 0, createdAt, ageMs: Math.max(0, now - createdAt),
+        firstLine: (pending.assignmentText ?? pending.text).split("\n", 1)[0]!.trim().slice(0, 300),
+      },
+    };
+  });
+}
 
 export function readStatus(runtime: TavernRuntime, threadId: string, input: z.output<typeof statusInput>) {
   if (input.section === "placement") return runtime.placements().controller.status(threadId, input.boardQuestId ?? null).then(agentData);
@@ -258,6 +274,7 @@ function statusData(
   return {
     archivedCount,
     archivedMembers, archivedMemberTotal, nextArchivedOffset,
+    memberBriefs: memberBriefRows(k, threadId, input.boardQuestId ?? undefined, input.memberThreadId ?? undefined),
     unreviewedMemory: runtime.memory.unreviewedFor(threadId, 0, 3),
     freeHands: resting.filter(m => m.mayRebriefFor !== null || m.machineLost).map(m => m.machineLost ? { ...m, unavailable: "machine lost: can't take new work; release it" } : m),
     restingMembers: resting.filter(m => m.settled),

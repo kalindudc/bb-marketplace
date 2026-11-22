@@ -303,10 +303,10 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_tell",
     "Member brief",
-    "Re-brief one of your own members, including a member that already reported done. memberThreadId accepts its unique live display name or thread id. Start an idle thread or queue behind its active turn; never steer into a running tool. Stopped or released members cannot take new work. Read the result: delivered, queued awaiting dispatch, retrying after failure, or blocked after bounded attempts. Repeat the actual delivery outcome; never call a blocked or refused brief retrying. Read Free hands for the permitted follow-up; a Warden may only re-check its rejected waypoint.",
-    z.object({ memberThreadId: id, text: z.string().min(1).max(8000) }),
+    "Brief your own members by live name or thread id; never steer into a running tool. Report the actual result: delivered, queued, unconfirmed, retrying, blocked or cancelled. Read Free hands for follow-up limits; a Warden may only re-check its rejected waypoint. For a correction, pass supersedeBriefId from tavern_status to replace only that unconfirmed brief.",
+    z.object({ memberThreadId: id, text: z.string().min(1).max(8000), supersedeBriefId: id.optional() }),
     async (input, threadId) => {
-      const delivery = await runtime.tell(threadId, input.memberThreadId, input.text);
+      const delivery = await runtime.tell(threadId, input.memberThreadId, input.text, input.supersedeBriefId);
       switch (delivery.status) {
         case "delivered":
           return `Brief delivered to ${delivery.memberName}.`;
@@ -315,7 +315,13 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         case "retrying":
           return `Brief delivery to ${delivery.memberName} failed on attempt ${delivery.attempts} of ${runtime.config().keepers.briefRetryAttempts}; Tavern will reconcile and retry it. Do not send it again.`;
         case "blocked":
-          return `Brief delivery to ${delivery.memberName} failed after ${delivery.attempts} attempts. Automatic retries have stopped; answer the brief blocker to retry or release the member.`;
+          return `Brief delivery to ${delivery.memberName} is blocked. Automatic retries have stopped; answer the brief blocker to retry or release the member, or explicitly replace the pending brief.`;
+        case "unconfirmed":
+          return `bb has not confirmed the brief for ${delivery.memberName}; Tavern will check for a receipt. Do not send it again.`;
+        case "pending":
+          return `Brief is pending in Tavern for ${delivery.memberName}; delivery is not confirmed. Do not send it again.`;
+        case "cancelled":
+          return `The pending brief for ${delivery.memberName} was cleared before Tavern could confirm delivery. Read tavern_status before sending fresh work.`;
       }
     },
   );
@@ -489,7 +495,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_status",
     "Read the party\'s status",
-    "Read bounded board state and page through reports, answers, defaults, events or pending routes. section=archived lists archived party members; use tavern_unarchive to bring one back. Use reportId and character offset for a full report and its original brief. memberThreadId accepts a unique live display name or thread id from your own party. Use section=requests with memberThreadId to inspect that member's frozen user-source manifest; page with sourceIndex and character offset. Fetch remaining facts when a digest says more remain. Page omitted rules with section=rules and use section=placement for machine rules and slots. The highest ledger version wins, configure or tick; read the needed quests after a re-anchor before acting.",
+    "Read bounded board state, including pending member briefs and current work. Page through reports, asks, events or pending routes. section=archived lists archived party members; use tavern_unarchive to bring one back. Use reportId and character offset for a full report and its original brief. memberThreadId accepts a unique live display name or thread id from your own party. Use section=requests with memberThreadId to inspect that member's frozen user-source manifest; page with sourceIndex and character offset. Fetch remaining facts when a digest says more remain. Page omitted rules with section=rules and use section=placement for machine rules and slots. The highest ledger version wins, configure or tick; read the needed quests after a re-anchor before acting.",
     statusInput,
     (input, threadId) => readStatus(runtime, threadId, { ...input, ...(input.memberThreadId ? { memberThreadId: k.resolvePartyMember(threadId, input.memberThreadId).threadId } : {}) }),
   );

@@ -100,6 +100,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Fixed
 
+- A brief that bb cannot confirm now raises a blocker instead of silently holding the member’s slot. Retry checks bb before sending the same brief again, and the Keeper can explicitly replace an unconfirmed brief. The Ledger and `tavern_status` show pending briefs beside current work.
 - The Keeper widget is the same height as bb’s context row. Resume is a plain button like Ledger, and the chips still open in place.
 - Idle characters stay in place in Lively mode and keep their small movements. A Quiet Keeper also stays in place. Walking characters face their travel direction when the composer narrows.
 - Characters resume their normal motion after a scope ask closes. Earlier violations remain visible under Scope and guardrails, but no longer hold the character in place.

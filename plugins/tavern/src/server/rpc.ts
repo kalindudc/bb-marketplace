@@ -1,5 +1,6 @@
 import { memberIdentityFacts, memberIdentityLabel } from "../shared/identity";
 import { memberHost } from "./member-engagement";
+import { memberBriefRows } from "./status";
 import { wasReleased } from "../shared/member-engagement";
 import { askHistory } from "./ask-history";
 import { scopeAskMember } from "./ask-effects";
@@ -306,6 +307,7 @@ export function rpcHandlers(
         scopes: runtime.scopes?.views(partyIds(threadId)) ?? [],
         violations: runtime.scopes?.violations(partyIds(threadId)) ?? [],
         keeperThreadId: threadId,
+        memberBriefs: memberBriefRows(k, threadId),
         succession: runtime.succession.view(threadId),
         undoLanes: readUndoLanes(k.store, threadId),
         quietSince: k.store.runtime(threadId).manualStopAt ?? null,

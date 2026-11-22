@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { patchThreadFixture, runtimeFixture } from "../server/member-fixture";
 import { describe, expect, it, vi } from "vitest";
+import { makeQueueEntry } from "@get-bb/plugin-sdk/testing";
 import { setup } from "../server/runtime-fixture";
 import { planInput } from "../server/support";
 import { TavernRuntime } from "../../src/server/runtime";
@@ -65,7 +66,7 @@ describe("durable explicit briefs", () => {
     const f = await planned(), member = await f.runtime.hire("lead", "project", f.input);
     const send = vi.spyOn(f.bb.sdk.threads, "send").mockResolvedValueOnce({ delivery: "queued" } as never);
     await f.runtime.sendRebrief(member.threadId, rebrief);
-    f.runtime.cancelled({ threadId: member.threadId, originPluginId: "tavern", content: send.mock.calls[0]![0].input } as never);
+    f.runtime.cancelled(makeQueueEntry({ id: "cancelled-brief", threadId: member.threadId, originPluginId: "tavern", content: send.mock.calls[0]![0].input as never }));
     f.advance(3_600_000); await f.runtime.sweep();
     expect(send.mock.calls.filter(([input]) => input.threadId === member.threadId)).toHaveLength(1);
     expect(f.k.store.openAsks("lead").some(ask => ask.kind === "blocker")).toBe(true);

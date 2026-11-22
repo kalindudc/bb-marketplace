@@ -1,4 +1,4 @@
-import { memberHost } from "./member-engagement";
+import { cancelMemberBrief, memberHost } from "./member-engagement";
 import { wasReleased } from "../shared/member-engagement";
 import { randomUUID } from "node:crypto";
 import type { Actor } from "../shared/schema";
@@ -117,8 +117,12 @@ export class StopAll {
       : { state: "stopped", since: startedAt, by, byLabel, receipt };
     k.store.atomic(() => {
       this.save(state);
+      for (const entry of entries) {
+        if (entry.role === "member") cancelMemberBrief(k.store, k.member(entry.threadId)!, startedAt, { stopAllReceiptId: receipt.id });
+      }
       if (previous.state !== "stopped") k.store.event(startedAt, null, null, "tavern.stopped", "Tavern stopped; new work is held until Resume.", { receipt, surface: source.surface, pluginId: source.pluginId ?? null }, by);
     });
+    for (const keeperId of new Set(entries.flatMap(entry => entry.role === "keeper" ? [entry.threadId] : []))) k.changed(keeperId);
     this.runtime.memory.cancel();
     this.flight = this.run(state).finally(() => { this.flight = null; });
     return this.flight;

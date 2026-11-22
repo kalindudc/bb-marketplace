@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { dispatch049, queued049 } from "./dispatch-fixture";
+import { patchThreadFixture, runtimeFixture } from "./member-fixture";
 import { makeThreadResponse } from "./host";
 import { seedQuest } from "./support";
 import { StopAll } from "../../src/server/stop-all";
@@ -51,6 +52,22 @@ describe("Stop all brake", () => {
     expect(f.k.store.events().find(e => e.type === "tavern.stop-receipt")?.data.receipt).toEqual(state.receipt);
     await f.runtime.stopAll.stop({ kind: "user" });
     expect(f.harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(12);
+  });
+  it("cancels a pending brief in the stop transition and never replays it after Resume", async () => {
+    const f = fixture();
+    f.runtime.spawnBriefDelivered("placed");
+    const members = f.k.store.all("members");
+    const text = "Old work";
+    patchThreadFixture(f.k.store, "placed", { pendingBrief: { id: "brief_old", text, attempts: 1, nextAttemptAt: f.time(), attemptedAt: f.time(), hostAfterSeq: 0, error: null } });
+    const queued = queued049("old-row", `[Tavern brief] id=brief_old\n${text}`, f.time(), { pluginId: "tavern" });
+    const stop = f.runtime.stopAll.stop({ kind: "user" });
+    expect(runtimeFixture(f.k.store, "placed").pendingBrief).toBeNull();
+    await stop;
+    expect(f.k.store.all("members")).toEqual(members);
+    f.runtime.stopAll.resume();
+    await f.runtime.retryInitialBriefs("lead");
+    expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
+    expect((await f.runtime.dispatch(dispatch049({ threadId: "placed", rows: [queued] }))).action).not.toBe("proceed");
   });
   it("holds ticks, briefs, hires and automated dispatch but lets typed user messages pass", async () => {
     const f = fixture();

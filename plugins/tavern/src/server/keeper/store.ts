@@ -202,6 +202,13 @@ export interface PendingBrief {
   hostAfterSeq: number | null;
   error: string | null;
   blockerAskId?: string | null;
+  createdAt?: number;
+  state?: "queued" | "delivering" | "unconfirmed";
+  receiptChecks?: number;
+  queuedOnHost?: boolean;
+  retryRequested?: boolean;
+  cancelledQueueId?: string | null;
+  hostQueueId?: string | null;
 }
 export interface Runtime {
   memberEngagement?: MemberEngagementData;
@@ -248,6 +255,7 @@ export interface Runtime {
   reportedBriefVersion?: number;
   failureAskId?: string | null;
   lastBriefAt?: number;
+  lastAcceptedBriefId?: string;
   initialBriefAt?: number;
   lastUnreportedTurn?: string;
   scopePending?: string | null;
@@ -417,6 +425,15 @@ export class KeeperStore {
       )
       .all(kind, value, limit) as { data: string }[];
     return rows.map((row) => this.decode(kind, row.data)).reverse();
+  }
+  pendingMemberBriefs(keeperThreadId: string, boardQuestId?: string, memberThreadId?: string) {
+    const rows = this.db.prepare(`SELECT m.data AS member, json_extract(r.data,'$.memberEngagement.delivery') AS brief
+      FROM tavern_records m JOIN tavern_runtime r ON r.thread_id=m.id
+      WHERE m.kind='members' AND json_extract(m.data, '$.keeperThreadId')=?
+        AND json_extract(m.data,'$.role')='member' AND json_type(r.data,'$.memberEngagement.delivery')='object'
+        AND (? IS NULL OR json_extract(m.data,'$.boardQuestId')=?) AND (? IS NULL OR m.id=?)
+      ORDER BY m.rowid`).all(keeperThreadId, boardQuestId ?? null, boardQuestId ?? null, memberThreadId ?? null, memberThreadId ?? null) as { member: string; brief: string }[];
+    return rows.map(row => ({ member: this.decode("members", row.member), pending: JSON.parse(row.brief) as PendingBrief }));
   }
   issuedShellGrants(field: "memberThreadId" | "boardQuestId", value: string) {
     const rows = this.db.prepare(`SELECT data FROM tavern_records WHERE kind='shellGrants' AND json_extract(data,'$.state')='issued' AND json_extract(data,'$.${field}')=? ORDER BY rowid`).all(value) as { data: string }[];

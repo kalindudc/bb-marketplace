@@ -96,6 +96,22 @@ describe("Closing time runtime", () => {
     expect(f.runtime.away.blocked("child")).toBe(false);
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1);
   });
+  it("cancels a resting member's rebrief when its interruption is confirmed, before a fresh tell", async () => {
+    const f = await party();
+    f.k.report("child", { status: "done", outcome: "Original work done", evidence: [], artifacts: [], confidence: null, voice: null });
+    vi.spyOn(f.bb.sdk.threads, "send").mockResolvedValueOnce({ delivery: "queued" } as never);
+    await f.runtime.sendRebrief("child", "Old rebrief");
+    const pending = runtimeFixture(f.k.store, "child").pendingBrief!;
+    expect(f.k.member("child")?.engagement).toBe("briefing");
+    expect(await f.close()).toMatchObject({ code: "closed" });
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toBeNull();
+    expect(f.k.member("child")?.engagement).toBe("resting");
+    expect(f.k.store.events("lead", 0, 200)).toContainEqual(expect.objectContaining({ type: "member.brief-cancelled", data: expect.objectContaining({ cancelledBriefId: pending.id }) }));
+    await f.runtime.away.return({ kind: "explicit-return", threadId: null, refId: null });
+    await f.runtime.retryInitialBriefs("lead");
+    expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1);
+    await expect(f.runtime.tell("lead", "child", "Fresh work")).resolves.toMatchObject({ status: "delivered" });
+  });
   it("does not count a paused member as stale", async () => {
     const f = await party();
     await f.close();
