@@ -12,15 +12,15 @@
   "harness": {
     "call": "evaluate(scope, prepareCall({ kind: 'tool', toolName: 'bash', input: { command }, cwd: wt }))",
     "fixture": [
-      "Create base outside every scratch root (not under /private/tmp or $TMPDIR), or the readonly write results become artifacts.",
+      "Create base outside the allowed ${tmp} root, so the readonly scope still refuses writes to the checkout.",
       "git init -q -b main main && cd main && git -c user.email=a@b -c user.name=n commit -q --allow-empty -m init",
       "git remote add origin git@github.com:fixture-dev/sample-repo.git && git remote add upstream https://github.com/example-org/sample-repo.git",
       "git worktree add -q ../wt -b feature",
       "cd ../wt && mkdir -p src packages/a && echo 'a' > src/a.ts && echo '{\"version\":\"1\"}' > package.json"
     ],
-    "scope": "s = { ...scopeForClass(role), threadId: 't1', issuedAt: 1 }; if (s.writes.mode === 'worktree') s = bindWorktree(s, wt); s = bindPaths(s, { home: homedir(), tmp: ['/private/tmp', realpathSync(tmpdir())], scopesDir: base + '/scopes', threadStorage: base + '/storage' }, realPath)",
+    "scope": "s = { ...scopeForClass(role), threadId: 't1', issuedAt: 1 }; if (s.writes.mode === 'worktree') s = bindWorktree(s, wt); s = bindPaths(s, { home: homedir(), tmp: [realpathSync(tmpdir())], scopesDir: base + '/scopes', threadStorage: base + '/storage' }, realPath)",
     "policy": "No global or project scopes.yml, so Smith has no git-push-main grant.",
-    "placeholders": "${threadStorage} means base + '/storage'."
+    "placeholders": "${threadStorage} means base + '/storage'; ${tmp} means realpathSync(tmpdir())."
   },
   "counts": {
     "ranger": {
@@ -393,23 +393,23 @@
       "note": "read builtin is not in the read-program list"
     },
     {
-      "command": "echo notes > /tmp/ranger-notes.txt",
+      "command": "echo notes > ${tmp}/ranger-notes.txt",
       "expected": "allow"
     },
     {
-      "command": "tee /tmp/out.txt < src/a.ts",
+      "command": "tee ${tmp}/out.txt < src/a.ts",
       "expected": "allow"
     },
     {
-      "command": "mkdir -p /tmp/ranger && cp src/a.ts /tmp/ranger/",
+      "command": "mkdir -p ${tmp}/ranger && cp src/a.ts ${tmp}/ranger/",
       "expected": "allow"
     },
     {
-      "command": "cat <<'EOF' > /tmp/report.md\n# r\nEOF",
+      "command": "cat <<'EOF' > ${tmp}/report.md\n# r\nEOF",
       "expected": "allow"
     },
     {
-      "command": "git diff > /tmp/diff.patch",
+      "command": "git diff > ${tmp}/diff.patch",
       "expected": "allow"
     },
     {
@@ -497,7 +497,7 @@
       "observedR2": "BLOCK(git-push-main)"
     },
     {
-      "command": "git apply /tmp/patch.diff",
+      "command": "git apply ${tmp}/patch.diff",
       "expected": "allow",
       "observedR2": "BLOCK(git-alias)",
       "note": "a worktree write like checkout or commit; treat as cwd write"
@@ -647,7 +647,7 @@
       "expected": "allow"
     },
     {
-      "command": "npm test > /tmp/test.log 2>&1; tail -50 /tmp/test.log",
+      "command": "npm test > ${tmp}/test.log 2>&1; tail -50 ${tmp}/test.log",
       "expected": "allow"
     },
     {
@@ -776,11 +776,11 @@
       "expected": "allow"
     },
     {
-      "command": "curl -fsSL https://example.com -o /tmp/x.json",
+      "command": "curl -fsSL https://example.com -o ${tmp}/x.json",
       "expected": "allow"
     },
     {
-      "command": "tar -xzf /tmp/a.tgz -C /tmp/a",
+      "command": "tar -xzf ${tmp}/a.tgz -C ${tmp}/a",
       "expected": "allow"
     },
     {
@@ -806,7 +806,7 @@
       "expected": "allow"
     },
     {
-      "command": "echo hi > /tmp/x",
+      "command": "echo hi > ${tmp}/x",
       "expected": "allow",
       "note": "Keeper temporary records are now permitted",
       "observedR2": "BLOCK(shell-write)"
@@ -833,7 +833,7 @@
       "expected": "allow"
     },
     {
-      "command": "npm publish > /tmp/log",
+      "command": "npm publish > ${tmp}/log",
       "expected": "block",
       "why": "arbitrary program and a scratch write; either reason blocks",
       "observedR2": "BLOCK(shell-write)"

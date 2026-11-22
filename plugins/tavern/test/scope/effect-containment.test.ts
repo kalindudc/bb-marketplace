@@ -7,7 +7,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { readerFallback } from "../../src/scope/worktree";
 import { evaluate, type ScopeCall } from "../../src/scope/engine";
 import { scopeForClass } from "../../src/scope/presets";
-import { bindPaths, realPath } from "../../src/scope/paths";
+import { bindPaths, realPath, within } from "../../src/scope/paths";
 import { shellCommands, commandWritePaths } from "../../src/scope/shell";
 import { prepareCall } from "../../src/scope/prepare";
 import { sandboxProfile } from "../../src/scope/sandbox";
@@ -57,16 +57,23 @@ it("resolves prior assignments and both finite loop writes into thread storage",
   expect(commands.flatMap(commandWritePaths)).toEqual(["/storage/t1/state/a.json", "/storage/t1/state/b.json"]);
 });
 it("extends only a read-and-fetch call with the external repository git dir", () => {
-  const root = realPath(mkdtempSync(join(tmpdir(), "tavern-fetch-"))); roots.push(root);
+  const root = realPath(mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES!, "tavern-fetch-"))); roots.push(root);
   const repo = join(root, "repo"); mkdirSync(repo); execFileSync("git", ["init", repo], { stdio: "ignore" });
-  const s = scope();
-  const fetch = prepareCall(call("git fetch", repo), { scope: s });
+  const scratch = realPath(tmpdir());
+  expect(within(repo, scratch), "The repository must be outside the allowed scratch root").toBe(false);
+  const s = bindPaths(scopeForClass("ranger"), { home: join(root, "home"), tmp: [scratch], scopesDir: join(root, "scopes") }, realPath);
+  const fetch = prepareCall(call("git status && git fetch", repo), { scope: s });
   expect(evaluate(s, fetch).allow).toBe(true);
   expect(fetch.fetchWriteRoots).toEqual([join(repo, ".git")]);
   expect(sandboxProfile(s, false, fetch.fetchWriteRoots)).toContain(`(allow file-write* (subpath ${JSON.stringify(join(repo, ".git"))}))`);
-  const mixed = prepareCall(call("git fetch && rm -rf .git", repo), { scope: s });
-  expect(mixed.fetchWriteRoots).toEqual([]);
-  expect(evaluate(s, mixed).allow).toBe(false);
+  for (const command of ["git fetch && rm -rf .git", "git fetch && printf note > notes.txt", 'git fetch && printf note > "$TMPDIR/notes.txt"']) {
+    const input = call(command, repo);
+    const mixed = prepareCall(input, { scope: s });
+    expect(mixed.fetchWriteRoots, command).toEqual([]);
+    expect(evaluate(s, mixed), command).toMatchObject({ allow: false, ruleId: "shell-write" });
+    const uncontained = prepareCall({ ...input, containment: undefined }, { scope: s });
+    expect(evaluate(s, uncontained), command).toMatchObject({ allow: false, ruleId: "shell-write" });
+  }
 });
 it("allows unparsable research but retains the raw deploy fallback", () => {
   expect(evaluate(scope(), call("echo 'unfinished")).allow).toBe(true);

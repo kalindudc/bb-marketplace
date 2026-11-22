@@ -51,6 +51,7 @@ Loom now plans large projects one phase at a time, and its page is rebuilt aroun
 
 ### Fixed
 
+- The push tests now check what happens when Git LFS is missing, even on machines that have it installed.
 - A plugin reload no longer counts an interrupted pull request read as a failure or delays the next engine's first read.
 - An update or reload no longer leaves Loom stopped with "service engine did not stop".
 - Spec no longer fails to load when only a repo names a forge profile.
