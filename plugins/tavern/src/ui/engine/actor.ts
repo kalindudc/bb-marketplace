@@ -74,8 +74,9 @@ export class Actor {
     this.body.vx = this.body.ax = this.body.swing = this.body.angularVelocity = 0;
   }
 
-  setRules(rules: ActorRules) {
-    const activity = actorActivity(this.mood, rules);
+  setRules(rules: ActorRules, span: number) {
+    const requested = actorActivity(this.mood, rules);
+    const activity = requested === "walk" && span <= 0 ? "stand" : requested;
     const changed = this.activity !== activity || this.held !== rules.held;
     this.held = rules.held;
     this.activity = activity;
@@ -88,7 +89,7 @@ export class Actor {
   }
 
   update(dt: number, span: number, rules: ActorRules, steps = 1) {
-    this.setRules(rules);
+    this.setRules(rules, span);
     this.body.x = Math.min(span, Math.max(0, this.body.x));
     const walk = this.activity === "walk" && span > 0;
     if (!walk && !this.cue && settled(this.body)) {

@@ -48,7 +48,7 @@ export function CharacterAvatar({ character, seed = character.avatar ?? characte
     };
     const world: EngineWorld = {
       mode: () => worldMode.current === "off" ? "off" : "calm",
-      refresh: () => actor.setRules(rules()),
+      refresh: () => actor.setRules(rules(), 0),
       update(seconds, steps) {
         actor.update(seconds, 0, rules(), steps);
         untilCue -= seconds * steps;

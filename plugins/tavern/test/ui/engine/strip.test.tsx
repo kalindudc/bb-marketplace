@@ -123,6 +123,7 @@ it("follows the walking art but holds the light during an idle, typing, reduced 
     return { invalidate: change => { change?.(); candidate.refresh?.(); candidate.draw(candidate.mode() === "off"); }, remove() {} };
   });
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(380);
   const art = sprites.createArt({ seed: "wren", classId: "wanderer", hue: "teal", charge: null, keeper: false });
   let x = 4;
   vi.spyOn(sprites, "createArt").mockReturnValue({ ...art, lightAnchor: () => ({ kind: "lantern", x, y: 20 }) });
@@ -133,7 +134,12 @@ it("follows the walking art but holds the light during an idle, typing, reduced 
   const props = { character, classLabel: "Wanderer", classId: "wanderer", mood: "idle", keeper: false, surface: "thread:wren", region: "widget" } as const;
   try {
     const view = render(<PartyStrip {...props} mode="calm" />);
-    const draw = (reduced = false) => { world.refresh?.(); world.update(0.1, 1); world.draw(reduced); };
+    const draw = (reduced = false) => {
+      const still = reduced || world.mode() === "off";
+      world.refresh?.();
+      if (!still) world.update(1 / 60, 1);
+      world.draw(still);
+    };
     x++; draw(); draw(); draw();
     expect(listener).toHaveBeenCalledTimes(1);
     view.rerender(<PartyStrip {...props} mode="lively" />);

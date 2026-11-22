@@ -8,7 +8,7 @@ import { KeeperSuccessionStore } from "./succession-store";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { KeeperCallKind } from "../../shared/undo-lane";
-import { applyAskEffect, type EffectHandlers, type AskEffect } from "../ask-effects";
+import { applyAskEffect, scopeAskMember, type EffectHandlers, type AskEffect } from "../ask-effects";
 import { issueShellGrant, settleShellGrant } from "../shell-grants";
 import type { RequestSources } from "../../shared/request-source";
 import { briefSteers } from "../request-sources";
@@ -1149,13 +1149,16 @@ export class Keeper {
   ): Ask | null {
     const ask = this.store.get("asks", id);
     if (!ask || ask.state !== "open") return null;
-    return this.store.atomic(() => {
+    const withdrawn = this.store.atomic(() => {
       const closing = ask.kind === "conclude" && ask.boardQuestId && this.quest(ask.boardQuestId).phase === "closing";
       if (closing)
         transitionQuest(this.store, this.quest(ask.boardQuestId!), isCloseEffect(ask.effect) ? ask.effect.draft.returnTo ?? "build" : "build", "conclude-withdrawn", { kind: "tavern" }, { kind: "ask", id }, at, { text, data: { ...data, askId: id, withdrawnCause: cause } });
       if (!closing) this.store.event(at, ask.keeperThreadId, ask.boardQuestId, "ask.withdrawn", text ?? ask.question, { ...data, askId: id, cause }, actor);
       return this.store.put("asks", id, { ...ask, state: "withdrawn", withdrawnAt: at, withdrawnCause: cause });
     });
+    const scopeMember = scopeAskMember(ask.effect);
+    if (scopeMember) this.invalidate([tags.thread(scopeMember)]);
+    return withdrawn;
   }
   pendingStopHires(id: string) {
     return this.store.db.prepare("SELECT h.id AS token,json_extract(h.data,'$.classId') AS classId,json_extract(h.data,'$.owner.title') AS title FROM tavern_records h WHERE h.kind='hires' AND json_extract(h.data,'$.owner.boardQuestId')=? AND NOT EXISTS (SELECT 1 FROM tavern_records m WHERE m.kind='members' AND m.id=json_extract(h.data,'$.memberThreadId'))").all(id) as { token: string; classId: string; title: string }[];
@@ -1521,7 +1524,10 @@ export class Keeper {
     if (by === "user") this.userAction(ask.keeperThreadId);
     if (effect.type === "grant-shell-act" && by !== "keeper") this.syncShellGrants(effect.memberThreadId);
     if (heldCommunication?.act === "draft" && optionId === "approve" && by !== "keeper") this.syncCommunication(heldCommunication.threadId, askId);
-    this.changed(ask.keeperThreadId, ask.boardQuestId);
+    const scopeMember = scopeAskMember(effect);
+    const stale = this.changedTags(ask.keeperThreadId, ask.boardQuestId);
+    if (scopeMember && !stale.includes(tags.thread(scopeMember))) stale.push(tags.thread(scopeMember));
+    this.invalidate(stale);
   }
   postSummary(threadId: string, draft: SummaryDraft) {
     this.require(threadId, "keeper");

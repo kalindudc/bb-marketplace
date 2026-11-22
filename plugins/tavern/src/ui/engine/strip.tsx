@@ -129,7 +129,7 @@ export function PartyStrip(props: PartyStripProps) {
       mode,
       refresh() {
         activeRules = { mode: mode(), ...holds() };
-        return actor.setRules(activeRules);
+        return actor.setRules(activeRules, span);
       },
       update(seconds, steps) {
         if (scene && (!motion.mayLoop("page") || stuckInView())) motion.settle(cue => cue.el === control);

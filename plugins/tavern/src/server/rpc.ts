@@ -2,6 +2,7 @@ import { memberIdentityFacts, memberIdentityLabel } from "../shared/identity";
 import { memberHost } from "./member-engagement";
 import { wasReleased } from "../shared/member-engagement";
 import { askHistory } from "./ask-history";
+import { scopeAskMember } from "./ask-effects";
 import { refreshQuestPullRequests } from "./conclude-pull-requests";
 import { attention, AttentionSnapshot } from "./attention";
 import { LimitPolicy } from "./limit-policy";
@@ -215,6 +216,7 @@ export function rpcHandlers(
         } } : {}),
         classNotice: thread.classNotice ?? null,
         scope: runtime.scopes?.view(threadId) ?? null,
+        openScopeAsk: !!m?.keeperThreadId && k.store.openAsks(m.keeperThreadId).some(ask => scopeAskMember(ask.effect) === threadId),
         violations: runtime.scopes?.violations([threadId]) ?? [],
         member: m ? projectMember(m) : null,
         keeper: m?.keeperThreadId ? k.member(m.keeperThreadId) : null,

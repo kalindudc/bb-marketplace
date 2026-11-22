@@ -618,6 +618,39 @@ describe("backend scope integration", () => {
       .filter((call) => (call.args[0] as { threadId: string }).threadId === "lead");
     expect(JSON.stringify(ticks)).toContain("STOP FAILED");
   });
+  it.each(["answered", "withdrawn"] as const)("releases a working errand's scope-blocker hold once the ask is %s", async closed => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", { ...f.input, classId: "wanderer", boardQuestId: null, waypointId: null, errand: true });
+    registerRpc(f.bb, f.runtime);
+    const invalidate = vi.spyOn(f.bb.rpc, "experimental_invalidate");
+    const violation = { threadId: "child", providerId: "pi", at: f.time(), eventId: "held-errand", seq: 3,
+      ruleId: "example-rule", reason: "Blocked command", stopped: false, latencyMs: 1 };
+    await f.runtime.scopes!.violation(violation);
+    f.k.activity("child", "working");
+    const ask = f.k.store.openAsks("lead").find(a => a.effect?.type === "scope-blocker")!;
+    const decor = () => f.harness.invokeRpc("decor", { threadId: "child" });
+    expect(await decor()).toMatchObject({ member: { state: "working" }, openScopeAsk: true, violations: [violation] });
+    invalidate.mockClear();
+    if (closed === "answered") await f.harness.invokeRpc("answerAsk", { askId: ask.id, optionId: "review", note: null, via: "page" });
+    else f.k.withdrawAsk(ask.id, "turn-recovered");
+    expect(f.k.store.get("asks", ask.id)?.state).toBe(closed);
+    expect(await decor()).toMatchObject({ member: { state: "working" }, openScopeAsk: false, violations: [violation] });
+    expect(invalidate.mock.calls.flatMap(([tags]) => tags)).toContain("tavern:thread:child");
+  });
+
+  it("does not project a closed widening ask as pending", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    await f.runtime.scopes!.override("lead", "child", { allowRules: ["git-push-main"] }, "Requested push");
+    registerRpc(f.bb, f.runtime);
+    const askId = f.k.store.runtime("child").scopePending!;
+    const decor = () => f.harness.invokeRpc("decor", { threadId: "child" });
+    expect(await decor()).toMatchObject({ scope: { pendingAskId: askId } });
+    f.k.withdrawAsk(askId, "plan-superseded");
+    expect(f.k.store.runtime("child").scopePending).toBe(askId);
+    expect(await decor()).toMatchObject({ openScopeAsk: false, scope: { pendingAskId: null } });
+  });
+
   it("allows policy-covered grants from trusted remotes without opening an ask", async () => {
     const f = await fixture();
     mkdirSync(join(f.root, ".agents/tavern"), { recursive: true });

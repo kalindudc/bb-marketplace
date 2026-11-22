@@ -233,7 +233,8 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   // Motion: the row holds still while an ask is in it, and for 2 s after the user types (the coordinator's hold; a restored draft doesn't
   // count); the busy dot pulses twice when its Keeper turns busy or the row comes into view busy, then holds solid.
   const need = needsOf(keeper);
-  const { cue, settle } = useTavernMotion(`thread:${threadId}`, { held: need.asks + need.holds > 0 || (!!data && !keeper && scopeAlerts(data) > 0) });
+  const held = need.asks + need.holds > 0 || (!keeper && Boolean(data?.openScopeAsk || data?.scope?.pendingAskId || data?.scope?.error));
+  const { cue, settle } = useTavernMotion(`thread:${threadId}`, { held });
   const dot = useRef<HTMLElement>(null);
   const pulsing = !!keeper && keeper.quietSince == null && keeper.status === "busy" && !!data?.member && !!registry.data;
   const pulse = () => cue(dot.current, "busy dot", { key: "dot", ms: 3200, className: "mo-pulse", ambient: true, region: "widget" });
@@ -316,7 +317,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const walker = data.characters !== false && identity && !identity.character.plain
     ? <ThreadPartyStrip key={`${threadId}:${identity.character.id}`} data={data} character={identity.character}
         classLabel={identity.cls.label} voice={data.voice ?? registry.data?.voice ?? "full"} pageSince={pageSince} change={changeCharacter}
-        held={need.asks + need.holds > 0 || (!keeper && scopeAlerts(data) > 0)} />
+        held={held} />
     : null;
 
   return (

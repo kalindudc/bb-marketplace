@@ -11,7 +11,7 @@ const DRAW = 1000 / 12;
 const makeArt = (classId: string) => createArt({ seed: "wren", classId, hue: "teal", charge: null, keeper: classId === "keeper" });
 const rules = { mode: "calm", held: false, typing: false } as const;
 
-function simulate(mood: ArtFrame["mood"], mode = "calm" as "calm" | "lively" | "off", reduced = false, legacy = false, sampleAt?: ReadonlyMap<number, string>, classId = "smith") {
+function simulate(mood: ArtFrame["mood"], mode = "calm" as "calm" | "lively" | "off", reduced = false, legacy = false, sampleAt?: ReadonlyMap<number, string>, classId = "smith", span = 640) {
   const art = makeArt(classId);
   let now = 0, next = 0, requests = 0, wakes = 0, timerWakes = 0;
   const callbacks = new Map<number, FrameRequestCallback>();
@@ -29,9 +29,9 @@ function simulate(mood: ArtFrame["mood"], mode = "calm" as "calm" | "lively" | "
   let draws = 0;
   const world = {
     mode: () => mode,
-    refresh: () => actor.setRules({ ...rules, mode }),
-    update(seconds: number, steps = 1) { actor.update(seconds, 640, { ...rules, mode }, steps); },
-    nextDraw: () => actor.nextDraw(640),
+    refresh: () => actor.setRules({ ...rules, mode }, span),
+    update(seconds: number, steps = 1) { actor.update(seconds, span, { ...rules, mode }, steps); },
+    nextDraw: () => actor.nextDraw(span),
     draw(still: boolean) { draws++; record(still); },
   };
   function record(still: boolean) {
@@ -105,6 +105,14 @@ describe("drawing only when due", () => {
     const walk = simulate("working", "lively", false, false, undefined, classId);
     const oldWalk = simulate("working", "lively", false, true, walk.pictures, classId);
     expect(walk.pictures).toEqual(oldWalk.pictures);
+  });
+
+  it("keeps drawing the standing idle in Lively when the strip is only as wide as the sprite", () => {
+    const narrow = simulate("working", "lively", false, false, undefined, "smith", 0);
+    const calm = simulate("working", "calm", false, false, undefined, "smith", 0);
+    expect(narrow.wakes).toBeGreaterThan(0);
+    expect(new Set(narrow.pictures.values()).size).toBeGreaterThan(1);
+    expect(narrow.pictures).toEqual(calm.pictures);
   });
 
   it.each([["off", false], ["calm", true]] as const)("%s with reduced=%s draws once without requesting frames", (mode, reduced) => {

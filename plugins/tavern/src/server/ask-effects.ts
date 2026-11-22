@@ -20,6 +20,10 @@ export function legacyAskEffect(ask: Ask, meta: Records["askMeta"] | null, runti
   if (ask.kind === "blocker") return { type: "answer-blocker" };
   return { type: "decision" };
 }
+export function scopeAskMember(effect: Ask["effect"]): string | undefined {
+  if (effect?.type === "scope-blocker" || effect?.type === "grant-scope") return effect.memberThreadId;
+}
+
 export type EffectHandlers = { [K in AskEffect["type"]]: (effect: AskEffect) => void };
 export const ASK_EFFECTS: Record<AskEffect["type"], { act: Act; handler: keyof EffectHandlers; answerOnly?: true }> = {
   greenlight: { act: "greenlight", handler: "greenlight" },

@@ -19,7 +19,7 @@ it.each(["input", "compositionend"])("wakes a parked quiet pose when the %s hold
   const draw = vi.fn((still: boolean) => actor.frame(still).activity);
   const handle = observeWorld(page, {
     mode: () => "calm", nextDraw: () => actor.nextDraw(0), draw,
-    refresh: () => actor.setRules(rules()), update: (dt, steps) => actor.update(dt, 0, rules(), steps),
+    refresh: () => actor.setRules(rules(), 0), update: (dt, steps) => actor.update(dt, 0, rules(), steps),
   });
   try {
     expect(draw).toHaveLastReturnedWith("stand");

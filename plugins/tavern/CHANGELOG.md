@@ -97,6 +97,8 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Fixed
 
+- Characters resume their normal motion after a scope ask closes. Earlier violations remain visible under Scope and guardrails, but no longer hold the character in place.
+- Characters in Lively mode keep their idle animation when the composer strip is too narrow to walk.
 - Fold closes the Keeper’s ask panel when it contains just one item, including when you opened it from the Ledger. When there is more than one item, Fold leaves the list available. Close and Escape dismiss the panel and return focus to the widget row.
 - Long quest summaries in the Keeper’s composer banner now end in an ellipsis. Crowded rows wrap instead of covering progress marks or controls, and the Journal count stays readable beside other thread chips.
 - Expandable sections in Tavern Settings now show a chevron that turns when you open them.

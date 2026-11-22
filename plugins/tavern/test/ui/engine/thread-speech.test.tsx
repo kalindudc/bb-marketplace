@@ -58,6 +58,27 @@ async function widget(patch: Partial<ThreadDecor> = {}) {
   return { actor, speech, update, mood, verify, click };
 }
 
+const oldViolation = { threadId: "keeper-1", providerId: "pi", at: 1, eventId: "past-refusal", seq: 1,
+  ruleId: "example-rule", reason: "An earlier command was refused", stopped: true, latencyMs: 1, mode: "enforce" as const };
+
+it("keeps a working member moving with an old scope violation", async () => {
+  const w = await widget({ ambientMotion: "lively", violations: [oldViolation] });
+  expect(w.actor()?.dataset.mood).toBe("working");
+  expect(w.actor()?.closest("section")?.hasAttribute("data-light-held")).toBe(false);
+  expect(w.actor()?.dataset.activity).toBe("walk");
+});
+
+it("holds a working member for an open scope blocker and releases it after the answer", async () => {
+  const hold = { openScopeAsk: true };
+  const w = await widget({ ambientMotion: "lively", ...hold });
+  expect(w.actor()?.dataset.activity).toBe("stand");
+  expect(w.actor()?.closest("section")?.dataset.lightHeld).toBe("true");
+  const answered = { openScopeAsk: false, violations: [oldViolation] };
+  await w.update(answered);
+  expect(w.actor()?.dataset.activity).toBe("walk");
+  expect(w.actor()?.closest("section")?.hasAttribute("data-light-held")).toBe(false);
+});
+
 const tick = async (ms: number) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
 const external = (tag: string) => {
   const el = document.createElement(tag);

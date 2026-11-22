@@ -1023,6 +1023,8 @@ export class BackendScopes {
     }
     const { keeper } = this.runtime;
     const store = keeper.store, member = keeper.member(threadId);
+    const pending = store.runtime(threadId).scopePending;
+    const pendingAsk = pending ? store.get("asks", pending) : null;
     const guardPosture = member?.guardPosture;
     if (row.scope && (isLiveMember(store, member, "brief") || isLiveKeeper(store, member, "present")) &&
         !store.runtime(threadId).builtinKeeperFallback && !store.get("scopeInputs", threadId))
@@ -1062,8 +1064,7 @@ export class BackendScopes {
           armed: row.armed,
           clusterGuard,
           sendGuard,
-          pendingAskId:
-            this.runtime.keeper.store.runtime(threadId).scopePending ?? null,
+          pendingAskId: pendingAsk?.state === "open" ? pendingAsk.id : null,
         }
       : null;
   }

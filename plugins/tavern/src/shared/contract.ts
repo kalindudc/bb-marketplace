@@ -189,6 +189,7 @@ export const threadDecorSchema = z.object({
   classNotice: classNoticeSchema.nullable().optional(),
   // added by Builder B: show the live guardrail and any pending widening alongside member details.
   scope: memberScopeSchema.nullable().optional(),
+  openScopeAsk: z.boolean().optional(),
   violations: z.array(scopeViolationSchema).optional(),
   member: memberSchema.nullable(),
   /** The Keeper of a member thread, so its header can say who it reports to. */
