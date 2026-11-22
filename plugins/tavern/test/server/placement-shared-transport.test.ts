@@ -16,6 +16,7 @@ import { SnapshotStore } from "../../src/server/placement/snapshot-store";
 import { PlacementStore } from "../../src/server/placement/store";
 import { PlacementTransport } from "../../src/server/placement/transport";
 import { placementRecord, sourceSnapshot } from "./placement-fixture";
+import { gitFixtureTemplate } from "../git-fixture-template";
 
 const hosts = new Set<ReturnType<typeof createFakePluginHost>>(), roots: string[] = [];
 afterEach(async () => {
@@ -24,8 +25,7 @@ afterEach(async () => {
 });
 const git = (root: string, ...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 type Environment = Awaited<ReturnType<BbPluginApi["sdk"]["environments"]["get"]>>;
-async function fixture(format: "sha1" | "sha256" = "sha1", extended = false) {
-  const root = realpathSync(mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "shared-import-"))); roots.push(root);
+const seedRepos = gitFixtureTemplate((root, format: "sha1" | "sha256", extended: boolean) => {
   const home = join(root, "home"), source = join(root, "source"); mkdirSync(home);
   git(home, "init", "-qb", "main", "--object-format=" + format); git(home, "config", "user.name", "Fixture"); git(home, "config", "user.email", "fixture@example.invalid");
   writeFileSync(join(home, "tracked"), "base\n");
@@ -41,6 +41,13 @@ async function fixture(format: "sha1" | "sha256" = "sha1", extended = false) {
   }
   git(source, "add", "-A"); git(source, "commit", "-qm", "source");
   const head = git(source, "rev-parse", "HEAD"), tree = git(source, "rev-parse", "HEAD^{tree}");
+  return { base, head, tree };
+});
+async function fixture(format: "sha1" | "sha256" = "sha1", extended = false) {
+  const root = realpathSync(mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "shared-import-"))); roots.push(root);
+  const home = join(root, "home"), source = join(root, "source");
+  const { base, head, tree } = seedRepos(root, format, extended);
+  git(source, "remote", "set-url", "origin", home);
   const endpoint = (side: "source" | "home") => ({ hostId: side, environmentId: side + "-env", root: side === "source" ? source : home });
   const environments = new Map<string, Environment>();
   for (const side of ["source", "home"] as const) environments.set(side + "-env", {

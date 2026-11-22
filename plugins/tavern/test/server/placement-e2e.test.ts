@@ -35,6 +35,7 @@ import { PlacementStore } from "../../src/server/placement/store";
 import { SettingsStore } from "../../src/server/settings/store";
 import { placementRuleSchema } from "../../src/shared/placement-settings";
 import { worktreeProvider } from "./environment-fixture";
+import { gitFixtureTemplate } from "../git-fixture-template";
 
 const hosts = new Set<ReturnType<typeof createFakePluginHost>>();
 const roots: string[] = [];
@@ -44,9 +45,8 @@ afterEach(async () => {
 });
 const git = (root: string, ...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 
-function nativeSourceFixture() {
-  const root = realpathSync(mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "placement-source-"))); roots.push(root);
-  const source = join(root, "source"), data = join(root, "native"); mkdirSync(source); mkdirSync(data);
+const seedSource = gitFixtureTemplate(root => {
+  const source = join(root, "source"); mkdirSync(source);
   git(source, "init", "-qb", "main"); git(source, "config", "user.name", "Fixture"); git(source, "config", "user.email", "fixture@example.invalid");
   writeFileSync(join(source, "work.txt"), "base\n"); git(source, "add", "-A"); git(source, "commit", "-qm", "base");
   const base = git(source, "rev-parse", "HEAD");
@@ -54,7 +54,12 @@ function nativeSourceFixture() {
   git(source, "update-ref", "refs/remotes/origin/main", base); git(source, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
   git(source, "branch", "--set-upstream-to=origin/main");
   writeFileSync(join(source, "work.txt"), "unpushed\n"); git(source, "commit", "-qam", "unpushed source");
-  const head = git(source, "rev-parse", "HEAD"), tree = git(source, "rev-parse", "HEAD^{tree}");
+  return { base, head: git(source, "rev-parse", "HEAD"), tree: git(source, "rev-parse", "HEAD^{tree}") };
+});
+function nativeSourceFixture() {
+  const root = realpathSync(mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "placement-source-"))); roots.push(root);
+  const source = join(root, "source"), data = join(root, "native");
+  const { base, head, tree } = seedSource(root); mkdirSync(data);
   const registry = new HostRegistry(data), transport = createTransport(registry);
   type Environment = Awaited<ReturnType<BbPluginApi["sdk"]["environments"]["get"]>>;
   const environment: Environment = { id: "source-env", projectId: "project", hostId: "source-host", path: source, status: "ready",

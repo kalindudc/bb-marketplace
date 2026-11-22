@@ -26,6 +26,7 @@ import { PlacementCarry } from "../../src/server/placement/carry";
 import { PlacementStore } from "../../src/server/placement/store";
 import { PlacementTransport } from "../../src/server/placement/transport";
 import { placementRecord, sourceSnapshot } from "./placement-fixture";
+import { gitFixtureTemplate } from "../git-fixture-template";
 import { fakePort } from "./support";
 import { countGitLaunches, settleGitConfigClock } from "../git-launch-count";
 
@@ -36,8 +37,7 @@ afterEach(async () => {
 });
 const git = (root: string, ...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 type Environment = Awaited<ReturnType<BbPluginApi["sdk"]["environments"]["get"]>>;
-async function fixture(format: "sha1" | "sha256" = "sha1", size = 32) {
-  const root = mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "placement-carry-")); roots.push(root);
+const seedRepos = gitFixtureTemplate((root, format: "sha1" | "sha256", size: number) => {
   const home = join(root, "home"), member = join(root, "member"); mkdirSync(home);
   git(home, "init", "-q", "-b", "main", "--object-format=" + format); git(home, "config", "user.name", "Fixture"); git(home, "config", "user.email", "fixture@example.invalid");
   writeFileSync(join(home, "tracked"), "base\n"); writeFileSync(join(home, "gone"), "delete\n"); git(home, "add", "-A"); git(home, "commit", "-qm", "base");
@@ -46,6 +46,13 @@ async function fixture(format: "sha1" | "sha256" = "sha1", size = 32) {
   writeFileSync(join(home, "empty"), ""); writeFileSync(join(home, "executable"), "#!/bin/sh\n", { mode: 0o755 }); symlinkSync("tracked", join(home, "link"));
   git(home, "add", "-A"); git(home, "commit", "-qm", "snapshot");
   const head = git(home, "rev-parse", "HEAD"), tree = git(home, "rev-parse", "HEAD^{tree}");
+  return { base, head, tree };
+});
+async function fixture(format: "sha1" | "sha256" = "sha1", size = 32) {
+  const root = mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "placement-carry-")); roots.push(root);
+  const home = join(root, "home"), member = join(root, "member");
+  const { base, head, tree } = seedRepos(root, format, size);
+  git(member, "remote", "set-url", "origin", home);
   const environments = new Map<string, Environment>();
   for (const [side, path, branch] of [["home", home, "main"], ["member", member, "tavern/member"]]) environments.set(side + "-env", {
     id: side + "-env", projectId: "project", hostId: side + "-host", path, status: "ready", hostLifecycle: "active",

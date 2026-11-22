@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { emulatedGit, realGit } from "./emulated-git";
+import { gitFixtureTemplate } from "../git-fixture-template";
 import { parseTreeEntries, treeObjectBytes } from "../../src/host/porcelain";
 import * as processModule from "../../src/host/process";
 import { BLOB_MAX_BYTES, CHUNK_BYTES, type Authority, type EndpointRegistration, type HostOutput, type TransferAuthority, type TransferRegistration } from "../../src/host-contract";
@@ -22,19 +23,26 @@ function expectNoAutoMaintenance({ env }: processModule.ProcessOptions) {
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const key of Object.keys(carryFaults)) delete carryFaults[key as keyof typeof carryFaults]; for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const git = (root: string, ...args: string[]) => execFileSync(realGit, ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+const seedRepos = gitFixtureTemplate((root, format: "sha1" | "sha256") => {
+  const home = join(root, "home"); mkdirSync(home);
+  git(home, "init", "-q", "-b", "main", "--object-format=" + format); git(home, "config", "user.name", "Fixture"); git(home, "config", "user.email", "fixture@example.invalid");
+  writeFileSync(join(home, "tracked"), "base\n"); writeFileSync(join(home, "gone"), "remove me\n"); writeFileSync(join(home, ".gitignore"), "ignored/\n");
+  git(home, "add", "-A"); git(home, "commit", "-qm", "baseline"); const base = git(home, "rev-parse", "HEAD");
+  for (const branch of ["maker", "checker"]) {
+    const path = join(root, branch);
+    git(home, "clone", "-q", "--no-hardlinks", home, path); git(path, "checkout", "-qb", branch);
+    git(path, "config", "user.name", "Fixture"); git(path, "config", "user.email", "fixture@example.invalid");
+  }
+  return base;
+});
 describe.each([false, true])("member emulation: %s", emulate => {
 afterEach(() => vi.unstubAllEnvs());
 async function fixture(format: "sha1" | "sha256" = "sha1", full = false) {
   const root = mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "transport-")); roots.push(root);
+  const base = seedRepos(root, format);
+  const home = join(root, "home"), maker = join(root, "maker"), checker = join(root, "checker");
+  for (const path of [maker, checker]) git(path, "remote", "set-url", "origin", home);
   if (emulate) vi.stubEnv("PATH", emulatedGit(root) + ":" + process.env.PATH);
-  const home = join(root, "home"), maker = join(root, "maker"), checker = join(root, "checker"); mkdirSync(home);
-  git(home, "init", "-q", "-b", "main", "--object-format=" + format); git(home, "config", "user.name", "Fixture"); git(home, "config", "user.email", "fixture@example.invalid");
-  writeFileSync(join(home, "tracked"), "base\n"); writeFileSync(join(home, "gone"), "remove me\n"); writeFileSync(join(home, ".gitignore"), "ignored/\n");
-  git(home, "add", "-A"); git(home, "commit", "-qm", "baseline"); const base = git(home, "rev-parse", "HEAD");
-  for (const [path, branch] of [[maker, "maker"], [checker, "checker"]]) {
-    git(home, "clone", "-q", "--no-hardlinks", home, path!); git(path!, "checkout", "-qb", branch!);
-    git(path!, "config", "user.name", "Fixture"); git(path!, "config", "user.email", "fixture@example.invalid");
-  }
   const endpoint = async (id: string, path: string, access: EndpointRegistration["access"], placementId: string, refs: string[]) => {
     const data = join(root, id + "-data"); mkdirSync(data);
     const registry = new HostRegistry(data), port = createTransport(registry);
@@ -75,7 +83,8 @@ it.each(["sha1", "sha256"] as const)("brings a %s maker home without touching th
   writeFileSync(join(f.maker, "tracked"), "maker\n"); unlinkSync(join(f.maker, "gone")); writeFileSync(join(f.maker, "binary"), bytes); symlinkSync("tracked", join(f.maker, "link"));
   git(f.maker, "add", "-A"); git(f.maker, "commit", "-qm", "maker snapshot");
   writeFileSync(join(f.home, "tracked"), "user's staged work\n"); git(f.home, "add", "tracked");
-  const index = readFileSync(join(f.home, ".git/index")), status = git(f.home, "status", "--porcelain");
+  // Git status can refresh the copied index before the import begins.
+  const status = git(f.home, "status", "--porcelain"), index = readFileSync(join(f.home, ".git/index"));
   const { value } = await exported(f), sent = await upload(f, value);
   const input = { ...sent.authority, remote: "origin", baseBranch: "main", author: value.author, message: value.message, entries: sent.entries, refs: ["refs/tavern/keeper/snapshot-a"], networkTimeoutMs: 1000 };
   const made = await f.target.port.importCommit(input);

@@ -19,6 +19,7 @@ import { MIGRATIONS } from "../../src/server/migrations";
 import { PlacementStore } from "../../src/server/placement/store";
 import { PlacementTransport } from "../../src/server/placement/transport";
 import { placementRecord, sourceSnapshot } from "./placement-fixture";
+import { gitFixtureTemplate } from "../git-fixture-template";
 
 const roots: string[] = [], hosts = new Set<ReturnType<typeof createFakePluginHost>>();
 afterEach(async () => {
@@ -27,8 +28,7 @@ afterEach(async () => {
 });
 const git = (root: string, ...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 type Environment = Awaited<ReturnType<BbPluginApi["sdk"]["environments"]["get"]>>;
-async function fixture(format: "sha1" | "sha256" = "sha1", binarySize = 32) {
-  const root = mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "placement-transport-")); roots.push(root);
+const seedRepos = gitFixtureTemplate((root, format: "sha1" | "sha256", binarySize: number) => {
   const home = join(root, "home"), source = join(root, "source"); mkdirSync(home);
   git(home, "init", "-q", "-b", "main", "--object-format=" + format); git(home, "config", "user.name", "Fixture"); git(home, "config", "user.email", "fixture@example.invalid");
   writeFileSync(join(home, "tracked"), "base\n"); writeFileSync(join(home, "gone"), "remove me\n"); git(home, "add", "-A"); git(home, "commit", "-qm", "base");
@@ -39,6 +39,13 @@ async function fixture(format: "sha1" | "sha256" = "sha1", binarySize = 32) {
   writeFileSync(join(source, "empty"), ""); writeFileSync(join(source, "executable"), "#!/bin/sh\n", { mode: 0o755 });
   git(source, "add", "-A"); git(source, "commit", "-qm", "snapshot");
   const head = git(source, "rev-parse", "HEAD"), tree = git(source, "rev-parse", "HEAD^{tree}");
+  return { base, head, tree };
+});
+async function fixture(format: "sha1" | "sha256" = "sha1", binarySize = 32) {
+  const root = mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "placement-transport-")); roots.push(root);
+  const home = join(root, "home"), source = join(root, "source");
+  const { base, head, tree } = seedRepos(root, format, binarySize);
+  git(source, "remote", "set-url", "origin", home);
   const endpoint = (side: "source" | "home") => ({ hostId: side + "-host", environmentId: side + "-env", root: side === "source" ? source : home });
   const environments = new Map<string, Environment>();
   for (const side of ["source", "home"] as const) environments.set(side + "-env", {

@@ -2,6 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { execFileSync } from "node:child_process";
 import { realGit } from "../host/emulated-git";
+import { gitFixtureTemplate } from "../git-fixture-template";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,15 +35,20 @@ afterEach(async () => {
 });
 export const readyGit = (root: string, ...args: string[]) => execFileSync(realGit, ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 type Environment = Awaited<ReturnType<BbPluginApi["sdk"]["environments"]["get"]>>;
-export async function readyFixture(checker = false, includesUncommitted = false) {
-  const root = mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "placement-ready-"));
-  const home = join(root, "home"), member = join(root, "member"), storage = join(root, "storage"), agentDir = join(root, "pi");
-  mkdirSync(home); mkdirSync(storage); mkdirSync(agentDir);
+const seedRepos = gitFixtureTemplate(root => {
+  const home = join(root, "home"), member = join(root, "member"); mkdirSync(home);
   readyGit(home, "init", "-q", "-b", "main"); readyGit(home, "config", "user.name", "Fixture"); readyGit(home, "config", "user.email", "fixture@example.invalid");
   writeFileSync(join(home, "tracked"), "base\n"); readyGit(home, "add", "-A"); readyGit(home, "commit", "-qm", "base");
   const base = readyGit(home, "rev-parse", "HEAD"); readyGit(home, "clone", "-q", "--no-hardlinks", home, member); readyGit(member, "checkout", "-qb", "tavern/member");
   writeFileSync(join(home, "tracked"), "snapshot\n"); readyGit(home, "commit", "-qam", "snapshot");
-  const head = readyGit(home, "rev-parse", "HEAD"), tree = readyGit(home, "rev-parse", "HEAD^{tree}");
+  return { base, head: readyGit(home, "rev-parse", "HEAD"), tree: readyGit(home, "rev-parse", "HEAD^{tree}") };
+});
+export async function readyFixture(checker = false, includesUncommitted = false) {
+  const root = mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "placement-ready-"));
+  const home = join(root, "home"), member = join(root, "member"), storage = join(root, "storage"), agentDir = join(root, "pi");
+  const { base, head, tree } = seedRepos(root);
+  readyGit(member, "remote", "set-url", "origin", home);
+  mkdirSync(storage); mkdirSync(agentDir);
   const environments = new Map<string, Environment>();
   for (const [side, path, branch] of [["home", home, "main"], ["member", member, "tavern/member"]]) environments.set(side + "-env", {
     id: side + "-env", projectId: "project", hostId: side + "-host", path, status: "ready", hostLifecycle: "active",
