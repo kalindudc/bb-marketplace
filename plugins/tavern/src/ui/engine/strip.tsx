@@ -139,7 +139,7 @@ export function PartyStrip(props: PartyStripProps) {
       draw(still) {
         const spriteWidth = actor.art.width * SCALE;
         const spriteHeight = actor.art.height * SCALE;
-        const x = scene && (still || !scene.road) ? Math.max(0, Math.floor((width - spriteWidth) / 2)) : Math.round(Math.min(span, actor.body.x) / SCALE) * SCALE;
+        const x = scene && (still || !scene.road) ? Math.max(0, Math.floor((width - spriteWidth) / 2)) : Math.round(actor.body.x / SCALE) * SCALE;
         const y = Math.max(0, ground - actor.art.ground * SCALE - (still || actor.small ? 0 : Math.round(actor.body.lift / SCALE) * SCALE));
         const speechEl = bubble.current;
         if (speechEl) {

@@ -19,7 +19,7 @@ export function isAttentionMood(mood: Mood): boolean {
 export function actorActivity(mood: Mood, rules: ActorRules): Exclude<Activity, "cue"> {
   if (rules.mode === "off" || rules.held || isAttentionMood(mood)) return "stand";
   if (rules.typing) return "quiet";
-  return rules.mode === "lively" && (mood === "working" || mood === "idle") ? "walk" : "stand";
+  return rules.mode === "lively" && mood === "working" ? "walk" : "stand";
 }
 
 export function allowsCue(rules: ActorRules, auto: boolean, mood: Mood) {

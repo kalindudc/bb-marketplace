@@ -100,6 +100,7 @@ describe("drawing only when due", () => {
     const idle = simulate("idle", "calm", false, false, undefined, classId);
     expect(idle.wakes).toBeLessThanOrEqual(80);
     expect(idle.wakes).toBeGreaterThan(40);
+    expect(simulate("idle", "lively", false, false, undefined, classId).pictures).toEqual(idle.pictures);
     const oldLoop = simulate("idle", "calm", false, true, idle.pictures, classId);
     for (const [at, pixels] of idle.pictures) expect(pixels, `idle frame ${at}`).toBe(oldLoop.pictures.get(at));
     const walk = simulate("working", "lively", false, false, undefined, classId);

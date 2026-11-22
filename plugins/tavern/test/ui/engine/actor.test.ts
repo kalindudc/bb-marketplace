@@ -61,6 +61,67 @@ it("never travels in Calm, walks in Lively at work, and stands when waiting", ()
   expect(a.body.x).toBe(at);
 });
 
+it("faces the direction of the resize before the next animation step", () => {
+  const a = actor();
+  step(a);
+  const previous = a.body.x;
+  const narrow = Math.floor(previous / 2);
+  expect(a.body.vx).toBeGreaterThan(0);
+  a.setRules(clear, narrow);
+  expect(a.body.x).toBeLessThan(previous);
+  expect(a.body.x).toBe(narrow);
+  expect(a.frame(false).facing).toBe(-1);
+  expect(a.body.vx).toBe(0);
+  a.update(1 / 60, narrow, clear);
+  expect(a.body.vx).toBeLessThan(0);
+  expect(a.frame(false).facing).toBe(Math.sign(a.body.vx));
+});
+
+it("faces its velocity throughout a seeded walk with repeated resizes", () => {
+  const a = actor();
+  let seed = 0x63593947;
+  let span = 170, resizes = 0, moved = 0;
+  for (let n = 0; n < 7200; n++) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    if (seed % 61 === 0) {
+      span = (seed >>> 8) % 170;
+      const clipped = a.body.x > span;
+      a.setRules(clear, span);
+      if (span > 0 && clipped) expect(a.frame(false).facing).toBe(-1);
+      expect(a.body.x).toBeLessThanOrEqual(span);
+      resizes++;
+    }
+    a.update(1 / 60, span, clear, 1 + (seed >>> 24) % 5);
+    if (a.body.vx !== 0) {
+      expect(a.frame(false).facing).toBe(Math.sign(a.body.vx));
+      moved++;
+    }
+  }
+  expect(resizes).toBeGreaterThan(80);
+  expect(moved).toBeGreaterThan(5000);
+});
+
+it("keeps hop facing through a resize and turns inward when walking resumes", () => {
+  const a = actor();
+  step(a);
+  const span = Math.floor(a.body.x / 2);
+  a.react("hop", clear, false);
+  step(a, clear, 12);
+  a.setRules(clear, span);
+  for (let n = 0; n < 18 && a.frame(false).activity === "cue"; n++) {
+    a.update(1 / 60, span, clear);
+    if (a.frame(false).activity === "cue") {
+      expect(a.frame(false).facing).toBe(1);
+      expect(a.body.x).toBe(span);
+      expect(a.body.vx).toBe(0);
+    }
+  }
+  a.update(1 / 60, span, clear, 36);
+  expect(a.frame(false).activity).toBe("walk");
+  expect(a.body.vx).toBeLessThan(0);
+  expect(a.frame(false).facing).toBe(Math.sign(a.body.vx));
+});
+
 it("keeps the smaller idle without automatic cues, but accepts deliberate cues", () => {
   const a = actor();
   step(a);

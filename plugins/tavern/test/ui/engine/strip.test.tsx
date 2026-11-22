@@ -116,7 +116,7 @@ it("reacts to clicks beside a held ask without moving the exclamation mark or as
   expect(speak).not.toHaveBeenCalled();
 });
 
-it("follows the walking art but holds the light during an idle, typing, reduced motion, Motion Off and Quiet", () => {
+it("follows the walking art but holds the light while standing, typing, reduced motion, Motion Off and Quiet", () => {
   let world: engine.EngineWorld;
   vi.spyOn(engine, "observeWorld").mockImplementation((_, candidate) => {
     world = candidate;
@@ -131,7 +131,7 @@ it("follows the walking art but holds the light during an idle, typing, reduced 
   vi.spyOn(motion, "getHolds").mockImplementation(() => ({ typing, held: false }));
   const listener = vi.fn();
   const unsubscribe = subscribeStripLantern(listener);
-  const props = { character, classLabel: "Wanderer", classId: "wanderer", mood: "idle", keeper: false, surface: "thread:wren", region: "widget" } as const;
+  const props = { ...wanderer, mood: "working" } as const;
   try {
     const view = render(<PartyStrip {...props} mode="calm" />);
     const draw = (reduced = false) => {
@@ -193,7 +193,7 @@ function mountWithClock(mode: "off" | "calm" | "lively", enabled: boolean) {
   const paint = vi.fn(), source = vi.fn<(strip: HTMLElement, anchor: LightAnchor | null) => void>();
   const overlay = watchLantern(document.createElement("canvas"), { lanternLight: enabled, lanternLightBb: true, lanternStrength: "medium" }, paint);
   const unsubscribe = subscribeStripLantern((strip, anchor) => { source(strip, anchor); overlay.draw(strip, anchor); });
-  const view = render(<div data-app-composer><PartyStrip {...wanderer} mode={mode} /><div data-composer-box><form data-promptbox /></div></div>);
+  const view = render(<div data-app-composer><PartyStrip {...wanderer} mode={mode} mood="working" /><div data-composer-box><form data-promptbox /></div></div>);
   return { ...clock, paint, source, renderPositions, dispose() { unsubscribe(); overlay.dispose(); view.unmount(); } };
 }
 

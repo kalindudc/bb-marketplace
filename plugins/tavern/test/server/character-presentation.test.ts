@@ -9,8 +9,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { registrySchema } from "../../src/shared/contract";
+import { registrySchema, threadDecorSchema } from "../../src/shared/contract";
 import { reportSchema, type Report } from "../../src/shared/schema";
+import { characterMood, widgetMoodFacts } from "../../src/shared/mood";
 import { BackupRecords } from "../../src/server/backup/records";
 import { Keeper } from "../../src/server/keeper/service";
 import { KeeperStore } from "../../src/server/keeper/store";
@@ -64,6 +65,17 @@ function fixture() {
 }
 
 describe("UI-only character presentation", () => {
+  it("projects a Keeper as idle after BB reports that its active thread ended", async () => {
+    const f = fixture();
+    f.k.bind("lead", "keeper", "moss", "project");
+    await f.runtime.threadStarted(makeThreadResponse({ id: "lead", status: "active" }));
+    expect(await f.rpc.decor({ threadId: "lead" })).toMatchObject({ member: { state: "working" }, keeperView: { status: "busy" } });
+    f.runtime.updateThread(makeThreadResponse({ id: "lead", status: "idle" }));
+    const decor = threadDecorSchema.parse(await f.rpc.decor({ threadId: "lead" }));
+    expect(decor).toMatchObject({ member: { state: "idle" }, keeperView: { status: "listening" } });
+    expect(characterMood(widgetMoodFacts(decor, f.time()))).toBe("idle");
+  });
+
   it("marks shipped characters as shipped with no claimed file date and no stats", async () => {
     const f = fixture(); vi.mocked(fs.statSync).mockClear();
     const result = await f.read();

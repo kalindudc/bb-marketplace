@@ -77,9 +77,16 @@ export class Actor {
   setRules(rules: ActorRules, span: number) {
     const requested = actorActivity(this.mood, rules);
     const activity = requested === "walk" && span <= 0 ? "stand" : requested;
-    const changed = this.activity !== activity || this.held !== rules.held;
+    const x = Math.min(span, Math.max(0, this.body.x));
+    const clipped = x !== this.body.x;
+    const changed = clipped || this.activity !== activity || this.held !== rules.held;
     this.held = rules.held;
     this.activity = activity;
+    if (clipped) {
+      this.body.x = x;
+      this.body.vx = this.body.ax = 0;
+      if (activity === "walk" && !this.cue) this.facing = x === 0 ? 1 : -1;
+    }
     if (this.small) {
       this.body.vx = this.body.ax = 0;
       if (this.cue?.kind !== "signature") this.body.swing = this.body.angularVelocity = 0;
@@ -90,7 +97,6 @@ export class Actor {
 
   update(dt: number, span: number, rules: ActorRules, steps = 1) {
     this.setRules(rules, span);
-    this.body.x = Math.min(span, Math.max(0, this.body.x));
     const walk = this.activity === "walk" && span > 0;
     if (!walk && !this.cue && settled(this.body)) {
       this.target = null;

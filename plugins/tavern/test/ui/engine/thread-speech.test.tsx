@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ThreadDecor } from "../../../src/shared/contract";
@@ -43,7 +43,7 @@ async function widget(patch: Partial<ThreadDecor> = {}) {
   const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { decor: () => data, registry: () => registry } });
   const actor = () => slot.container.querySelector<HTMLButtonElement>("[data-actor]");
   const speech = () => slot.container.querySelector<HTMLElement>(".twalk-speech:not([hidden])")?.textContent ?? null;
-  await waitFor(() => expect(slot.container.querySelector(".tw-member-class")).not.toBeNull());
+  await waitFor(() => expect(actor()).not.toBeNull());
   const update = async (next: Partial<ThreadDecor>) => {
     data = { ...data, ...next };
     await act(async () => {
@@ -63,9 +63,22 @@ const oldViolation = { threadId: "keeper-1", providerId: "pi", at: 1, eventId: "
 
 it("keeps a working member moving with an old scope violation", async () => {
   const w = await widget({ ambientMotion: "lively", violations: [oldViolation] });
+  expect(screen.getByRole("button", { name: /^Member, 1 scope alert:/ }).textContent).toContain("1 alert");
   expect(w.actor()?.dataset.mood).toBe("working");
   expect(w.actor()?.closest("section")?.hasAttribute("data-light-held")).toBe(false);
   expect(w.actor()?.dataset.activity).toBe("walk");
+});
+
+it.each([
+  ["idle member", "member", "idle", null],
+  ["idle Keeper", "keeper", "idle", null],
+  ["idle Keeper in Quiet", "keeper", "idle", 1000],
+  ["Keeper in Quiet during an active turn", "keeper", "working", 1000],
+] as const)("%s stands in Lively", async (_label, role, state, quietSince) => {
+  const keeperView = role === "keeper" ? { ...fixtureDecor.keeperView!, quietSince, openAsks: [], boardQuests: [] } : null;
+  const w = await widget({ ambientMotion: "lively", keeperView, member: { ...fixtureMember, role, state } });
+  expect(w.actor()?.dataset.activity).toBe("stand");
+  expect(w.actor()?.dataset.mood).toBe("idle");
 });
 
 it("holds a working member for an open scope blocker and releases it after the answer", async () => {

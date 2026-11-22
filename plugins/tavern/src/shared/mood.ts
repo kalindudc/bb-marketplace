@@ -67,7 +67,7 @@ export function widgetMoodFacts(data: ThreadDecor, now: number): MoodFacts {
   const { member, keeperView, scope, boardQuest, moodSignals, progress } = data;
   return {
     now,
-    activity: member?.state ?? "idle",
+    activity: keeperView?.quietSince != null && member?.state === "working" ? "idle" : member?.state ?? "idle",
     engagement: member?.engagement,
     released: moodSignals?.released === true,
     archived: moodSignals?.archived === true || keeperView?.archived === true || goneQuest(boardQuest),

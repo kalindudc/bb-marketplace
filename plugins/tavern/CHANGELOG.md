@@ -98,6 +98,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Fixed
 
+- Idle characters stay in place in Lively mode and keep their small movements. A Quiet Keeper also stays in place. Walking characters face their travel direction when the composer narrows.
 - Characters resume their normal motion after a scope ask closes. Earlier violations remain visible under Scope and guardrails, but no longer hold the character in place.
 - Characters in Lively mode keep their idle animation when the composer strip is too narrow to walk.
 - Fold closes the Keeper’s ask panel when it contains just one item, including when you opened it from the Ledger. When there is more than one item, Fold leaves the list available. Close and Escape dismiss the panel and return focus to the widget row.
