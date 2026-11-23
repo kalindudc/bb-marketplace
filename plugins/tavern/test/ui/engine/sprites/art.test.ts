@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { Registry } from "../../../../src/server/registry";
 import { parseRegistryDefinition } from "../../../../src/server/registry-file";
+import { Actor } from "../../../../src/ui/engine/actor";
 import { CUES, MOODS, type ArtFrame, type ArtInput, type CharacterArt } from "../../../../src/ui/engine/art";
 import { createArt, drawStillAvatar } from "../../../../src/ui/engine/sprites";
 import { actor } from "../../../../src/ui/engine/sprites/parts";
@@ -47,6 +48,48 @@ function hash(art: CharacterArt, frame = rest) {
 }
 
 describe("seeded character art", () => {
+  const cast = shipped().flatMap(character => character.classes.map(classId => [`${character.id}/${classId}`, character, classId] as const));
+  it.each(cast)("%s faces its direction of travel through the walk cycle", (_name, character, classId) => {
+    const spec = { ...input, classId, seed: character.avatar ?? character.id, hue: character.hue, charge: character.charge, look: character.look };
+    const art = createArt(spec);
+    const kit = classKit(classId);
+    const book = poseBook(mood => kit.quiet[mood] ?? kit.idle, seedTraits(spec).blinkOffset, kit.signature);
+    const walker = new Actor(character.id, art, "working", `fixture-${character.id}-${classId}`);
+    const { ctx, pixels } = recorder();
+    const centre = (art.width - 1) / 2;
+    const eyeInk = "#010203";
+    // A dark backdrop keeps the sprite rim out of the eye ink.
+    const eyePalette = { ...palette, ink: eyeInk, background: "#24221f" };
+    const checkFace = (frame: ArtFrame, direction: number) => {
+      art.draw(ctx, frame, eyePalette);
+      const eyes = pixels.flatMap((pixel, i) => {
+        const x = i % art.width;
+        return pixel === eyeInk && i < 16 * art.width && x >= 6 && x <= 17 ? [x] : [];
+      });
+      expect(eyes.length, "visible eye pixels").toBeGreaterThan(0);
+      const eyeCentre = eyes.reduce((sum, x) => sum + x, 0) / eyes.length;
+      expect(direction * (eyeCentre - centre), `step ${frame.step}, travel ${direction}, dark ${!!frame.dark}`).toBeGreaterThan(0);
+    };
+    const seen = new Set<string>();
+    const rules = { mode: "lively", typing: false, held: false } as const;
+    const span = 100;
+    for (let i = 0; i < 1000 && seen.size < 16; i++) {
+      const x = walker.body.x;
+      walker.update(1 / 60, span, rules);
+      const frame = walker.frame(false);
+      const direction = Math.sign(walker.body.x - x);
+      if (frame.activity !== "walk" || direction === 0 || walker.body.x === 0 || walker.body.x === span) continue;
+      const pose = book.poses[book.index(frame)]!;
+      if (pose.gaze || pose.blink) continue;
+      const key = `${direction}:${frame.step}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      checkFace(frame, direction);
+      checkFace({ ...frame, dark: true }, direction);
+    }
+    expect(seen.size).toBe(16);
+  });
+
   it.each([
     ["keeper", "runewood", "#ecffd0", "#f7edd4"],
     ["wanderer", "lantern", palette.skin[0]!, "#9abdb2"],
@@ -398,21 +441,24 @@ describe("seeded character art", () => {
     expect(hash(art, { ...a, swing: -0.6 })).not.toBe(first);
   });
 
-  it("anchors the lantern to its painted flame as it swings, in both directions", () => {
+  it.each(["walk", "hop", "signature"] as const)("keeps the lantern swing attached and pointing in the same screen direction during %s", motion => {
     const wanderer = { ...input, classId: "wanderer" };
     const art = createArt(wanderer);
     const colours = spriteColours(wanderer.hue, seedTraits(wanderer), palette);
     const { ctx, pixels } = recorder();
-    for (const facing of [1, -1] as const) for (const swing of [-1.1, 0, 1.1]) {
-      const frame = { ...rest, facing, swing, cue: "signature", activity: "cue", still: false, dark: true } as const;
-      art.draw(ctx, frame, palette);
-      const anchor = art.lightAnchor(frame)!;
-      expect(anchor.kind).toBe("lantern");
-      expect([colours[Ink.Cream], colours[Ink.Flame]]).toContain(pixels[anchor.y * art.width + anchor.x]);
+    for (const facing of [1, -1] as const) {
+      const neutral: ArtFrame = { ...rest, facing, activity: motion === "walk" ? "walk" : "cue",
+        cue: motion === "walk" ? null : motion, progress: 0.5, still: false, dark: true };
+      const neutralX = art.lightAnchor(neutral)!.x;
+      for (const [swing, offset] of [[-1.1, -2], [0, 0], [1.1, 2]] as const) {
+        const frame = { ...neutral, swing };
+        art.draw(ctx, frame, palette);
+        const anchor = art.lightAnchor(frame)!;
+        expect(anchor.kind).toBe("lantern");
+        expect([colours[Ink.Cream], colours[Ink.Flame]]).toContain(pixels[anchor.y * art.width + anchor.x]);
+        expect(anchor.x).toBe(neutralX + offset * facing);
+      }
     }
-    const neutral = { ...rest, activity: "cue", cue: "signature", still: false, dark: true } as const;
-    expect(art.lightAnchor({ ...neutral, swing: -1.1 })!.x).toBeLessThan(art.lightAnchor(neutral)!.x);
-    expect(art.lightAnchor({ ...neutral, swing: 1.1 })!.x).toBeGreaterThan(art.lightAnchor(neutral)!.x);
   });
 
   it("draws distinct cue, walk and mood poses, with rain only on errors", () => {

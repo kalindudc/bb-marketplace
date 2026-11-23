@@ -14,6 +14,11 @@ const LIGHTS = {
 const RAIN = rainCloud();
 const DAY_SHADOW = dayShadow();
 
+function spriteFacing(frame: ArtFrame): ArtFrame["facing"] {
+  if (frame.activity !== "walk" || frame.still || smallIdle(frame)) return frame.facing;
+  return frame.facing === 1 ? -1 : 1;
+}
+
 export const createArt: ArtFactory = input => {
   const traits = seedTraits(input);
   const kit = classKit(input.classId);
@@ -35,7 +40,9 @@ export const createArt: ArtFactory = input => {
   };
   const swingFor = (frame: ArtFrame, i: number) => {
     if (frame.still || (smallIdle(frame) && frame.cue !== "signature")) return 2;
-    return poses[i]?.action === "lantern" && frame.activity === "stand" ? 3 : 2 + Math.round(2 * Math.sin(frame.swing));
+    // Rebase the pendulum angle before mirroring the lantern so its screen swing keeps its direction.
+    const angle = frame.swing * frame.facing * spriteFacing(frame);
+    return poses[i]?.action === "lantern" && frame.activity === "stand" ? 3 : 2 + Math.round(2 * Math.sin(angle));
   };
   const brightFor = (frame: ArtFrame, i: number, ember: boolean | undefined) => {
     if (poses[i]?.action === "lantern" && poses[i]?.accent === "peak") return 1;
@@ -47,7 +54,7 @@ export const createArt: ArtFactory = input => {
     const { index: i, ember } = at(frame);
     const { bodyKey, anchor } = drawing(i, frame.dark);
     const light = anchor && isLampKind(anchor.kind) ? swingFor(frame, i) * 2 + brightFor(frame, i, ember) : 0;
-    return ((bodyKey * 10 + light) * 2 + Number(frame.facing === -1)) * 2 + Number(frame.mood === "error");
+    return ((bodyKey * 10 + light) * 2 + Number(spriteFacing(frame) === -1)) * 2 + Number(frame.mood === "error");
   };
   const palettes = new WeakMap<CharacterPalette, readonly string[]>();
   function coloursFor(palette: CharacterPalette) {
@@ -80,12 +87,12 @@ export const createArt: ArtFactory = input => {
       const { kind } = anchor;
       const lamp = isLampKind(kind) ? LIGHTS[kind][swingFor(frame, i)]![0] : null;
       const x = anchor.x + (lamp?.flameX ?? 0);
-      return { kind, x: frame.facing === -1 ? WIDTH - 1 - x : x, y: anchor.y + (lamp?.flameY ?? 0) };
+      return { kind, x: spriteFacing(frame) === -1 ? WIDTH - 1 - x : x, y: anchor.y + (lamp?.flameY ?? 0) };
     },
     draw(ctx, frame, palette, lift = 0) {
       const { index: i, ember } = at(frame);
       const { runs, anchor } = drawing(i, frame.dark);
-      const { facing } = frame;
+      const facing = spriteFacing(frame);
       const colours = coloursFor(palette);
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
       if (!frame.dark) {
