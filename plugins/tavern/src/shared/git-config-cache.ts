@@ -42,20 +42,21 @@ interface GitConfigLookup {
   layout?: { paths: Watch[]; stamps: string[] | null; local: string; worktree: string };
   cached?: CachedConfig;
 }
-export function configLookup(root: string, gitDir: string | undefined, cwd: string | undefined, env: NodeJS.ProcessEnv): GitConfigLookup | undefined {
+export function configLookup(root: string, gitDir: string | undefined, cwd: string | undefined, env: NodeJS.ProcessEnv, program: string): GitConfigLookup | undefined {
   try {
     const directory = fs.realpathSync(gitDir ? cwd ?? process.cwd() : root);
     const home = env.HOME ? absoluteFrom(directory, env.HOME) : undefined;
     if (!home && !env.GIT_CONFIG_GLOBAL || env.GIT_TEST_ASSUME_DIFFERENT_OWNER !== undefined) return;
     const paths: Watch[] = [];
     const system = /^(?:1|true|yes|on)$/i.test(env.GIT_CONFIG_NOSYSTEM ?? "") ? "" : env.GIT_CONFIG_SYSTEM;
-    const key = JSON.stringify(["full", directory, gitDir]);
+    const key = JSON.stringify(["full", directory, gitDir, program]);
     const environment = JSON.stringify(Object.entries(env).filter(([name]) => name.startsWith("GIT_CONFIG") || ["HOME", "XDG_CONFIG_HOME", "PATH", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_IMPLICIT_WORK_TREE", "GIT_TEST_DEFAULT_HASH", "GIT_TEST_DEFAULT_REF_FORMAT"].includes(name)).sort(([a], [b]) => a.localeCompare(b)));
     const cached = configCache.get(key);
     if (cached && cached.environment === environment && unchanged(cached.stamps, snapshot(cached.paths)))
       return { key, environment, directory, paths, system, home, cached };
 
-    if (system === undefined) {
+    if (program !== "git") paths.push([program]);
+    else if (system === undefined) {
       const path = env.PATH?.split(delimiter);
       if (!path?.length) return;
       let executable = false;
@@ -76,7 +77,7 @@ export function configLookup(root: string, gitDir: string | undefined, cwd: stri
       paths.push(item);
       if (!observed.has(path)) observed.set(path, [item, metadataStamp(path, directory)]);
     };
-    for (const [file, directory] of [...paths]) if (file.endsWith("/git")) watch(file, directory);
+    for (const [file, directory] of [...paths]) if (file === program || file.endsWith("/git")) watch(file, directory);
     let metadata = gitDir && absoluteFrom(directory, gitDir);
     if (!metadata) {
       for (let candidate = directory; ; candidate = dirname(candidate)) {

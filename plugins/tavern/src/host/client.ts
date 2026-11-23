@@ -12,6 +12,15 @@ export function hostCallTimeoutMs(method: HostMethod, input: { networkTimeoutMs?
   if (method === "memoryPreflight") return 370_000;
   return ["inspect", "snapshotWorktree", "commitAll", "exportChanges", "carryStart", "carryFinish", "carryAbort", "worktreeState", "revokePlacement", "releaseSnapshotRef"].includes(method) ? 330_000 : 30_000;
 }
+const programPolicies = new WeakMap<Pick<BbPluginApi, "hosts">, { read(): string; primaryHost(): Promise<string | null> }>();
+export function installHostGitProgram(bb: Pick<BbPluginApi, "hosts" | "sdk">, read: () => string) {
+  const policy = {
+    read,
+    primaryHost: async () => (await bb.sdk.system.config()).primaryHostId,
+  };
+  programPolicies.set(bb, policy);
+  return () => { if (programPolicies.get(bb) === policy) programPolicies.delete(bb); };
+}
 export function createHostPort(bb: Pick<BbPluginApi, "hosts">): HostPort {
   const client = bb.hosts.experimental_client({ contract: hostContract });
   return {
@@ -27,7 +36,15 @@ export function createHostPort(bb: Pick<BbPluginApi, "hosts">): HostPort {
           throw new Error("The delivered workspace host must match the authenticated target host.");
       }
       const timeoutMs = hostCallTimeoutMs(method, "networkTimeoutMs" in input ? input : {});
-      return client.call(method, input, { hostId, timeoutMs, signal: options?.signal }) as Promise<HostOutput<M>>;
+      const call = { hostId, timeoutMs, signal: options?.signal };
+      const policy = programPolicies.get(bb), program = policy?.read();
+      if (policy && program && hostId === await policy.primaryHost()) {
+        const operation = hostContract[method];
+        const wireMethod = "experimental_retryable" in operation ? "configuredGitRead" : "configuredGit";
+        const result = await client.call(wireMethod, { program, method, request: operation.input.parse(input) }, call);
+        return operation.output.parse(result) as HostOutput<M>;
+      }
+      return client.call(method, input, call) as Promise<HostOutput<M>>;
     },
     onWorkerExit: listener => client.experimental_onWorkerExit(listener),
   };

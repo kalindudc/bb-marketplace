@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync, type ExecFileSyncOptionsWithBufferEncoding, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -6,6 +7,33 @@ import { promisify } from "node:util";
 import { configLookup, configRead, parseConfig, type ConfigRow } from "./git-config-cache";
 
 const exec = promisify(execFile);
+const requestGitProgram = new AsyncLocalStorage<string>();
+const environmentGitPrograms = new WeakMap<NodeJS.ProcessEnv, string>();
+let serverGitProgram: (() => string) | undefined;
+
+export function installServerGitProgram(read: () => string): () => void {
+  serverGitProgram = read;
+  return () => { if (serverGitProgram === read) serverGitProgram = undefined; };
+}
+export function withGitProgram<T>(path: string, run: () => T): T {
+  return requestGitProgram.run(path, run);
+}
+export function gitProgramProblem(path: string): string | null {
+  if (!path) return null;
+  try {
+    if (isAbsolute(path) && fs.statSync(path).isFile()) {
+      fs.accessSync(path, fs.constants.X_OK);
+      return null;
+    }
+  } catch { /* The setting is the same recovery action for every unusable path. */ }
+  return `Tavern's Git program setting is missing or not executable: ${path}. Change it in Settings or clear it to use Git from PATH.`;
+}
+function gitProgram() {
+  const path = requestGitProgram.getStore() ?? serverGitProgram?.() ?? "";
+  const problem = gitProgramProblem(path);
+  if (problem) throw new Error(problem);
+  return path || "git";
+}
 type Entry = [key: string, value: string];
 export type GitKind = "full" | "porcelain";
 export interface GitMetadata { gitDir: string; commonDir: string }
@@ -57,6 +85,7 @@ function baseEnvironment(root: string, options: Options): NodeJS.ProcessEnv {
     GIT_ALLOW_PROTOCOL: options.networkRemote ? "git:http:https:ssh" : "file:git:http:https:ssh", GIT_PAGER: "cat", GIT_EDITOR: ":", GIT_SEQUENCE_EDITOR: ":",
   });
   appendConfig(env, pinned);
+  environmentGitPrograms.set(env, gitProgram());
   return env;
 }
 
@@ -197,17 +226,18 @@ function gitSandbox(): string | undefined {
   if (!fs.existsSync(sandboxExec)) throw new Error("Tavern cannot run Git on macOS because sandbox-exec is unavailable.");
   return sandboxExec;
 }
-function wrapGit(file: string | undefined, args: readonly string[], directories: string[] = [], files: string[] = [], network = false): GitInvocation {
-  if (!file) return { file: "git", args: [...args] };
+const programFor = (env: NodeJS.ProcessEnv) => environmentGitPrograms.get(env) ?? gitProgram();
+function wrapGit(file: string | undefined, program: string, args: readonly string[], directories: string[] = [], files: string[] = [], network = false): GitInvocation {
+  if (!file) return { file: program, args: [...args] };
   const profile = ["(version 1)", "(allow default)", "(deny file-write*)",
     `(allow file-write* ${[...new Set(directories)].map(subpath).join(" ")} ${[...new Set(["/dev/null", "/dev/stdout", "/dev/stderr", ...files])].map(literal).join(" ")} (subpath "/dev/fd") (regex #"^/dev/tty[^/]*$"))`,
     ...(network ? [] : ["(deny network*)"]),
   ].join("\n");
-  return { file, args: ["-p", profile, "git", ...args] };
+  return { file, args: ["-p", profile, program, ...args] };
 }
-function gitRead(root: string, args: string[], options: Options, env: NodeJS.ProcessEnv) {
+function gitRead(root: string, args: string[], options: Options, env: NodeJS.ProcessEnv, program = programFor(env)) {
   return {
-    command: wrapGit(gitSandbox(), [...(options.gitDir ? ["--git-dir", options.gitDir] : ["-C", root]), ...args]),
+    command: wrapGit(gitSandbox(), program, [...(options.gitDir ? ["--git-dir", options.gitDir] : ["-C", root]), ...args]),
     options: { cwd: options.cwd, env, encoding: "utf8" as const, timeout: Math.min(options.timeoutMs ?? 3000, 3000), maxBuffer: 8 * 1024 * 1024 },
   };
 }
@@ -220,7 +250,9 @@ function systemPath(output: string): string | undefined {
 }
 
 export function gitConfigRevision(root: string, options: Options = {}): object | undefined {
-  if (options.kind !== "porcelain") return configLookup(root, options.gitDir, options.cwd, baseEnvironment(root, options))?.cached?.revision;
+  if (options.kind === "porcelain") return;
+  const env = baseEnvironment(root, options);
+  return configLookup(root, options.gitDir, options.cwd, env, programFor(env))?.cached?.revision;
 }
 
 function writeRoots(root: string, options: Options) {
@@ -241,7 +273,7 @@ function writeRoots(root: string, options: Options) {
 function metadataRead(root: string, options: Options, env: NodeJS.ProcessEnv) {
   const sanitized = { ...env };
   delete sanitized.GIT_INDEX_FILE;
-  return gitRead(root, ["rev-parse", "--git-dir", ...(options.kind === "porcelain" ? [] : ["--git-common-dir"])], options, sanitized);
+  return gitRead(root, ["rev-parse", "--git-dir", ...(options.kind === "porcelain" ? [] : ["--git-common-dir"])], options, sanitized, programFor(env));
 }
 function metadataPaths(output: string, root: string, options: Options): GitMetadata {
   const paths = output.replace(/\n$/, "").split("\n");
@@ -264,7 +296,7 @@ function reciprocalWorktree(checkout: string, { gitDir, commonDir }: GitMetadata
     } finally { fs.closeSync(fd); }
   } catch { return false; }
 }
-function containedCommand(file: string, root: string, argv: readonly string[], checkout: string, metadata: GitMetadata, options: Options): GitInvocation {
+function containedCommand(file: string, program: string, root: string, argv: readonly string[], checkout: string, metadata: GitMetadata, options: Options): GitInvocation {
   const outside = [metadata.gitDir, metadata.commonDir].filter(path => path !== checkout && !path.startsWith(checkout + sep));
   const outsideMetadataDenied = outside.length > 0 && !reciprocalWorktree(checkout, metadata);
   const directories = outsideMetadataDenied ? [checkout] : [checkout, ...outside];
@@ -276,12 +308,12 @@ function containedCommand(file: string, root: string, argv: readonly string[], c
   }
   if (network) files.push(join(fs.realpathSync(os.homedir()), ".ssh", "known_hosts"));
   if (directories.some(path => dirname(path) === path)) throw new Error("Tavern cannot give Git write access to the filesystem root.");
-  return { ...wrapGit(file, argv, directories, files, network), ...(outsideMetadataDenied ? { outsideMetadataDenied: true } : {}) };
+  return { ...wrapGit(file, program, argv, directories, files, network), ...(outsideMetadataDenied ? { outsideMetadataDenied: true } : {}) };
 }
 export async function gitInvocation(root: string, args: readonly string[], env: NodeJS.ProcessEnv, options: Options = {}): Promise<GitInvocation> {
   args = packArguments(args, env);
-  const file = gitSandbox();
-  if (!file || options.readOnly || args[subcommandIndex(args)] === "rev-parse") return wrapGit(file, args);
+  const file = gitSandbox(), program = programFor(env);
+  if (!file || options.readOnly || args[subcommandIndex(args)] === "rev-parse") return wrapGit(file, program, args);
   const { checkout, discover, local } = writeRoots(root, options);
   let metadata = local;
   if (discover) {
@@ -289,12 +321,12 @@ export async function gitInvocation(root: string, args: readonly string[], env: 
     const { stdout } = await exec(read.command.file, read.command.args, { ...read.options, signal: options.signal });
     metadata = metadataPaths(stdout, root, options);
   }
-  return containedCommand(file, root, args, checkout, metadata, options);
+  return containedCommand(file, program, root, args, checkout, metadata, options);
 }
 function gitInvocationSync(root: string, args: readonly string[], env: NodeJS.ProcessEnv, options: Options): GitInvocation {
   args = packArguments(args, env);
-  const file = gitSandbox();
-  if (!file || options.readOnly || args[subcommandIndex(args)] === "rev-parse") return wrapGit(file, args);
+  const file = gitSandbox(), program = programFor(env);
+  if (!file || options.readOnly || args[subcommandIndex(args)] === "rev-parse") return wrapGit(file, program, args);
   const { checkout, discover, local } = writeRoots(root, options);
   let metadata = local;
   if (discover) {
@@ -302,7 +334,7 @@ function gitInvocationSync(root: string, args: readonly string[], env: NodeJS.Pr
     const stdout = execFileSync(read.command.file, read.command.args, { ...read.options, stdio: ["ignore", "pipe", "pipe"] });
     metadata = metadataPaths(stdout, root, options);
   }
-  return containedCommand(file, root, args, checkout, metadata, options);
+  return containedCommand(file, program, root, args, checkout, metadata, options);
 }
 
 type SyncOptions = Options & { timeout: number };
@@ -333,7 +365,7 @@ export async function gitEnvironment(root: string, options: Options = {}): Promi
   const env = baseEnvironment(root, options);
   if (options.kind === "porcelain") return env;
   if (options.signal?.aborted) options.signal.throwIfAborted();
-  const lookup = configLookup(root, options.gitDir, options.cwd, env);
+  const lookup = configLookup(root, options.gitDir, options.cwd, env, programFor(env));
   const read = async (args: string[]) => {
     const call = gitRead(root, args, options, env);
     return (await exec(call.command.file, call.command.args, { ...call.options, signal: options.signal })).stdout;
@@ -355,7 +387,7 @@ export async function gitEnvironment(root: string, options: Options = {}): Promi
 export function gitEnvironmentSync(root: string, options: Options = {}): NodeJS.ProcessEnv {
   const env = baseEnvironment(root, options);
   if (options.kind === "porcelain") return env;
-  const lookup = configLookup(root, options.gitDir, options.cwd, env);
+  const lookup = configLookup(root, options.gitDir, options.cwd, env, programFor(env));
   const read = (args: string[]) => {
     const call = gitRead(root, args, options, env);
     return execFileSync(call.command.file, call.command.args, { ...call.options, stdio: ["ignore", "pipe", "pipe"] });

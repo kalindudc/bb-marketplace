@@ -19,7 +19,7 @@ export function settingsCommands(bb: BbPluginApi, store: SettingsStore) {
   const keepers = new KeeperStore(store.db);
   function guardrails(ctx: PluginCliContext, keys: string[]) {
     if (!ctx.threadId) return;
-    const consent = [...new Set(keys.filter(key => key === "keepers.alwaysAsk" || key === "away.neverWhileClosed" || key === "scopes.sendTools"))];
+    const consent = [...new Set(keys.filter(key => key === "keepers.alwaysAsk" || key === "away.neverWhileClosed" || key === "scopes.sendTools" || key === "tavern.gitProgram"))];
     if (consent.length) throw new PluginCliError(`Only you can change ${consent.join(", ")}. Use Tavern Settings or a terminal outside an agent thread.`);
     if (!keepers.get("members", ctx.threadId)) return;
     const blocked = [...new Set(keys.filter(isGuardrailSetting))].sort();

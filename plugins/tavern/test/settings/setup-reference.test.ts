@@ -23,7 +23,7 @@ it("documents each settings schema key exactly once and gives its current defaul
   for (const entry of entries) {
     expect(entry.description).not.toBe("");
     const key = entry.key!.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
-    const consent = ["keepers.alwaysAsk", "away.neverWhileClosed", "machines.forges", "scopes.sendTools"];
+    const consent = ["keepers.alwaysAsk", "away.neverWhileClosed", "machines.forges", "scopes.sendTools", "tavern.gitProgram"];
     expect(entry.authority).toMatch(/^User\b/);
     expect(entry.authority.includes("Plain")).toBe(isGuardrailSetting(key) && !consent.includes(key));
     expect(entry.authority.includes("Granted")).toBe(!isGuardrailSetting(key));

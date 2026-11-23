@@ -6,6 +6,7 @@ import { QUEST_TUNABLE_KEYS, settingsContract, type SettingDecision, type Tavern
 import { exportToml } from "./toml";
 import { SettingsConflict, type SettingsStore } from "./store";
 import { importSettings, type SettingsFiles, type SettingsPreview } from "./files";
+import { gitProgramProblem } from "../../shared/git-safety";
 
 export function settingsHandlers(store: SettingsStore, files: SettingsFiles, validate?: (settings: TavernSettings) => void): ExperimentalPluginRpcHandlersWithContext<typeof settingsContract> {
   if (validate) store.setValidator(validate);
@@ -25,7 +26,9 @@ export function settingsHandlers(store: SettingsStore, files: SettingsFiles, val
           keeperName: keeper?.displayName ?? "Keeper", key, value, applied: snapshot.effective.tuning.mode !== "off" && snapshot.pinned[key] === undefined }];
       });
     });
-    return { ...snapshot, ...store.placementRepair(), file: files.status(), liveOverrides, lastChangers: store.lastChangers() };
+    const problem = gitProgramProblem(snapshot.effective.tavern.gitProgram);
+    return { ...snapshot, ...store.placementRepair(), file: files.status(), liveOverrides, lastChangers: store.lastChangers(),
+      ...(problem ? { gitProgramProblem: problem } : {}) };
   };
   function mutate(action: () => SettingDecision | null | void) {
     try {

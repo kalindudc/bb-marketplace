@@ -20,6 +20,7 @@ import { alertRouteContract, type AlertRouteView, type HoldReason } from "../../
 import { insightsContract } from "../../shared/insights";
 import { WardenQualitySection } from "./warden-quality";
 import { MemorySettings } from "./memory-settings";
+import { gitProgramSettingSchema } from "../../shared/git-program";
 
 const WHY = "Changed on the settings page";
 export const ATMOSPHERE_ANCHOR = "tavern-settings-atmosphere";
@@ -84,10 +85,11 @@ export function SettingDefault({ setting, api: provided, managed = false }: { se
   const api = provided ?? inherited;
   const context = api?.data;
   const value = settingsValue(DEFAULT_SETTINGS, setting);
+  const fallback = setting === "tavern.gitProgram" ? "Git from PATH" : defaultWords(setting, value);
   const changed = !!context && differsFromDefault(context.effective, setting);
   const last = context?.lastChangers?.[setting] ?? context?.history.find(change => change.changes.some(c => c.key === setting));
   return <div className="tv-set-default">
-    <span data-setting-changed={changed || undefined}>{changed ? "Changed from " : "Default: "}<b>{defaultWords(setting, value)}</b></span>
+    <span data-setting-changed={changed || undefined}>{changed ? "Changed from " : "Default: "}<b>{fallback}</b></span>
     {managed && last && <span>Last changed by <SettingAuthor threadId={last.threadId} by={last.by} /> <TimeAgo at={last.at} /></span>}
     {changed && api && <button type="button" className="tv-ilink act" aria-label={`Reset ${settingLabel(setting)} to default`} disabled={api.pending} onClick={() => void api.reset(setting)}>Reset to default</button>}
   </div>;
@@ -168,6 +170,21 @@ export function NumberField({ id, value, min, max, unit, onSave, disabled }: { i
 }
 
 
+function GitProgramField({ id, value, problem, api }: { id: string; value: string; problem?: string; api: Api }) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  const valid = gitProgramSettingSchema.safeParse(text).success;
+  const error = !valid ? "Enter an absolute path or leave it empty." : text === value ? problem : undefined;
+  const save = () => { if (valid && text !== value) void api.save({ tavern: { gitProgram: text } }); };
+  return <div className="tv-git-program">
+    <input id={id} className="tv-text" type="text" value={text} disabled={api.pending} spellCheck={false} autoComplete="off"
+      aria-invalid={!!error} aria-describedby={error ? `${id}-error` : undefined}
+      onChange={event => setText(event.target.value)} onBlur={save}
+      onKeyDown={event => { if (event.key === "Enter") save(); else if (event.key === "Escape") setText(value); }} />
+    {error && <span id={`${id}-error`} className="tv-problem" role="alert">{error}</span>}
+  </div>;
+}
+
 export function TavernSection() {
   const api = useTavernSettings();
   const registry = useRegistry();
@@ -175,6 +192,8 @@ export function TavernSection() {
 <SettingsCard title="Control of Tavern" hint="Pause work or choose whether agents can change settings." glyph="lock" guardrail>
     <Row label="Pause every Keeper" setting="tavern.paused" help="No ticks, hires or timers while paused. Asks stay answerable." control={(id) => <Toggle id={id} checked={t.paused} disabled={api.pending} onChange={(v) => void api.save({ tavern: { paused: v } })} />} />
     <Row label="Agents may change settings" setting="tavern.agentsMayChangeSettings" help="Agent CLI changes are recorded with their thread and can be undone below." control={(id) => <Toggle id={id} checked={t.agentsMayChangeSettings} disabled={api.pending} onChange={(v) => void api.save({ tavern: { agentsMayChangeSettings: v } })} />} />
+    <Row label="Git program" setting="tavern.gitProgram" help="Absolute path on the machine running Tavern. Leave empty to use Git from PATH. Other machines keep their own Git."
+      control={id => <GitProgramField id={id} value={t.gitProgram} problem={d.gitProgramProblem} api={api} />} />
 </SettingsCard>
 <SettingsCard title="New threads" hint="Choose how a thread starts and where Tavern appears." glyph="file">
     <Row label="New threads start as" setting="tavern.defaultClass" help="The class a new thread starts with. None is an ordinary thread." control={(id) => <select id={id} className="tv-select" value={t.defaultClass} disabled={api.pending} onChange={(e) => void api.save({ tavern: { defaultClass: e.target.value } })}><option value="none">None (an ordinary thread)</option>{registry.data?.classes.map((c) => <option key={c.id} value={c.id}>{c.label} ({c.plain})</option>)}</select>} />

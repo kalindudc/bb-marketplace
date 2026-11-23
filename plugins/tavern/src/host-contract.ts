@@ -8,6 +8,7 @@ import { pullRequestReviewerSchema } from "./shared/pull-request";
 import { setupLineSchema } from "./shared/setup";
 import { setupForgeInput } from "./shared/setup-forge";
 import { memoryPreflightInput, memoryPreflightOutput, memoryRunInput, memoryRunOutput } from "./shared/memory";
+import { gitProgramPathSchema } from "./shared/git-program";
 import { nativeScopeVariablesSchema } from "./scope/host-env";
 import { artifactFileSchema, endpointSchema, gitOidSchema, objectFormatSchema, sha256Schema, sourceFetchSchema, workspaceKindSchema } from "./shared/placement";
 
@@ -75,7 +76,7 @@ export const scopeDecisionSchema = z.discriminatedUnion("allow", [
 const empty = z.object({}).strict();
 const retryable = { experimental_retryable: true } as const;
 
-export const hostContract = defineRpcContract({
+const hostOperations = defineRpcContract({
   registerEndpoint: {
     input: endpointRegistrationSchema,
     output: z.object({ registered: z.literal(true), generation }).strict(),
@@ -226,9 +227,19 @@ export const hostContract = defineRpcContract({
   finishArtifact: { input: transferAuthoritySchema.extend({ artifactId: id }).strict(), output: z.object({ storageKey: path, sha256: sha256Schema, size }).strict() },
 });
 
-export type HostMethod = keyof typeof hostContract;
-export type HostInput<M extends HostMethod> = z.input<(typeof hostContract)[M]["input"]>;
-export type HostOutput<M extends HostMethod> = z.output<(typeof hostContract)[M]["output"]>;
+const configuredGit = {
+  input: z.object({ program: gitProgramPathSchema, method: z.enum(Object.keys(hostOperations) as (keyof typeof hostOperations)[]), request: z.unknown() }).strict(),
+  output: z.unknown(),
+};
+export const hostContract = defineRpcContract({
+  ...hostOperations,
+  configuredGit,
+  configuredGitRead: { ...configuredGit, ...retryable },
+});
+
+export type HostMethod = keyof typeof hostOperations;
+export type HostInput<M extends HostMethod> = z.input<(typeof hostOperations)[M]["input"]>;
+export type HostOutput<M extends HostMethod> = z.output<(typeof hostOperations)[M]["output"]>;
 export type Authority = z.infer<typeof authoritySchema>;
 export type TransferAuthority = z.infer<typeof transferAuthoritySchema>;
 export type EndpointRegistration = z.infer<typeof endpointRegistrationSchema>;

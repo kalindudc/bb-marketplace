@@ -1,4 +1,4 @@
-import { experimental_defineHostEntry, type ExperimentalHostRpcContext } from "@get-bb/plugin-sdk";
+import { experimental_defineHostEntry, type ExperimentalHostRpcContext, type ExperimentalHostRpcHandlers } from "@get-bb/plugin-sdk";
 import { resolve } from "node:path";
 import { hostContract, type HostOutput } from "../host-contract";
 import { createArtifacts } from "./artifacts";
@@ -13,6 +13,7 @@ import { inspectSetupForges, probeSetupForges } from "./setup-forge";
 import { preflightMemory, runMemory } from "./memory";
 import { pushedBase } from "./pushed-base";
 import { snapshotWorktree } from "./snapshot";
+import { withGitProgram } from "../shared/git-safety";
 
 export interface TavernHostEntryOptions { artifactPath: string; paths?: NativeScopePaths }
 export function createTavernHostEntry(options: TavernHostEntryOptions) {
@@ -42,9 +43,7 @@ export function createTavernHostEntry(options: TavernHostEntryOptions) {
   };
   const call = <T>(context: ExperimentalHostRpcContext, work: (native: ReturnType<typeof services>, signal: AbortSignal) => T | Promise<T>) =>
     invoke(context, signal => work(services(context), signal));
-  return experimental_defineHostEntry({
-    contract: hostContract,
-    handlers: {
+  const handlers: Omit<ExperimentalHostRpcHandlers<typeof hostContract>, "configuredGit" | "configuredGitRead"> = {
       registerEndpoint: (input, context) => call(context, (native, signal) => native.registry.registerEndpoint(input, signal)),
       registerEndpoints: (input, context) => call(context, (native, signal) => native.registry.registerEndpoints(input, signal)),
       releaseEndpoint: (input, context) => call(context, (native, signal) => native.registry.releaseEndpoint(input, signal)),
@@ -109,7 +108,19 @@ export function createTavernHostEntry(options: TavernHostEntryOptions) {
       readArtifact: (input, context) => call(context, (native, signal) => native.artifacts.readArtifact(input, signal)),
       artifactChunk: (input, context) => call(context, (native, signal) => native.artifacts.artifactChunk(input, signal)),
       finishArtifact: (input, context) => call(context, (native, signal) => native.artifacts.finishArtifact(input, signal)),
-    },
+  };
+  const configuredGit = (retryable: boolean): ExperimentalHostRpcHandlers<typeof hostContract>["configuredGit"] =>
+    async ({ program, method, request }, context) => {
+      const operation = hostContract[method];
+      if (retryable !== ("experimental_retryable" in operation))
+        throw new HostError("host-operation-mode", "The configured Git request does not match the operation's retry policy.");
+      const handler = handlers[method] as (request: unknown, context: ExperimentalHostRpcContext) => unknown;
+      const result = await withGitProgram(program, () => handler(operation.input.parse(request), context));
+      return operation.output.parse(result);
+    };
+  return experimental_defineHostEntry({
+    contract: hostContract,
+    handlers: { ...handlers, configuredGit: configuredGit(false), configuredGitRead: configuredGit(true) },
     dispose: async () => { closed = true; controller.abort(); await Promise.allSettled([...calls]); },
   });
 }
