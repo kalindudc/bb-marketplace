@@ -82,11 +82,11 @@ describe("Warden checker scope at strict-host hire", () => {
     await expect(f.harness.behavior.invokeAgentTool("tavern_scope", { memberThreadId: "child", override: { tools: { allow: ["npm test"] } }, reason: "Tests" }, { threadId: "lead" })).rejects.toThrow(/preset already allows/);
     expect(f.k.store.openAsks("lead").filter(ask => ["scope", "blocker"].includes(ask.kind))).toEqual([]);
   });
-  it("does not recognise checks from prose or the agent’s extra brief", async () => {
+  it("never turns prose or the agent’s extra brief into custom check permissions", async () => {
     const f = await fixture(true, "All duration assertions pass; consult the user if anything differs.");
     await f.runtime.hire("lead", "project", f.input);
     expect(f.scope().checks!.commands).toEqual(["node --test"]);
-    expect(evaluate(f.scope(), { kind: "bash", toolName: "bash", input: { command: "./bin/unapproved-check" }, cwd: f.makerRoot })).toEqual({ allow: true });
+    expect(evaluate(f.scope(), { kind: "bash", toolName: "bash", input: { command: "./bin/unapproved-check" }, cwd: f.makerRoot }).allow).toBe(false);
   });
   it("keeps ordinary reads available but checks closed when no linked maker root is known", async () => {
     const f = await fixture(false);

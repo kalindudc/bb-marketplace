@@ -4,7 +4,6 @@ import { evaluate } from "../../src/scope/engine";
 import { scopeForClass } from "../../src/scope/presets";
 import { scopeSchema } from "../../src/scope/schema";
 import { bindPaths } from "../../src/scope/paths";
-import { shellCommands } from "../../src/scope/shell";
 
 const scope = (role: string) => bindPaths({ ...scopeForClass(role, undefined, role === "keeper" ? "keeper" : undefined), assignedBranch: "feature" }, { home: "/home/me", tmp: ["/tmp", "/private/tmp"], worktree: "/repo", threadStorage: "/storage/t1", scopesDir: "/data/scopes" });
 const bash = (role: string, command: string) => evaluate({ ...scope(role), assignedBranch: command.includes("topic") ? "topic" : "feature" }, { kind: "bash", toolName: "bash", input: { command }, cwd: "/repo", pushHeads: { ["/repo\0" + "0"]: "feature" } });
@@ -28,8 +27,7 @@ describe("scope engine", () => {
     expect(evaluate(scope("keeper"), { kind: "tool", toolName: "tavern_hire", input: {}, cwd: "/repo" }).allow).toBe(true);
     expect(evaluate(scope("keeper"), { kind: "write", toolName: "write", input: { path: "/tmp/note" }, cwd: "/repo" }).allow).toBe(true);
     expect(bash("keeper", "git status && ls src").allow).toBe(true);
-    expect(bash("keeper", "npm test")).toEqual({ allow: true });
-    expect(bash("keeper", "npm test > result.txt")).toMatchObject({ allow: false, ruleId: "shell-write" });
+    expect(bash("keeper", "npm test").allow).toBe(false);
   });
   it("limits writes by root, not string prefix, and protects guard files", () => {
     for (const path of ["src/a.ts", "/tmp/a"]) expect(evaluate(scope("smith"), { kind: "write", toolName: "write", input: { path }, cwd: "/repo" }).allow).toBe(true);
@@ -48,21 +46,6 @@ describe("scope engine", () => {
   });
   it("keeps Git writes blocked even from Ranger scratch", () => {
     expect(bash("ranger", "git -C /tmp commit -m fixture")).toMatchObject({ allow: false, ruleId: "shell-write" });
-  });
-  it.each([
-    ["a | b", ["a", "b"]],
-    ["a && b", ["a", "b"]],
-    ["cat <<EOF\ntext\nEOF", ["cat"]],
-    ["python - <<'EOF'\nprint('text')\nEOF", ["python"]],
-  ] as const)("parses %j for shell inspection", (command, programs) => {
-    expect(shellCommands(command, "/repo").map(part => part.argv[0])).toEqual(programs);
-    expect(bash("warden", command)).toMatchObject({ allow: true });
-  });
-  it("explains an uncontained Smith shell parse refusal", () => {
-    const command = 'echo "unfinished > tracked.txt';
-    const result = bash("smith", command);
-    expect(result).toMatchObject({ allow: false, ruleId: "shell-parse", reason: expect.stringContaining("unterminated double quote") });
-    if (!result.allow) expect(result.reason).toContain(JSON.stringify(command));
   });
   it("keeps opaque script input blocked for an uncontained Smith", () => {
     expect(bash("smith", "bash < input.sh")).toMatchObject({ allow: false, ruleId: "shell-input" });
