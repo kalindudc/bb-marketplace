@@ -39,8 +39,10 @@ it.each(commands)("recognises %s: %s for every class", (kind, command) => {
   for (const role of ["ranger", "warden", "smith", "wanderer", "keeper"]) {
     const decision = evaluate(scope(role), call(command));
     const managed = ["ready", "close", "review"].includes(kind) || /\bpr (?:comment|edit)\b/.test(command);
-    expect(decision.allow, role).toBe(kind !== "cluster-write" && !managed && role === "keeper");
-    if (role === "keeper" && !managed && kind !== "cluster-write") expect(decision).toMatchObject({ acts: expect.arrayContaining([expect.objectContaining({ kind })]) });
+    const requiresReceipt = kind === "merge" || kind === "cluster-write";
+    expect(decision.allow, role).toBe(!requiresReceipt && !managed && role === "keeper");
+    if (role === "keeper" && kind === "merge") expect(decision).toMatchObject({ ruleId: "merge-approval" });
+    if (role === "keeper" && !managed && !requiresReceipt) expect(decision).toMatchObject({ acts: expect.arrayContaining([expect.objectContaining({ kind })]) });
     if (kind === "review" || /\bpr comment\b/.test(command)) expect(decision).toMatchObject({ ruleId: "send-guard", reason: expect.stringContaining("Agents do not send as you") });
     else if (managed && role === "keeper" && kind !== "ready") expect(decision).toMatchObject({ reason: expect.stringContaining("tavern_pull_request") });
   }

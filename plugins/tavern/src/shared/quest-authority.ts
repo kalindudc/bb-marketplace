@@ -19,7 +19,11 @@ export const preapprovalInputSchema = z.object({
 export const preapprovalSchema = preapprovalInputSchema.extend({ ...grant, retriesUsed: z.number().int().min(0).max(1) });
 export type Preapproval = z.infer<typeof preapprovalSchema>;
 export type PreapprovalInput = z.infer<typeof preapprovalInputSchema>;
-export const actTargetSchema = z.object({ commit: z.string().min(1).max(64).optional(), command: z.string().min(1).max(8000).optional() }).strict();
+const mergeRef = z.string().min(1).max(255).regex(/^[^\s\u0000$`*?\[\]]+$/);
+export const mergeTargetSchema = z.object({ repository: mergeRef, targetBranch: mergeRef, sourceBranch: mergeRef.optional(), pullRequest: z.url({ protocol: /^https$/ }).max(500).optional() }).strict()
+  .refine(value => !!value.sourceBranch !== !!value.pullRequest, "Name one source branch or pull request");
+export const actTargetSchema = z.object({ commit: z.string().min(1).max(64).optional(), command: z.string().min(1).max(8000).optional(), merge: mergeTargetSchema.optional() }).strict()
+  .refine(value => !value.merge || !!value.command && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.commit ?? ""), "A merge target needs the exact command and full head revision");
 export type ActTarget = z.infer<typeof actTargetSchema>;
 export function preapprovalWords(receipt: { at: number; surface: string }) {
   return `pre-approved by you at ${moveTime(receipt.at, Date.now())} (${receipt.surface.replace("client (unattested)", "client, unattested")})`;

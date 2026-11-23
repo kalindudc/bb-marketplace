@@ -22,6 +22,9 @@ export interface WatchDeps {
   onViolation(violation: Violation, binding?: ScopeObservationBinding): void | Promise<void>;
   onActObservation?(observation: ActObservation): void;
   onShellGrantUsed?(threadId: string, grantId: string): void;
+  onMergeUsed?(threadId: string, askId: string, eventId: string, succeeded: boolean): boolean;
+  onObservedMerge?(threadId: string, command: string, eventId: string, at: number, succeeded: boolean): boolean;
+  onMergeArmed?(threadId: string): void;
   drainCommunication?(threadId: string, idle?: boolean): Promise<void>;
   cwdForThread?(threadId: string): string | undefined;
   remoteForThread?(threadId: string): RemoteScopeObservation | undefined;
@@ -77,6 +80,7 @@ function guardBlocked(item: Item): boolean {
 }
 export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchDeps): void {
   const pending = new Map<string, Promise<void>>();
+  const mergeSessions = new Map<string, string>();
   const stopped = new Map<string, { record: ScopeRecord; binding?: ScopeObservationBinding }>();
   const starts = new Map<string, Map<string, number>>();
   const worktrees = new Map<string, { root: string; record: ScopeRecord }>();
@@ -256,8 +260,12 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
             if (disposed || store.records.get(threadId) !== record || after?.kind !== "ready" || !sameBinding(identity(after), expected) || reply.scopeRevision !== expected.revision || reply.scopeDigest !== expected.scopeDigest) {
               await hold(threadId, providerId, row.id, row.seq, "The remote scope or assignment changed during inspection; keep this event pending and ask the Keeper to reconcile its current binding.", expected); return;
             }
-            if (reply.decision.allow) for (const act of reply.decision.acts ?? []) store.recordAct({ threadId, providerId, at: Date.now(), eventId: row.id, seq: row.seq, kind: act.kind, call: reply.call, mode: modeFor(threadId) === "watch" ? "watch" : "enforce" });
-            if (!reply.decision.allow) { violation = await contain(threadId, providerId, row.id, row.seq, row.createdAt, reply.decision, reply.call, expected); break; }
+            const source = rawCall.input.command ?? rawCall.input.cmd;
+            const observed = !clusterObservation && !reply.decision.allow && reply.decision.ruleId === "merge-approval" && typeof source === "string" &&
+              deps.onObservedMerge?.(threadId, source, row.id, row.createdAt, item.exitCode === 0) === true;
+            if (reply.decision.allow || observed) for (const kind of reply.decision.allow ? (reply.decision.acts ?? []).map(act => act.kind) : ["merge" as const])
+              store.recordAct({ threadId, providerId, at: Date.now(), eventId: row.id, seq: row.seq, kind, call: reply.call, mode: modeFor(threadId) === "watch" ? "watch" : "enforce" });
+            if (!reply.decision.allow && !observed) { violation = await contain(threadId, providerId, row.id, row.seq, row.createdAt, reply.decision, reply.call, expected); break; }
           }
           if (violation) { advance(false); if (violation.mode === "enforce") return; }
           else advance();
@@ -325,8 +333,12 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
             const id = observedPullRequestReceipt(item) ?? row.id;
             const prepared = prepareCall(local, { scope });
             const receipt = providerId === "pi" ? observedActReceipt(item) : undefined;
-            const clusterWriteApproved = matchesActReceipt(record.file, threadId, "cluster-write", prepared.input.command ?? prepared.input.cmd, receipt);
-            decision = evaluate(scope, { ...prepared, draftApproved: matchedDraftReceipt(record.file, call, draftObservation), clusterWriteApproved, ...(clusterWriteApproved ? { clusterObservation: receipt } : {}), shellGrants: modeFor(threadId) === "watch" && providerId === "pi" && !record.binding ? readShellGrants(record.file, scope) : undefined, prGrantAvailable: grant => pullRequestGrantAvailable(record.file, grant, id) },
+            const source = prepared.input.command ?? prepared.input.cmd;
+            const clusterWriteApproved = matchesActReceipt(record.file, threadId, "cluster-write", source, receipt);
+            const mergeObserved = scope.role === "keeper" && (receipt ? matchesActReceipt(record.file, threadId, "merge", source, receipt) &&
+              deps.onMergeUsed?.(threadId, receipt.split(" ")[0]!, row.id, item.exitCode === 0) === true :
+              !!prepared.merge && typeof source === "string" && deps.onObservedMerge?.(threadId, source, row.id, row.createdAt, item.exitCode === 0) === true);
+            decision = evaluate(scope, { ...prepared, mergeObserved, draftApproved: matchedDraftReceipt(record.file, call, draftObservation), clusterWriteApproved, ...(clusterWriteApproved ? { clusterObservation: receipt } : {}), shellGrants: modeFor(threadId) === "watch" && providerId === "pi" && !record.binding ? readShellGrants(record.file, scope) : undefined, prGrantAvailable: grant => pullRequestGrantAvailable(record.file, grant, id) },
               providerId === "pi" && modeFor(threadId) === "enforce" && scope.role === "wanderer" && scope.preset === "open" && !hasShellGrantGuard(record.file, scope));
             if (decision.allow && decision.prGrant && !claimPullRequestGrant(record.file, decision.prGrant, id) && !pullRequestGrantAvailable(record.file, decision.prGrant, id))
               decision = blocked(call.toolName, "pr-sends-as-you", "the one-use pull request exception was already used");
@@ -347,7 +359,14 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
     const previous = pending.get(thread.id) ?? Promise.resolve();
     const work = previous.then(async () => {
       if (thread.providerId === "pi") {
-        try { await deps.drainCommunication?.(thread.id); }
+        try {
+          const session = store.records.get(thread.id)?.scope?.role === "keeper" && store.mergeGuardSession(thread.id);
+          if (session && mergeSessions.get(thread.id) !== session) {
+            deps.onMergeArmed?.(thread.id);
+            mergeSessions.set(thread.id, session);
+          }
+          await deps.drainCommunication?.(thread.id);
+        }
         catch (error) { bb.log.warn(`Tavern held communication ${thread.id}: ${String(error)}`); }
       }
       if (modeFor(thread.id) !== "off") await check(thread.id, thread.providerId, sequence);
@@ -363,8 +382,8 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
   bb.events.on("thread.active", ({ thread }) => { stopped.delete(thread.id); });
   bb.events.on("thread.archived", ({ thread }) => { stopped.delete(thread.id); worktrees.delete(thread.id); });
   bb.events.on("thread.deleted", ({ thread }) => {
-    stopped.delete(thread.id); worktrees.delete(thread.id); starts.delete(thread.id);
+    stopped.delete(thread.id); worktrees.delete(thread.id); starts.delete(thread.id); mergeSessions.delete(thread.id);
     if (store.records.has(thread.id)) store.clear(thread.id);
   });
-  bb.onDispose(() => { disposed = true; stopped.clear(); worktrees.clear(); starts.clear(); });
+  bb.onDispose(() => { disposed = true; stopped.clear(); worktrees.clear(); starts.clear(); mergeSessions.clear(); });
 }

@@ -81,9 +81,11 @@ describe("Closing time local denials", () => {
     const call = (command: string) => ({kind:"bash" as const, toolName:"bash", input:{command}, cwd});
     const fallback = (scope: typeof base, source: string) => fallbackActs(source).some(act => closingAct(scope, act, source));
     for (const command of ["gh pr merge 12", "git push origin main", "git push origin HEAD:main", "git push origin HEAD:refs/heads/master"]) {
-      expect(evaluate(base, call(command)).allow, command).toBe(true);
-      expect(evaluate(merge, call(command)).allow, command).toBe(false);
-      expect(evaluate(others, call(command)).allow, command).toBe(true);
+      expect(evaluate(base, call(command)), command).toMatchObject({ allow: false, ruleId: "merge-approval" });
+      const approved = { ...call(command), mergeMatches: true };
+      expect(evaluate(base, approved).allow, command).toBe(true);
+      expect(evaluate(merge, approved), command).toMatchObject({ allow: false, ruleId: "closing-act" });
+      expect(evaluate(others, approved).allow, command).toBe(true);
       expect(fallback(merge, command), command).toBe(true);
       expect(fallback(others, command), command).toBe(false);
     }

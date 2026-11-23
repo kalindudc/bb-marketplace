@@ -1,4 +1,5 @@
 import { memberHost } from "./member-engagement";
+import { recordMergeUse, refreshMergeApprovals, useObservedMerge } from "./merge-approvals";
 import { wasReleased } from "../shared/member-engagement";
 import type { ActGrant } from "../scope/act-grants";
 import { existsSync } from "node:fs";
@@ -122,6 +123,18 @@ export class BackendScopes {
       communicationPolicy: threadId => communicationPolicy(runtime.keeper, threadId, runtime.config().scopes.sendTools, this.api?.localScopeRecord(threadId)?.file, runtime.away.store.snapshot().status.closed),
       drainCommunication: (threadId, idle) => this.drainCommunication(threadId, idle),
       onActObservation: (observation) => this.observeAct(observation),
+      onMergeUsed: (threadId, askId, eventId, succeeded) => {
+        const k = runtime.keeper;
+        const accepted = recordMergeUse(k, threadId, askId, eventId, succeeded);
+        if (accepted) k.changed(threadId, k.store.get("asks", askId)?.boardQuestId);
+        return accepted;
+      },
+      onObservedMerge: (threadId, command, eventId, at, succeeded) => {
+        const used = useObservedMerge(runtime.keeper, threadId, this.api.scopeFile(threadId), command, eventId, at, succeeded);
+        if (used) runtime.keeper.changed(threadId);
+        return used;
+      },
+      onMergeArmed: threadId => this.refreshMergeApprovals(threadId),
       onShellGrantUsed: (threadId, id) => { this.recordGrantUse(threadId, id); this.syncGrants(threadId); },
     });
   }
@@ -151,6 +164,12 @@ export class BackendScopes {
     const ids = holds.map(hold => hold.id);
     if (local) acknowledgeCommunicationHolds(local.file, ids);
     else await remote!.host.call(remote!.hostId, "communicationHolds", { ...remote!.input, operationId: randomUUID(), acknowledge: ids });
+  }
+  refreshMergeApprovals(threadId?: string) {
+    for (const id of threadId ? [threadId] : this.api.status().threads.filter(row => row.scope?.role === "keeper").map(row => row.threadId)) {
+      const local = this.api.localScopeRecord(id);
+      if (local?.scope.role === "keeper") refreshMergeApprovals(this.runtime.keeper, id, local.file, this.api.mergeGuardArmed(id));
+    }
   }
   async revokeDraftReceipts(questId: string, delegationId: string) {
     const k = this.runtime.keeper;

@@ -42,15 +42,20 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const noteLabel = typeof note.presentation?.label === "object" ? note.presentation.label.pending : note.presentation?.label;
   const noteMetadata = note.name + (noteLabel ?? "") + note.description;
   const ask = registered.mock.calls.find(([tool]) => tool.name === "tavern_ask")![0];
-  const mergeAskSchema = (ask.parameters as { anyOf: object[] }).anyOf.at(-1);
+  const askSchemas = (ask.parameters as { anyOf: Array<{ properties: { target?: { properties: Record<string, unknown> } } }> }).anyOf;
+  const mergeAskSchema = askSchemas.at(-1);
   expect(mergeAskSchema).toMatchObject({ required: ["mergeAskId", "action", "reason"] });
-  const mergeAskSchemaDelta = 1 + Buffer.byteLength(JSON.stringify(mergeAskSchema));
+  const targetProperties = askSchemas[0]!.properties.target!.properties;
+  const { merge, ...priorTarget } = targetProperties;
+  expect(merge).toMatchObject({ required: ["repository", "targetBranch"] });
+  const mergeTargetDelta = Buffer.byteLength(JSON.stringify(targetProperties)) - Buffer.byteLength(JSON.stringify(priorTarget));
+  const mergeAskSchemaDelta = 1 + Buffer.byteLength(JSON.stringify(mergeAskSchema)) + mergeTargetDelta;
   const structure = Buffer.byteLength(JSON.stringify(keep)) - Buffer.byteLength(keep.name + keep.description + "Kept a resting member")
     + Buffer.byteLength(JSON.stringify(refresh)) - Buffer.byteLength(refresh.name + refresh.description + "Requested Keeper refresh");
   const briefWarning = briefSteerFact("Wren XVIII", { at: 0, excerpt: "x".repeat(160), memberThreadId: "thr_abcdefghij" });
   const questSchemaDelta = Buffer.byteLength(JSON.stringify(quest.parameters)) - Buffer.byteLength(JSON.stringify(opening));
   const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + mergeAskSchemaDelta + judgeBytes + checkpointDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
-  if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${bytes}\n`);
+  if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${bytes}\nMERGE_TARGET_SCHEMA_BYTES=${mergeTargetDelta}\n`);
   expect(bytes).toBeLessThanOrEqual(34754);
 });
 it("keeps the normal-reply limit and per-quest re-anchor instructions", () => {

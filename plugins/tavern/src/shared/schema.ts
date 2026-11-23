@@ -549,6 +549,8 @@ export type AskEffect = z.infer<typeof askEffectSchema>;
 export const askSchema = z.object({
   unsure: z.boolean().optional(),
   target: actTargetSchema.optional(),
+  mergeApproval: z.object({ expiresAt: epochMs, delegationId: id.optional() }).optional(),
+  mergeUse: z.object({ at: epochMs, eventId: z.string(), succeeded: z.boolean() }).optional(),
   sendTarget: z.string().optional(),
   clusterTargets: z.array(z.object({ context: z.string().optional(), namespace: z.string().optional() })).optional(),
   runThreadId: threadId.optional(),

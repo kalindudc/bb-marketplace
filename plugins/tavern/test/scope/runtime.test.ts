@@ -82,7 +82,7 @@ describe("provider-neutral watcher", () => {
     expect(store.violations()[0]?.reason).toMatch(/draft\.txt.*readonly.*shell write.*write-path.*tell your Keeper/is);
     await harness.lifecycle.dispose();
   });
-  it.each(["enforce", "watch"] as const)("records Keeper acts without stopping in %s", async mode => {
+  it.each([["enforce", true], ["watch", true], ["enforce", false]] as const)("records Keeper acts without stopping in %s only with approval (approved=%s)", async (mode, approved) => {
     const { store } = fixture();
     const s = bindPaths({ ...scopeForClass("keeper"), mode, threadId: "t1", issuedAt: 1 }, { home: temp(), tmp: [tmpdir()], scopesDir: store.directory });
     store.write("t1", s);
@@ -91,12 +91,14 @@ describe("provider-neutral watcher", () => {
       events: { list: async () => [{ id: "e1", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { type: "commandExecution", command: "dt pr merge 1", cwd: store.dataDir } } }] },
     }, environments: {} } });
     const onViolation = vi.fn();
-    registerWatcher(bb, store, { onViolation });
+    const onObservedMerge = vi.fn((_id, command) => approved && command === "dt pr merge 1");
+    registerWatcher(bb, store, { onViolation, onObservedMerge });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1" }), sequence: 1 });
-    expect(store.violations()).toEqual([]);
-    expect(store.acts()).toEqual([expect.objectContaining({ kind: "merge", mode })]);
-    expect(onViolation).not.toHaveBeenCalled();
-    expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
+    expect(onObservedMerge).toHaveBeenCalledWith("t1", "dt pr merge 1", "e1", expect.any(Number), false);
+    expect(store.violations()).toEqual(approved ? [] : [expect.objectContaining({ ruleId: "merge-approval" })]);
+    expect(store.acts()).toEqual(approved ? [expect.objectContaining({ kind: "merge", mode })] : []);
+    expect(onViolation).toHaveBeenCalledTimes(approved ? 0 : 1);
+    expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(approved ? 0 : 1);
     await harness.lifecycle.dispose();
   });
   it("binds a late worktree from SDK environment data once and checks relative writes against it", async () => {

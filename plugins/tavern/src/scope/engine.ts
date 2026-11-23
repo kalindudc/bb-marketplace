@@ -16,8 +16,10 @@ import { prCommandDigest, pullRequestOwned } from "./pr-policy";
 import { commandWritePaths, ruleMatches, shellCommands, type ShellCommand } from "./shell";
 import { ShellSyntaxError } from "./parser";
 import { memoryCommandRule, runsMemoryCommand } from "./memory-policy";
+import { explicitMerge, inspectMerge, type MergeCall } from "./merge";
+import type { ActTarget } from "../shared/quest-authority";
 
-export interface ScopeCall { draftApproved?: boolean; clusterWriteApproved?: boolean; clusterObservation?: string; containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; shellGrants?: readonly ShellGrantProjection[]; prGrantAvailable?(id: string): boolean }
+export interface ScopeCall { draftApproved?: boolean; merge?: MergeCall | null; mergeMatches?: boolean; mergeHeadChanged?: boolean; mergeObserved?: boolean; clusterWriteApproved?: boolean; clusterObservation?: string; containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; shellGrants?: readonly ShellGrantProjection[]; prGrantAvailable?(id: string): boolean }
 export type Decision = { allow: true; check?: boolean; acts?: Act[]; prGrant?: string; shellGrant?: string } | { allow: false; ruleId: string; reason: string; act?: ActKind };
 const allowed: Decision = { allow: true };
 export const BLOCK_MARKER = "[Tavern scope blocked]";
@@ -31,6 +33,14 @@ function blockedAct(what: string, act: Act, ruleId = act.ruleId): Decision {
   if (!ask) return blocked(what, ruleId, act.why);
   const why = ruleId === "pr-sends-as-you" ? " " + act.why : "";
   return { allow: false, act: act.kind, ruleId, reason: `${HELD_MARKER}${act.kind}. This needs a ${ask} ask. Nothing was done. ${keepWorking} Held command: ${JSON.stringify(what.slice(0, 8000))}.${why}` };
+}
+export function mergeBlock(merge: MergeCall, target?: ActTarget, staleVerdict = false) {
+  const where = merge.repository ?? target?.merge?.repository ?? "unresolved repository";
+  const branch = merge.branch ?? target?.merge?.targetBranch ?? "unresolved target branch";
+  const why = merge.issue ?? (staleVerdict ? "the Warden verdict is no longer current" : "no current, unused approval matches this exact protected write");
+  const next = staleVerdict ? `Get a current Warden verdict on ${target?.commit}.` : merge.issue ? "Name one exact repository, source, target branch and head revision." :
+    "Ask the user with tavern_ask; for an open ask use its mergeAskId and action ask-user.";
+  return { allow: false as const, ruleId: "merge-approval", reason: `${BLOCK_MARKER} ${merge.description} to ${where} (${branch}): ${why}. ${next}` };
 }
 export function toolAllowed(scope: Scope, name: string, input: Record<string, unknown> = {}): boolean {
   const awaySend = scope.tools.deny.includes("*send*") && scope.shell.deny.some(rule => rule.id.startsWith("away:") && rule.id.endsWith(":send"));
@@ -153,6 +163,11 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
   const olderOpenBaseline = legacyWanderer && scope.role === "wanderer" && scope.preset === "open";
   const authority = authorityDecision(scope, call);
   if (authority) return authority;
+  const sourceForMerge = call.input.command ?? call.input.cmd;
+  if (scope.role === "keeper" && !call.mergeObserved && typeof sourceForMerge === "string") {
+    const merge = call.merge === undefined ? inspectMerge(sourceForMerge, call.cwd, undefined) : call.merge;
+    if (merge && !call.mergeMatches) return mergeBlock(merge);
+  }
   const contained = call.containment === "sandbox" && scope.sandbox && ["bash", "Bash"].includes(call.toolName);
   if (contained) scope = readerFallback(scope);
   if ([...scope.writes.allow, ...scope.writes.deny].some(path => path.includes("${")) && !["tavern_report", "journal", "quest", "tavern_ready"].includes(call.toolName)) return blocked(call.toolName, "worktree-unresolved", "the worktree root must be bound from the provisioned environment");
@@ -221,7 +236,7 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
     });
     const smithOwned = Boolean(call.ownedPrs?.includes(draftEditKey(command)));
     const questOwned = pullRequestOwned(command, scope.pullRequestPolicy?.owned ?? [], call.questOwnedPrs ?? []);
-    const route = pullRequestRoute(command, smithOwned || questOwned);
+    const route = scope.role === "keeper" && (call.mergeMatches || call.mergeObserved) && explicitMerge(command) ? undefined : pullRequestRoute(command, smithOwned || questOwned);
     if (route && (route.kind === "ready" || route.kind === "close")) return blocked(command.text, route.ruleId, route.why);
     if (route?.kind === "send") {
       const prException = commands.length === 1 && !command.githubEnvironment && scope.pullRequestPolicy?.grants.find(g => g.digest === prCommandDigest(source) && call.prGrantAvailable?.(g.id));
@@ -233,6 +248,8 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
       if (prException) prGrant = prException.id;
     }
     const commandActs = route && !smithOwned ? [route] : scope.pullRequestPolicy?.alwaysAsk === false && route?.kind === "send" ? [route] : actsForCommand(command);
+    if ((call.mergeMatches || call.mergeObserved) && !commandActs.some(act => act.kind === "merge"))
+      commandActs.push({ kind: "merge", ruleId: "merge-approval", why: "Uses the recorded approval for this protected write" });
     const approvedClusterWrite = call.clusterWriteApproved && commandActs.some(act => act.kind === "cluster-write");
     for (const act of commandActs) {
       observed.push(act);

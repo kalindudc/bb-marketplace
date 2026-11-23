@@ -1,5 +1,6 @@
 import { authorize, commitUserAct, type UserActReceipt } from "../authority";
 import { QuestAuthority } from "../quest-authority";
+import { MERGE_APPROVAL_MS } from "../merge-approvals";
 import { changeSpendBudget } from "../spend-budget";
 import { DELEGATABLE_KINDS, preapprovalWords, type DelegationKind } from "../../shared/quest-authority";
 import { clusterCommandTarget, fallbackActs } from "../../scope/acts";
@@ -1208,7 +1209,7 @@ export class Keeper {
     data: Record<string, unknown> = {},
   ): Ask | null {
     const ask = this.store.get("asks", id);
-    if (!ask || ask.state !== "open") return null;
+    if (!ask || ask.state !== "open" && !(cause === "merge-moot" && ask.kind === "merge" && ask.state === "answered" && ask.mergeApproval && !ask.mergeUse)) return null;
     const withdrawn = this.store.atomic(() => {
       const closing = ask.kind === "conclude" && ask.boardQuestId && this.quest(ask.boardQuestId).phase === "closing";
       if (closing)
@@ -1375,6 +1376,12 @@ export class Keeper {
         : "Record approval for the exact act. This does not run it. In the Keeper lane, approval needs a current Warden verdict.";
       input = { ...input, options: [{ id: "approve", label: runner ? "Approve" : "Approve the act", detail, recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], effect: { type: "decision", outcomes: [{ optionId: runner ? "confirm-run" : "approve", outcome: "approve" }, { optionId: "deny", outcome: "decline" }] } };
     }
+    if (input.kind === "merge" && input.target?.merge && input.effect.type === "decision") {
+      const { repository, sourceBranch, pullRequest, targetBranch } = input.target.merge;
+      const detail = `${repository}: ${sourceBranch ?? pullRequest} into ${targetBranch} at ${input.target.commit}.`;
+      if (detail.length > 300) throw new Error("Use shorter exact repository and pull request names so the approval shows the full target.");
+      input = { ...input, options: input.options.map(option => option.id === "approve" ? { ...option, detail } : option) };
+    }
     const lane = this.authority.baseLane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure, effect: input.effect, sendTarget: input.sendTarget });
     const childLink = questId ? this.store.leadLinksBy("childQuestId", questId)[0] : undefined;
     let forwardedQuestion: Ask["forwardedQuestion"];
@@ -1453,14 +1460,15 @@ export class Keeper {
     if (!ask || ask.keeperThreadId !== threadId || ask.kind !== "merge" || ask.effect?.type !== "decision")
       throw new Error(`Ask ${askId} is not a plain merge ask owned by this Keeper. Read tavern_status section=asks for the right ID.`);
     if (action === "withdraw" && ask.state === "withdrawn" && ask.withdrawnCause === "merge-moot") return ask;
-    if (ask.state !== "open")
-      throw new Error(`Merge ask ${askId} is no longer open (${ask.state}). Read its outcome in tavern_status section=asks.`);
+    const closed = () => new Error(`Merge ask ${askId} is no longer open (${ask.state}). Read its outcome in tavern_status section=asks.`);
+    if (ask.state !== "open" && action === "ask-user") throw closed();
     if (ask.boardQuestId) {
       this.liveQuest(threadId, ask.boardQuestId);
       this.guard(threadId, ask.boardQuestId);
     }
     if (action === "withdraw") {
-      const withdrawn = this.withdrawAsk(askId, "merge-moot", this.now(), { kind: "agent", threadId }, reason)!;
+      const withdrawn = this.withdrawAsk(askId, "merge-moot", this.now(), { kind: "agent", threadId }, reason);
+      if (!withdrawn) throw closed();
       this.changed(threadId, ask.boardQuestId);
       return withdrawn;
     }
@@ -1612,12 +1620,16 @@ export class Keeper {
       throw new Error("This ask cannot default");
     if (ask.releaseHoldId && (by !== "user" || via === "timer")) throw new Error("A checker-handoff hold needs an explicit user answer");
     const keeperSource = by === "keeper" ? this.authority.keeperDecisionSource(ask) : {};
+    const mergeApproval = ask.kind === "merge" && ask.effect?.type === "decision" && ask.target?.merge && optionId === "approve" &&
+      (by === "keeper" && !ask.unsure || by === "user" && receipt?.act === "answerAsk" && via !== "cli" && via !== "timer") ?
+      { expiresAt: this.now() + MERGE_APPROVAL_MS, ...(keeperSource.delegation ? { delegationId: keeperSource.delegation.id } : {}) } : undefined;
     const answerData = { askId, optionId, answeredBy: by, ...(standing ? { preapproval: { id: standing.grant.id, at: standing.grant.at, surface: standing.grant.surface } } : {}), ...(by === "keeper" ? { keeperName: this.name(this.require(ask.keeperThreadId, "keeper")), ...keeperSource } : {}), ...(receipt ? { authority: receipt } : {}) };
     commitUserAct(this.store, () => this.now(), receipt, () => {
       if (standing) this.authority.consume(standing);
       this.store.put("asks", ask.id, {
         ...ask,
         state: by === "default" ? "defaulted" : "answered",
+        ...(mergeApproval ? { mergeApproval } : {}),
         answer: { optionId, note, via, by, at: this.now(), ...(keeperSource.keeperAuthority ? { keeperAuthority: keeperSource.keeperAuthority } : {}), ...(heldCommunication?.act === "draft" && keeperSource.delegation ? { draftDelegationId: keeperSource.delegation.id } : {}), ...(surface ? { surface } : {}), ...(standing ? { preapproval: { id: standing.grant.id, at: standing.grant.at, surface: standing.grant.surface } } : {}) },
       });
       applyAskEffect(effect, {

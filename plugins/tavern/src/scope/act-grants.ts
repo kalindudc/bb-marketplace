@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import { atomicWrite } from "./store";
+import { actTargetSchema } from "../shared/quest-authority";
 
 export const actTargetDigest = (source: string) => createHash("sha256").update(source, "utf8").digest("hex");
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -9,8 +10,9 @@ const id = z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/);
 export const actGrantSchema = z.object({
   threadId: id, act: z.string().min(1).max(60), targetDigest: digest, target: z.string().min(1).max(8000),
   scope: z.literal("once"), askId: id, issuedAt: z.number().int().nonnegative(), expiresAt: z.number().int().positive(),
-  usedAt: z.null(),
-}).strict().refine(grant => grant.targetDigest === actTargetDigest(grant.target) && grant.expiresAt > grant.issuedAt);
+  usedAt: z.null(), mergeTarget: actTargetSchema.optional(),
+}).strict().refine(grant => grant.targetDigest === actTargetDigest(grant.target) && grant.expiresAt > grant.issuedAt &&
+  (grant.act === "merge" ? !!grant.mergeTarget?.merge && grant.mergeTarget.command === grant.target : grant.mergeTarget === undefined));
 export type ActGrant = z.infer<typeof actGrantSchema>;
 const directory = (file: string) => file + ".act-grants";
 const grantFile = (file: string, digest: string) => directory(file) + "/" + digest + ".json";
@@ -33,23 +35,39 @@ export function issueActGrant(file: string, input: ActGrant, check?: () => void)
   if (!grantDirectory(file)) throw new Error("The command grant directory is not an ordinary directory.");
   atomicWrite(grantFile(file, grant.targetDigest), JSON.stringify(grant), check);
 }
-export function availableActGrant(file: string, threadId: string, act: string, source: unknown, now = Date.now()) {
+function findActGrant(file: string, threadId: string, act: string, source: unknown) {
   if (typeof source !== "string" || source.length > 8000 || !grantDirectory(file)) return;
   const raw = readSmall(grantFile(file, actTargetDigest(source)), 64 * 1024);
   if (raw === undefined) return;
   const grant = actGrantSchema.parse(JSON.parse(raw));
-  if (grant.threadId === threadId && grant.act === act && grant.target === source && grant.issuedAt <= now && grant.expiresAt > now && !existsSync(usedFile(file, grant.askId))) return grant;
+  if (grant.threadId === threadId && grant.act === act && grant.target === source) return grant;
+}
+export function availableActGrant(file: string, threadId: string, act: string, source: unknown, now = Date.now()) {
+  const grant = findActGrant(file, threadId, act, source);
+  if (grant && grant.issuedAt <= now && grant.expiresAt > now && !existsSync(usedFile(file, grant.askId))) return grant;
+}
+export function mergeGrantContext(file: string, threadId: string, source: unknown) {
+  const grant = findActGrant(file, threadId, "merge", source);
+  if (!grant?.mergeTarget) return;
+  const used = readSmall(usedFile(file, grant.askId), 4096);
+  const staleVerdict = !!used && JSON.parse(used).staleVerdict === true;
+  return { target: grant.mergeTarget, staleVerdict };
 }
 export function claimActGrant(file: string, grant: ActGrant, observation: string, now = Date.now()) {
   if (availableActGrant(file, grant.threadId, grant.act, grant.target, now)?.askId !== grant.askId) return false;
   const used = useSchema.parse({ threadId: grant.threadId, act: grant.act, targetDigest: grant.targetDigest, usedAt: now, observation });
-  try { writeFileSync(usedFile(file, grant.askId), JSON.stringify(used), { mode: 0o600, flag: "wx" }); return true; }
+  return markActGrant(file, grant.askId, used);
+}
+function markActGrant(file: string, askId: string, marker: object) {
+  try { writeFileSync(usedFile(file, id.parse(askId)), JSON.stringify(marker), { mode: 0o600, flag: "wx" }); return true; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") return false; throw error; }
 }
-export function revokeActGrant(file: string, askId: string) {
-  if (!grantDirectory(file)) return;
-  try { writeFileSync(usedFile(file, id.parse(askId)), JSON.stringify({ revoked: true }), { mode: 0o600, flag: "wx" }); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+export function claimObservedMerge(file: string, askId: string) {
+  mkdirSync(directory(file), { mode: 0o700, recursive: true });
+  return grantDirectory(file) && markActGrant(file, askId, { observed: true });
+}
+export function revokeActGrant(file: string, askId: string, staleVerdict = false) {
+  if (grantDirectory(file)) markActGrant(file, askId, { revoked: true, ...(staleVerdict ? { staleVerdict: true } : {}) });
 }
 export const actReceiptLine = (askId: string, observation: string) => `Tavern command receipt: ${askId} ${observation}`;
 export function observedActReceipt(item: Record<string, unknown>) {

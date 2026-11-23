@@ -233,7 +233,8 @@ export class NativeScopes {
       if (decision.allow && decision.prGrant && !claimPullRequestGrant(file, decision.prGrant, observationId!) && !pullRequestGrantAvailable(file, decision.prGrant, observationId))
         decision = blocked(call.toolName, "pr-sends-as-you", "the one-use pull request exception was already used");
       check();
-      return hostContract.prepareCall.output.parse({ call, scopeRevision: record.binding.revision, scopeDigest: record.binding.scopeDigest, decision });
+      const { merge: _merge, mergeMatches: _mergeMatches, mergeHeadChanged: _mergeHeadChanged, ...observable } = call;
+      return hostContract.prepareCall.output.parse({ call: observable, scopeRevision: record.binding.revision, scopeDigest: record.binding.scopeDigest, decision });
     });
     this.acknowledged(authority, result.scopeRevision, result.scopeDigest, signal, () => {});
     return result;

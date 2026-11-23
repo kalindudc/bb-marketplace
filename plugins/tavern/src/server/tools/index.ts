@@ -402,7 +402,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_ask",
     "Opened an ask",
-    "Ask only for a choice the user must make. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. For Kubernetes, Terraform, Helm and kapp writes use cluster-write with target.command, change, undo when known and runThreadId when a member runs it; every run needs approval and confirmation on the card. Use shellGrant.heldEventId for held shell acts, or heldCommunicationAskId after reviewing a held message. Set dismiss:true to discard that hold. Sends-as-you needs the full recipient and draft. For checker-handoff release, use blocker, boardQuestId and releaseCheckerHandoff:true; Tavern pins the hold. Include options, a recommendation, what continues and the held waypoints. Use mergeAskId, action ask-user or withdraw, and reason for an existing plain merge ask. Never infer approval from chat or a timer, or use a native question tool. An answer does not execute an act or supply credentials.",
+    "Ask only when the user must choose. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. Cluster writes need target.command, change, known undo and runThreadId for a member. Approve and confirm each run on its card. Use shellGrant.heldEventId for held shell acts or heldCommunicationAskId for held messages (dismiss:true to discard). Give the full sends-as-you draft and recipient. For checker handoff, use blocker, boardQuestId and releaseCheckerHandoff:true. Include options, recommendation, what continues and held waypoints. For an existing merge, give mergeAskId, action ask-user or withdraw, and reason. Chat and timers give no approval. Never use native question tools. Answers do not execute acts or supply credentials.",
     z.union([askSchema
       .pick({
         question: true,
@@ -434,7 +434,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     (input, threadId) => {
       if ("mergeAskId" in input) {
         const ask = k.changeMergeAsk(threadId, input.mergeAskId, input.action, input.reason);
-        return input.action === "withdraw" ? `Merge ask ${ask.id} withdrawn without approval.` : `Merge ask ${ask.id} now waits for the user.\n::tavern-ask{id="${ask.id}"}`;
+        return input.action === "withdraw" ? `Merge ask ${ask.id} withdrawn; no run is authorized.` : `Merge ask ${ask.id} now waits for the user.\n::tavern-ask{id="${ask.id}"}`;
       }
       if ("heldCommunicationAskId" in input) {
         const ask = k.reviewHeldCommunication(threadId, input.heldCommunicationAskId, input.dismiss);

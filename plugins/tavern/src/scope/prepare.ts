@@ -11,10 +11,11 @@ import type { Scope } from "./schema";
 import { gitWriteRoots } from "./sandbox";
 import { commandWritePaths, shellCommands } from "./shell";
 import { memoryCommandCandidates, memoryCommandRule, memoryExecutableKey } from "./memory-policy";
+import { exactMerge, inspectMerge } from "./merge";
+import type { ActTarget } from "../shared/quest-authority";
 
-export interface PrepareDeps { scope?: Scope; readCommand?(program: string, args: string[], cwd?: string): string }
-export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall {
-  const read = deps.readCommand ?? ((program: string, args: string[], cwd = call.cwd) => {
+export interface PrepareDeps { scope?: Scope; mergeTarget?: ActTarget; readCommand?(program: string, args: string[], cwd?: string): string }
+const commandReader = (root: string) => ((program: string, args: string[], cwd = root) => {
     const options: ExecFileSyncOptionsWithStringEncoding & { cwd: string; timeout: number } = { cwd, encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] };
     if (program === "git") {
       const read = { ...options, readOnly: true };
@@ -23,7 +24,9 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
     const env = program === "gh" || program === "dt" ? gitEnvironmentSync(cwd, { childGit: true }) : undefined;
     return execFileSync(program, args, { ...options, env });
   });
+export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall {
   const cwd = realPath(call.cwd);
+  const read = deps.readCommand ?? commandReader(cwd);
   const resolvedPaths: Record<string, string> = {};
   const pushTargets: Record<string, string[]> = {};
   const pushHeads: Record<string, string> = {};
@@ -41,6 +44,10 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
   };
   for (const path of [call.input.path, call.input.file_path]) if (typeof path === "string") add(path, cwd);
   const command = call.input.command ?? call.input.cmd;
+  const checkMerge = call.merge === undefined && deps.scope?.role === "keeper" && typeof command === "string";
+  const merge = checkMerge ? inspectMerge(command, cwd, read) : undefined;
+  const match = merge && deps.mergeTarget && exactMerge(merge, deps.mergeTarget, read);
+  const mergeFacts = checkMerge ? { merge: merge ?? null, mergeMatches: match === true, ...(match === "head-changed" ? { mergeHeadChanged: true } : {}) } : {};
   if (typeof command === "string") {
     if (command.includes("$(git rev-parse --show-toplevel)")) {
       try { gitRoots[cwd] = read("git", ["-C", cwd, "rev-parse", "--show-toplevel"]).trim(); }
@@ -55,7 +62,7 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
         catch { /* A directory that cannot be checked remains a possible failure path. */ }
       }
       commands = shellCommands(command, cwd, facts);
-    } catch { return { ...call, cwd, resolvedPaths }; }
+    } catch { return { ...call, ...mergeFacts, cwd, resolvedPaths }; }
     if (call.containment === "sandbox" && commands.every(cmd => !cmd.uncertain && commandWritePaths(cmd).length === 0 && (containmentRead(cmd) || cmd.argv[0] === "git" && cmd.argv[1] === "fetch" && !cmd.gitEnvironment))) {
       for (const cmd of commands) if (cmd.argv[0] === "git" && cmd.argv[1] === "fetch") fetchWriteRoots.push(...gitWriteRoots(cmd.cwd));
     }
@@ -133,5 +140,5 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
       for (const path of commandWritePaths(cmd)) add(path, cmd.cwd);
     }
   }
-  return { ...call, cwd, resolvedPaths, pushTargets, pushHeads, gitRoots, directories, ownedDraftPrs, ownedPrs, ...(questOwnedPrs.length ? { questOwnedPrs } : {}), ...(call.containment === "sandbox" ? { fetchWriteRoots: [...new Set(fetchWriteRoots)] } : {}) };
+  return { ...call, ...mergeFacts, cwd, resolvedPaths, pushTargets, pushHeads, gitRoots, directories, ownedDraftPrs, ownedPrs, ...(questOwnedPrs.length ? { questOwnedPrs } : {}), ...(call.containment === "sandbox" ? { fetchWriteRoots: [...new Set(fetchWriteRoots)] } : {}) };
 }

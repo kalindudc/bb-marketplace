@@ -214,7 +214,10 @@ export class TavernRuntime {
   settingsChanged() {
     const next = this.config(), previous = this.previousSettings;
     this.previousSettings = next;
-    if (previous) this.keeper.authority.applyAskPolicy(previous.keepers.alwaysAsk, next.keepers.alwaysAsk);
+    if (previous) {
+      this.keeper.authority.applyAskPolicy(previous.keepers.alwaysAsk, next.keepers.alwaysAsk);
+      if (previous.keepers.alwaysAsk.includes("merge") !== next.keepers.alwaysAsk.includes("merge")) this.scopes?.refreshMergeApprovals();
+    }
     this.reviewCache = null;
     if (!isDeepStrictEqual(previous?.scopes.sendTools, next.scopes.sendTools)) {
       if (previous) invalidateDrafts(this.keeper, approvedDrafts(this.keeper));
@@ -778,6 +781,7 @@ export class TavernRuntime {
       if (askId) void this.notifyDraftApproved(threadId, askId).catch(error => this.bb.log.warn(`Tavern draft approval delivery ${threadId}: ${String(error)}`));
     };
     this.scopes.refreshCommunication();
+    this.scopes.refreshMergeApprovals();
   }
   private async notifyDraftApproved(threadId: string, askId: string) {
     const current = () => {
@@ -1029,6 +1033,12 @@ export class TavernRuntime {
     // Actionable news wakes the Keeper it belongs to through the same gates as the sweep.
     keeper.store.onEvent = ({ keeperThreadId, boardQuestId, type, data, actor }) => {
       if (!keeperThreadId) return;
+      if (this.scopes && /^(?:ask\.(?:opened|answered|withdrawn|lane-changed)|quest\.|plan\.|delegation\.|authority\.revoked|decision\.undone|lane\.reset|journal\.changed|act\.verified|member\.(?:released|replaced))/.test(type)) {
+        queueMicrotask(() => {
+          try { this.scopes?.refreshMergeApprovals(keeperThreadId); }
+          catch (error) { this.bb.log.warn(`Tavern merge approval: ${String(error)}`); }
+        });
+      }
       if (this.scopes && this.config().scopes.sendTools.some(rule => rule.act === "draft") &&
           ["authority.revoked", "delegation.ended", "decision.undone", "quest.held", "quest.wrapped", "quest.stopping", "quest.stopped", "member.released"].includes(type)) {
         queueMicrotask(() => {

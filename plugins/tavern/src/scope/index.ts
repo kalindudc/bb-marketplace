@@ -227,6 +227,7 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
     mode: () => mode,
     revokeClusterGrant: (threadId: string, askId: string) => revokeActGrant(store.file(threadId), askId),
     clusterGuardArmed: (threadId: string) => !store.records.get(threadId)?.error && store.isArmed(threadId, true),
+    mergeGuardArmed: (threadId: string) => !store.records.get(threadId)?.error && !!store.mergeGuardSession(threadId),
     issueClusterGrant(grant: ActGrant) {
       const check = () => {
         if (store.records.get(grant.threadId)?.error || !store.isArmed(grant.threadId, true))

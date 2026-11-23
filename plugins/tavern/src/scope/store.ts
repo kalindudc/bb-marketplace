@@ -22,7 +22,7 @@ const progressSchema = z.object({ cursor: z.number().int().nonnegative(), pendin
 export interface NativeScopeReceipt { hostBinding: ScopeHostBinding; renderedDigest: string }
 export const scopeArmedSchema = z.object({
   threadId: scopeSchema.shape.threadId, issuedAt: scopeSchema.shape.issuedAt, pid: z.number().int().positive(), at: z.number().int().nonnegative(),
-  clusterWrites: z.literal(1).optional(), sendGuard: z.literal(1).optional(), messagePolicyProblem: z.string().optional(), hostBinding: scopeHostBindingSchema.optional(), renderedDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  clusterWrites: z.literal(1).optional(), mergeGuard: z.literal(1).optional(), sendGuard: z.literal(1).optional(), messagePolicyProblem: z.string().optional(), hostBinding: scopeHostBindingSchema.optional(), renderedDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict().refine(value => (value.hostBinding === undefined) === (value.renderedDigest === undefined), "A native receipt requires its binding and rendered-byte digest together");
 export const armedFile = (file: string) => file.replace(/\.json$/, "") + ".armed";
 export function atomicWrite(file: string, value: string, check?: () => void): void {
@@ -30,9 +30,9 @@ export function atomicWrite(file: string, value: string, check?: () => void): vo
   try { check?.(); writeFileSync(temp, value, { mode: 0o600, flag: "wx" }); check?.(); renameSync(temp, file); }
   finally { rmSync(temp, { force: true }); }
 }
-export function armScope(file: string, scope: Scope, native?: NativeScopeReceipt, at = Date.now(), messagePolicyProblem?: string): void {
+export function armScope(file: string, scope: Scope, native?: NativeScopeReceipt, at = Date.now(), messagePolicyProblem?: string, mergeGuard = false): void {
   atomicWrite(armedFile(file), JSON.stringify(scopeArmedSchema.parse({ threadId: scope.threadId, issuedAt: scope.issuedAt, pid: process.pid, at, clusterWrites: 1,
-    ...(messagePolicyProblem ? { messagePolicyProblem } : { sendGuard: 1 }), ...native })));
+    ...(mergeGuard ? { mergeGuard: 1 } : {}), ...(messagePolicyProblem ? { messagePolicyProblem } : { sendGuard: 1 }), ...native })));
 }
 const messagePolicySchema = z.object({
   threadId: scopeSchema.shape.threadId, issuedAt: scopeSchema.shape.issuedAt, scopeDigest: z.string().optional(),
@@ -200,6 +200,10 @@ export class ScopeStore {
       readMessagePolicy(record.file, base);
     } catch (error) { if (error instanceof MessagePolicyError) return error.message; }
     return this.liveMarker(threadId)?.messagePolicyProblem;
+  }
+  mergeGuardSession(threadId: string): string | undefined {
+    const marker = this.records.get(threadId)?.scope?.mode === "enforce" && this.liveMarker(threadId);
+    if (marker && marker.mergeGuard === 1) return `${marker.pid}:${marker.at}`;
   }
   isArmed(threadId: string, clusterWrites = false, sendGuard = false): boolean {
     const marker = this.liveMarker(threadId);

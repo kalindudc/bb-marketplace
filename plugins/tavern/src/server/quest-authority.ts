@@ -162,7 +162,10 @@ export class QuestAuthority {
     const warden = verdict && k.member(verdict.wardenThreadId);
     const entry = verdict && k.journal.linkedEntries(ask.boardQuestId!).find(e => e.id === verdict.entryId && e.threadId === warden?.checkerMakerThreadId);
     if (!entry || entry.status !== "verified" || entry.review?.actor.kind !== "agent" || entry.review.actor.threadId !== warden?.threadId) throw new Error("The Warden verdict is no longer current");
-    if (!ask.target || !verdict || warden?.classId !== "warden" || warden.boardQuestId !== ask.boardQuestId || !warden.checkerMakerThreadId || warden.checkerMakerThreadId === warden.threadId || !(QuestAuthority.sameTarget(ask.target, verdict.target) || ask.kind === "merge" && !!ask.target.commit && !!verdict.target.commit && replay?.verifiedCommit === verdict.target.commit && replay.commit === ask.target.commit)) throw new Error("A delegated merge or production change needs a Warden verdict on the exact commit or command");
+    const matches = ask.target && verdict && (ask.target.merge ? ask.target.commit === verdict.target.commit && entry.link?.waypointId === warden?.checkerWaypointId &&
+      entry.review.evidence.some(e => e.ref === ask.target?.commit) :
+      QuestAuthority.sameTarget(ask.target, verdict.target) || ask.kind === "merge" && !!ask.target.commit && !!verdict.target.commit && replay?.verifiedCommit === verdict.target.commit && replay.commit === ask.target.commit);
+    if (!matches || warden?.classId !== "warden" || warden.boardQuestId !== ask.boardQuestId || !warden.checkerMakerThreadId || warden.checkerMakerThreadId === warden.threadId) throw new Error("A delegated merge or production change needs a Warden verdict on the exact commit or command");
   }
   recordVerdict(threadId: string, askId: string, entryId: string, target: ActTarget) {
     const k = this.keeper, warden = k.require(threadId, "member"), ask = k.store.get("asks", askId);
