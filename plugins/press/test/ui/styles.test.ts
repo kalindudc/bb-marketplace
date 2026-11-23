@@ -41,6 +41,13 @@ describe("press.css", () => {
     expect(css.match(/\b(?:rgb|hsl)a?\(/gi)).toBeNull();
   });
 
+  it("scrolls the panel itself, since a flush tab gets no scrolling from bb", () => {
+    const root = css.match(/^\.press-panel\s*\{([^}]*)\}/m)?.[1] ?? "";
+    expect(root).toMatch(/(?:^|;)\s*height:\s*100%/);
+    expect(root).toMatch(/(?:^|;)\s*min-height:\s*0/);
+    expect(root).toMatch(/(?:^|;)\s*overflow-y:\s*auto/);
+  });
+
   it("never redefines a bb token in terms of itself", () => {
     const cycles = [...css.matchAll(/(--[\w-]+)\s*:[^;]*var\(\1\b/g)].map((match) => match[1]);
     expect(cycles).toEqual([]);

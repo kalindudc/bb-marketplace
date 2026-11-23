@@ -12,6 +12,10 @@
   --press-hover: color-mix(in oklab, var(--foreground) 7%, transparent);
   --press-ease: cubic-bezier(.2, .8, .2, 1);
   container-type: inline-size;
+  /* The tab is flush, so bb adds no scrolling: an expanded summary would be clipped without this. */
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
   color: var(--foreground);
   font-size: 13px;
   line-height: 1.4;

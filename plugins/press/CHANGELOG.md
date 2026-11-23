@@ -2,6 +2,12 @@
 
 Notable changes to Press, newest first. Releases are tagged `press/vX.Y.Z` in this repository.
 
+## 0.2.1 (2026-11-23)
+
+### Fixed
+
+- The Press panel scrolls. An expanded summary, or a long history, ran past the bottom of the panel and could not be reached, because the tab is flush and bb adds no scrolling to it.
+
 ## 0.2.0 (2026-11-23)
 
 ### Added
