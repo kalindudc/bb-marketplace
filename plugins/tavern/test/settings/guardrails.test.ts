@@ -9,22 +9,6 @@ import { MIGRATIONS } from "../../src/server/migrations";
 import type { Database } from "../../src/server/ports";
 import { fixtureMember } from "../../src/ui/thread/fixtures";
 
-it("requires a user terminal or Settings to change the Git program", async () => {
- const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n"));
- try {
-  const store = new SettingsStore(db as unknown as Database);
-  const cli = defineCli({name:"tavern",summary:"Tavern",commands:settingsCommands({} as BbPluginApi,store)});
-  const args=["settings","set","tavern.gitProgram=/fixture/bin/git","--apply"];
-  const agent=await cli.run(args,{threadId:"plain"});
-  expect(agent.exitCode).toBe(1);
-  expect(agent.stderr).toContain("Only you can change tavern.gitProgram");
-  expect(store.read().tavern.gitProgram).toBe("");
-  expect((await cli.run(args, {})).exitCode).toBe(0);
-  expect(store.read().tavern.gitProgram).toBe("/fixture/bin/git");
-  expect(store.snapshot().history[0]).toMatchObject({by:"user",changes:[{key:"tavern.gitProgram"}]});
- } finally { db.close(); }
-});
-
 it.each(["member", "keeper"] as const)("blocks guardrail applies from a persisted %s, including archived callers", async role => {
  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n"));
  try {

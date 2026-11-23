@@ -140,48 +140,6 @@ it("groups Tavern controls in named cards with guardrail hints",async()=>{
  expect(s.container.textContent).toContain("Agents in Tavern threads can't change these; only you can.");
  for(const c of s.container.querySelectorAll(".tv-settings-card")){expect(c.querySelector("h3")).toBeTruthy();expect(c.querySelector("svg")).toBeTruthy();expect(c.querySelector(".tv-settings-hint")?.textContent).toMatch(/\w+/);}
 });
-it("sets and clears the Git program through the existing Settings save and reset actions", async () => {
- const view=structuredClone(settingsView);
- const update=vi.fn(()=>({code:"ok",revision:view.revision+1,settings:view,problems:[]}));
- const s=await section("tavern",view,{settingsUpdate:update});
- const input=await s.findByRole("textbox",{name:"Git program"});
- expect((input as HTMLInputElement).value).toBe("");
- fireEvent.change(input,{target:{value:"relative-git"}});
- fireEvent.keyDown(input,{key:"Enter"});
- expect(update).not.toHaveBeenCalled();
- fireEvent.change(input,{target:{value:"/fixture/bin/git"}});
- fireEvent.keyDown(input,{key:"Enter"});
- await waitFor(()=>expect(update).toHaveBeenCalledWith(expect.objectContaining({patch:{tavern:{gitProgram:"/fixture/bin/git"}}})));
-
- const configured=structuredClone(settingsView); configured.effective.tavern.gitProgram="/fixture/bin/git";
- const active=await section("tavern",configured,{settingsUpdate:update});
- await within(active.container).findByDisplayValue("/fixture/bin/git");
- fireEvent.click(active.getByRole("button",{name:"Reset Git program to default"}));
- await waitFor(()=>expect(update).toHaveBeenCalledWith(expect.objectContaining({patch:{},reset:["tavern.gitProgram"]})));
-});
-it("shows an unusable Git program beside its field and clears the old warning when editing", async () => {
- const view=structuredClone(settingsView);
- view.effective.tavern.gitProgram="/fixture/missing/git";
- view.gitProgramProblem="Git program is missing or not executable: /fixture/missing/git.";
- const s=await section("tavern",view);
- const input=await s.findByRole("textbox",{name:"Git program"});
- const row=within(input.closest("[data-setting-keys]") as HTMLElement);
- const error=row.getByRole("alert");
- expect(error.textContent).toContain(view.gitProgramProblem);
- expect(input.getAttribute("aria-invalid")).toBe("true");
- expect(input.getAttribute("aria-describedby")).toBe(error.id);
- fireEvent.change(input,{target:{value:"/fixture/replacement/git"}});
- expect(row.queryByRole("alert")).toBeNull();
-});
-it.runIf(process.env.TAVERN_LAYOUT_HARNESS === "1")("exports the Git program setting for browser measurements", async () => {
- const view=structuredClone(settingsView);
- view.effective.tavern.gitProgram="/opt/example/Git Tools/bin/git";
- if(process.env.TAVERN_GIT_PROGRAM_ERROR === "1")
-   view.gitProgramProblem="Tavern's Git program setting is missing or not executable: /opt/example/Git Tools/bin/git. Change it in Settings or clear it to use Git from PATH.";
- const slot=await section("tavern",view);
- await slot.findByRole("textbox",{name:"Git program"});
- process.stdout.write("GIT_PROGRAM_LAYOUT="+JSON.stringify(slot.container.innerHTML)+"\n");
-});
 it("groups Atmosphere controls and links to the character sheets",async()=>{
  const s=await section("atmosphere");
  const party=await s.findByRole("region",{name:"The party"});

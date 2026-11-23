@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
-import { ChildProcess, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +9,7 @@ import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import rootEntry, { tavernGuard } from "../../host";
 import { createTavernHostEntry } from "../../src/host/entry";
-import { createHostPort, installHostGitProgram } from "../../src/host/client";
+import { createHostPort } from "../../src/host/client";
 import { hostContract, type HostMethod } from "../../src/host-contract";
 import * as gitHost from "../../src/host/git";
 import { runProcess } from "../../src/host/process";
@@ -67,39 +67,6 @@ it("bounds Git launches for inspect, prepareCall and a dirty snapshot", async ()
     await expect(prepare()).rejects.toThrow(/repository-replaced/);
   } finally { await f.harness.experimental_dispose(); }
 }, 900_000);
-it("uses the controller's Git program only on the authenticated primary host and clears it on the next call", async () => {
-  const f = fixture(), shim = join(f.root, "checked-git");
-  writeFileSync(shim, '#!/bin/sh\nexec git "$@"\n', { mode: 0o755 });
-  let primaryHostId: string | null = "guest";
-  const server = createFakePluginHost({
-    pluginId: "tavern", experimental_hostEntry: true,
-    sdk: { system: { config: async () => ({ primaryHostId }) as never } },
-    experimental_callHostRpc: async ({ method, input, signal }) => f.harness.experimental_call(method as HostMethod, input as never, { signal }),
-  });
-  let selected = shim;
-  installHostGitProgram(server.bb, () => selected);
-  const port = createHostPort(server.bb);
-  try {
-    await f.register();
-    const launches = vi.spyOn(ChildProcess.prototype as unknown as { spawn(options: { args: string[] }): unknown }, "spawn");
-    await port.call("guest", "inspect", f.authority);
-    expect(launches.mock.calls.length).toBeGreaterThan(0);
-    expect(launches.mock.calls.every(([call]) => call.args.includes(shim))).toBe(true);
-    launches.mockClear();
-    await port.call("another-host", "inspect", f.authority);
-    expect(launches.mock.calls.length).toBeGreaterThan(0);
-    expect(launches.mock.calls.some(([call]) => call.args.includes(shim))).toBe(false);
-    launches.mockClear();
-    primaryHostId = null;
-    await port.call("guest", "inspect", f.authority);
-    expect(launches.mock.calls.some(([call]) => call.args.includes(shim))).toBe(false);
-    launches.mockClear();
-    primaryHostId = "guest";
-    selected = "";
-    await port.call("guest", "inspect", f.authority);
-    expect(launches.mock.calls.some(([call]) => call.args.includes(shim))).toBe(false);
-  } finally { await server.harness.lifecycle.dispose(); await f.harness.experimental_dispose(); }
-});
 it("routes atomic batch waiting and terminal endpoint release through the SDK harness",async()=>{
   const f=fixture(),read=(endpointId:string)=>({...f.endpoint,endpointId,git:"full" as const,access:"source-read" as const,allowedRefs:[],ownerThreadId:null,workspaceKind:null}),batch=(ids:string[])=>({placementId:"placement",generation:1,operationId:"batch",endpoints:ids.map(read)});
   try{expect(await f.harness.experimental_call("registerEndpoints",batch(Array.from({length:31},(_,i)=>String(i))))).toMatchObject({outcome:"registered"});expect(await f.harness.experimental_call("registerEndpoints",batch(["0","new-a","new-b"]))).toEqual({outcome:"waiting",generation:1,active:31,required:2,limit:32});

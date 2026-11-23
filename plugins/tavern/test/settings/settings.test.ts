@@ -1,6 +1,6 @@
 import Sqlite from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { settingsSchema, settingsPatchSchema, settingsSnapshotSchema, TUNABLES, isGuardrailSetting } from "../../src/shared/settings";
+import { settingsSchema, settingsPatchSchema, settingsSnapshotSchema, TUNABLES } from "../../src/shared/settings";
 import { SettingsStore, SettingsConflict } from "../../src/server/settings/store";
 import { exportToml, previewToml } from "../../src/server/settings/toml";
 import { MIGRATIONS } from "../../src/server/migrations";
@@ -16,15 +16,6 @@ function fixture() {
   return { db, store };
 }
 afterEach(() => databases.splice(0).forEach(db => db.close()));
-
-it("accepts an absolute Git program or the default, not a command line or a relative path", () => {
-  expect(settingsSchema.parse({}).tavern).toMatchObject({ gitProgram: "" });
-  expect(isGuardrailSetting("tavern.gitProgram")).toBe(true);
-  expect(settingsPatchSchema.safeParse({ tavern: { gitProgram: "/fixture/Git Tools/bin/git" } }).success).toBe(true);
-  expect(settingsPatchSchema.safeParse({ tavern: { gitProgram: "" } }).success).toBe(true);
-  for (const gitProgram of ["git", "~/bin/git", "bin/git", "/fixture/bin/git\n--help"])
-    expect(settingsPatchSchema.safeParse({ tavern: { gitProgram } }).success).toBe(false);
-});
 
 describe("settings compatibility and validation", () => {
   it("keeps today's defaults, units, opt-in timers and unlimited history", () => {

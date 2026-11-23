@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { ChildProcess, execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -33,40 +33,6 @@ function fixture() {
   writeFileSync(join(root, "tracked"), "base\n"); git("add", "-A"); git("commit", "-qm", "base");
   return { dir, root, dataDir, sentinel, global, program, git, raw, run: (args: string[], cwd = root) => runGit(cwd, args, { dataDir }) };
 }
-
-it("uses the configured Git program for sync and async launches without removing the sandbox", async () => {
-  const f = fixture(), configured = join(f.dir, "real-git");
-  writeFileSync(configured, '#!/bin/sh\nexec git "$@"\n', { mode: 0o755 });
-  const child = ChildProcess.prototype as unknown as { spawn(options: { args: string[] }): unknown };
-  const launches = vi.spyOn(child, "spawn");
-  let selected = configured;
-  const dispose = safety.installServerGitProgram(() => selected);
-  try {
-    const env = await safety.gitEnvironment(f.root);
-    selected = "";
-    const invocation = await safety.gitInvocation(f.root, ["-C", f.root, "rev-parse", "HEAD"], env);
-    if (process.platform === "darwin") {
-      expect(invocation.file).toBe("/usr/bin/sandbox-exec");
-      expect(invocation.args[2]).toBe(configured);
-      expect(invocation.args[1]).toContain("(deny file-write*)");
-    } else expect(invocation.file).toBe(configured);
-    selected = configured;
-    expect((await f.run(["rev-parse", "HEAD"])).stdout.trim()).toBe(f.git("rev-parse", "HEAD"));
-    expect(safety.execGitSync(f.root, ["rev-parse", "HEAD"], { encoding: "utf8", timeout: 3000 }).trim()).toBe(f.git("rev-parse", "HEAD"));
-  } finally { dispose(); }
-  expect(launches.mock.calls.length).toBeGreaterThan(0);
-  expect(launches.mock.calls.every(([call]) => call.args.includes(configured))).toBe(true);
-});
-
-it.each([false, true])("names the Git program setting and path instead of falling back (exists: %s)", async exists => {
-  const f = fixture(), path = join(f.dir, "unavailable-git");
-  if (exists) writeFileSync(path, "", { mode: 0o644 });
-  await safety.withGitProgram(path, async () => {
-    const expected = new RegExp("Git program.*" + path);
-    await expect(f.run(["rev-parse", "HEAD"])).rejects.toThrow(expected);
-    expect(() => safety.execGitSync(f.root, ["rev-parse", "HEAD"], { encoding: "utf8", timeout: 3000 })).toThrow(expected);
-  });
-});
 
 function configValue(env: NodeJS.ProcessEnv, key: string) {
   let value: string | undefined;

@@ -4,10 +4,6 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ## Unreleased
 
-### Added
-
-- Settings lets you choose which Git program Tavern runs on its own machine. A direct Git binary used about half the CPU per Git call in a local test. Leave the setting empty to keep using Git from PATH; other machines keep their own Git.
-
 ### Changed
 
 - In light mode, faint pixel sunrays stay fixed at the strip’s upper-left corner, a warm patch follows the character’s feet, and a small highlight shimmers on the character’s outline. Their short shadow stretches as they walk and draws away as they hop. The daylight stays steady with Motion Off or reduced motion. Daytime tools and nighttime lights are unchanged.

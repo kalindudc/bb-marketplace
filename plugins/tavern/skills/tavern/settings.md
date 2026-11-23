@@ -10,7 +10,6 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | Setting | What it does | Default | Who can change it |
 | --- | --- | --- | --- |
 | `tavern.paused` | Holds new Keeper work while current turns finish. | `false` | User; Plain |
-| `tavern.git_program` | Sets an absolute Git path on Tavern's server machine. Empty uses PATH. | `""` | User |
 | `tavern.default_class` | Starts new eligible threads as this class. None starts a plain thread. | `"none"` | User; Granted |
 | `tavern.widget_row` | Shows the Tavern widget above the composer. | `true` | User; Granted |
 | `tavern.voice` | Sets full, light or off voice for Tavern's character presentation. | `"full"` | User; Granted |

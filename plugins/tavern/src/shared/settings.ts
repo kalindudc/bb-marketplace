@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { defineContract } from "./define-contract";
 import { sendToolsSchema } from "./communication";
-import { gitProgramSettingSchema } from "./git-program";
 import { placementSettingsSchema, placementSettingsPatchSchema, placementPolicyReadSchema, settingsJsonValueSchema } from "./placement-settings";
 
 import { AWAY_STOP_LIST, PRODUCTION_WAKE_HOURS, awayQuestSchema, awayStopListSchema } from "./away";
@@ -75,7 +74,7 @@ export type SparseTunables = Partial<Tunables>;
 
 export const GUARDRAIL_SETTING_KEYS = [
   "scopes.*", "away.*", "keepers.alwaysAsk", "keepers.greenlight", "keepers.partyMax", "keepers.decisionTimerMax",
-  "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "tavern.gitProgram", "attention.reviewBudget", "attention.notify", "attention.quietHours", "tuning.mode",
+  "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "attention.reviewBudget", "attention.notify", "attention.quietHours", "tuning.mode",
   "knobs.typingHoldSeconds", "knobs.afterMessageHoldSeconds", "knobs.rangerTimeboxMaxMinutes",
 ] as const;
 export function isGuardrailSetting(key: string) {
@@ -109,7 +108,7 @@ const sections = {
     ambientMotion: z.enum(["calm", "lively", "off"]).default("calm"), characterQuietUntil: characterQuietUntilSchema, repeatSeconds: z.number().int().min(3).max(60).default(20),
     lanternLight: z.boolean().default(true), lanternStrength: lanternStrengthSchema.default("medium"), lanternLightBb: z.boolean().default(true),
     // Wake-delivered ticks may hold briefly to gather more events; regular sweep ticks ignore it. Off by default.
-    batchWakeEvents: z.boolean().default(false), gitProgram: gitProgramSettingSchema.default(""), ...numberFields(KNOB_FIELDS.tavern) }).strict(),
+    batchWakeEvents: z.boolean().default(false), ...numberFields(KNOB_FIELDS.tavern) }).strict(),
   away: z.object({ neverWhileClosed: awayStopListSchema, defaultEndState: awayQuestSchema.shape.endState,
     defaultAllowWatched: z.boolean(), defaultWakeBlockers: z.boolean(), defaultWakeProduction: z.boolean(), ...numberFields(KNOB_FIELDS.away) }).strict(),
   attention: z.object({ reviewBudget: z.number().int().min(1).max(30),
@@ -143,7 +142,7 @@ export const settingsSchema = z.object({
 export const DEFAULT_SETTINGS = settingsSchema.parse({});
 export const settingsPatchSchema = z.object({
   tavern: sections.tavern.partial().extend({ agentsMayChangeSettings: z.boolean().optional(), characters: z.boolean().optional(), ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().int().min(3).max(60).optional(), batchWakeEvents: z.boolean().optional(),
-    lanternLight: z.boolean().optional(), lanternStrength: lanternStrengthSchema.optional(), lanternLightBb: z.boolean().optional(), gitProgram: gitProgramSettingSchema.optional(),
+    lanternLight: z.boolean().optional(), lanternStrength: lanternStrengthSchema.optional(), lanternLightBb: z.boolean().optional(),
   }).optional(), attention: sections.attention.partial().optional(),
   away: sections.away.partial().optional(),
   keepers: sections.keepers.partial().extend({ restMinutes: sections.keepers.shape.restMinutes.removeDefault().optional() }).optional(), classes: sections.classes.optional(),
@@ -202,7 +201,7 @@ export const settingsSnapshotSchema = z.object({ revision: z.number().int(), eff
 export type SettingsSnapshot = z.infer<typeof settingsSnapshotSchema>;
 export const settingsFileSchema = z.object({ path: z.string(), exists: z.boolean(), differs: z.boolean(), error: z.string().nullable(), changedKeys: z.array(z.string()), hash: z.string().nullable().optional() });
 const settingAuthorSchema = settingDecisionSchema.pick({ at: true, by: true, threadId: true });
-export const settingsViewSchema = settingsSnapshotSchema.extend({ file: settingsFileSchema, gitProgramProblem: z.string().optional(),
+export const settingsViewSchema = settingsSnapshotSchema.extend({ file: settingsFileSchema,
   lastChangers: z.record(z.string(), settingAuthorSchema).optional(),
   liveOverrides: z.array(z.object({ questId: z.string(), questTitle: z.string(), keeperThreadId: z.string(), keeperName: z.string(),
     key: z.enum(QUEST_TUNABLE_KEYS), value: z.number(), applied: z.boolean() })).optional(),

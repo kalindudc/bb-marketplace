@@ -1084,10 +1084,6 @@
 .tavern.tv-page .tv-away-stops { min-width: 0; margin: 0; }
 .tavern.tv-page .tv-away-stops > p { margin: 5px 0; }
 .tavern.tv-page .tv-set-c { display: flex; justify-content: flex-end; min-width: 0; }
-.tavern.tv-page [data-setting-keys="tavern.gitProgram"] { grid-template-columns: minmax(0, 1fr) minmax(0, 18rem); }
-.tavern.tv-page .tv-git-program { display: grid; width: 100%; }
-.tavern.tv-page .tv-git-program .tv-text { width: 100%; }
-.tavern.tv-page .tv-git-program .tv-problem { overflow-wrap: anywhere; }
 .tavern.tv-page .tv-set-ro { grid-template-columns: minmax(0, 1fr); }
 .tavern.tv-page .tv-set-ro .tv-set-c, .tavern.tv-page .tv-set-ro .tv-chips { justify-content: flex-start; }
 .tavern.tv-page .tv-set-intro { margin: 4px 0 8px; max-width: 72ch; font-size: 12px; color: var(--tv-text-2); }
@@ -1154,9 +1150,7 @@
   .tavern.tv-page .tv-filediff { grid-template-columns: 16px minmax(0, 1fr); }
   .tavern.tv-page .tv-filediff-a { grid-column: 2; }
   .tavern.tv-page :is(.tv-switch, .tv-text, .tv-select, .tv-num input, .tv-set-check, .tv-set-warden-quality .btn) { min-height: 44px; }
-  .tavern.tv-page.tv-set-atmosphere .tv-num input, .tavern.tv-page .tv-git-program .tv-text { font-size: 16px; }
-  .tavern.tv-page [data-setting-keys="tavern.gitProgram"] { grid-template-columns: minmax(0, 1fr); }
-  .tavern.tv-page [data-setting-keys="tavern.gitProgram"] .tv-ilink { min-height: 44px; }
+  .tavern.tv-page.tv-set-atmosphere .tv-num input { font-size: 16px; }
   .tavern.tv-page .tv-set-table thead { display: none; }
   .tavern.tv-page .tv-set-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 6px 0; border-top: 1px solid var(--tavern-line); }
   .tavern.tv-page .tv-set-table th { grid-column: 1 / -1; border: 0; }
