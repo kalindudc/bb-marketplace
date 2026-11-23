@@ -38,6 +38,18 @@ describe("scope engine", () => {
     "git push origin feature", "sudo env X=1 timeout 10 git -C /repo push origin feature", "bash -lc 'git push origin feature'", "xargs -I {} git push origin feature", "echo $(git push origin feature)", "for x in a; do git push origin feature; done", "gh pr create --draft", "gh api repos/a/b -f title=x", "gh api -X POST repos/a/b", "kubectl --context staging apply -f a.yaml", "helm upgrade x y", "terraform apply", "dev deploy", "terraform -chdir=/tmp apply", "kapp --app foo deploy", "helm --kube-context staging install a b"
   ])("blocks readonly shell: %s", command => expect(bash("ranger", command).allow).toBe(false));
   it.each(["git status", "gh pr view 1", "echo 'git push origin main'", "kubectl get pods", "cat a | head -1", "git diff > /tmp/report"])("allows readonly shell: %s", command => expect(bash("ranger", command).allow).toBe(true));
+  it.each(["./tool --flag", "printf x | ./tool", "./tool < input.txt", "bash < input.sh"])("lets an uncontained Ranger run %s", command => {
+    expect(bash("ranger", command)).toMatchObject({ allow: true });
+  });
+  it.each(["./tool > outside.txt", "tee outside.txt", "cp input.txt outside.txt", "mv input.txt outside.txt", "rm outside.txt", "git commit -m fixture"])("keeps uncontained Ranger writes guarded: %s", command => {
+    expect(bash("ranger", command)).toMatchObject({ allow: false, ruleId: "shell-write" });
+  });
+  it("keeps Git writes blocked even from Ranger scratch", () => {
+    expect(bash("ranger", "git -C /tmp commit -m fixture")).toMatchObject({ allow: false, ruleId: "shell-write" });
+  });
+  it("keeps opaque script input blocked for an uncontained Smith", () => {
+    expect(bash("smith", "bash < input.sh")).toMatchObject({ allow: false, ruleId: "shell-input" });
+  });
   it.each([
     "git push origin main", "git push origin HEAD:master", "git push origin HEAD:refs/notes/test", "git push origin tag v1", "git push --follow-tags origin feature", "git push --prune origin feature", "git push origin +HEAD:topic", "git push origin :topic", "git push --mirror origin", "git push origin", "git push", "gh pr create --title x", "gh pr create --draft=false", "gh pr ready 1", "gh pr merge 1", "gh api repos/a/b -X PATCH", "kubectl rollout restart deployment/a", "echo x > ../outside", "cd /outside && touch x", "tee /outside/a < a", "git -C /outside checkout x", "git -C /outside branch topic", "git -C /outside remote add upstream url", "git config --global user.email x@y"
   ])("blocks Smith overreach: %s", command => expect(bash("smith", command).allow).toBe(false));

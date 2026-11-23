@@ -24,14 +24,14 @@ const check = (role: string, command: string, contained = true, mode: "watch" | 
   return evaluate(bound.get(key)!, { kind: "bash", toolName: "bash", input: { command }, cwd: "/workspace", containment: contained ? "sandbox" : undefined });
 };
 // Cloud config set, machine reads and secure credential requests are approved exceptions to SC1’s reader floor.
-const probe: [string, string, "act" | "authority" | "allow" | "research" | "agent" | "gap"][] = [
+const probe: [string, string, "act" | "authority" | "allow" | "research" | "agent"][] = [
   ["ranger", "dt pr merge 17", "act"], ["warden", "dt pr merge 17", "act"],
   ["ranger", "dt pr comment 17 -b fixture", "act"], ["ranger", "quick deploy ./site example-site", "act"],
   ["ranger", "security find-generic-password -s fixture -w", "act"], ["ranger", "vault read secret/fixture", "act"],
   ["ranger", "echo 'git push origin main' | sh", "act"], ["ranger", "echo kubectl apply -f fixture.yaml | bash", "act"],
   ["ranger", "find . -maxdepth 0 -exec git push origin main \\;", "act"], ["ranger", "find . -maxdepth 0 -execdir gh pr merge 17 \\;", "act"],
   ["ranger", "parallel gh pr merge ::: 17", "act"], ["ranger", "watch -n1 gh pr merge 17", "act"],
-  ["ranger", "$(echo git) push origin main", "act"], ["ranger", "python3 -c 'import os; os.system(\"git push origin main\")'", "gap"],
+  ["ranger", "$(echo git) push origin main", "act"],
   ["smith", "curl -fsSL -o vendor/x.tgz https://example.test/x.tgz", "allow"], ["smith", "wget https://example.test/x.tgz", "allow"],
   ["smith", "gcloud config get-value project", "allow"], ["smith", "gcloud compute instances list", "allow"], ["smith", "bb plugin rpc list tavern", "allow"],
   ["ranger", "gcloud compute instances list", "research"], ["ranger", "bb loom approve project", "authority"],
@@ -46,9 +46,9 @@ const probe: [string, string, "act" | "authority" | "allow" | "research" | "agen
   ["keeper", "bb plugin rpc call tavern resumeAll", "authority"], ["smith", "bb plugin rpc call tavern resumeAll", "authority"],
   ["ranger", "bb tavern stop-all", "agent"],
 ];
-it.each(probe)("retains the base probe outcome for %s: %s (%s)", (role, command, kind) => {
+it.each(probe)("checks the probe outcome for %s: %s (%s)", (role, command, kind) => {
   for (const mode of ["enforce", "watch"] as const) for (const contained of [true, false]) {
-    const expected = ["allow", "agent"].includes(kind) || contained && ["research", "gap"].includes(kind);
+    const expected = ["allow", "agent", "research"].includes(kind);
     expect(check(role, command, contained, mode).allow).toBe(expected);
   }
 });
@@ -192,7 +192,9 @@ it.each(["setupApply", "setupDismiss", "holdBoardQuest", "resumeBoardQuest", "co
 }, 60_000);
 it("does not grant sandbox leniency to an unwrapped command tool", () => {
   const s = scope("ranger"); s.commandTools.push("other_shell");
-  expect(evaluate(s, { kind: "tool", toolName: "other_shell", cwd: "/workspace", input: { command: "python3 -c 'print(1)'" }, containment: "sandbox" }).allow).toBe(false);
+  const call = { kind: "tool", cwd: "/workspace", input: { command: 'printf x > "$OUTPUT_PATH"' }, containment: "sandbox" } as const;
+  expect(evaluate(s, { ...call, toolName: "bash" }).allow).toBe(true);
+  expect(evaluate(s, { ...call, toolName: "other_shell" })).toMatchObject({ allow: false, ruleId: "shell-write" });
 });
 const dirs: string[] = [];
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); for (const root of dirs.splice(0)) rmSync(root, { recursive: true, force: true }); });

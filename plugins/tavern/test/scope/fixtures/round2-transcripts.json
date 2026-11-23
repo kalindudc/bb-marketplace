@@ -25,8 +25,8 @@
   "counts": {
     "ranger": {
       "total": 88,
-      "expectedBlock": 3,
-      "mismatches": 19
+      "expectedBlock": 0,
+      "mismatches": 22
     },
     "smith": {
       "total": 79,
@@ -358,20 +358,17 @@
     },
     {
       "command": "npx vitest run test/scope",
-      "expected": "block",
-      "why": "readonly-shell: arbitrary program; test runners are not proven read-only (by design)",
+      "expected": "allow",
       "observedR2": "BLOCK(readonly-shell)"
     },
     {
       "command": "node -e 'console.log(1)'",
-      "expected": "block",
-      "why": "readonly-shell: interpreter with inline code (by design)",
+      "expected": "allow",
       "observedR2": "BLOCK(readonly-shell)"
     },
     {
       "command": "python3 -c 'print(1)'",
-      "expected": "block",
-      "why": "readonly-shell: interpreter with inline code (by design)",
+      "expected": "allow",
       "observedR2": "BLOCK(readonly-shell)"
     },
     {

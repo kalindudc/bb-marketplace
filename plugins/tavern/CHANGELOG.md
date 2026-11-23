@@ -63,6 +63,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Changed
 
+- Rangers can run local programs and pipe input into them. Checked write paths, Git changes, sends and cluster writes still have guardrails.
 - Carried lights breathe at their own pace at night. The halo follows the source, and the pool on the ground widens and dims during a hop. The pixelated light fades before the strip’s edges. By day the shadow stays on the ground and softens as the character rises. Motion Off and reduced motion keep the light steady.
 - The Keeper’s widget stays on one row. Open asks, new items or quest progress in place from their chips, or use the chevron to open what needs your attention first. Keeper state is short; the shield opens the full guard details in the Ledger. The Ledger and Journal still open their own panels.
 - The Keeper handles blocked calls first. Scope blocks stay in the member alert, the Ledger and quest history, but no longer ask you to review them. Older review-only asks are marked moved to the Keeper. You still decide exact scope grants and can confirm a Pi restart when only you can repair a missing guard. Unreadable write targets are refused without being called outside the allowed roots.

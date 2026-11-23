@@ -248,16 +248,19 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
     if (scope.preset !== "open" && program === "git") {
       const known = [...gitReads, "config", "branch", "remote", "stash", "push", "add", "commit", "checkout", "switch", "restore", "reset", "fetch", "pull", "merge", "rebase", "cherry-pick", "revert", "tag", "clean", "rm", "mv", "worktree", "init", "clone", "reflog", "apply", "am", "submodule", "lfs", "format-patch", "bisect"];
       if (!known.includes(sub)) return blocked(command.text, "git-alias", "unknown git subcommands or aliases cannot be checked");
-      if (!gitRead(argv) && sub !== "push" && !(contained && sub === "fetch" && call.fetchWriteRoots?.length)) paths.push(command.cwd);
       if (sub === "config" && argv.some(arg => ["--global", "--system"].includes(arg)) && !gitRead(argv)) return blocked(command.text, "git-global-config", "global git configuration is outside the member worktree");
+      if (!gitRead(argv) && sub !== "push" && !(contained && sub === "fetch" && call.fetchWriteRoots?.length)) {
+        if (!contained && scope.preset === "readonly") return blocked(command.text, "shell-write", "this readonly member cannot make Git changes");
+        paths.push(command.cwd);
+      }
     }
     for (const path of paths) if (!(contained && (/[$`]/.test(path) || command.uncertain || command.cwdAlternative)) && !isSink(normalizeToolPath(path, command.cwd)) && (scope.preset !== "open" && (/[\$`]/.test(path) || path.startsWith("~") || command.uncertain) || !canWrite(path, command.cwd))) return blocked(`shell write to ${path}`, "shell-write", "the write target is protected, outside allowed roots or cannot be proven" + writeScope);
     if (scope.preset === "open") continue;
-    if (!contained && command.fedInput && command.scriptInput === "opaque") return blocked(command.text, "shell-input", "shell input from a pipe or redirect cannot be inspected");
+    if (!contained && scope.preset !== "readonly" && command.fedInput && command.scriptInput === "opaque") return blocked(command.text, "shell-input", "shell input from a pipe or redirect cannot be inspected");
     if (!contained && scope.preset === "worktree" && command.cwdAlternative && !readonlyProgram(command) && !canWrite(command.cwd, command.cwd)) return blocked(command.text, "shell-location", "one possible working directory is outside allowed roots");
     if (!contained && command.uncertain && !readonlyProgram(command)) return blocked(command.text, "shell-location", "the command's working directory or symlinks cannot be proven");
     if (contained && scope.writes.mode === "none" && !shellGrant && readerNeedsDecision(command)) return blocked(command.text, "legacy-act", "this consequential command requires a scope decision");
-    if (scope.writes.mode === "none" && !contained) {
+    if (scope.preset !== "readonly" && scope.writes.mode === "none" && !contained) {
       const knownWriter = ["tee", "mkdir", "cp", "mv", "touch", "rm", "rmdir"].includes(program) && knownWritePaths(argv).length > 0;
       if (!read && !check && !knownWriter && !shellGrant && !approvedClusterWrite) return blocked(command.text, "readonly-shell", "this scope permits inspected read programs, not arbitrary programs or opaque shell input");
     }

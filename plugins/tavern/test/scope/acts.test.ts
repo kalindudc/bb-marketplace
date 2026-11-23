@@ -65,10 +65,10 @@ it.each(["sample-machines", "other-fleet-machines"])("classifies machine writes 
     expect(fallbackActs(command + " 'unterminated")).toEqual([]);
   }
 });
-it("does not catalogue Terraform plan as a cluster write or run it in a read-only host preset", () => {
+it("allows an uncontained Ranger to run Terraform plan without a cluster-write ask", () => {
   const command = "terraform plan";
   expect(acts(command)).toEqual([]);
-  expect(evaluate(scope("ranger"), { ...call(command), containment: undefined })).toMatchObject({ allow: false, ruleId: "readonly-shell" });
+  expect(evaluate(scope("ranger"), { ...call(command), containment: undefined })).toMatchObject({ allow: true });
 });
 it.each(["--kubeconfig-context demo", "--kubeconfig ./config", "--yes", "-y", "--yes=false"])("catalogues kapp with global flag %s", flag => {
   expect(acts(`kapp ${flag} deploy -a demo`)).toEqual(["cluster-write"]);
