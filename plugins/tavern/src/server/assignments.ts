@@ -1,4 +1,4 @@
-import { hasEndedEngagement } from "../shared/member-engagement";
+import { hasEndedEngagement, wasReleased } from "../shared/member-engagement";
 import type { CharacterDef, ClassDef, Member, Plan } from "../shared/schema";
 
 export function validatePartyCharacters(plan: Pick<Plan, "party">, registry: { classes: ClassDef[]; characters: CharacterDef[] }) {
@@ -37,7 +37,7 @@ export function validateCheckerMakers(plan: Pick<Plan, "party" | "waypoints">, m
 
 export function checkerAssignments(plan: Pick<Plan, "party" | "waypoints">, members: Member[]) {
   const remaining = members
-    .filter((member) => member.classId === "warden")
+    .filter((member) => member.classId === "warden" && !wasReleased(member))
     .sort((a, b) => {
       const inactive = (member: Member) =>
         Number(member.state === "failed" || hasEndedEngagement(member));
@@ -48,10 +48,10 @@ export function checkerAssignments(plan: Pick<Plan, "party" | "waypoints">, memb
     if (party.classId !== "warden") continue;
     const member = party.characterId
       ? remaining.find((member) => member.characterId === party.characterId)
-      : (remaining.find(
+      : remaining.find(
           (member) =>
             member.checkerWaypointId && party.waypointIds.includes(member.checkerWaypointId),
-        ) ?? remaining[0]);
+        );
     if (!member) continue;
     const pinnedMaker = member.checkerMakerThreadId;
     const waypointIds = pinnedMaker

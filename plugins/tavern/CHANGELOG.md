@@ -16,6 +16,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- Released Wardens free their checker slots. A newly hired Warden can check its assigned waypoint without the Keeper reordering the slots or making a new plan.
 - Releasing a party member now archives its thread after preserving its work. Ask your Keeper to archive members released before this version.
 - Keepers must reuse a resting party member before hiring if it can take the same work. The next check-in flags resting members when the quest work is done or their rest has gone stale.
 - Walking sprites mirror to face their direction of travel, without changing the characters’ original faces.

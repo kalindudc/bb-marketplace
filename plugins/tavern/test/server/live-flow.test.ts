@@ -8,6 +8,8 @@ import { planInput, waypointEntry } from "./support";
 import { queued049 } from "./dispatch-fixture";
 import { registerTools } from "../../src/server/tools";
 import { registerRpc } from "../../src/server/rpc";
+import { registerJournal } from "../../src/server/journal";
+import { checkerAssignments } from "../../src/server/assignments";
 import {
   makeThreadResponse,
   makePluginAgentConfigurationContext,
@@ -202,6 +204,70 @@ describe("live Keeper flow regressions", () => {
     await expect(hire("w1")).rejects.toThrow(/is resting.*tavern_tell/);
     await expect(hire("w2")).resolves.toMatchObject({ checkerMakerThreadId: second.threadId });
     expect(f.k.member(resting.threadId)?.engagement).toBe("resting");
+  });
+  it("records verdicts on the hired waypoint regardless of slot order and frees released checker slots", async () => {
+    const f = setup();
+    f.bb.sdk.plugins.list = async () => ({ plugins: [] });
+    f.bb.sdk.threads.getPluginMetadata = async () => ({});
+    f.bb.sdk.threads.stop = async () => ({ ok: true });
+    Object.assign(f.port, registerJournal(f.bb, f.k.store.db, {
+      roleOf: id => {
+        const member = f.k.member(id);
+        return member && { ...member, checkerWaypointIds: f.k.checkerWaypoints(id) };
+      },
+      invalidate: () => {},
+      verdictSubmitted: (actor, entries) => f.k.recordWardenRound(actor, entries),
+    }));
+    const q = await seedQuest(f.k, "lead", "Build two parts", "Parts");
+    bind(f, "maker-one", "smith", q.id, "bram");
+    bind(f, "maker-two", "smith", q.id, "juno");
+    const base = planInput(q.id);
+    const plan = await f.runtime.plan("lead", {
+      ...base,
+      waypoints: [
+        { ...base.waypoints[0]!, owner: "maker-one", check: "warden" },
+        { ...base.waypoints[0]!, id: "w2", owner: "maker-two", check: "warden" },
+      ],
+      party: ["w2", "w1"].map(id => ({
+        classId: "warden", characterId: null, model: null, purpose: `Check ${id}`, waypointIds: [id],
+      })),
+    });
+    f.k.answerAsk(f.k.store.openAsks("lead", q.id).find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
+    const hire = (waypointId: string) => f.runtime.hire("lead", "project", {
+      classId: "warden", boardQuestId: q.id, waypointId, title: "Check", brief,
+    });
+    const evidence = [{ kind: "note" as const, ref: "Checked results", detail: "", exitCode: null }];
+    const journal = (threadId: string, input: unknown) => f.harness.behavior.invokeAgentTool("journal", input, { threadId });
+    const submit = async (maker: string) => {
+      const [entry] = f.port.get(maker).entries;
+      expect(await journal(maker, { action: "done", id: entry!.id, evidence })).toEqual(expect.any(String));
+      f.k.report(maker, { status: "done", outcome: "Ready for review", evidence, artifacts: [], confidence: null });
+      return entry!.id;
+    };
+    const verify = (warden: string, maker: string, id: string) =>
+      journal(warden, { action: "verify", threadId: maker, id, evidence });
+    const firstEntry = await submit("maker-one");
+    const first = await hire("w1");
+    expect.soft(await verify(first.threadId, "maker-one", firstEntry)).toEqual(expect.any(String));
+    expect(await f.runtime.release("lead", first.threadId, "Finished checking the first part")).toBe(true);
+    expect.soft(checkerAssignments(plan, f.k.store.all("members"))).toEqual([]);
+    expect(await journal(first.threadId, {
+      action: "reject", threadId: "maker-one", id: firstEntry, reason: "Found a problem", evidence,
+    })).toMatchObject({
+      isError: true,
+      content: [expect.objectContaining({ text: expect.stringContaining("Only a Warden assigned to this board quest and waypoint") })],
+    });
+    expect(f.k.summary(q.id).waypoints.find(w => w.id === "w1")).toMatchObject({ state: "verified", verifiedBy: first.threadId });
+
+    const secondEntry = await submit("maker-two");
+    const second = await hire("w2");
+    expect(await verify(second.threadId, "maker-two", secondEntry)).toEqual(expect.any(String));
+    expect(f.k.quest(q.id)).toMatchObject({ planVersion: plan.version, greenlitVersion: plan.version });
+    const rounds = f.k.store.events("lead", 0, 100).filter(e => e.type === "waypoint.review-round");
+    expect(rounds.map(e => e.data)).toEqual([
+      expect.objectContaining({ waypointId: "w1", makerThreadId: "maker-one", verdict: "verified", planVersion: plan.version }),
+      expect.objectContaining({ waypointId: "w2", makerThreadId: "maker-two", verdict: "verified", planVersion: plan.version }),
+    ]);
   });
   it("does not accept a completed report while any of the member's linked waypoints is unfinished", async () => {
     const f = setup();
