@@ -2,6 +2,12 @@
 
 Notable changes to Update Shelf, newest first. Releases are tagged `update-shelf/vX.Y.Z` in this repository.
 
+## Unreleased
+
+### Changed
+
+- What's new shows up to 100,000 characters of notes per release before shortening them.
+
 ## 0.3.0 (2026-10-28)
 
 ### Added

@@ -9,7 +9,8 @@ export interface ChangelogEntry {
 const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/u;
 const VERSION = /^\[?v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\]?(?=$|[\s(\-–—:,])/u;
 const FENCE = /^\s*(```|~~~)/u;
-const MAX_BODY = 12_000;
+// Keep this equal to MAX_VERSION_CHARACTERS in scripts/changelog.mjs for the marketplace validator.
+const MAX_BODY = 100_000;
 
 /**
  * The sections of a changelog newer than `from` and no newer than `to`, in file order.

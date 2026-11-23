@@ -70,6 +70,14 @@ describe("sliceChangelog", () => {
     expect(sliceChangelog(KEEP_A_CHANGELOG, { from: "a713743", to: "0.2.6" }).map((entry) => entry.version)).toEqual(["0.2.6"]);
   });
 
+  it("keeps up to 100,000 characters of a release and marks longer notes as truncated", () => {
+    const body = "x".repeat(100_000);
+    const range = { from: "0.2.5", to: "0.2.6" };
+    const notes = `## 0.2.6\n\n${body}`;
+    expect(sliceChangelog(notes, range)[0]!.body).toBe(body);
+    expect(sliceChangelog(`${notes}x`, range)[0]!.body).toBe(`${body}\n\n…`);
+  });
+
   it("returns nothing when neither version is known", () => {
     expect(sliceChangelog(KEEP_A_CHANGELOG, { from: null, to: null })).toEqual([]);
   });

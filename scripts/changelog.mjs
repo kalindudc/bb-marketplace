@@ -9,8 +9,8 @@
 // scripts/changelog.test.mjs checks every plugin against it and scripts/build.mjs runs it in `npm run check`.
 export const SECTIONS = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security", "Compatibility"];
 
-// plugins/update-shelf/src/changelog.ts truncates a version's notes at this many characters.
-export const MAX_VERSION_CHARACTERS = 12_000;
+// Keep this equal to MAX_BODY in plugins/update-shelf/src/changelog.ts so valid notes are not truncated.
+export const MAX_VERSION_CHARACTERS = 100_000;
 
 const INTRO_PREFIX = "Notable changes to ";
 // An older tag the file does not cover is allowed only when the intro says so, in these words.

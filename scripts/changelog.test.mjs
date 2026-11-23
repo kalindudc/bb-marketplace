@@ -118,7 +118,7 @@ test("keeps a version inside what Update Shelf shows", () => {
   const text = replace("### Fixed\n\n- A bullet.", `### Added\n\n${half}\n\n### Fixed\n\n${half}`);
   const problems = check(text);
   assert.equal(problems.length, 1);
-  assert.match(problems[0], /0\.2\.0 is \d+ characters; What's new cuts a version at 12000/);
+  assert.match(problems[0], /0\.2\.0 is \d+ characters; What's new cuts a version at 100000/);
 });
 
 test("passes a checkout with no tags, and skips only the history rules", () => {

@@ -129,7 +129,7 @@ Notable changes to Lineup, newest first. Releases are tagged `lineup/vX.Y.Z` in 
   Compatibility, in that order, only those with content. One paragraph may
   open a version.
 - One bullet per change, no bold lead-in. Dated release notes are limited to
-  12,000 characters so they fit in What's New. Unreleased notes have no length limit.
+  100,000 characters so they fit in What's New. Unreleased notes have no length limit.
 - A blank line between blocks, no HTML or images, one newline at the end.
 - A tag older than the file needs the intro line "Releases before this file
   existed are described in their commit messages."
