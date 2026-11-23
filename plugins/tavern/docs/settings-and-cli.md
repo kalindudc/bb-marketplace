@@ -16,6 +16,14 @@ For the complete key-by-key schema (every default, bound, TOML path, and edit pe
 | **Where work runs** | Maker/checker remote slot ceilings (`max_makers` / `max_checkers`, default `2` each), machine placement rules with per-class model overrides, and forge profiles (`machines.forges`). |
 | **Journal, Data & Tuning** | Journal reminders and grace windows, Insights sample retention (`history_days`), auto-archive (`auto_archive_days`), backup retention (`backup_keep`, default `14`), and deterministic pacing tuning (`off` by default; `suggest` or `apply`). |
 
+## Contextual speech
+
+Contextual speech is off by default. The strip still draws a prop, and the existing Speech bubbles setting still controls ordinary character lines. Contextual speech does not open agent threads, send chat or start on a timer.
+
+To opt in, a server operator selects an HTTPS text service that accepts the Responses protocol with reasoning off, no storage, a hard output limit and reported usage. Qualify the exact service, model and standard tariff using synthetic examples first: at least 30 events, at least 95% accepted lines, and 95% of calls within two seconds. Keep the profile off if these checks fail. Set `TAVERN_SPEECH_PROFILE` in the bb server process environment (not the agent environment) to a JSON object with `endpoint`, `model`, `inputUsdPerMillion`, `outputUsdPerMillion` and `qualified: true`. Supply `TAVERN_SPEECH_API_KEY` separately as a server secret. Restart the server after adding or removing the profile. Ordinary Tavern settings, agent tools and imported settings cannot enable it.
+
+Atmosphere shows whether the profile is on, the 12 attempts per thread per UTC day and the 100 attempts for the whole install. The profile must price those 100 attempts below $0.10 at 800 input and 64 output tokens each. A timed-out or invalid reply still uses one attempt. Tavern sends only the class, work stage and kind of change, and falls back to an existing canned line when a request cannot be used.
+
 ## Guided setup with an agent
 
 Click **Ask an agent to set up Tavern** at the top of Settings to open a bb composer thread with a setup prompt (even if you have a default class, you can start it as a plain thread):

@@ -131,6 +131,25 @@ describe("thread strip speech", () => {
     expect(w.speech()).toBeNull();
   });
 
+  it("uses one decorative canned fallback for a watched contextual event and never replays it", async () => {
+    const scene = { revision: "first", at: Date.now() - 10, role: "smith", stage: "work", activity: "unknown", moment: "assignment", posture: "clear" } as const;
+    const w = await widget({ contextualSpeech: true, stripScene: scene });
+    vi.useFakeTimers();
+    await tick(480_000);
+    expect(w.speech()).toBeNull();
+    await w.update({ stripScene: { ...scene, revision: "second", at: Date.now() } });
+    await tick(1_999);
+    expect(says.working).toContain(w.speech());
+    expect(w.actor()?.closest("section")?.querySelector(".twalk-speech")?.getAttribute("aria-hidden")).toBe("true");
+    await tick(BUBBLE_MS);
+    await w.update({ pendingEvents: 3 });
+    await tick(2_000);
+    expect(w.speech()).toBeNull();
+    w.click();
+    expect(says.working).toContain(w.speech());
+    expect(w.actor()?.closest("section")?.querySelector(".twalk-speech")?.getAttribute("role")).toBe("status");
+  });
+
   it("speaks on click without repeating after an unrelated widget update", async () => {
     const w = await widget();
     w.click();

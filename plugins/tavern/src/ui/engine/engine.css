@@ -40,7 +40,7 @@
   outline: 2px solid var(--tavern-hearth);
   outline-offset: -3px;
 }
-.tavern.twalk .twalk-ask-button { position: absolute; top: 0; left: 24px; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; pointer-events: auto; cursor: pointer; }
+.tavern.twalk .twalk-ask-button { position: absolute; top: 0; left: 48px; width: 44px; height: 44px; padding: 0; border: 0; background: transparent; pointer-events: auto; cursor: pointer; }
 .tavern.twalk .twalk-ask-button:focus-visible { outline: 2px solid var(--tavern-hearth); outline-offset: -2px; }
 .tavern.twalk .twalk-need { top: 4px; left: 8px; right: auto; --tchar-card: var(--card); border-radius: 0; pointer-events: none; }
 .tavern .twalk-speech {
@@ -65,6 +65,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.tavern .twalk-speech[data-contextual] { max-width: min(216px, var(--speech-room)); font-size: 12px; }
+.tavern .twalk-speech[data-contextual] .twalk-speech-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; }
 .tavern .twalk-speech::before,
 .tavern .twalk-speech::after {
   content: "";

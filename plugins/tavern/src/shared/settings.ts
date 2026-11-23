@@ -203,6 +203,7 @@ export type SettingsSnapshot = z.infer<typeof settingsSnapshotSchema>;
 export const settingsFileSchema = z.object({ path: z.string(), exists: z.boolean(), differs: z.boolean(), error: z.string().nullable(), changedKeys: z.array(z.string()), hash: z.string().nullable().optional() });
 const settingAuthorSchema = settingDecisionSchema.pick({ at: true, by: true, threadId: true });
 export const settingsViewSchema = settingsSnapshotSchema.extend({ file: settingsFileSchema, gitProgramProblem: z.string().optional(),
+  contextualSpeech: z.boolean().optional(),
   lastChangers: z.record(z.string(), settingAuthorSchema).optional(),
   liveOverrides: z.array(z.object({ questId: z.string(), questTitle: z.string(), keeperThreadId: z.string(), keeperName: z.string(),
     key: z.enum(QUEST_TUNABLE_KEYS), value: z.number(), applied: z.boolean() })).optional(),

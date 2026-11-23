@@ -8,7 +8,8 @@ import { SettingsConflict, type SettingsStore } from "./store";
 import { importSettings, type SettingsFiles, type SettingsPreview } from "./files";
 import { gitProgramProblem } from "../../shared/git-safety";
 
-export function settingsHandlers(store: SettingsStore, files: SettingsFiles, validate?: (settings: TavernSettings) => void): ExperimentalPluginRpcHandlersWithContext<typeof settingsContract> {
+export function settingsHandlers(store: SettingsStore, files: SettingsFiles, validate?: (settings: TavernSettings) => void,
+  contextualSpeech?: boolean): ExperimentalPluginRpcHandlersWithContext<typeof settingsContract> {
   if (validate) store.setValidator(validate);
   const requireClient = (context?: ExperimentalPluginRpcHandlerContext) => {
     return requireUserAct(context, "settingsUpdate");
@@ -28,7 +29,7 @@ export function settingsHandlers(store: SettingsStore, files: SettingsFiles, val
     });
     const problem = gitProgramProblem(snapshot.effective.tavern.gitProgram);
     return { ...snapshot, ...store.placementRepair(), file: files.status(), liveOverrides, lastChangers: store.lastChangers(),
-      ...(problem ? { gitProgramProblem: problem } : {}) };
+      ...(contextualSpeech === undefined ? {} : { contextualSpeech }), ...(problem ? { gitProgramProblem: problem } : {}) };
   };
   function mutate(action: () => SettingDecision | null | void) {
     try {

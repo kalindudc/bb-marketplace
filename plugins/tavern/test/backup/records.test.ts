@@ -71,6 +71,23 @@ describe("Tavern records snapshots", () => {
       expect(target.records.empty()).toBe(true);
     } finally { source.db.close(); target.db.close(); }
   });
+  it("does not copy the install's speech quota through a portable backup", () => {
+    const source = setup(), target = setup();
+    try {
+      populate(source);
+      const addQuota = (fixture: ReturnType<typeof setup>, attempts: number) =>
+        fixture.db.prepare("INSERT INTO tavern_dialogue_daily(day,seat,attempts,latest) VALUES(1,'',?,1)").run(attempts);
+      addQuota(source, 10);
+      addQuota(target, 5);
+      const snapshot = source.records.capture();
+      expect(snapshot.tables).not.toHaveProperty("tavern_dialogue_daily");
+      const forged = structuredClone(snapshot);
+      forged.tables.tavern_dialogue_daily = { columns: ["day", "seat", "attempts", "latest"], rows: [] };
+      expect(() => target.records.restore(forged)).toThrow("not a Tavern records table");
+      target.records.restore(snapshot);
+      expect(target.db.prepare("SELECT attempts FROM tavern_dialogue_daily").pluck().get()).toBe(5);
+    } finally { source.db.close(); target.db.close(); }
+  });
   it("excludes the live brake from capture and refuses a portable brake on restore", () => {
     const source = setup(), target = setup();
     source.db.prepare("INSERT INTO tavern_records(kind,id,data) VALUES('stopAll','tavern',?)")

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import type { CharacterDef } from "../../shared/schema";
+import type { StripProp } from "../../shared/strip-scene";
+import { drawStripProp, propLeft } from "./strip-prop";
 import { clockTime } from "../../shared/time";
 import { readPalette, type CharacterPalette } from "../kit/characters";
 import { motion, stuckInView, type Surface } from "../kit/motion";
@@ -32,7 +34,7 @@ export function walkSpan(composerWidth: number | null, stripWidth: number, sprit
   return Math.max(0, Math.min(composerWidth || stripWidth, stripWidth) - spriteWidth);
 }
 
-export type StripSpeech = { actorId: string; text: string };
+export type StripSpeech = { actorId: string; text: string; contextual?: boolean; announce?: boolean };
 export type AskDisclosure = { panelId: string; expanded: boolean; open: (button: HTMLButtonElement) => void };
 
 type PartyStripProps = {
@@ -49,10 +51,13 @@ type PartyStripProps = {
   held?: boolean;
   quiet?: boolean;
   speech?: StripSpeech | null;
+  prop?: StripProp | null;
+  contactKey?: string;
   canClickSpeak?: boolean;
   askDisclosure?: AskDisclosure;
   onActorClick?: (actorId: string) => void;
   onMoodCueEnd?: () => void;
+  onSpeechVisible?: (visible: boolean) => void;
   actorMenu?: Pick<ComponentProps<typeof CharacterMenu>, "mode" | "voice" | "voiceBeforeOff" | "quietUntil" | "change" | "openSheet">;
 };
 
@@ -86,7 +91,7 @@ export function PartyStrip(props: PartyStripProps) {
   const strip = useRef<HTMLElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const button = useRef<HTMLButtonElement>(null);
-  const askButton = useRef<HTMLButtonElement>(null);
+  const contact = useRef<{ key: string | undefined; cue: Cue | null }>({ key: props.contactKey, cue: null });
   const bubble = useRef<HTMLSpanElement>(null);
   const runtime = useRef<{ invalidate(change?: () => void): void; cue(kind: Cue, auto: boolean, onEnd?: () => void): void; click(): void }>(null);
   const latest = useRef(props);
@@ -99,11 +104,17 @@ export function PartyStrip(props: PartyStripProps) {
     if (runtime.current) runtime.current.invalidate(() => { cue = applyMood(); });
     else cue = applyMood();
     if (scene && (props.held || props.quiet || isAttentionMood(mood) || props.mode === "off")) motion.settle(c => c.el === button.current);
+    if (contact.current.key !== props.contactKey) contact.current = { key: props.contactKey, cue: props.prop && !props.held ? cue : null };
     if (cue && !scene) {
-      if (runtime.current) runtime.current.cue(cue, true, props.onMoodCueEnd);
-      else props.onMoodCueEnd?.();
+      const currentContact = contact.current;
+      const finish = () => {
+        if (contact.current === currentContact) contact.current.cue = null;
+        props.onMoodCueEnd?.();
+      };
+      if (runtime.current) runtime.current.cue(cue, true, finish);
+      else finish();
     }
-  }, [actor, art, mood, props.mode, props.held, props.quiet, words, scene, !!props.askDisclosure]);
+  }, [actor, art, mood, props.mode, props.held, props.quiet, words, scene, !!props.askDisclosure, props.prop, props.contactKey]);
 
   useLayoutEffect(() => {
     const el = strip.current!, board = canvas.current!, control = button.current!;
@@ -120,18 +131,24 @@ export function PartyStrip(props: PartyStripProps) {
     let drawnLight: LightAnchor | null = null;
     let drawnX = 0;
     let drawnY = 0;
+    let inView = false;
+    const speechVisibility = (visible: boolean) => {
+      const { typing, held } = motion.getHolds(latest.current.surface);
+      latest.current.onSpeechVisible?.(visible && !document.hidden && !typing && !held);
+    };
     const holds = () => {
       const { surface, held } = latest.current;
       const current = motion.getHolds(surface);
       return { typing: current.typing, held: held ?? current.held };
     };
-    const mode = () => latest.current.quiet ? "off" : scene ? sceneMode : latest.current.mode ?? "calm";
+    const mode = () => latest.current.quiet ? "off" : scene ? sceneMode : latest.current.mode === "lively" && !!latest.current.prop && control === document.activeElement ? "calm" : latest.current.mode ?? "calm";
     let activeRules = { mode: mode(), ...holds() };
-    let painted: { x: number; y: number; key: number; art: typeof art; palette: CharacterPalette; badge: boolean; stride: number; glint: number } | null = null;
+    let painted: { x: number; y: number; key: number; art: typeof art; palette: CharacterPalette; stride: number; glint: number; prop: StripProp | null; propX: number | null; touch: boolean } | null = null;
     const world: EngineWorld = {
       mode,
       refresh() {
         activeRules = { mode: mode(), ...holds() };
+        if (latest.current.onSpeechVisible) speechVisibility(inView);
         return actor.setRules(activeRules, span);
       },
       update(seconds, steps) {
@@ -142,7 +159,8 @@ export function PartyStrip(props: PartyStripProps) {
       draw(still) {
         const spriteWidth = actor.art.width * SCALE;
         const spriteHeight = actor.art.height * SCALE;
-        const x = scene && (still || !scene.road) ? Math.max(0, Math.floor((width - spriteWidth) / 2)) : Math.round(actor.body.x / SCALE) * SCALE;
+        const ask = !!latest.current.askDisclosure;
+        const x = ask ? 0 : scene && (still || !scene.road) ? Math.max(0, Math.floor((width - spriteWidth) / 2)) : Math.round(actor.body.x / SCALE) * SCALE;
         const restY = ground - actor.art.ground * SCALE;
         const y = Math.max(0, restY - (still || actor.small ? 0 : Math.round(actor.body.lift / SCALE) * SCALE));
         const lift = restY - y;
@@ -150,7 +168,7 @@ export function PartyStrip(props: PartyStripProps) {
         if (speechEl) {
           const left = x - BUBBLE_GAP;
           const right = width - x - spriteWidth - BUBBLE_GAP;
-          speechEl.hidden = Math.max(left, right) < 48;
+          speechEl.hidden = Math.max(left, right) < (latest.current.speech?.contextual ? 176 : 48);
           const onRight = right >= left;
           speechEl.style.setProperty("--speech-origin", `${onRight ? x + spriteWidth + BUBBLE_GAP : left}px`);
           speechEl.style.setProperty("--speech-room", `${Math.max(left, right)}px`);
@@ -161,8 +179,6 @@ export function PartyStrip(props: PartyStripProps) {
           control.style.transform = position;
           lastPosition = position;
         }
-        const ask = askButton.current;
-        if (ask && ask.style.transform !== position) ask.style.transform = position;
         const frame = actor.frame(still);
         if (scene) control.dataset.pose = frame.still ? "still" : frame.activity;
         if (control.dataset.activity !== frame.activity) control.dataset.activity = frame.activity;
@@ -185,20 +201,22 @@ export function PartyStrip(props: PartyStripProps) {
           if (ctx) ctx.imageSmoothingEnabled = false;
         }
         if (!ctx) return;
-        const badge = !!latest.current.askDisclosure;
+        const prop = latest.current.prop ?? null;
+        const propX = prop ? propLeft(x, spriteWidth, width, ask) : null;
+        const touch = propX !== null && frame.cue !== null && frame.cue === contact.current.cue &&
+          frame.progress < 0.24 && frame.progress > 0 && !frame.small && !activeRules.typing && control !== document.activeElement;
         const key = actor.art.pixelKey(frame);
         const stride = !frame.dark && frame.activity === "walk" ? 2 + Number(frame.step % 4 >= 2) : 0;
         const glint = frame.dark ? 0 : daylightGlint(frame, activeRules.typing);
         if (painted?.x === x && painted.y === y && painted.key === key && painted.art === actor.art && painted.palette === palette &&
-            painted.badge === badge && painted.stride === stride && painted.glint === glint) return;
-        painted = { x, y, key, art: actor.art, palette, badge, stride, glint };
+          painted.stride === stride && painted.glint === glint && painted.prop === prop && painted.propX === propX && painted.touch === touch) return;
+        painted = { x, y, key, art: actor.art, palette, stride, glint, prop, propX, touch };
         ctx.clearRect(0, 0, width, height);
+        if (prop && propX !== null) drawStripProp(ctx, prop, propX, ground - SCALE, palette, touch);
         ctx.save();
         ctx.translate(x, y);
         ctx.beginPath();
         ctx.rect(0, 0, spriteWidth, spriteHeight);
-        // Reserve the badge's full CSS box, including its transparent corners.
-        if (badge) ctx.rect(32, 4, 13, 13);
         ctx.clip("evenodd");
         ctx.scale(SCALE, SCALE);
         actor.art.draw(ctx, frame, palette, frame.dark ? undefined : { sunGlint: glint });
@@ -229,7 +247,10 @@ export function PartyStrip(props: PartyStripProps) {
       if (ctx) ctx.imageSmoothingEnabled = false;
     };
     measure();
-    const handle = observeWorld(el, world);
+    const handle = observeWorld(el, world, props.onSpeechVisible ? visible => {
+      inView = visible;
+      speechVisibility(visible);
+    } : undefined);
     const onResize = () => {
       const oldWidth = width, oldSpan = span;
       measure();
@@ -300,7 +321,7 @@ export function PartyStrip(props: PartyStripProps) {
       resize?.disconnect();
       if (!resize) window.removeEventListener("resize", onResize);
     };
-  }, [actor, scene?.road, props.region, ground, height]);
+  }, [actor, scene?.road, props.region, ground, height, !!props.onSpeechVisible]);
 
   const status = mood === "waiting" && !props.askDisclosure && !scene ? "waiting" : MOOD_WORD[mood];
   const label = `${character.name}, ${classLabel}${keeper ? ", Keeper" : ""}, ${status}`;
@@ -353,6 +374,8 @@ export function PartyStrip(props: PartyStripProps) {
         setMenuTrigger(e.currentTarget);
       } : undefined}
       aria-label={scene ? `Open ${character.name}'s thread: ${MOOD_WORD[mood]}` : actorLabel}
+      onFocus={() => { if (!scene && props.prop && props.mode === "lively") runtime.current?.invalidate(); }}
+      onBlur={() => { if (!scene && props.prop && props.mode === "lively") runtime.current?.invalidate(); }}
       onPointerEnter={e => { if (!scene && !props.quiet && e.pointerType !== "touch") runtime.current?.cue("notice", false); }}
       onClick={e => {
         if (e.detail > 0 && suppressTap.current) {
@@ -362,13 +385,14 @@ export function PartyStrip(props: PartyStripProps) {
         if (scene) props.onActorClick?.(actor.id);
         else runtime.current?.click();
       }} />
-    {props.askDisclosure && <button ref={askButton} type="button" className="twalk-ask-button"
+    {props.askDisclosure && <button type="button" className="twalk-ask-button"
       aria-label={`Open asks for ${character.name}`} aria-expanded={props.askDisclosure.expanded} aria-controls={props.askDisclosure.panelId}
       onClick={event => props.askDisclosure!.open(event.currentTarget)}>
       <span className="tchar-need twalk-need" data-tavern-still aria-hidden="true">!</span>
     </button>}
     {props.actorMenu && <span id={`${menuId}-hint`} className="sr">{MENU_HINT}</span>}
     {menuTrigger && props.actorMenu && <CharacterMenu id={menuId} trigger={menuTrigger} name={character.name} close={closeMenu} {...props.actorMenu} />}
-    {words && <span ref={bubble} className="twalk-speech" role="status" hidden><span className="twalk-speech-text">{words}</span></span>}
+    {words && <span ref={bubble} className="twalk-speech" data-contextual={speech?.contextual || undefined}
+      role={speech?.announce === false ? undefined : "status"} aria-hidden={speech?.announce === false || undefined} hidden><span className="twalk-speech-text">{words}</span></span>}
   </section>;
 }

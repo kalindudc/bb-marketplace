@@ -199,6 +199,8 @@ export class TavernRuntime {
       this.sourceInspection = new SourceDiscovery(this.bb, createHostPort(this.bb), new DiscoveryStore(this.keeper.store.db, () => this.keeper.now()));
     return this.sourceInspection;
   }
+  contextualSpeech = false;
+
   config(questId?: string | null): TavernSettings {
     return this.settings ? this.settings.read(questId) : DEFAULT_SETTINGS;
   }

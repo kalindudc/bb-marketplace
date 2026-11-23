@@ -1,5 +1,6 @@
 import { experimental_ProviderModelPicker as ProviderModelPicker, experimental_copyToClipboard, experimental_useProviders, experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate, type ExperimentalProviderModelPickerValue } from "@get-bb/plugin-sdk/app";
 import { createContext, useContext, useCallback, useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { DIALOGUE_INSTALL_CAP, DIALOGUE_THREAD_CAP } from "../../shared/strip-scene";
 import { ambientMotionPatch, characterQuietPatch, charactersPatch, CHARACTER_QUIET_HOUR_MS, DEFAULT_SETTINGS, KNOB_FIELDS, importSummary, isGuardrailSetting, settingsContract, voicePatch, type TavernSettings, type SettingsChange, type SettingsPatch, type ResettableSetting, type SettingsView, type TunableKey } from "../../shared/settings";
 import { Glyph, OpensMark, TimeAgo, plural, useRegistry, useSidebarActorNames, useRemembered, ExpandsMark, FoldSummary } from "../kit";
 import { useCharacterQuiet } from "../engine/character-quiet";
@@ -237,6 +238,8 @@ export function AtmosphereSection() {
     <SettingsCard title="The party" hint="Choose how characters appear and open their sheets to roll new avatars." glyph="shield">
       <Row label="Show characters" setting="tavern.characters" help="Draws the pixel-art characters above the composer. Off leaves the class crest in the widget row." control={id => <Toggle id={id} checked={t.characters} disabled={api.pending} onChange={v => void api.save(charactersPatch(v))} />} />
       <Row label="Speech bubbles" setting="tavern.voice" coveredBy={["tavern.voiceBeforeOff"]} help={VOICE_HELP[t.voice]} control={() => <SegFilter label="Speech bubbles" value={t.voice} onChange={v => void api.save(voicePatch(v, t.voice))} options={[{ id: "full", label: "Full" }, { id: "light", label: "Light" }, { id: "off", label: "Off" }]} />} />
+      <Row label="Contextual speech" help={`Sends only work type and stage to the selected service, never chat, titles, or reports. Limits per UTC day: ${DIALOGUE_THREAD_CAP} attempts per thread and ${DIALOGUE_INSTALL_CAP} for this install (under $0.10 at qualified rates). Enable it in the server environment.`}
+        control={id => <output id={id}>{d.contextualSpeech ? "On" : "Off"}</output>} />
       <Row label="Levels and crest notches" setting="tavern.levels" help="Shows levels and crest notches earned from verified work. Off hides them without changing what characters have earned." control={id => <Toggle id={id} checked={t.levels} disabled={api.pending} onChange={v => void api.save({ tavern: { levels: v } })} />} />
       <div className="tv-set-links"><button type="button" className="tv-ilink act" onClick={() => navigate.toPluginPanel("tavern", { subPath: "characters" })}><span>Character sheets</span><OpensMark /></button></div>
     </SettingsCard>

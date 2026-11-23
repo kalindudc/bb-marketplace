@@ -266,7 +266,7 @@ const onInput = () => {
   typingTimer = holding ? window.setTimeout(finishTyping, TYPING_HOLD_MS) : undefined;
 };
 
-export function observeWorld(el: Element, world: EngineWorld): Pick<WorldHandle, "invalidate" | "remove"> {
+export function observeWorld(el: Element, world: EngineWorld, onVisible?: (visible: boolean) => void): Pick<WorldHandle, "invalidate" | "remove"> {
   if (observed.size === 0) {
     motion.install();
     subscribeInput();
@@ -283,9 +283,10 @@ export function observeWorld(el: Element, world: EngineWorld): Pick<WorldHandle,
     }
   }
   const handle = scheduler.register(world);
-  observed.set(el, handle);
+  const registered = onVisible ? { ...handle, setVisible(visible: boolean) { handle.setVisible(visible); onVisible(visible); } } : handle;
+  observed.set(el, registered);
   observer?.observe(el);
-  handle.setVisible(inViewport(el));
+  registered.setVisible(inViewport(el));
   return {
     invalidate: handle.invalidate,
     remove: () => {

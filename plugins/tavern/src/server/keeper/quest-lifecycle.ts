@@ -144,7 +144,7 @@ export function transitionQuest(store: KeeperStore, quest: BoardQuest, to: Phase
     }
     authorised.add(result);
     store.put("quests", quest.id, result);
-    store.event(at, quest.keeperThreadId, quest.id, row.event, options.text ?? `${quest.title}: ${from ?? "new"} to ${to}`, { ...options.data, ...(to === "stopped" ? { closure: result.outcome } : {}), cause, phase: { from, to }, receipt }, actor);
+    store.event(at, quest.keeperThreadId, quest.id, row.event, options.text ?? `${quest.title}: ${from ?? "new"} to ${to}`, { ...options.data, ...(to === "stopped" ? { closure: result.outcome } : {}), cause, phase: { from, to }, stripPlanVersion: result.planVersion, receipt }, actor);
     if (from === "held") cursors[quest.id] = { ...cursors[quest.id]!, through: store.eventSequence(quest.keeperThreadId) };
     if (to === "held" || from === "held") store.patch(quest.keeperThreadId, { heldNewsCursors: cursors });
     return result;

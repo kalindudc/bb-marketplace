@@ -1,6 +1,8 @@
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ThreadDecor } from "../../shared/contract";
+import { DIALOGUE_CACHE_MS, DIALOGUE_DEADLINE_MS, dialogueSlot, stripProp } from "../../shared/strip-scene";
+import { DialogueSocket, type DialogueLine } from "./dialogue-socket";
 import { characterMood, REPORTED_MS, VERIFIED_MS, widgetMoodFacts } from "../../shared/mood";
 import { pickLine, type LineFacts } from "../../shared/says";
 import type { CharacterDef } from "../../shared/schema";
@@ -82,7 +84,26 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
   const [cueEnd, setCueEnd] = useState<{ transition: typeof transition; at: number } | null>(null);
   const [last, setLast] = useState<{ text: string; at: number } | null>(null);
   const [tried, setTried] = useState<{ event?: number; ambient?: number }>({});
-  const [bubble, setBubble] = useState<{ line: StripSpeech; transition: typeof transition; at: number; automatic: boolean } | null>(null);
+  const [bubble, setBubble] = useState<{ line: StripSpeech; transition: typeof transition; at: number; automatic: boolean; revision?: string } | null>(null);
+  const [speechVisible, setSpeechVisible] = useState(false);
+  const [dialogue, setDialogue] = useState<DialogueLine | null>(null);
+  const [eventRevision, setEventRevision] = useState<string | null>(null);
+  const contextual = data.contextualSpeech === true;
+  const workbench = data.stripScene;
+  const revision = workbench?.revision;
+  const contextualSlot = dialogueSlot(workbench, speechMode);
+  const mayWatch = contextual && speechVisible && !held && speechMode !== "off" && workbench?.posture !== "gone";
+  const previousScene = useRef({ contextual, revision, speechMode });
+  useLayoutEffect(() => {
+    const previous = previousScene.current;
+    previousScene.current = { contextual, revision, speechMode };
+    if (previous.revision !== revision) setDialogue(line => line?.revision === previous.revision ? null : line);
+    if (!contextual || !mayWatch || !contextualSlot || revision === undefined || previous.revision === revision || !previous.contextual || previous.speechMode === "off") return;
+    if (workbench?.at != null && workbench.at >= pageSince && Date.now() - workbench.at < DIALOGUE_DEADLINE_MS) setEventRevision(revision);
+  }, [contextual, revision, speechMode, contextualSlot, mayWatch, workbench?.at, pageSince]);
+  useLayoutEffect(() => {
+    if (!mayWatch) { setDialogue(null); setEventRevision(null); }
+  }, [mayWatch]);
   const latestReport = useRef(-Infinity);
   const ownReportAt = Math.max(member.lastReportAt ?? -Infinity, data.moodSignals?.report?.createdAt ?? -Infinity);
   const reading = () => {
@@ -98,7 +119,8 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
     waypoint: verdict?.waypointTitle ?? data.moodSignals?.waypointTitle,
     checker: verdict?.checkerName,
   };
-  const visible = bubble?.transition === transition && speechMode !== "off" && !held && speechSlot(mood) ? bubble : null;
+  const visible = bubble?.transition === transition && speechMode !== "off" && !held && speechSlot(mood) &&
+    (!bubble.line.contextual || mayWatch && bubble.revision === revision) ? bubble : null;
   const cueEndsAt = cueEnd?.transition === transition ? cueEnd.at : undefined;
   const input = {
     actorId, voice: speechMode, mood, moodSince: transition.since, pageSince, cueEndsAt,
@@ -110,6 +132,21 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
   useLayoutEffect(() => {
     live.current = click => {
       const now = Date.now();
+      if (contextual) {
+        const holds = motion.getHolds(surface);
+        if (!mayWatch || holds.typing || holds.held || document.hidden || stuckInView() || reportSpeechHeld({ now, ...reading() }) || !speechSlot(mood)) return;
+        if (!click && (!contextualSlot || eventRevision !== revision || workbench?.at == null || now > workbench.at + DIALOGUE_DEADLINE_MS + 80)) return;
+        const slot = click ? contextualSlot ?? mood : contextualSlot!;
+        const cached = dialogue && dialogue.revision === revision && now - dialogue.receivedAt < DIALOGUE_CACHE_MS ? dialogue.text : null;
+        const choices = character.says?.[slot]?.filter(line => line.length <= 56 && line.split(/\s+/).length <= 10);
+        const text = cached ?? pickLine(choices, `${actorId}:${slot}:${revision}:${click ? now : "event"}`, last?.text ?? null, {});
+        if (!click) setEventRevision(null);
+        if (text) {
+          setLast({ text, at: now });
+          setBubble({ line: { actorId: character.id, text, contextual: true, announce: click }, transition, at: now, automatic: !click, revision });
+        }
+        return;
+      }
       const scheduled = planSpeech({ ...input, now, click });
       if (!scheduled || scheduled.at > now) return;
       const holds = motion.getHolds(surface);
@@ -125,12 +162,20 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
       }
     };
   });
-  const plan = planSpeech({ ...input, now: Date.now() });
+  const plan = contextual ? null : planSpeech({ ...input, now: Date.now() });
   useEffect(() => {
     if (!character.says || plan?.at === undefined) return;
     const timer = setTimeout(() => live.current(false), Math.max(0, plan.at - Date.now()));
     return () => clearTimeout(timer);
   }, [character.says, plan?.at, plan?.key]);
+  useEffect(() => {
+    const at = workbench?.at;
+    if (!contextual || !mayWatch || !contextualSlot || !eventRevision || eventRevision !== revision || at == null) return;
+    const deadline = at + DIALOGUE_DEADLINE_MS;
+    const showAt = dialogue?.revision === revision ? Math.min(deadline, Math.max(at + 1_000, cueEndsAt ?? at)) : deadline;
+    const timer = setTimeout(() => live.current(false), Math.max(0, showAt - Date.now()));
+    return () => clearTimeout(timer);
+  }, [contextual, mayWatch, contextualSlot, eventRevision, revision, workbench?.at, dialogue, cueEndsAt]);
   useLayoutEffect(() => {
     if (bubble && !visible) setBubble(null);
     if (!visible) return;
@@ -141,14 +186,18 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
   }, [bubble, visible, surface, ownReportAt]);
 
   if (mood === "released") return null;
-  return <PartyStrip
+  return <>
+    {mayWatch && <DialogueSocket threadId={data.threadId} onLine={setDialogue} />}
+    <PartyStrip
     character={character} classId={member.classId} classLabel={classLabel} mood={mood} memberId={member.threadId}
     askDisclosure={askDisclosure} keeper={!!data.keeperView} surface={surface} region="widget" mode={motionMode} held={held} quiet={quiet}
+    prop={stripProp(data.stripScene)} contactKey={workbench?.posture === "clear" && workbench.moment !== "report" ? workbench.revision : undefined}
     actorMenu={{ mode: motionMode, voice, voiceBeforeOff: data.voiceBeforeOff, quietUntil: quiet ? data.characterQuietUntil : undefined, change, openSheet: () => navigate.toPluginPanel("tavern", { subPath: `character/${character.id}` }) }}
-    speech={visible?.line ?? null} canClickSpeak={speechMode !== "off" && speechSlot(mood) && !!character.says?.[mood]?.length}
+    speech={visible?.line ?? null} canClickSpeak={speechMode !== "off" && speechSlot(mood) && (!!character.says?.[contextualSlot ?? mood]?.length || !!dialogue?.text)}
+    onSpeechVisible={contextual ? setSpeechVisible : undefined}
     onActorClick={() => live.current(true)} onMoodCueEnd={() => {
       const at = Date.now();
       setCueEnd(previous => previous && previous.transition.order > transition.order ? previous : { transition, at });
     }}
-  />;
+  /></>;
 }

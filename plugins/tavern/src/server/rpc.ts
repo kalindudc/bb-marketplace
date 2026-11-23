@@ -41,6 +41,7 @@ import type { TavernRuntime } from "./runtime";
 import { freeHands, restingContext } from "./resting";
 import { threadIdentities } from "./identity";
 import { currentAskNames } from "./quest-names";
+import { readStripScene } from "./strip-scene";
 
 /** The stored brief for the widget: every hire-time line, then as many of the newest follow-ups as fit. */
 function decorBrief(brief: Brief | null | undefined) {
@@ -199,7 +200,8 @@ export function rpcHandlers(
       const m = k.member(threadId), thread = k.store.runtime(threadId);
       const boardQuest = m?.boardQuestId ? k.quest(m.boardQuestId) : null;
       const plan = boardQuest ? k.store.get("plans", `${boardQuest.id}:${boardQuest.planVersion}`) : null;
-      const verdict = m && boardQuest ? waypointMoodVerdict(m, k.journal.linkedEntries(boardQuest.id)) : null;
+      const entries = boardQuest ? k.journal.linkedEntries(boardQuest.id) : [];
+      const verdict = m ? waypointMoodVerdict(m, entries) : null;
       const reviewer = verdict?.checkerThreadId ? k.member(verdict.checkerThreadId) : null;
       const checkerName = reviewer?.classId === "warden" && reviewer.characterId
         ? reviewer.displayName ?? runtime.snapshot(k.store.runtime(reviewer.threadId).projectId ?? undefined).characters.find(c => c.id === reviewer.characterId)?.name ?? null : null;
@@ -214,8 +216,16 @@ export function rpcHandlers(
             return (target ? target === threadId : waypoint && ask.boardQuestId === m.boardQuestId && ask.holds.includes(waypoint)) && askNeedsUser(k.store, ask);
           })
         : [];
+      const report = currentMoodReport(lastReport, thread.lastBriefAt);
+      const handBack = m?.role === "keeper" && k.memory.notes(threadId, 200).some(note => note.kind === "waiting-on-user");
+      const archived = !!host && (host.archivedAt != null || host.deletedAt != null);
+      const scene = m && readStripScene(k, m, { thread, boardQuest, plan, entries, lastReport, verdict, archived,
+        held: handBack || memberAsks.length > 0 || !!snapshot?.asks.some(a => a.state === "open"),
+      });
       return {
         threadId,
+        ...(scene ? { stripScene: scene } : {}),
+        ...(runtime.contextualSpeech ? { contextualSpeech: true } : {}),
         widgetRow: runtime.config().tavern.widgetRow,
         succession: runtime.succession.view(threadId),
         ambientMotion: runtime.config().tavern.hearthFlicker ? runtime.config().tavern.ambientMotion : "off",
@@ -228,9 +238,9 @@ export function rpcHandlers(
         verifiedPoseMinutes: runtime.config().tavern.verifiedPoseMinutes,
         ...(m ? { moodSignals: {
           released: wasReleased(m),
-          archived: memberHost(k.store, m).archivedAt !== null || memberHost(k.store, m).deletedAt !== null,
-          handBack: m.role === "keeper" && k.memory.notes(threadId, 200).some(note => note.kind === "waiting-on-user"),
-          report: currentMoodReport(lastReport, thread.lastBriefAt),
+          archived,
+          handBack,
+          report,
           waypointTitle: titleOf(m.checkerWaypointId ?? m.waypointId),
           verdict: verdict ? { status: verdict.status, at: verdict.at, waypointTitle: titleOf(verdict.waypointId), checkerName } : null,
         } } : {}),

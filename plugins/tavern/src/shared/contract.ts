@@ -7,6 +7,7 @@ import { executionFactsSchema } from "./class-execution";
 import { classExecutionInputSchema, classModeFactsSchema, classNoticeSchema } from "./class-execution-contract";
 import { z } from "zod";
 import { pullRequestSchema } from "./pull-request";
+import { stripSceneSchema } from "./strip-scene";
 import { defineContract } from "./define-contract";
 import { stopAllContract } from "./stop-all";
 import { characterQuietUntilSchema, voiceBeforeOffSchema, voiceModeSchema } from "./settings";
@@ -182,6 +183,8 @@ export const threadDecorSchema = z.object({
   ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().optional(), characters: z.boolean().optional(),
   voice: voiceModeSchema.optional(), voiceBeforeOff: voiceBeforeOffSchema.optional(), characterQuietUntil: characterQuietUntilSchema.optional(),
   reportedPoseSeconds: z.number().int().positive().optional(), verifiedPoseMinutes: z.number().int().positive().optional(),
+  stripScene: stripSceneSchema.optional(),
+  contextualSpeech: z.boolean().optional(),
   moodSignals: z.object({
     released: z.boolean(),
     archived: z.boolean(),

@@ -144,6 +144,10 @@ const APPENDED: string[] = [
    CREATE INDEX tavern_memory_recent ON tavern_memory_notes(store,project,updated_at DESC,id DESC);
    CREATE INDEX tavern_memory_review ON tavern_memory_notes(store,project,updated_at DESC,id DESC)
     WHERE reviewed_at IS NULL AND status='accepted';`,
+  `CREATE TABLE tavern_dialogue_daily (
+     day INTEGER NOT NULL, seat TEXT NOT NULL, attempts INTEGER NOT NULL, latest INTEGER NOT NULL,
+     PRIMARY KEY(day, seat)
+   );`,
 ];
 
 export const MIGRATIONS: string[] = [

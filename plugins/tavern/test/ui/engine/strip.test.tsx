@@ -40,7 +40,8 @@ it("swaps the carried source on a theme change without moving a held ask marker"
     expect(listener.mock.lastCall?.[1]).toMatchObject({ kind: "crystal" });
     const mark = screen.getByText("!"), ask = screen.getByText("Review the route");
     const pixels = clip.mock.results.at(-1)?.value;
-    expect(pixels).toEqual({ rule: "evenodd", bounds: [[0, 0, 48, 56], [32, 4, 13, 13]] });
+    expect(pixels).toEqual({ rule: "evenodd", bounds: [[0, 0, 48, 56]] });
+    expect(screen.getByRole("button", { name: /open asks/i }).style.transform).toBe("");
     const still = [mark.outerHTML, ask.outerHTML];
     document.documentElement.classList.remove("dark");
     await Promise.resolve();
@@ -77,6 +78,28 @@ it("uses the avatar seed and member class and places the carried light in page c
   expect(createArt.mock.lastCall?.[0].seed).toBe("wren");
   rerender(<PartyStrip {...props} classId="smith" />);
   expect(world!.lightAnchors?.()).toEqual([expect.objectContaining({ kind: "ember" })]);
+});
+
+it("paints an inert prop in the same 70px canvas and does not invalidate when the prop stays the same", () => {
+  const fillRect = vi.fn();
+  const ctx = { fillRect, beginPath() {}, rect() {}, clip() {}, clearRect() {}, save() {}, restore() {}, translate() {}, scale() {} };
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(320);
+  const invalidate = vi.fn();
+  vi.spyOn(engine, "observeWorld").mockImplementation((_, candidate) => {
+    invalidate.mockImplementation(change => { change?.(); candidate.draw(true); });
+    candidate.draw(true);
+    return { invalidate, remove() {} };
+  });
+  const view = render(<PartyStrip {...wanderer} prop="book" />);
+  expect(screen.getByRole("region").querySelector("canvas")?.height).toBe(70);
+  expect(fillRect.mock.calls.some(([x, y]) => x >= 48 && y >= 34)).toBe(true);
+  const calls = invalidate.mock.calls.length;
+  view.rerender(<PartyStrip {...wanderer} prop="book" />);
+  expect(invalidate).toHaveBeenCalledTimes(calls);
+  view.rerender(<PartyStrip {...wanderer} prop="seal" />);
+  expect(invalidate).toHaveBeenCalledTimes(calls + 1);
+  expect(screen.getAllByRole("button")).toHaveLength(1);
 });
 
 it("leaves the host's transcript-to-composer fade and backing alone", () => {

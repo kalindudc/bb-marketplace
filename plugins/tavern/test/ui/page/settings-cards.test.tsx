@@ -189,7 +189,9 @@ it("groups Atmosphere controls and links to the character sheets",async()=>{
  expect(s.getByText("How the tavern looks and feels: its characters, their speech and its motion.")).toBeTruthy();
  expect(s.getAllByRole("heading",{level:3}).map(h=>h.textContent)).toEqual(["The party","Motion","Lantern","Character cues"]);
  const labels=(el:HTMLElement)=>[...el.querySelectorAll(".tv-set-row label")].map(l=>l.textContent);
- expect(labels(party)).toEqual(["Show characters","Speech bubbles","Levels and crest notches"]);
+ expect(labels(party)).toEqual(["Show characters","Speech bubbles","Contextual speech","Levels and crest notches"]);
+ expect(within(party).getByText("Off",{selector:"output"})).toBeTruthy();
+ expect(within(party).getByText(/12 attempts per thread and 100 for this install/)).toBeTruthy();
  expect(labels(motion)).toEqual(["Ambient motion","Character quiet","Repeat every"]);
  expect(labels(s.getByRole("region",{name:"Lantern"}))).toEqual(["Lantern light","Strength","Light bb's surfaces"]);
  expect(s.container.querySelector("#tavern-settings-atmosphere")).toBeTruthy();
