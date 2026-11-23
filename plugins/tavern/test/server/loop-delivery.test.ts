@@ -10,6 +10,23 @@ function news(f: ReturnType<typeof setup>) {
   return f.k.store.event(f.time(), "lead", null, "promise.due", "A fact that must remain unread until delivery");
 }
 
+it("saves a brief acceptance for the next real news, without waking the Keeper by itself", async () => {
+  const f = setup();
+  f.k.store.event(f.time(), "lead", null, "member.briefed", "Mira accepted the brief", { memberThreadId: "member" });
+  await f.runtime.tick("lead");
+  expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
+  f.advance(180_000);
+  news(f);
+  await f.runtime.tick("lead");
+  const sent = f.harness.inspection.sdk.callsTo("threads.send");
+  expect(sent).toHaveLength(1);
+  expect(JSON.stringify(sent)).toContain("Mira accepted the brief");
+  f.advance(180_000);
+  news(f);
+  await f.runtime.tick("lead");
+  expect(JSON.stringify(f.harness.inspection.sdk.callsTo("threads.send").at(-1))).not.toContain("Mira accepted the brief");
+});
+
 describe("Keeper loop delivery failures", () => {
   it("does not mark a live Keeper stopped for an unrelated maintenance 404", async () => {
     const f = setup();

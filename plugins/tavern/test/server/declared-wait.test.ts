@@ -1,5 +1,6 @@
 // @vitest-environment node
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { patchMemberDetails } from "../../src/server/member-engagement";
 import { registerTools } from "../../src/server/tools";
 import { setup } from "./runtime-fixture";
 
@@ -35,6 +36,33 @@ it("keeps a declared wait scoped to its member and wakes the Keeper once at the 
   expect(f.k.store.events("lead").filter(e => e.type === "promise.due")).toEqual([
     expect.objectContaining({ text: expect.stringContaining(condition), data: expect.objectContaining({ memberThreadId: "waiting" }) }),
   ]);
+});
+
+it("does not flag a member with a pending wake-up, but resumes stale checks after it clears", async () => {
+  const f = await party();
+  const read = vi.spyOn(f.bb.sdk.threads, "experimental_listPluginMetadata");
+  read.mockResolvedValueOnce({ threads: [{ threadId: "waiting", metadata: { wakeups: { version: 1, pending: [{ id: "wake" }], untilAt: f.time() + 60 * 60_000 } } }] });
+  f.advance(40 * 60_000);
+  await f.runtime.sweep();
+  expect(read).toHaveBeenCalledWith(expect.objectContaining({ pluginId: "wakeup", threadIds: expect.arrayContaining(["waiting", "other"]) }));
+  expect(f.k.member("waiting")?.strikes).toBe(0);
+  expect(f.k.member("other")?.strikes).toBe(1);
+  read.mockResolvedValueOnce({ threads: [] });
+  await f.runtime.sweep();
+  expect(f.k.member("waiting")?.strikes).toBe(1);
+});
+
+it("does not flag a member with an active keep, but resumes stale checks after it expires", async () => {
+  const f = await party();
+  const keep = f.k.decide("lead", { text: "Keep the member", why: "More work is expected", reversible: true, source: "keeper" });
+  patchMemberDetails(f.k.store, "waiting", { rest: { since: f.time(), keep: { decisionId: keep.id, until: f.time() + 60 * 60_000, why: keep.why } } });
+  f.advance(40 * 60_000);
+  f.k.stale();
+  expect(f.k.member("waiting")?.strikes).toBe(0);
+  expect(f.k.member("other")?.strikes).toBe(1);
+  f.advance(20 * 60_000);
+  f.k.stale();
+  expect(f.k.member("waiting")?.strikes).toBe(1);
 });
 
 it("rejects a reported wait without a deadline", async () => {

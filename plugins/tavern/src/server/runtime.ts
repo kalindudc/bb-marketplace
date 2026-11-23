@@ -3179,6 +3179,21 @@ export class TavernRuntime {
     catch (error) { this.bb.log.warn(String(error)); }
     finally { active = false; }
   }
+  private async pendingMemberWakeups(threadIds: string[]) {
+    const pending = new Set<string>();
+    for (let start = 0; start < threadIds.length; start += 200) {
+      const { threads } = await loopCall(this.bb.sdk.threads.experimental_listPluginMetadata({
+        pluginId: "wakeup", threadIds: threadIds.slice(start, start + 200),
+      }), "pending member wake-ups");
+      for (const { threadId, metadata } of threads) {
+        const wake = metadata.wakeups;
+        if (wake && typeof wake === "object" && !Array.isArray(wake) && wake.version === 1 &&
+          Array.isArray(wake.pending) && wake.pending.length > 0 &&
+          typeof wake.untilAt === "number" && this.keeper.now() < wake.untilAt + 10 * 60_000) pending.add(threadId);
+      }
+    }
+    return pending;
+  }
   async sweep() {
     if (this.stopAll.reason()) return;
     try { this.settingsMaintenance(); }
@@ -3219,7 +3234,9 @@ export class TavernRuntime {
           { name: "briefs", run: automatic(() => this.retryInitialBriefs(id)) },
           { name: "failure blocker", run: automatic(() => this.ensureFailureBlocker(id)) },
           { name: "defaults", run: automatic(() => this.keeper.defaults(id, error => this.bb.log.warn(String(error)))) },
-          { name: "stale", run: automatic(() => this.keeper.stale(id, child => this.away.blocked(child))) },
+          { name: "stale", run: automatic(() => this.keeper.stale(id,
+            child => !!this.stopAll.reason() || this.config().tavern.paused || this.away.blocked(child),
+            threadIds => this.pendingMemberWakeups(threadIds))) },
         ]);
         try { await this.tick(id); }
         catch (error) {

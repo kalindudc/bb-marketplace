@@ -61,6 +61,7 @@ export const SDK_CONTRACTS: Record<string, z.ZodType> = {
   "threads.queuedMessages.update": thread.extend({ queuedMessageId: id, expectedUpdatedAt: z.number(), input: z.array(prompt).min(1) }),
   "threads.queuedMessages.send": thread.extend({ queuedMessageId: id, mode: z.enum(["auto", "steer", "queue-if-active"]) }),
   "threads.getPluginMetadata": thread.extend({ pluginId: pluginId.optional() }),
+  "threads.experimental_listPluginMetadata": z.object({ pluginId: pluginId.optional(), threadIds: z.array(id).min(1).max(200), signal }),
   "threads.updatePluginMetadata": thread.extend({ pluginId: pluginId.optional(), set: metadata.optional(), remove: z.array(z.string()).optional() }).superRefine((value, ctx) => {
     if (value.remove && new Set(value.remove).size !== value.remove.length) ctx.addIssue({ code: "custom", message: "remove contains duplicate keys" });
     if (value.remove?.some(key => value.set && Object.hasOwn(value.set, key))) ctx.addIssue({ code: "custom", message: "set and remove overlap" });

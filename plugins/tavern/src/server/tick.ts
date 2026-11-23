@@ -119,6 +119,7 @@ export class TickLoop {
         } : {}),
         tickDeliveryAskId: null,
         cursor: Math.max(rt.cursor, batch.cursor),
+        briefFactCursor: Math.max(rt.briefFactCursor ?? 0, batch.cursor),
         factContinuation: batch.continuation ?? null,
         tickAt: now,
         heldAt: null,
@@ -372,10 +373,16 @@ export class TickLoop {
     const pendingIds = [...pending.keys()].slice(-100);
     if (pendingIds.join(",") !== (rt.pendingMomentEvents ?? []).join(",")) this.k.store.patch(threadId, { pendingMomentEvents: pendingIds });
     if (!news && !rt.reanchor && !gateWarnings.length && !briefWarnings.length) {
-      this.k.store.patch(threadId, { cursor });
+      this.k.store.patch(threadId, { cursor, briefFactCursor: rt.briefFactCursor ?? rt.cursor });
       this.k.store.acknowledgeHeldNews(threadId, heldNewsProgress);
       return null;
     }
+    const briefs = [...new Map([
+      ...this.k.store.briefFacts(threadId, rt.briefFactCursor ?? rt.cursor, cursor),
+      ...resumed.filter(event => event.type === "member.briefed" && event.id <= (heldNewsProgress[event.boardQuestId!] ?? 0)),
+    ].map(event => [event.id, event])).values()].sort((a, b) => b.id - a.id);
+    const visibleBriefs = briefs.filter(event => !event.boardQuestId || this.k.quest(event.boardQuestId).phase !== "held");
+    if (visibleBriefs.length) facts.push(`Brief acceptances (data): ${JSON.stringify(visibleBriefs.slice(0, 8).map(event => event.text.slice(0, 200)))}`);
     if (deck) for (const id of pendingIds) {
       const next = pending.get(id)!.filter(card => !acknowledged.has(momentKey(card)));
       if (!next.length || Buffer.byteLength(renderKeeperCards(deck, [...cards, ...next])) > MOMENT_CARD_BYTES) continue;

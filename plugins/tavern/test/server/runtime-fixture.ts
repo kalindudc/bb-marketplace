@@ -25,6 +25,7 @@ export function setup(sdkOverrides: Record<string, unknown> = {}, pluginRoot = f
         defaultExecutionOptions: async () => null,
         queuedMessages: { list: async () => [] },
         updatePluginMetadata: async () => ({}),
+        experimental_listPluginMetadata: async () => ({ threads: [] }),
         update: async ({ threadId, title }: { threadId: string; title?: string }) => makeThreadResponse({ id: threadId, title: title ?? null }),
         events: { list: async () => [] },
         archive: async ({ threadId }: { threadId: string }) => ({ ok: true, archivedThreadIds: [threadId] }),

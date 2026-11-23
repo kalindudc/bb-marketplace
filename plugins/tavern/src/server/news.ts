@@ -18,7 +18,6 @@ export const NEWS = new Set([
   "handback.resolved",
   "member.unreported",
   "member.unbriefed",
-  "member.briefed",
   "member.brief-refused",
   "ask.answered",
   "ask.cluster-run-ready",

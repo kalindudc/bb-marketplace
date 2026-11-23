@@ -2552,12 +2552,16 @@ export class Keeper {
   priorities(threadId: string) {
     return renderRestatement(this, threadId, true);
   }
-  stale(keeperThreadId?: string, held: (threadId: string) => boolean = () => false) {
+  stale(keeperThreadId?: string, held: (threadId: string) => boolean = () => false,
+    pendingWakeups?: (threadIds: string[]) => Promise<ReadonlySet<string>>) {
+    const alerts = new Map<string, () => void>();
     const members = keeperThreadId
       ? this.store.query("members", "keeperThreadId", keeperThreadId)
       : this.store.all("members");
     for (const m of members.filter((m) => m.role === "member" && !m.rangerCheckpointReportId && isLiveMember(this.store, m, "work") && m.state !== "failed" && isLiveKeeper(this.store, this.member(m.keeperThreadId!)) && !held(m.threadId))) {
       const now = this.now();
+      const keep = memberDetails(this.store, m.threadId).rest?.keep;
+      if (keep && keep.until > now && this.store.get("decisions", keep.decisionId)?.undone === false) continue;
       const wait = this.memory.openMemberWait(m.threadId);
       if (wait?.dueAt != null && wait.dueAt > now) continue;
       const rt = this.store.runtime(m.threadId);
@@ -2565,30 +2569,38 @@ export class Keeper {
       const progress = this.journal.progress(m.threadId);
       const evidenceAt = Math.max(m.createdAt, m.lastReportAt ?? 0, rt.lastBriefAt ?? 0, progress.lastEvidenceAt ?? 0);
       if (m.state === "working" && now - (m.lastActiveAt ?? 0) < interval) {
-        if (now - evidenceAt >= interval && rt.quietHintAt !== evidenceAt) {
+        if (now - evidenceAt >= interval && rt.quietHintAt !== evidenceAt) alerts.set(m.threadId, () => {
           this.store.atomic(() => {
             this.store.patch(m.threadId, { quietHintAt: evidenceAt });
             this.store.event(now, m.keeperThreadId, m.boardQuestId, "member.quiet",
               `${this.name(m)} is working without recent progress evidence. Check the work before deciding whether to intervene.`, { memberThreadId: m.threadId });
           });
           this.changed(m.threadId, m.boardQuestId);
-        }
+        });
         continue;
       }
       const releaseAt = this.settings().keepers.staleStrikes;
       const lastStrikeAt = rt.lastStrikeAt ?? 0;
       const strikes = lastStrikeAt && evidenceAt > lastStrikeAt ? 1 : m.strikes + 1;
       if (strikes > Math.max(2, releaseAt) || now - Math.max(m.lastActiveAt ?? 0, evidenceAt, lastStrikeAt, progress.quietSince ?? 0) < interval) continue;
-      this.store.atomic(() => {
-        this.store.put("members", m.threadId, { ...m, strikes });
-        this.store.patch(m.threadId, { lastStrikeAt: now });
-        if (strikes <= 2 || strikes === releaseAt)
-          this.store.event(now, m.keeperThreadId, m.boardQuestId, "member.stale",
-            `${this.name(m)}: stale strike ${strikes}${strikes >= releaseAt ? `; releasable: call tavern_release for ${m.threadId}, with replace:true to reuse the slot` : ""}`,
-            { memberThreadId: m.threadId, strikes });
+      alerts.set(m.threadId, () => {
+        this.store.atomic(() => {
+          const current = this.member(m.threadId);
+          if (!current || current.lastActiveAt !== m.lastActiveAt || current.lastReportAt !== m.lastReportAt || current.engagement !== m.engagement || current.strikes !== m.strikes) return;
+          this.store.put("members", m.threadId, { ...current, strikes });
+          this.store.patch(m.threadId, { lastStrikeAt: now });
+          if (strikes <= 2 || strikes === releaseAt)
+            this.store.event(now, m.keeperThreadId, m.boardQuestId, "member.stale",
+              `${this.name(m)}: stale strike ${strikes}${strikes >= releaseAt ? `; releasable: call tavern_release for ${m.threadId}, with replace:true to reuse the slot` : ""}`,
+              { memberThreadId: m.threadId, strikes });
+        });
+        this.changed(m.threadId, m.boardQuestId);
       });
-      this.changed(m.threadId, m.boardQuestId);
     }
+    if (alerts.size && pendingWakeups) return pendingWakeups([...alerts.keys()]).then(pending => {
+      for (const [id, alert] of alerts) if (!pending.has(id) && !held(id)) alert();
+    });
+    for (const alert of alerts.values()) alert();
   }
   defaults(
     keeperThreadId?: string,

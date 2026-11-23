@@ -307,6 +307,7 @@ export interface Runtime {
   tickAt: number | null;
   cursor: number;
   heldNewsCursors?: Record<string, { cursor: number; through?: number }>;
+  briefFactCursor?: number;
   factContinuation?: { eventId: number; offset: number } | null;
   heldAt: number | null;
   holdExpiredAt?: number;
@@ -1056,6 +1057,13 @@ export class KeeperStore {
     return this.readEvents(
       `WHERE keeper_thread_id IN (${owners.map(() => "?").join(",")}) AND id>? ${visibleOnly ? `AND ${visibleEventSql}` : ""} ORDER BY id ASC LIMIT ?`,
       [...owners, after, limit],
+    );
+  }
+  briefFacts(keeperThreadId: string, after: number, through: number) {
+    const owners = this.keeperEventOwners(keeperThreadId);
+    return this.readEvents(
+      `WHERE keeper_thread_id IN (${owners.map(() => "?").join(",")}) AND type='member.briefed' AND id>? AND id<=? ORDER BY id DESC LIMIT 8`,
+      [...owners, after, through],
     );
   }
   recentScopeBlocks(keeperThreadId: string, limit: number, questId?: string) {
