@@ -112,6 +112,7 @@ export function ReportView({ report, names = {}, compact = false, member, onView
         ? <ol key={i} className="rv-list" data-content>{block.items.map((item, j) => <li key={j}><Prose text={item} /></li>)}</ol>
         : <p key={i} className="rv-p" data-content><Prose text={block.text} /></p>)}
     {prs}
+    {report.checkpoint && <div className="rv-sec"><h4 className="rv-h">What is left</h4><p className="rv-p" data-content><Prose text={readable(report.checkpoint.left, names)} /></p><p className="rv-p">Estimated time: {plural(report.checkpoint.moreMinutes, "minute")}</p></div>}
     {evidence.length > 0 && <div className="rv-sec"><h4 className="rv-h">Evidence</h4><EvidenceList evidence={evidence} fold /></div>}
     {report.artifacts.length > 0 && <div className="rv-sec"><h4 className="rv-h">Artifacts</h4><EvidenceList evidence={report.artifacts.map((ref) => ({ kind: /^https?:\/\//i.test(ref) ? "url" : "file", ref, detail: "", exitCode: null }))} /></div>}
     <MemberEstimate confidence={report.confidence} />
@@ -120,7 +121,7 @@ export function ReportView({ report, names = {}, compact = false, member, onView
   </div>;
 }
 
-const STATUS_WORD: Record<Report["status"], string> = { done: "done", "needs-decision": "needs a decision", blocked: "blocked" };
+const STATUS_WORD: Record<Report["status"], string> = { done: "done", "needs-decision": "needs a decision", blocked: "blocked", checkpoint: "checkpoint" };
 const when = (at: number, now: number) => new Date(at).toDateString() === new Date(now).toDateString() ? clockTime(at) : `${new Date(at).toLocaleDateString([], { day: "numeric", month: "short" })} ${clockTime(at)}`;
 
 /** Names for one member's reports: the party, the quest and its waypoints (summaryNames), the quest's Keeper as "the Keeper" when nothing names it better, and each report by who filed it. */

@@ -63,6 +63,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Changed
 
+- A Ranger’s check-in is a report, not a finish. The Keeper can accept the findings, continue scouting within the minutes budget, or release or replace the Ranger. The Ledger shows when the Ranger is waiting on its Keeper.
 - Rangers can run local programs and pipe input into them. Checked write paths, Git changes, sends and cluster writes still have guardrails.
 - Carried lights breathe at their own pace at night. The halo follows the source, and the pool on the ground widens and dims during a hop. The pixelated light fades before the strip’s edges. By day the shadow stays on the ground and softens as the character rises. Motion Off and reduced motion keep the light steady.
 - The Keeper’s widget stays on one row. Open asks, new items or quest progress in place from their chips, or use the chevron to open what needs your attention first. Keeper state is short; the shield opens the full guard details in the Ledger. The Ledger and Journal still open their own panels.

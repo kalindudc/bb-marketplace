@@ -16,9 +16,10 @@ export function hasEndedEngagement(member: Pick<Member, "engagement">): boolean 
   return member.engagement === "resting" || member.engagement === "released" || member.engagement === "stopped" || member.engagement === "archiving" || member.engagement === "archived";
 }
 
-export function memberActivityWord(member: Pick<Member, "engagement" | "disposition" | "state">, ended = false): string {
+export function memberActivityWord(member: Pick<Member, "engagement" | "disposition" | "state" | "rangerCheckpointReportId">, ended = false): string {
   if (member.engagement === "archived") return member.disposition === "released" || member.disposition === "stopped" ? `${member.disposition}; archived` : "archived";
   if (member.engagement === "resting" && ended) return "finished";
+  if (member.engagement === "active" && member.rangerCheckpointReportId) return "checkpoint, waiting for the Keeper";
   if (member.engagement === "active" || member.engagement === undefined) return member.state;
   if (member.engagement === "briefing" && member.state === "failed") return "failed";
   return member.engagement;

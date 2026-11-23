@@ -19,7 +19,7 @@ import type {
   PluginAgentConfigurationContext,
   PluginThreadEventPayloads,
 } from "@get-bb/plugin-sdk";
-import { actorSchema, classKind, type Actor, type Brief, type LeadLink, type Member } from "../shared/schema";
+import { actorSchema, classKind, type Actor, type Brief, type ClassDef, type LeadLink, type Member, type Report } from "../shared/schema";
 import { TICK_PREFIX } from "../shared/text";
 import { settled, verifiedWaypoint } from "../shared/waypoint";
 import { isCloseEffect, unsettledWaypointSchema, waiverLine, type PullRequestChoices } from "../shared/closing";
@@ -46,7 +46,7 @@ import {
 } from "./instructions";
 import { reserveStaffing, settleStaffing } from "./staffing";
 import { SpendBudget } from "./spend-budget";
-import type { HireIntent, PendingBrief, ReviewTarget } from "./keeper/store";
+import type { HireIntent, PendingBrief, RangerContinuation, ReviewTarget, Runtime } from "./keeper/store";
 import { resolveHireExecution } from "./execution";
 import { ServiceRecords } from "./service-record";
 import { classExecutionFacts, classLimits } from "./class-execution";
@@ -104,6 +104,7 @@ export const KEEPER_TOOLS = [
   "tavern_keep",
   "tavern_scope",
   "tavern_tell",
+  "tavern_judge",
   "tavern_unarchive",
   "tavern_reopen",
   "tavern_plan",
@@ -117,6 +118,14 @@ export const KEEPER_TOOLS = [
   "tavern_tune",
   "tavern_refresh_keeper",
 ];
+function rangerRun(state: Runtime, report: Report) {
+  const { rangerBox: box } = state;
+  const startedAt = box?.startedAt ?? state.initialBriefAt;
+  if (startedAt === undefined || report.createdAt < startedAt) return null;
+  const minutes = (report.createdAt - startedAt) / 60_000;
+  const timebox = state.brief?.timeboxMinutes;
+  return { minutes: (box?.priorElapsedMinutes ?? 0) + minutes, overrun: !!box?.priorOverrun || timebox != null && minutes > timebox };
+}
 const submissionSchema = z.object({
   classId: z.string().optional(),
   route: z.enum(["aside", "new-quest"]).optional(),
@@ -300,7 +309,7 @@ export class TavernRuntime {
     let capped = false;
     for (const event of events) {
       const report = reports.find(row => row.id === event.data.reportId);
-      if (!report || report.status === "blocked" || report.status === "needs-decision") return "none";
+      if (!report || report.status !== "done" || this.keeper.member(report.memberThreadId)?.rangerCheckpointReportId === report.id) return "none";
       const prior = reports.filter(row => row.boardQuestId === report.boardQuestId && row.deliveredAt !== null);
       if (!prior.length) return "none";
       const last = Math.max(...prior.map(row => row.deliveredAt!));
@@ -420,7 +429,7 @@ export class TavernRuntime {
     }
     return member;
   }
-  async sendRebrief(threadId: string, text: string, supersedeBriefId?: string): Promise<{ briefPending: boolean }> {
+  async sendRebrief(threadId: string, text: string, supersedeBriefId?: string, continuation?: { keeperId: string; role: ClassDef; input: RangerContinuation }): Promise<{ briefPending: boolean }> {
     this.stopAll.assertRunning();
     let member = this.requireBriefableMember(threadId);
     if (member.boardQuestId) {
@@ -433,6 +442,23 @@ export class TavernRuntime {
     if (!text.trim()) throw new Error("A brief cannot be empty");
     const current = () => memberDetails(this.keeper.store, threadId).delivery;
     let delivery = current();
+    if (continuation) {
+      const { keeperId, role, input } = continuation;
+      this.rangerReportForKeeper(keeperId, input.reportId);
+      if (this.initialBriefs.has(threadId) || this.replacingBriefs.has(threadId))
+        throw new Error("The Ranger’s earlier brief delivery is still settling. Try again after it finishes.");
+      const state = this.keeper.store.runtime(threadId);
+      const committed = (state.rangerBox?.priorBudgetMinutes ?? 0) + (state.brief?.timeboxMinutes ?? 0);
+      const config = this.config(member.boardQuestId);
+      if (input.minutes > config.knobs.rangerTimeboxMaxMinutes)
+        throw new Error(`The Ranger check-in interval is at most ${config.knobs.rangerTimeboxMaxMinutes} minutes. Choose a shorter interval or ask the user to lift the setting.`);
+      const budget = classLimits(role, config).rangerMinutes;
+      if (committed + input.minutes > budget)
+        throw new Error(`This Ranger has used ${committed} of its ${budget} class-budget minutes in check-in boxes. Another ${input.minutes} would exceed that budget. Use the remaining minutes, accept the report, release the Ranger, or ask the user to lift the budget.`);
+      return this.sendInitialBrief(threadId, this.queueRebrief(member, text, undefined, input).text);
+    }
+    if (member.rangerCheckpointReportId)
+      throw new Error(`The Ranger is waiting on ${member.rangerCheckpointReportId}. Use tavern_judge to continue or accept, or tavern_release.`);
     if (this.replacingBriefs.has(threadId)) throw new Error("The pending brief is already being replaced.");
     if (supersedeBriefId) {
       if (delivery?.id !== supersedeBriefId) throw new Error("Name the current pending brief to replace it; read tavern_status first.");
@@ -474,11 +500,11 @@ export class TavernRuntime {
     return this.sendInitialBrief(threadId, (delivery ?? this.queueRebrief(member, text)).text);
   }
 
-  private queueRebrief(member: Member, text: string, superseded?: { old: PendingBrief; receipt: string; removedQueueIds: string[] }): PendingBrief {
+  private queueRebrief(member: Member, text: string, superseded?: { old: PendingBrief; receipt: string; removedQueueIds: string[] }, rangerContinuation?: RangerContinuation): PendingBrief {
     const k = this.keeper, { threadId, keeperThreadId, boardQuestId } = member, at = k.now();
     const requestSources = captureRequestSources(k, keeperThreadId!, boardQuestId);
     const actor = { kind: "agent" as const, threadId: keeperThreadId! };
-    const delivery: PendingBrief = { id: `brief_${randomUUID()}`, text: `${text}\n\n${requestSourcePacket(k, requestSources)}`, assignmentText: text, requestSources, createdAt: at, state: "queued", attempts: 0, nextAttemptAt: at, attemptedAt: null, hostAfterSeq: null, error: null };
+    const delivery: PendingBrief = { id: `brief_${randomUUID()}`, text: `${text}\n\n${requestSourcePacket(k, requestSources)}`, assignmentText: text, requestSources, ...(rangerContinuation ? { rangerContinuation } : {}), createdAt: at, state: "queued", attempts: 0, nextAttemptAt: at, attemptedAt: null, hostAfterSeq: null, error: null };
     k.store.atomic(() => {
       if (member.engagement === "resting")
         transitionMember(k.store, member, "briefing", "rebrief", actor, { kind: "brief", id: delivery.id }, at, { details: { delivery } });
@@ -510,6 +536,10 @@ export class TavernRuntime {
       const pending = memberDetails(this.keeper.store, threadId).delivery;
       if (id === null ? state.initialBriefAt !== undefined : pending?.id !== id) return;
       const before = this.requireBriefableMember(threadId);
+      const continuation = pending?.rangerContinuation;
+      const checkpoint = continuation && this.keeper.store.get("reports", continuation.reportId);
+      if (continuation && (!checkpoint || !state.brief || before.rangerCheckpointReportId !== continuation.reportId))
+        throw new Error("This continuation no longer matches the Ranger's recorded checkpoint and brief.");
       if (before.engagement === "briefing") {
         const hire = this.keeper.store.hireForMember(threadId);
         transitionMember(this.keeper.store, before, "active", "brief-accepted", { kind: "tavern" }, { kind: "brief-acceptance", id: id ?? hire?.id ?? threadId }, this.keeper.now(),
@@ -524,8 +554,24 @@ export class TavernRuntime {
         ...(id !== null && pending ? { lastAcceptedBriefId: id, assignmentText: pending.assignmentText ?? pending.text, requestSources: pending.requestSources ?? state.requestSources ?? null } : {}),
         ...(id !== null && pending && state.brief && state.initialBriefAt !== undefined ? { brief: { ...state.brief, context: [...state.brief.context, `Follow-up v${(state.briefVersion ?? 0) + 1}: ${pending.assignmentText ?? pending.text}`] } } : {}),
       });
-      this.briefed(threadId);
       const member = this.keeper.member(threadId)!;
+      if (continuation) {
+        const spent = rangerRun(state, checkpoint!);
+        const brief = this.keeper.store.runtime(threadId).brief!;
+        const startedAt = this.keeper.now();
+        this.keeper.store.patch(threadId, {
+          brief: { ...brief, timeboxMinutes: continuation.minutes, questions: continuation.questions },
+          rangerBox: { startedAt, priorBudgetMinutes: (state.rangerBox?.priorBudgetMinutes ?? 0) + (state.brief?.timeboxMinutes ?? 0), priorElapsedMinutes: spent?.minutes ?? 0, priorOverrun: spent?.overrun ?? false },
+        });
+        const { rangerCheckpointReportId: reportId, ...resumed } = member;
+        this.keeper.store.put("members", threadId, resumed);
+        this.keeper.store.event(startedAt, member.keeperThreadId, member.boardQuestId, "ranger.continued", pending!.assignmentText!,
+          { memberThreadId: threadId, reportId, briefId: id, minutes: continuation.minutes, startedAt, questions: continuation.questions },
+          { kind: "agent", threadId: member.keeperThreadId! });
+      } else if (pending && state.rangerAcceptedReportId) {
+        this.keeper.store.patch(threadId, { initialBriefAt: this.keeper.now(), rangerBox: undefined, rangerAcceptedReportId: undefined });
+      }
+      this.briefed(threadId);
       if (id !== null && pending) {
         this.keeper.activity(threadId, "working");
         this.keeper.store.put("members", threadId, {
@@ -2671,8 +2717,11 @@ export class TavernRuntime {
     const member = this.keeper.member(threadId);
     if (!member || member.role !== "member") throw new Error("Only party members can be archived here");
     this.queueMemberArchive(member, "Archive done errand", { kind: "archive-authority", id: reportId, evidence: { cause: "errand-report" } }, { kind: "tavern" }, true);
+    return this.finishErrandArchive(member);
+  }
+  private async finishErrandArchive(member: Member): Promise<string | null> {
     const pending = await this.archiveMembers([member]);
-    return pending.length ? memberDetails(this.keeper.store, threadId).operation?.error ?? "Member cleanup is held; Tavern will retry after the hold ends." : null;
+    return pending.length ? memberDetails(this.keeper.store, member.threadId).operation?.error ?? "Member cleanup is held; Tavern will retry after the hold ends." : null;
   }
   private async confirmMemberArchive(member: Member): Promise<boolean> {
     const k = this.keeper, id = member.threadId, operation = memberDetails(k.store, id).operation!;
@@ -2848,7 +2897,56 @@ export class TavernRuntime {
     });
     this.keeper.changed(thread.id, member.boardQuestId);
   }
-  async tell(threadId: string, memberThreadId: string, text: string, supersedeBriefId?: string) {
+  private rangerReportForKeeper(keeperId: string, reportId: string) {
+    const k = this.keeper;
+    k.require(keeperId, "keeper");
+    const report = k.store.get("reports", reportId);
+    const member = report && k.member(report.memberThreadId);
+    if (!member || member.classId !== "ranger" || member.keeperThreadId !== keeperId)
+      throw new Error("Name a Ranger report from your own party.");
+    if (!isLiveMember(k.store, member, "work") || member.rangerCheckpointReportId !== reportId)
+      throw new Error("This Ranger is no longer waiting for a decision on that report. Read tavern_status for current work.");
+    const pending = memberDetails(k.store, member.threadId).delivery;
+    if (pending)
+      throw new Error(`Ranger brief ${pending.id} is pending. Read tavern_status, then wait for delivery or use tavern_release.`);
+    return { member, report };
+  }
+  async acceptRangerReport(keeperId: string, reportId: string) {
+    this.stopAll.assertRunning();
+    const k = this.keeper, { member, report } = this.rangerReportForKeeper(keeperId, reportId);
+    const completed = k.store.atomic(() => {
+      const actor = { kind: "agent" as const, threadId: keeperId };
+      const state = k.store.runtime(member.threadId), run = rangerRun(state, report);
+      const completed = transitionMember(k.store, member, "resting", "ranger-accepted", actor, { kind: "report", id: reportId }, k.now(),
+        { patch: { state: "idle" }, data: { reportId, ...run } });
+      k.memory.clearMemberWait(member.threadId);
+      k.store.patch(member.threadId, { rangerAcceptedReportId: reportId });
+      if (run) this.record("ranger.completed", { memberThreadId: member.threadId, ...run }, keeperId, member.boardQuestId, `ranger-completed:${reportId}`, report.createdAt);
+      if (member.errand) this.queueMemberArchive(completed, "Archive accepted Ranger errand", { kind: "archive-authority", id: reportId, evidence: { cause: "ranger-acceptance" } }, undefined, true);
+      return completed;
+    });
+    k.changed(member.threadId, member.boardQuestId);
+    const archiveBlocker = member.errand ? await this.finishErrandArchive(completed) : null;
+    return { reportId, memberName: k.name(member), accepted: true, archiveBlocker };
+  }
+  async continueRangerReport(keeperId: string, reportId: string, minutes: number, reason: string, questionNumbers?: number[]) {
+    const { member } = this.rangerReportForKeeper(keeperId, reportId);
+    const k = this.keeper, keeper = k.require(keeperId, "keeper");
+    const state = k.store.runtime(member.threadId);
+    if (!state.brief?.timeboxMinutes || !state.brief.questions.length)
+      throw new Error("This Ranger has no recorded check-in interval or questions. Accept or release it; hire a fresh Ranger if more scouting is needed.");
+    const all = state.brief.questions;
+    if (questionNumbers && (new Set(questionNumbers).size !== questionNumbers.length || questionNumbers.some(n => n > all.length)))
+      throw new Error(`Choose distinct question numbers from 1 to ${all.length} in the current brief.`);
+    const questions = questionNumbers ? all.filter((_, index) => questionNumbers.includes(index + 1)) : all;
+    const projectId = state.projectId ?? k.store.runtime(keeperId).projectId;
+    const snapshot = projectId ? await this.prepareRegistry(projectId) : this.snapshot();
+    const role = snapshot.classes.find(c => c.id === keeper.classId);
+    if (!role) throw new Error("The Keeper class budget is unavailable. Restore the class or release the Ranger.");
+    const text = `Continue scouting for ${minutes} minutes, then file a checkpoint and wait. Reason: ${reason}\nQuestions for this box:\n${questions.map((question, index) => `${index + 1}. ${question.replace(/^\s*\d+[.)]\s+/, "")}`).join("\n")}`;
+    return this.tell(keeperId, member.threadId, text, undefined, { keeperId, role, input: { reportId, minutes, questions } });
+  }
+  async tell(threadId: string, memberThreadId: string, text: string, supersedeBriefId?: string, continuation?: { keeperId: string; role: ClassDef; input: RangerContinuation }) {
     memberThreadId = this.keeper.resolvePartyMember(threadId, memberThreadId).threadId;
     this.keeper.require(threadId, "keeper");
     const member = this.keeper.member(memberThreadId);
@@ -2856,6 +2954,8 @@ export class TavernRuntime {
       throw new Error("Only tell members of your own party");
     if (member.boardQuestId) this.keeper.assertQuestNotHeld(member.boardQuestId);
     this.requireBriefableMember(memberThreadId);
+    if (member.rangerCheckpointReportId && !continuation)
+      throw new Error(`The Ranger is waiting on ${member.rangerCheckpointReportId}. Use tavern_judge to continue or accept, or tavern_release.`);
     this.keeper.assertCheckerHandoff(member.classId, member.boardQuestId);
     if (member.boardQuestId) {
       this.keeper.guard(threadId, member.boardQuestId);
@@ -2875,7 +2975,7 @@ export class TavernRuntime {
     }
     await this.away.beforeTell(memberThreadId);
     this.keeper.assertCheckerHandoff(member.classId, member.boardQuestId);
-    const delivery = await this.sendRebrief(memberThreadId, text, supersedeBriefId);
+    const delivery = await this.sendRebrief(memberThreadId, text, supersedeBriefId, continuation);
     const pending = memberDetails(this.keeper.store, memberThreadId).delivery;
     const status = !delivery.briefPending ? "delivered" : !pending ? "cancelled"
       : openBriefBlocker(this.keeper.store, pending) ? "blocked"

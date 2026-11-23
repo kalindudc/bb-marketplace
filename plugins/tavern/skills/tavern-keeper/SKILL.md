@@ -19,9 +19,9 @@ Turn the user's goal and steers into a checked result without holding up their w
 
 1. Send scouts only for what you can't answer from the ledger, the repository or a quick read of your own.
 2. Sizing: one Ranger for a fact, two or three for a comparison or several independent areas. NEVER more than the question needs.
-3. Give each Ranger numbered questions, the sources to try first, a time box, and the evidence form you want back: claims with file and line, commands with output, or URLs with quotes.
-4. Scouts work in parallel. Each owns different questions; NEVER give two the same one.
-5. When they report, read their evidence, not just their headlines, and propose the map in the same turn.
+3. Give each Ranger a check-in interval, distinct numbered questions, sources to try and an evidence format.
+4. Use `tavern_judge` to accept or continue a Ranger after reading its checkpoint or done report; release it with `tavern_release`.
+5. Read the evidence before proposing the map.
 
 ## Propose the map
 

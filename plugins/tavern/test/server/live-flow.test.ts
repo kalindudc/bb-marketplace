@@ -517,7 +517,7 @@ describe("live Keeper flow regressions", () => {
     const f = setup();
     const q = await seedQuest(f.k,"lead", "A", "A");
     bind(f, "scout", "ranger", q.id);
-    f.k.report("scout", {
+    const scoutReport = f.k.report("scout", {
       status: "done",
       outcome: "Answers",
       evidence: [],
@@ -525,6 +525,7 @@ describe("live Keeper flow regressions", () => {
       confidence: null,
       voice: null,
     });
+    await f.runtime.acceptRangerReport("lead", scoutReport.id);
     f.runtime.updateThread(makeThreadResponse({ id: "scout", status: "idle" }));
     expect(f.k.member("scout")).toMatchObject({ state: "idle", engagement: "resting" });
     patchThreadFixture(f.k.store, "scout", {
@@ -538,7 +539,7 @@ describe("live Keeper flow regressions", () => {
     });
     expect(f.k.member("scout")?.engagement).toBe("released");
     bind(f, "other", "ranger", q.id, "fern");
-    f.k.report("other", {
+    const otherReport = f.k.report("other", {
       status: "done",
       outcome: "Answers",
       evidence: [],
@@ -546,6 +547,7 @@ describe("live Keeper flow regressions", () => {
       confidence: null,
       voice: null,
     });
+    await f.runtime.acceptRangerReport("lead", otherReport.id);
     await f.runtime.threadLifecycle("thread.unarchived", {
       thread: makeThreadResponse({
         id: "other",

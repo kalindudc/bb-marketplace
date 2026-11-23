@@ -83,7 +83,7 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `knobs.after_message_hold_seconds` | Holds ticks for a time after your message. | `60` | User; Plain; Tuned |
 | `knobs.stale_minutes` | Sets how long a quiet member has before it is stale. A Keeper can set a bounded quest override. | `20` | User; Granted; Tuned |
 | `knobs.report_batch_seconds` | Sets how long to gather reports before delivery. A Keeper can set a bounded quest override. | `60` | User; Granted; Tuned |
-| `knobs.ranger_timebox_max_minutes` | Caps a Ranger’s time box. | `12` | User; Plain |
+| `knobs.ranger_timebox_max_minutes` | Ranger check-in interval: how long a Ranger scouts before it reports to its Keeper, who continues it or accepts the work. | `12` | User; Plain |
 | `knobs.ledger_refresh_minutes` | Sets the time between full ledger refreshes. | `10` | User; Granted |
 
 ## Structured values

@@ -28,7 +28,7 @@ export const settingsHref = (pluginId: string) => `/settings/plugins/${encodeURI
 
 export { formatValue };
 /** Knob labels the tuner does not own: user budgets kept under knobs for the file format. */
-const USER_KNOB_LABELS: Record<string, string> = { rangerTimeboxMaxMinutes: "Ranger time-box ceiling" };
+const USER_KNOB_LABELS: Record<string, string> = { rangerTimeboxMaxMinutes: "Ranger check-in interval" };
 export const isUserKnob = (key: string) => key.replace(/^knobs\./, "") in USER_KNOB_LABELS;
 export const knobLabel = (path: string) => { const key = path.replace(/^knobs\./, "") as TunableKey; return TUNABLES[key]?.label ?? USER_KNOB_LABELS[key] ?? path; };
 export const knobValue = (path: string, value: unknown) => { const key = path.replace(/^knobs\./, "") as TunableKey; return typeof value === "number" && TUNABLES[key] ? formatValue(value, TUNABLES[key].unit) : value === null || value === undefined ? "default" : String(value); };

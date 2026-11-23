@@ -46,7 +46,9 @@ export function fixtureActivity(k: Keeper, id: string, state: MemberFixture["sta
           waypointId: current.waypointId, status: "done", outcome: "Fixture work complete", evidence: [], artifacts: [],
           confidence: null, voice: null, createdAt: at, deliveredAt: null,
         });
-        const resting = transitionMember(k.store, current, "resting", "done-report", { kind: "agent", threadId: id },
+        const ranger = current.classId === "ranger";
+        if (ranger) k.store.put("members", id, { ...current, rangerCheckpointReportId: reportId });
+        const resting = transitionMember(k.store, current, "resting", ranger ? "ranger-accepted" : "done-report", { kind: "agent", threadId: ranger ? current.keeperThreadId! : id },
           { kind: "report", id: reportId }, at, { data: { reportId, status: "done" }, patch: { state: "idle" } });
         k.store.put("members", id, { ...resting, lastActiveAt: at });
       });

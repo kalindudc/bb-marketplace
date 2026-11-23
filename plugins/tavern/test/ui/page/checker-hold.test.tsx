@@ -13,7 +13,7 @@ import * as scenes from "./scenes";
 
 type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
 const slots: RenderedSlot[] = [];
-afterEach(() => { for (const slot of slots.splice(0)) slot.lifecycle.unmount(); });
+afterEach(() => { for (const slot of slots.splice(0)) slot.lifecycle.unmount(); vi.useRealTimers(); });
 beforeEach(() => { window.localStorage.clear(); vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} }); });
 const LOADED = { timeout: 3000 };
 
@@ -42,13 +42,17 @@ const releaseButton = (slot: RenderedSlot) => row(slot)?.querySelector<HTMLButto
 
 describe("a checker-handoff hold on the quest page", () => {
   it("shows an active hold as one calm row in By whose move: what it holds, why, when and from your words, with one release control", async () => {
-    const slot = await questPage(withHold(hold()));
+    const noon = new Date(2026, 9, 14, 12).getTime();
+    const sameDayHold = noon - 12 * 60_000;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(noon);
+    const slot = await questPage(withHold(hold({ createdAt: sameDayHold })));
     const el = await waitFor(() => { expect(row(slot)).not.toBeNull(); return row(slot)!; }, LOADED);
     expect(el.closest("section")!.querySelector("h2, h3")!.textContent).toContain("By whose move");
     expect(el.querySelector(".tv-hold-h")!.textContent).toBe("Checker handoff on hold");
     expect(el.textContent).toContain("No Warden is hired or re-tasked on this quest until you release it.");
     expect(el.textContent).toContain("You want to read the private drafts before any Warden checks them.");
-    expect(el.querySelector(".tv-hold-src")!.textContent).toContain(`Held at ${clockTime(heldAt)}, from your message:`);
+    expect(el.querySelector(".tv-hold-src")!.textContent).toContain(`Held at ${clockTime(sameDayHold)}, from your message:`);
     expect(el.querySelector(".tv-hold-src")!.textContent).toContain("“Don't hand the vault cutover to a checker until I've looked at the drafts myself.”");
     expect(releaseButton(slot)!.textContent).toBe("Release checker handoff");
     // Calm: no glow and no motion class on the row.

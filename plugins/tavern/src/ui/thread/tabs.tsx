@@ -8,6 +8,7 @@ import { QuestAuthority, activeHold, heldQuests, CheckIndependence, GuardPosture
 import { revealAsk } from "./state";
 import { BriefSteerLine } from "../kit/brief-steer";
 import { NewSummaries } from "./new-summaries";
+import { REPORTS_TAB } from "./reports-tab";
 import { keeperGuards, keeperState, useKeeperStop } from "./keeper-state";
 import { KeeperSuccessionRecord } from "../kit/succession";
 import { LeadChainRows } from "./lead-chain-rows";
@@ -172,6 +173,14 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
           {!!data.keeperBlocks?.length && <section className="lg-card" aria-label="The Keeper is handling"><h3>The Keeper is handling</h3>
             <ul className="lg-rows">{data.keeperBlocks.map(block => <li key={block.id}><b>{block.question}</b> <span>{block.why}</span>
               <AlertAction action={{ kind: "tell", keeperThreadId: threadId, text: `Review the blocker “${block.question}” and tell me the next safe step.` }} /></li>)}</ul>
+          </section>}
+          {!!data.rangerCheckpoints?.length && <section className="lg-card" aria-label="Ranger check-ins">
+            <h3>Ranger check-ins</h3>
+            <ul className="lg-rows lg-briefs">{data.rangerCheckpoints.map(({ memberThreadId, boardQuestId, name, reportId, state }) => <li key={memberThreadId}>
+              <p><b>{name}</b> · <span>{state}</span></p>
+              <button type="button" className="lnk-btn act" aria-label={`View report from ${name}`}
+                onClick={() => panel.openTab({ tab: REPORTS_TAB, params: { memberThreadId, questId: boardQuestId, reportId } })}>View report <OpensMark /></button>
+            </li>)}</ul>
           </section>}
           {!!data.memberBriefs?.length && <section className="lg-card" aria-label="Pending member briefs">
             <h3>Pending member briefs</h3>

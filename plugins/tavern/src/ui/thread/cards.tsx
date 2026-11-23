@@ -20,7 +20,7 @@ import { revealAsk } from "./state";
 import "./skeletons.css";
 
 type Identity = { cls: ClassDef; character: CharacterDef };
-const REPORT_WORD = { done: "done", "needs-decision": "needs your decision", blocked: "blocked" } as const;
+const REPORT_WORD = { done: "done", "needs-decision": "needs your decision", blocked: "blocked", checkpoint: "checkpoint" } as const;
 
 import { MemberEstimate } from "../kit/member-estimate";
 

@@ -53,6 +53,17 @@ describe("Report card and report tab", () => {
     slot.lifecycle.unmount();
   });
 
+  it("shows a Ranger checkpoint’s remaining work and estimate", async () => {
+    const app = await load();
+    const tab = app.tabs.find(t => t.id === REPORTS_TAB.id)!;
+    const report = { ...fixtureReport, boardQuestId: null, status: "checkpoint" as const, checkpoint: { left: "Confirm who owns the source", moreMinutes: 4 } };
+    const slot = renderSlot(tab as never, { threadId: "keeper-1", environment: null, params: { memberThreadId: "member-1", questId: null } }, { rpc: { reports: () => ({ reports: [report] }), registry: () => fixtureRegistry, crests: () => ({ crests: [] }) } });
+    await slot.findByRole("heading", { name: "What is left" });
+    expect(slot.getByText("Confirm who owns the source")).toBeTruthy();
+    expect(slot.getByText("Estimated time: 4 minutes")).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
+
   it("says so when the link lacks its member, rather than showing nothing", async () => {
     const app = await load();
     const tab = app.tabs.find(t => t.id === REPORTS_TAB.id)!;

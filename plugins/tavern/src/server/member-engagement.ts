@@ -37,6 +37,7 @@ export const MEMBER_TRANSITIONS = [
   ...rows(["resting"], ["briefing"], "rebrief", ["agent"], "brief", "member.rebrief-requested"),
   ...rows(["briefing"], ["resting"], "rebrief-cancelled", ["tavern"], "brief-cancelled", "member.brief-cancelled"),
   ...rows(["active"], ["resting", "briefing"], "done-report", ["agent"], "report", "report.filed"),
+  ...rows(["active"], ["resting"], "ranger-accepted", ["agent"], "report", "ranger.accepted"),
   ...rows(available, ["releasing"], "release-requested", ["agent"], "decision", "member.release-requested"),
   ...rows(["archived"], ["releasing"], "lost-release-requested", ["agent"], "decision", "member.release-requested"),
   ...rows(available, ["releasing"], "release-answered", ["user"], "ask-answer", "member.release-requested"),
@@ -129,9 +130,11 @@ function hasArchiveAuthority(store: KeeperStore, member: Member, receipt: Engage
   const cause = receipt.evidence?.cause;
   if (cause === "errand-report") {
     const report = store.get("reports", receipt.id);
-    return member.errand && report?.status === "done" && report.memberThreadId === member.threadId &&
+    return member.classId !== "ranger" && member.errand && report?.status === "done" && report.memberThreadId === member.threadId &&
       report.boardQuestId === member.boardQuestId && report.keeperThreadId === member.keeperThreadId;
   }
+  if (cause === "ranger-acceptance")
+    return member.classId === "ranger" && member.errand && store.runtime(member.threadId).rangerAcceptedReportId === receipt.id;
   if (cause === "cancelled-hire") {
     const hire = store.get("hires", receipt.id);
     return hire?.memberThreadId === member.threadId && hire.cancelledAt != null;
@@ -181,7 +184,11 @@ export function transitionMember(store: KeeperStore, member: Member, to: Engagem
     }
     if (cause === "done-report") {
       const report = store.get("reports", receipt.id);
-      if (actor.kind !== "agent" || actor.threadId !== bound.threadId || report?.memberThreadId !== bound.threadId || report.status !== "done" || report.deliveredAt !== null) refuse("report does not authorize this member to rest");
+      if (bound.classId === "ranger" || actor.kind !== "agent" || actor.threadId !== bound.threadId || report?.memberThreadId !== bound.threadId || report.status !== "done" || report.deliveredAt !== null) refuse("report does not authorize this member to rest");
+    }
+    if (cause === "ranger-accepted") {
+      if (bound.classId !== "ranger" || actor.kind !== "agent" || actor.threadId !== bound.keeperThreadId || bound.rangerCheckpointReportId !== receipt.id || memberDetails(store, bound.threadId).delivery)
+        refuse("the owning Keeper must accept the current checkpoint without a pending brief");
     }
     const previous = memberDetails(store, bound.threadId);
     const details = { ...previous, ...options.details };
@@ -266,6 +273,7 @@ export function transitionMember(store: KeeperStore, member: Member, to: Engagem
     if (["archived", "released", "stopped"].includes(to)) details.operation = null;
     if (cause === "unarchived") { details.archive = null; details.host = null; }
     const updated: Member = { ...bound, ...options.patch, engagement: to };
+    if (cause === "ranger-accepted" || to !== "active" && to !== "briefing") delete updated.rangerCheckpointReportId;
     if (to === "archiving" || to === "archived") updated.disposition = details.archive!.disposition;
     else if (to === "released" || to === "stopped") updated.disposition = to;
     else delete updated.disposition;

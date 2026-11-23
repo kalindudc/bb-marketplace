@@ -1,6 +1,6 @@
 import { memberIdentityFacts, memberIdentityLabel } from "../shared/identity";
 import { memberHost } from "./member-engagement";
-import { memberBriefRows } from "./status";
+import { memberBriefRows, rangerCheckpointRows } from "./status";
 import { wasReleased } from "../shared/member-engagement";
 import { askHistory } from "./ask-history";
 import { askMemberTarget, scopeAskMember } from "./ask-effects";
@@ -323,6 +323,7 @@ export function rpcHandlers(
         violations: runtime.scopes?.violations(partyIds(threadId)) ?? [],
         keeperThreadId: threadId,
         memberBriefs,
+        rangerCheckpoints: rangerCheckpointRows(k, threadId),
         keeperBlocks,
         succession: runtime.succession.view(threadId),
         undoLanes: readUndoLanes(k.store, threadId),

@@ -297,6 +297,7 @@ export type MemberBriefRow = z.infer<typeof memberBriefRowSchema>;
 export const ledgerSchema = z.object({
   keeperBlocks: z.array(askSchema.pick({ id: true, question: true, why: true })).optional(),
   memberBriefs: z.array(memberBriefRowSchema).optional(),
+  rangerCheckpoints: z.array(z.object({ memberThreadId: threadId, boardQuestId: z.string().nullable(), name: z.string(), reportId: z.string(), state: z.string() })).optional(),
   succession: successionViewSchema.nullable().optional(),
   asksNextCursor: z.string().nullable().optional(),
   attention: attentionSchema.optional(),

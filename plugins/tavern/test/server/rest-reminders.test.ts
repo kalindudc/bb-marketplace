@@ -37,7 +37,8 @@ it("reminds once per member per rest at the configured threshold, without stoppi
   expect(f.bb.sdk.threads.stop).not.toHaveBeenCalled();
   expect(runtimeFixture(f.k.store, f.m.threadId).released).toBeUndefined();
   await f.runtime.tell("lead", f.m.threadId, "Check the follow-up");
-  f.k.report(f.m.threadId, { status: "done", outcome: "Follow-up checked", evidence: [], artifacts: [], confidence: null, voice: null });
+  const report = f.k.report(f.m.threadId, { status: "done", outcome: "Follow-up checked", evidence: [], artifacts: [], confidence: null, voice: null });
+  await f.runtime.acceptRangerReport("lead", report.id);
   f.advance(30 * 60_000);
   f.runtime.remindResting("lead");
   expect(reminders(f)).toHaveLength(2);

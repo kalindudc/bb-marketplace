@@ -113,7 +113,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_tune",
     "Adjusted quest pacing",
-    "Override staleMinutes and reportBatchSeconds for an active quest until it ends. Requires tuning mode apply and respects user pins. Change thread-wide pacing and memory in Settings, not here. The Ranger time-box ceiling is a user-only budget.",
+    "Override staleMinutes and reportBatchSeconds for an active quest until it ends. Requires tuning mode apply and respects user pins. Change thread-wide pacing and memory in Settings, not here. The Ranger check-in interval is a user-only budget.",
     z.object({ boardQuestId: id, values: sparseTunablesSchema, why: z.string().trim().min(1).max(2000) }).strict(),
     (input, threadId) => {
       k.guard(threadId, input.boardQuestId);
@@ -220,7 +220,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_hire",
     "Hired a party member",
-    "Hire with a bounded brief. title names the task, not the class or character; Tavern names the thread. Scope narrows class policy or requests named grants. Uncovered widening opens a consequential, never-timed scope ask; the brief stays queued and work cannot start until approval. The review budget is hard: only the user can allow one more review on the quest page. A reversible tavern_decide with exceeds: party or rangers permits one hire beyond that soft class limit, never keepers.partyMax. Scouts and errands may precede greenlight; staffing needs recorded greenlight, by default the user's explicit approval. A waypoint Warden needs a known maker journal entry; its brief includes the maker thread, entry ids, trusted maker worktree and explicit plan check commands. The checker preset allows standard test/check/lint/typecheck runners there without widening or a user-run blocker. Do not request commands as tool names. Use shell fences or inline command quotes for custom checks, not prose that invents permissions. Read its review posture: any class-model fallback is a same-family check (not independent), never an independent check. Scoped hires prefer Pi when it offers the model. Otherwise refuse by default; requestDetectionOnly:true asks without hiring. After the user approves, repeat with detectionOnlyAskId. Detection only is not prevention. Unknown class models refuse: change classes.<classId>.model in Tavern settings. Never silently choose a provider default. Tell the user any execution substitution in this turn. Every brief names outcome, mode, out-of-scope, re-runnable done-when and context paths; Ranger briefs also need numbered questions and a time box within the live Ranger-minute limit. Rangers return evidence, not the deliverable. Retain the returned review limitation verbatim. A missing maker root is a binding fault, not permission to weaken scope. Scoped local non-Pi hires are \"detection only (not prevented)\"; watchers and environment speed bumps are not pre-exec prevention. Never claim hooks or shims are installed. Remote posture is detection only. Obey the approved party and the replacement limit per slot per plan version; resting, released and stopped members free slots. Retry or release members who failed or have a pending brief before replacing them. Rangers and Wanderers may scout a linked quest within live budgets without a re-plan. Read Free hands in the ledger or tavern_status first; reuse is advisory. Each Warden slot checks one maker only, and its character and model apply at hire. Call tavern_placements with repo, classId and optional boardQuestId before picking. repo defaults to your own project; a Warden defaults to its maker's repo and cannot name another. placement is {ruleId} from those choices or {kind:\"current\"} for your own repo only. Consent, inputs, models and forge come from the rule; never supply or merge target inputs. A cross-repo hire carries only that repo's pushed default-branch tip, never the user's unpushed commits or uncommitted files. No pick: the repo's matching rule applies, otherwise your repo stays here. Leads take no automatic rule. Failed models refuse before allocation; set that class's rule model in Settings, Where work runs. There is no fallback model. The first line names the repo, rule or pick and target.",
+    "Hire with a bounded brief. title names the task; Tavern names the thread. Include outcome, mode, out-of-scope, re-runnable done-when and context paths. Rangers need numbered questions and a check-in interval; return evidence, not the deliverable. Widening scope opens a never-timed scope ask; the brief stays queued until approval. Only the user can lift the review budget on the quest page. A reversible tavern_decide with exceeds: party or rangers allows one hire, never beyond keepers.partyMax. Scouts and errands may precede greenlight; staffing needs recorded greenlight, by default the user's explicit approval. A waypoint Warden needs a known maker journal entry. Give the maker, entries, trusted worktree and explicit check commands. The checker preset allows standard check runners there. Do not request commands as tool names; quote custom commands. One maker per Warden slot. Repeat the returned review limitation verbatim. A missing maker root must not widen scope. Prefer Pi for scoped hires. Otherwise requestDetectionOnly:true asks without hiring. After the user approves, repeat with detectionOnlyAskId. Remote and scoped local non-Pi hires detect only, not prevent; never claim hooks are installed. Unknown models refuse before allocation; set classes.<classId>.model or the rule model in Where work runs. Report execution substitutions now. Obey the approved party and replacements per slot per plan version. Resting, released and stopped members free slots. Retry or release failed or unbriefed members before replacing. Scouts need no re-plan; check Free hands first. Call tavern_placements with repo, classId and optional boardQuestId. repo defaults to your own project, or the Warden's maker repo for a Warden. placement is {ruleId} or {kind:\"current\"} for your repo only. Only the rule sets consent, inputs, models and forge. No pick uses the matching rule or stays here for your own repo; leads take no automatic rule. Cross-repo hires carry only the pushed default-branch tip. There is no fallback model. The first line names the repo, rule or pick and target.",
     z.object({
       classId: id,
       brief: briefSchema,
@@ -356,6 +356,17 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
           return `The pending brief for ${delivery.memberName} was cleared before Tavern could confirm delivery. Read tavern_status before sending fresh work.`;
       }
     },
+  );
+  register(
+    "tavern_judge",
+    "Judged a Ranger report",
+    "Use the current Ranger report id: accept the work or continue with minutes, reason and optional questionNumbers from the current brief. To stop or replace the Ranger instead, use tavern_release.",
+    z.discriminatedUnion("op", [
+      z.object({ op: z.literal("accept"), reportId: id }).strict(),
+      z.object({ op: z.literal("continue"), reportId: id, minutes: z.number().int().min(1).max(240), reason: z.string().trim().min(1).max(500), questionNumbers: z.array(z.number().int().min(1).max(12)).min(1).max(12).optional() }).strict(),
+    ]),
+    (input, threadId) => input.op === "accept" ? runtime.acceptRangerReport(threadId, input.reportId)
+      : runtime.continueRangerReport(threadId, input.reportId, input.minutes, input.reason, input.questionNumbers),
   );
   register("tavern_hold", "Held the quest", "Hold only by citing messageId of the user’s uncancelled, unused message routed to this quest, newer than its last phase transition; its quoted text is the receipt.", z.object({ boardQuestId: id, messageId: id }), (input, threadId) => runtime.setQuestHeld(input.boardQuestId, true, { kind: "agent", threadId }, input.messageId));
   register("tavern_resume", "Resumed the quest", "Resume only by citing messageId of the user’s uncancelled, unused message routed to this quest, newer than its last phase transition; its quoted text is the receipt.", z.object({ boardQuestId: id, messageId: id }), (input, threadId) => runtime.setQuestHeld(input.boardQuestId, false, { kind: "agent", threadId }, input.messageId));
@@ -590,24 +601,19 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_report",
     "Filed a report",
-    "Write a report to the Keeper's mailbox and end your turn. Give a one-sentence headline of at most 160 characters. A Warden headline states the result, never a claim of independence. Preserve the same-family check (not independent) label when applicable. Before a done report, mark every linked entry done with evidence or have it verified. A Warden checks rather than owns its waypoint. To declare a wait, include wait with a condition and dueAt; the Keeper is reminded at the deadline.",
+    "Write a report to the Keeper's mailbox and end your turn. Give a headline of at most 160 characters. A Warden headline states the result, never a claim of independence; keep the same-family check (not independent) label. Before done, mark every linked entry done with evidence or have it verified. Use wait with condition and dueAt for a reminder. Ranger: at check-in, report checkpoint with numbered answers, evidence and checkpoint {left, moreMinutes}. Checkpoint and done wait for your Keeper.",
     reportSchema
-      .pick({ status: true, outcome: true, headline: true, evidence: true, artifacts: true, wait: true })
+      .pick({ status: true, outcome: true, headline: true, evidence: true, artifacts: true, wait: true, checkpoint: true })
       .extend({
         confidence: reportSchema.shape.confidence.default(null),
       }),
     async (input, threadId) => {
       const report = k.report(threadId, input);
       const member = k.member(threadId)!;
-      if (member.classId === "ranger" && report.status === "done") {
-        const state = k.store.runtime(threadId);
-        if (state.initialBriefAt !== undefined) {
-          const minutes = (report.createdAt - state.initialBriefAt) / 60_000, timebox = state.brief?.timeboxMinutes;
-          if (minutes >= 0) runtime.record("ranger.completed", { memberThreadId: threadId, minutes, overrun: timebox !== undefined && timebox !== null && minutes > timebox }, member.keeperThreadId, member.boardQuestId, `ranger-completed:${threadId}`, report.createdAt);
-        }
-      }
+      if (member.rangerCheckpointReportId === report.id)
+        return `Report written. End your turn and wait for the Keeper to accept, continue or release you.\nReport id: ${report.id}`;
       let archiveBlocker: string | null = null;
-      if (member.errand && report.status === "done") {
+      if (member.errand && member.classId !== "ranger" && report.status === "done") {
         archiveBlocker = await runtime.archiveMember(threadId, report.id);
       }
       const warning = report.status === "done" ? await runtime.uncommittedWarning(threadId) : null;

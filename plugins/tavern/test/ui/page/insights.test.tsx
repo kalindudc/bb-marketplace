@@ -290,17 +290,17 @@ describe("Tavern settings sections", () => {
     expect(await slot.findByText((_text, element) => element?.classList.contains("tv-exec-d") === true && element.textContent?.includes("Set here: gpt-6.1-sol, the model's default thinking") === true)).toBeTruthy();
     expect(slot.getByRole("button", { name: "Use the class file for Warden" })).toBeTruthy();
   });
-  it("puts the Ranger time-box ceiling under Keepers as your own budget, not in Tavern tunes these", async () => {
+  it("puts the Ranger check-in interval under Keepers as your own budget, not in Tavern tunes these", async () => {
     const update = vi.fn((_input: { revision: number; patch: unknown; why: string }) => ok());
     const slot = await section("keepers", { settingsUpdate: update });
-    const field = await slot.findByLabelText("Ranger time-box ceiling");
+    const field = await slot.findByLabelText("Ranger check-in interval");
     fireEvent.change(field, { target: { value: "15" } });
     fireEvent.blur(field);
     await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ patch: { knobs: { rangerTimeboxMaxMinutes: 15 } } })));
     for (const slot of slots.splice(0)) slot.lifecycle.unmount();
     const tuned = await section("tuned");
     await tuned.findByText("Keeper tick interval");
-    expect(tuned.queryByText("Ranger time-box ceiling")).toBeNull();
+    expect(tuned.queryByText("Ranger check-in interval")).toBeNull();
   });
   it("previews pasted TOML in place and applies it only on the second click", async () => {
     const imp = vi.fn((input: { toml: string; apply?: boolean; revision?: number }) => ({ code: input.apply ? "applied" as const : "preview" as const, revision: 12, applied: !!input.apply, changes: [{ key: "attention.reviewBudget", from: 4, to: 6, kind: "set" as const }], problems: [] }));

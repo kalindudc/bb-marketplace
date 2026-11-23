@@ -192,7 +192,9 @@ export interface TickBatch {
   rowId: string | null;
   state: "prepared" | "queued" | "delivered" | "cancelled";
 }
+export type RangerContinuation = { reportId: string; minutes: number; questions: string[] };
 export interface PendingBrief {
+  rangerContinuation?: RangerContinuation;
   id: string;
   text: string;
   assignmentText?: string;
@@ -259,6 +261,8 @@ export interface Runtime {
   lastBriefAt?: number;
   lastAcceptedBriefId?: string;
   initialBriefAt?: number;
+  rangerBox?: { startedAt: number; priorBudgetMinutes: number; priorElapsedMinutes: number; priorOverrun: boolean };
+  rangerAcceptedReportId?: string;
   lastUnreportedTurn?: string;
   scopePending?: string | null;
   scopeProblems?: string[];

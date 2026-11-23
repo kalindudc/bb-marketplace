@@ -2089,12 +2089,17 @@ export class Keeper {
     threadId: string,
     input: Pick<
       Report,
-      "status" | "outcome" | "headline" | "evidence" | "artifacts" | "confidence" | "wait"
+      "status" | "outcome" | "headline" | "evidence" | "artifacts" | "confidence" | "wait" | "checkpoint"
     > & Partial<Pick<Report, "voice">>,
   ) {
     const m = this.require(threadId, "member");
+    const ranger = m.classId === "ranger";
+    if (input.status === "checkpoint" ? !ranger || !input.checkpoint : input.checkpoint !== undefined)
+      throw new Error("Only a Ranger checkpoint includes checkpoint.left and checkpoint.moreMinutes.");
     if (input.status === "done" && input.wait) throw new Error("A done report cannot declare a wait.");
-    const late = !isLiveMember(this.store, m, "brief") || m.engagement === "resting" && input.status !== "done" || !isLiveKeeper(this.store, this.member(m.keeperThreadId!), "present");
+    if (input.status === "checkpoint" && input.wait) throw new Error("A checkpoint already waits for the Keeper; omit wait.");
+    const rangerCheckIn = ranger && (input.status === "done" || input.status === "checkpoint");
+    const late = !isLiveMember(this.store, m, "brief") || m.engagement === "resting" && (input.status !== "done" || ranger) || !isLiveKeeper(this.store, this.member(m.keeperThreadId!), "present");
     const entries = this.journal
       .get(threadId)
       .entries.filter((e) => e.link?.boardQuestId === m.boardQuestId);
@@ -2144,7 +2149,7 @@ export class Keeper {
     const quest = m.boardQuestId ? this.store.get("quests", m.boardQuestId) : null;
     const reviewPlanVersion = quest?.checkPlanVersion ?? quest?.greenlitVersion;
     const reviewPlan = quest && reviewPlanVersion && this.store.get("plans", `${quest.id}:${reviewPlanVersion}`);
-    const reviewWaypoints = !late && report.status === "done" && m.classId !== "warden" && reviewPlan
+    const reviewWaypoints = !late && report.status === "done" && !ranger && m.classId !== "warden" && reviewPlan
       ? reviewPlan.waypoints.flatMap(w => {
           const entryIds = entries.filter(e => e.link?.waypointId === w.id && e.status === "done").map(e => e.id);
           return entryIds.length && w.actor === "agent" && waypointCheck(w) === "warden" ? [{ waypointId: w.id, entryIds }] : [];
@@ -2167,9 +2172,11 @@ export class Keeper {
       previous.headline === report.headline &&
       JSON.stringify(previous.evidence) === JSON.stringify(report.evidence) &&
       JSON.stringify(previous.artifacts) === JSON.stringify(report.artifacts) &&
-      isDeepStrictEqual(previous.wait, report.wait)
+      isDeepStrictEqual(previous.wait, report.wait) && isDeepStrictEqual(previous.checkpoint, report.checkpoint)
     )
       return { ...previous, voice: null };
+    if (!late && rangerCheckIn && m.rangerCheckpointReportId)
+      throw new Error(`Report ${m.rangerCheckpointReportId} is waiting for the Keeper; end your turn.`);
     const held = reviewWaypoints.filter(({ waypointId }) =>
       rejections.filter(rejection => rejection.waypointId === waypointId && rejection.planVersion === reviewPlanVersion).length >= 2);
     if (reviewPlanVersion && held.length) report.reviewWait = { planVersion: reviewPlanVersion, waypointIds: held.map(w => w.waypointId) };
@@ -2187,14 +2194,15 @@ export class Keeper {
       const text = `${this.name(m)}: ${input.outcome}`, data = { reportId: report.id, status: input.status,
         ...(reviewWaypoints.length ? { makerThreadId: threadId, reviewPlanVersion, reviewWaypoints } : {}),
         ...(reviewWaitNotice.length ? { reviewWaitNotice } : {}) };
-      if (!late && input.status === "done" && m.engagement === "active") {
+      if (!late && input.status === "done" && !ranger && m.engagement === "active") {
         transitionMember(this.store, m, memberDetails(this.store, threadId).delivery ? "briefing" : "resting", "done-report", { kind: "agent", threadId }, { kind: "report", id: report.id }, this.now(), { text, data });
       } else {
-        if (!late && input.status !== "done") this.activity(threadId, "waiting");
+        if (!late && (input.status !== "done" || rangerCheckIn)) this.activity(threadId, "waiting");
         this.store.event(this.now(), m.keeperThreadId, m.boardQuestId, late ? "report.late" : "report.filed", text, data);
       }
       this.store.put("members", threadId, {
         ...this.member(threadId)!,
+        ...(!late && rangerCheckIn ? { rangerCheckpointReportId: report.id } : {}),
         doing: input.outcome.slice(0, 300),
         lastReportAt: this.now(),
         strikes: 0,
@@ -2401,9 +2409,9 @@ export class Keeper {
       ? ` · verified ${verified} of ${waypoints.length}${accepted ? ` · accepted ${accepted}` : ""}${done ? ` · done ${done}` : ""}${skippedCount ? ` · skipped ${skippedCount}` : ""}`
       : "";
     const phase = displayStage(q.phase, waypoints, plan !== null);
-    const newsBy = nextNewsBy(phase, members.filter(member => member.classId === "ranger" && member.state !== "failed" && isLiveMember(this.store, member, "work")).flatMap(member => {
+    const newsBy = nextNewsBy(phase, members.filter(member => member.classId === "ranger" && !member.rangerCheckpointReportId && member.state !== "failed" && isLiveMember(this.store, member, "work")).flatMap(member => {
       const runtime = this.store.runtime(member.threadId);
-      return runtime.brief?.timeboxMinutes != null ? [(runtime.initialBriefAt ?? member.createdAt) + runtime.brief.timeboxMinutes * 60_000] : [];
+      return runtime.brief?.timeboxMinutes != null ? [(runtime.rangerBox?.startedAt ?? runtime.initialBriefAt ?? member.createdAt) + runtime.brief.timeboxMinutes * 60_000] : [];
     }), this.memory.notes(q.keeperThreadId, 500, 0, id).filter(note => note.kind === "commitment" && note.state === "open" && note.dueAt != null).map(note => note.dueAt!));
     const clock = (at: number) => moveTime(at, this.now());
     const outcome =
@@ -2488,7 +2496,7 @@ export class Keeper {
     const members = keeperThreadId
       ? this.store.query("members", "keeperThreadId", keeperThreadId)
       : this.store.all("members");
-    for (const m of members.filter((m) => m.role === "member" && isLiveMember(this.store, m, "work") && m.state !== "failed" && isLiveKeeper(this.store, this.member(m.keeperThreadId!)) && !held(m.threadId))) {
+    for (const m of members.filter((m) => m.role === "member" && !m.rangerCheckpointReportId && isLiveMember(this.store, m, "work") && m.state !== "failed" && isLiveKeeper(this.store, this.member(m.keeperThreadId!)) && !held(m.threadId))) {
       const now = this.now();
       const wait = this.memory.openMemberWait(m.threadId);
       if (wait?.dueAt != null && wait.dueAt > now) continue;

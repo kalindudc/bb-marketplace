@@ -251,6 +251,7 @@ export const memberSchema = z.object({
   createdAt: epochMs,
   lastActiveAt: epochMs.nullable(),
   lastReportAt: epochMs.nullable(),
+  rangerCheckpointReportId: id.optional(),
   strikes: z.number().int(),
   verifiedWins: z.number().int(),
 });
@@ -665,7 +666,8 @@ export const reportSchema = z.object({
   keeperThreadId: threadId.nullable(),
   boardQuestId: id.nullable(),
   waypointId: z.string().nullable(),
-  status: z.enum(["done", "needs-decision", "blocked"]),
+  status: z.enum(["done", "needs-decision", "blocked", "checkpoint"]),
+  checkpoint: z.object({ left: z.string().trim().min(1).max(1000), moreMinutes: z.number().int().min(0).max(240) }).strict().optional(),
   outcome: z.string().min(1).max(4000),
   // added by Builder B: the answer belongs in credits; the full report stays one click away.
   headline: z.string().trim().min(1).max(160).optional(),

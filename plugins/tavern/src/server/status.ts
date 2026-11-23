@@ -7,6 +7,7 @@ import { agentData } from "./agent-data";
 import type { TavernRuntime } from "./runtime";
 import { readRequestSources } from "./request-sources";
 import { planDiff } from "./keeper/plan-diff";
+import { isLiveMember } from "./liveness";
 
 export const statusInput = z.object({
   boardQuestId: z.string().min(1).max(120).nullish(),
@@ -51,6 +52,14 @@ export function memberBriefRows(k: TavernRuntime["keeper"], threadId: string, bo
         firstLine: (pending.assignmentText ?? pending.text).split("\n", 1)[0]!.trim().slice(0, 300),
       },
     };
+  });
+}
+
+export function rangerCheckpointRows(k: TavernRuntime["keeper"], keeperId: string, boardQuestId?: string | null, memberThreadId?: string | null) {
+  return k.store.activeStaffing(keeperId).flatMap(member => {
+    const reportId = member.rangerCheckpointReportId;
+    if (!reportId || !isLiveMember(k.store, member, "work") || boardQuestId && member.boardQuestId !== boardQuestId || memberThreadId && member.threadId !== memberThreadId) return [];
+    return [{ memberThreadId: member.threadId, boardQuestId: member.boardQuestId, name: k.name(member), reportId, state: memberActivityWord(member) }];
   });
 }
 
@@ -277,6 +286,7 @@ function statusData(
     archivedCount,
     archivedMembers, archivedMemberTotal, nextArchivedOffset,
     memberBriefs: memberBriefRows(k, threadId, input.boardQuestId ?? undefined, input.memberThreadId ?? undefined),
+    rangerCheckpoints: rangerCheckpointRows(k, threadId, input.boardQuestId, input.memberThreadId),
     unreviewedMemory: runtime.memory.unreviewedFor(threadId, 0, 3),
     freeHands: resting.filter(m => m.mayRebriefFor !== null || m.machineLost).map(m => m.machineLost ? { ...m, unavailable: "machine lost: can't take new work; release it" } : m),
     restingMembers: resting.filter(m => m.settled),

@@ -5,7 +5,7 @@ Use this guide to run quests from start to finish, steer Keepers and parties, co
 ## Starting and steering a quest
 
 1. Open **Tavern → Start a quest** (or select a Keeper thread) and describe your goal, what a checked result looks like, and any boundaries.
-2. While the quest is in `scout`, Rangers answer bounded questions. The move line shows when the next news is due from the earliest live Ranger time box or dated Keeper promise.
+2. While the quest is in `scout`, Rangers answer bounded questions. The move line shows the earliest current check-in or dated Keeper promise. A check-in is not a finish: the Ranger gives its numbered findings, evidence, remaining work and time estimate, then waits. A done report also waits. The Keeper accepts or continues the Ranger with `tavern_judge`, or stops or replaces it with `tavern_release`. A continued box starts when bb confirms the new brief. The boxes count toward the class’s Ranger minutes budget.
 3. The Keeper proposes a [quest map](glossary.md#quest-map) listing each [waypoint](glossary.md#waypoint), who acts, how it is checked, and an optional spend budget. Explicit approval (**greenlight**) is the default (`keepers.greenlight = "explicit"`).
 4. Keep talking in the same Keeper thread to steer work. Name the quest when a Keeper holds more than one. Quick questions, asides, and standing rules are routed separately from plan changes; standing rules stay local to that Keeper unless you make them global.
 5. Use **Tell selected Keepers** on the Common room to send one unchanged message to several Keeper threads at once, with a receipt for each.

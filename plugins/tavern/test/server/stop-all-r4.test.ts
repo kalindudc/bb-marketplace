@@ -140,7 +140,8 @@ describe("R4 brake regressions", () => {
     const report = f.k.report("member", { status: "done", outcome: "Done", evidence: [], artifacts: [], confidence: null, voice: null });
     await f.runtime.stopAll.stop({ kind: "user" });
     await expect(f.runtime.release("lead", "member", "Done")).rejects.toThrow(/Tavern is stopped/);
-    await f.runtime.archiveMember("member", report.id);
+    await expect(f.runtime.acceptRangerReport("lead", report.id)).rejects.toThrow(/Tavern is stopped/);
+    expect(f.k.member("member")?.rangerCheckpointReportId).toBe(report.id);
     expect(f.harness.inspection.sdk.callsTo("threads.archive")).toHaveLength(0);
     expect(runtimeFixture(f.k.store, "member").released).toBeFalsy();
   });

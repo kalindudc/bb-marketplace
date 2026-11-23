@@ -25,6 +25,12 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const refresh = registered.mock.calls.find(([tool]) => tool.name === "tavern_refresh_keeper")![0];
   const quest = registered.mock.calls.find(([tool]) => tool.name === "tavern_quest")![0];
   const release = registered.mock.calls.find(([tool]) => tool.name === "tavern_release")![0];
+  const judge = registered.mock.calls.find(([tool]) => tool.name === "tavern_judge")![0];
+  const report = registered.mock.calls.find(([tool]) => tool.name === "tavern_report")![0];
+  const reportSchema = JSON.stringify(report.parameters);
+  const checkpointDelta = Buffer.byteLength(reportSchema) - Buffer.byteLength(reportSchema.replace(',"checkpoint"', "").replace(/,"checkpoint":\{"type":"object".*?"additionalProperties":false\}/, ""));
+  expect(checkpointDelta).toBeGreaterThan(0);
+  const judgeBytes = Buffer.byteLength(JSON.stringify(judge.parameters));
   const releaseSchema = JSON.stringify(release.parameters);
   const replacementSchemaDelta = Buffer.byteLength(releaseSchema) - Buffer.byteLength(releaseSchema.replace(',"replace":{"type":"boolean"}', ""));
   expect(replacementSchemaDelta).toBeGreaterThan(0);
@@ -43,7 +49,7 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
     + Buffer.byteLength(JSON.stringify(refresh)) - Buffer.byteLength(refresh.name + refresh.description + "Requested Keeper refresh");
   const briefWarning = briefSteerFact("Wren XVIII", { at: 0, excerpt: "x".repeat(160), memberThreadId: "thr_abcdefghij" });
   const questSchemaDelta = Buffer.byteLength(JSON.stringify(quest.parameters)) - Buffer.byteLength(JSON.stringify(opening));
-  const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + mergeAskSchemaDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
+  const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + mergeAskSchemaDelta + judgeBytes + checkpointDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
   if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${bytes}\n`);
   expect(bytes).toBeLessThanOrEqual(34754);
 });

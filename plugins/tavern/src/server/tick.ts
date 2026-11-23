@@ -210,6 +210,8 @@ export class TickLoop {
             status: report.status,
             outcome: report.outcome,
             ...(report.wait ? { wait: report.wait } : {}),
+            ...(report.checkpoint ? { checkpoint: report.checkpoint } : {}),
+            ...(this.k.member(report.memberThreadId)?.rangerCheckpointReportId === report.id ? { waitingForKeeper: true } : {}),
             evidenceCount: report.evidence.length,
             artifactsCount: report.artifacts.length,
           })}\nEvidence and full brief: call tavern_status for this report.${notice.length ? `\n${notice.map(id => `${id} had two rejected rounds in plan v${wait!.planVersion}; record a new plan version before the next review.`).join("\n")}` : ""}`,

@@ -329,7 +329,7 @@ it.each([
 it("names the Ranger ceiling in its actual section with minutes",async()=>{
  const view=structuredClone(settingsView);view.history=[{...view.history[0]!,changes:[{key:"knobs.rangerTimeboxMaxMinutes",from:12,to:30,kind:"set"}]}];
  const s=await section("settings-history",view);fireEvent.click(await s.findByRole("button",{name:"1 change"}));
- expect(s.container.textContent).toContain("Keepers and decisions · Ranger time-box ceiling: 12 min to 30 min");
+ expect(s.container.textContent).toContain("Keepers and decisions · Ranger check-in interval: 12 min to 30 min");
 });
 it("keeps large changes readable with three keys and folded remaining details",async()=>{
  const view=structuredClone(settingsView);view.history=[{...view.history[0]!,changes:Array.from({length:8},(_,i)=>({key:`classes.smith.model${i}`,from:"Before",to:"After",kind:"set" as const}))}];

@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/re
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { fixtureDecor, fixtureJournal, fixtureLedger, fixtureMember, fixtureQuest, fixtureRegistry } from "../../../src/ui/thread/fixtures";
 import { JournalTab, LedgerTab } from "../../../src/ui/thread/tabs";
+import { REPORTS_TAB } from "../../../src/ui/thread/reports-tab";
 import type { Ledger } from "../../../src/shared/contract";
 import { PartyPicture } from "../../../src/ui/kit";
 afterEach(cleanup);
@@ -36,6 +37,14 @@ const ledger = ledgerAt(now);
 const renderLedger = (data: Ledger = ledger) => renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: { ledger: () => withAttention(data), decor: () => fixtureDecor, registry: () => fixtureRegistry } });
 
 describe("Ledger: what the Keeper keeps in mind", () => {
+  it("shows the waiting Ranger and opens its checkpoint report", async () => {
+    const slot = renderLedger({ ...ledger, rangerCheckpoints: [{ memberThreadId: "ranger", boardQuestId: null, name: "Fern", reportId: "checkpoint-1", state: "checkpoint, waiting for the Keeper" }] });
+    const region = await slot.findByRole("region", { name: "Ranger check-ins" });
+    expect(within(region).getByText("checkpoint, waiting for the Keeper")).toBeTruthy();
+    fireEvent.click(within(region).getByRole("button", { name: "View report from Fern" }));
+    expect(slot.inspection.experimental_panelCalls).toContainEqual({ method: "openTab", options: { tab: REPORTS_TAB, params: { memberThreadId: "ranger", questId: null, reportId: "checkpoint-1" } } });
+    slot.lifecycle.unmount();
+  });
   it("uses the returned quest's recorded move line for close early", async () => {
     const outcome = "Returned, 0 verified, closed early, 2 not verified";
     const slot = renderLedger({ ...ledger, boardQuests: [{ ...fixtureQuest, phase: "done", outcome: "closed-early", move: { who: "nobody", text: outcome } }] });

@@ -117,7 +117,10 @@ describe("quest tale and credits", () => {
 describe("report headline", () => {
   it("keeps old reports sparse and persists a trimmed optional headline through report RPC", async () => {
     const f = await fixture(); f.bind("scout", "ranger");
-    expect(f.k.report("scout", f.report())).not.toHaveProperty("headline");
+    const original = f.k.report("scout", f.report());
+    expect(original).not.toHaveProperty("headline");
+    await f.runtime.acceptRangerReport("lead", original.id);
+    await f.runtime.tell("lead", "scout", "Check the README again.");
     const updated = f.k.report("scout", { ...f.report(), headline: "  The README is correct.  " });
     expect(updated.headline).toBe("The README is correct.");
     expect(await f.call("reports", { ids: [updated.id] })).toMatchObject({ reports: [{ headline: "The README is correct." }] });

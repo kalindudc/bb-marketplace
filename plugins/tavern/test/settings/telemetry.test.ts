@@ -22,13 +22,16 @@ it("records member interruptions once without applying Keeper-only stop behavior
   expect(rows).toHaveLength(1); expect(rows[0]).toMatchObject({ at, keeperThreadId: "lead", questId: q.id, data: { reason: "manual-stop", threadId: "member" } });
   expect(f.k.store.runtime("member").manualStopAt).toBeUndefined();
 });
-it("records completed Ranger runs from the acknowledged initial brief for the time-box rule", async () => {
+it("records accepted Ranger runs from the acknowledged initial brief for check-in telemetry", async () => {
   const f = setup(), settings = new SettingsStore(f.k.store.db, f.time), insights = new InsightsReader(f.k.store.db, settings, f.time);
   f.runtime.enableSettings(settings, insights); registerTools(f.bb, f.runtime);
   const brief = briefSchema.parse({ outcome: "Read", mode: "make-it-work", outOfScope: "", doneWhen: "Read", context: [], questions: ["What exists?"], timeboxMinutes: 5 });
   f.k.bind("scout", "ranger", "otto", "project", { keeperThreadId: "lead", boardQuestId: null, waypointId: null, errand: true, title: "Read", brief });
   f.k.store.patch("scout", { initialBriefAt: f.time() - 8 * 60_000 });
   await f.harness.behavior.invokeAgentTool("tavern_report", { status: "done", outcome: "Found the files", evidence: [], artifacts: [] }, { threadId: "scout" });
+  expect(insights.signals()).toMatchObject({ rangerMinutes: [], rangerOverruns: 0 });
+  const reportId = f.k.store.query("reports", "memberThreadId", "scout", 1)[0]!.id;
+  await f.harness.behavior.invokeAgentTool("tavern_judge", { op: "accept", reportId }, { threadId: "lead" });
   expect(insights.signals()).toMatchObject({ rangerMinutes: [8], rangerOverruns: 1 });
 });
 it("measures main Keeper turn time from native boundaries without double counting", async () => {

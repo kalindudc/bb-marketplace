@@ -98,7 +98,7 @@ export function ReportItem({ report, registry, detail }: { report: Report; regis
   const [inline, setInline] = useState(false);
   const headline = member ? taleHeadline(report, memberReportNames(detail, member, registry)) : null;
   const name = member ? characterName(registry, member) : "A member";
-  const tone = report.status === "blocked" ? "bad" : report.status === "needs-decision" ? "you" : "done";
+  const tone = report.status === "blocked" ? "bad" : report.status === "needs-decision" || report.status === "checkpoint" ? "you" : "done";
   return <li className={`tv-item ${tone === "done" ? "" : tone}`} data-stuck={tone === "bad" || undefined}>
     {member ? <CrestOf member={member} registry={registry} size={16} /> : <PageGlyph name="done" />}
     <span className="tv-item-t" data-content title={headline ?? undefined}><b>{name}{headline ? ": " : ""}</b>{headline}</span>

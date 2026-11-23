@@ -5,7 +5,7 @@ import { voiceShown, Crest, MemberReports, OpensMark, QueryState, ReportView, Sk
 
 export const REPORTS_TAB: ExperimentalTabReference & { availability: "action"; context: { kind: "thread" } } = { id: "reports", context: { kind: "thread" }, availability: "action" };
 export type ReportsTabParams = { memberThreadId: string; questId: string | null; reportId?: string };
-const STATUS_WORD: Record<Report["status"], string> = { done: "done", "needs-decision": "needs your decision", blocked: "blocked" };
+const STATUS_WORD: Record<Report["status"], string> = { done: "done", "needs-decision": "needs your decision", blocked: "blocked", checkpoint: "checkpoint" };
 
 export function readReportsTabParams(params: JsonValue | null): ReportsTabParams | null {
   if (!params || typeof params !== "object" || Array.isArray(params)) return null;
