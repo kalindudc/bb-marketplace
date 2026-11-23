@@ -59,20 +59,16 @@ describe("class hire snapshots", () => {
     expect(configured.instructions).not.toContain("UNRELATED NEW ROLE");
   });
 
-  it("names a resting member in the hire result as advice, never as a refusal", async () => {
+  it("names an eligible resting member and refuses a fresh hire before allocating", async () => {
     const f = setup();
     const input = { classId: "ranger", errand: true, title: "Scout", brief: { ...brief, questions: ["What changed?"], timeboxMinutes: 5 } };
     const first = await f.runtime.hire("lead", "project", input);
     putMemberFixture(f.k.store, first.threadId, { ...f.k.store.get("members", first.threadId)!, state: "done", place: "rest" });
     registerTools(f.bb, f.runtime);
-    const text = await f.harness.behavior.invokeAgentTool("tavern_hire", {
+    await expect(f.harness.behavior.invokeAgentTool("tavern_hire", {
       classId: "ranger", errand: true, title: "Follow up",
       brief: { ...brief, questions: ["What changed?"], timeboxMinutes: 5 },
-    }, { threadId: "lead" });
-    expect(text).toContain("Hired");
-    expect(text).toContain("Free hands:");
-    expect(text).toContain(first.threadId);
-    expect(text).toContain("this hire was allowed");
+    }, { threadId: "lead" })).rejects.toThrow(new RegExp(`${first.displayName}.*${first.threadId}.*tavern_tell.*tavern_release`));
   });
 
   it("never reads a member worktree as the project's class source", async () => {

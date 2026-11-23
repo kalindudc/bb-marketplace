@@ -323,7 +323,7 @@ describe("round 2 release, ask and scout policies", () => {
       refuse(new Error("The cancelled send never reached the member"));
       await expect(tell).resolves.toMatchObject({ status: "cancelled" });
     }
-    expect(f.k.member(f.member.threadId)?.engagement).toBe("released");
+    expect(f.k.member(f.member.threadId)).toMatchObject({ engagement: "archived", disposition: "released" });
   });
   it("retains the allocation when the host never acknowledges the individual stop", async () => {
     const f = await stuckMember("running turn");
@@ -376,7 +376,7 @@ describe("round 2 release, ask and scout policies", () => {
     const allocation = f.k.store.get("staffing", key)!;
     f.k.store.put("staffing", key, { ...allocation, slots: [{ memberThreadId: f.member.threadId, uses: 3 }] });
     expect(await f.release(true)).toContain("Only two replacements are allowed per party slot");
-    expect(f.k.member(f.member.threadId)?.engagement).toBe("released");
+    expect(f.k.member(f.member.threadId)).toMatchObject({ engagement: "archived", disposition: "released" });
     expect(f.k.store.activeStaffing("lead")).toEqual([]);
   });
   it.each(stuckCases)("stops and replaces a member with %s without losing its waypoint", async stuck => {
@@ -472,15 +472,15 @@ describe("round 2 release, ask and scout policies", () => {
     );
     expect(result).toContain("Released");
     expect(f.bb.sdk.threads.stop).toHaveBeenCalledWith({ threadId: member.threadId });
-    expect(f.k.member(member.threadId)).toMatchObject({ engagement: "released", disposition: "released" });
+    expect(f.k.member(member.threadId)).toMatchObject({ engagement: "archived", disposition: "released" });
     expect(
       f.k.store
         .query("decisions", "keeperThreadId", "lead")
         .some((d) => d.reversible && d.source === "keeper" && /Release/.test(d.text)),
     ).toBe(true);
     await expect(f.runtime.hire("lead", "project", f.input)).resolves.toBeTruthy();
-    f.runtime.updateThread(makeThreadResponse({ id: member.threadId, status: "idle" }));
-    expect(f.k.member(member.threadId)?.engagement).toBe("released");
+    f.runtime.updateThread(makeThreadResponse({ id: member.threadId, status: "idle", archivedAt: f.time() }));
+    expect(f.k.member(member.threadId)?.engagement).toBe("archived");
   });
   it("M-2 keeps the slot until stopping is confirmed, then completes release in the sweep", async () => {
     const f = await approved();

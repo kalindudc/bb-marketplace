@@ -1,4 +1,4 @@
-import { briefProgress, memberDetails, memberHost } from "./member-engagement";
+import { briefProgress, memberDetails, memberHost, releasedThreadOpen } from "./member-engagement";
 import type { MemberBriefRow } from "../shared/contract";
 import { memberActivityWord, wasReleased } from "../shared/member-engagement";
 import { z } from "zod";
@@ -87,7 +87,8 @@ function statusData(
       change: previous && plan ? planDiff(previous, plan) : "First plan", plan };
   }
   if (input.section === "requests") return readRequestSources(k, threadId, { memberThreadId: input.memberThreadId ?? undefined, manifestId: input.manifestId ?? undefined, sourceIndex: input.sourceIndex, offset: input.offset });
-  const archivedRows = k.store.all("members").filter(member => member.keeperThreadId === threadId && memberHost(k.store, member).archivedAt !== null).map(member => {
+  const party = k.store.query("members", "keeperThreadId", threadId, -1);
+  const archivedRows = party.filter(member => memberHost(k.store, member).archivedAt !== null).map(member => {
     const state = k.store.runtime(member.threadId);
     const quest = member.boardQuestId ? k.store.get("quests", member.boardQuestId) : null;
     return { threadId: member.threadId, name: k.name(member), classId: member.classId, quest: quest?.deletedAt != null ? "a deleted quest" : quest?.short ?? null, released: wasReleased(member), deleted: memberHost(k.store, member).deletedAt !== null };
@@ -281,6 +282,11 @@ function statusData(
     };
   }
   const resting = restingParty(k, threadId);
+  const releasedRows = party.filter(member => releasedThreadOpen(k.store, member) && (!input.boardQuestId || member.boardQuestId === input.boardQuestId) && (!input.memberThreadId || member.threadId === input.memberThreadId));
+  const releasedNotArchived = releasedRows.slice(input.offset, input.offset + input.limit).map(member => ({
+    threadId: member.threadId, name: k.name(member), classId: member.classId, boardQuestId: member.boardQuestId,
+  }));
+  const nextReleasedNotArchivedOffset = input.offset + releasedNotArchived.length < releasedRows.length ? input.offset + releasedNotArchived.length : null;
   const review = runtime.review();
   return {
     archivedCount,
@@ -288,8 +294,9 @@ function statusData(
     memberBriefs: memberBriefRows(k, threadId, input.boardQuestId ?? undefined, input.memberThreadId ?? undefined),
     rangerCheckpoints: rangerCheckpointRows(k, threadId, input.boardQuestId, input.memberThreadId),
     unreviewedMemory: runtime.memory.unreviewedFor(threadId, 0, 3),
-    freeHands: resting.filter(m => m.mayRebriefFor !== null || m.machineLost).map(m => m.machineLost ? { ...m, unavailable: "machine lost: can't take new work; release it" } : m),
+    freeHands: resting.filter(m => m.mayRebriefFor !== null || m.machineLost || m.needsCleanup).map(m => m.machineLost ? { ...m, unavailable: "machine lost: can't take new work; release it" } : m),
     restingMembers: resting.filter(m => m.settled),
+    releasedNotArchived, nextReleasedNotArchivedOffset,
     quests: (input.boardQuestId
       ? [k.quest(input.boardQuestId)]
       : k.store.visibleRecords("quests", threadId, input.limit, input.offset)
@@ -303,6 +310,6 @@ function statusData(
       outcome: r.outcome.slice(0, 500),
     })),
     review: { ...review, items: review.items.map(({ title, url, boardQuestId }) => ({ title, url, boardQuestId })) },
-    more: "Use section=errands for in-flight and recent side quests with owners, asks and states. Other sections: reports, asks, events or pending with offset/limit (afterEventId for events). Full report: reportId and character offset.",
+    more: (releasedRows.length ? "Use tavern_release on releasedNotArchived members to archive them. " : "") + "Use section=errands for in-flight and recent side quests with owners, asks and states. Other sections: reports, asks, events or pending with offset/limit (afterEventId for events). Full report: reportId and character offset.",
   };
 }

@@ -321,7 +321,7 @@ describe("member re-brief delivery through the strict host", () => {
     f.bb.sdk.threads.stop = async () => ({ ok: true });
     await f.runtime.answerAsk(ask!.id, "release", null, "page", true);
     expect(runtimeFixture(f.k.store, "child").pendingBrief).toBeNull();
-    expect(f.k.member("child")?.engagement).toBe("released");
+    expect(f.k.member("child")).toMatchObject({ engagement: "archived", disposition: "released" });
     expect(f.k.store.events("lead", 0, 200)).toContainEqual(expect.objectContaining({ type: "member.release-requested", data: expect.objectContaining({ cancelledBriefId: old.id }) }));
   });
 

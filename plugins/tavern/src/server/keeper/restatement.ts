@@ -349,7 +349,11 @@ export function renderRestatement(
     ),
   ];
   const resting = restingParty(k, threadId);
-  parts.push(section("Free hands", resting.filter(m => m.mayRebriefFor !== null || m.machineLost).map(m => `${m.name} (${m.classId}, ${m.threadId}); quest ${m.quest}; resting ${m.restedMinutes} min${m.machineHeld ? "; machine held" : ""}; last work ${quoted(short(m.lastWork, 160))}; ${m.machineLost ? "machine lost: can't take new work; release it" : `may be re-briefed for: ${m.mayRebriefFor}`}`), 2200, "more free hands; call tavern_status"));
+  parts.push(section("Free hands", resting.filter(m => m.mayRebriefFor !== null || m.machineLost || m.needsCleanup).map(m => [
+    `${m.name} (${m.classId}, ${m.threadId}); quest ${m.quest}; resting ${m.restedMinutes} min${m.machineHeld ? "; machine held" : ""}; last work ${quoted(short(m.lastWork, 160))}`,
+    ...(m.needsCleanup ? ["re-brief or release"] : []),
+    ...(m.machineLost ? ["machine lost: can't take new work; release it"] : m.mayRebriefFor ? [`may be re-briefed for: ${m.mayRebriefFor}`] : ["no eligible re-brief"]),
+  ].join("; ")), 2200, "more free hands; call tavern_status"));
   const settledMembers = resting.filter(m => m.settled);
   if (settledMembers.length) parts.push(section("Resting, settled", settledMembers.map(m => `${m.name} (${m.threadId}); resting ${m.restedMinutes} min${m.machineHeld ? "; machine held" : ""}${m.machineLost ? "; machine lost: can't take new work; release it" : m.kept ? `; kept until ${clock(m.kept.until)}: ${quoted(short(m.kept.why, 120))}` : "; release or keep"}`), 1500, "more resting members; call tavern_status"));
   if (!priorities) {

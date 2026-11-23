@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { runtimeFixture } from "./member-fixture";
+import { fixtureActivity, runtimeFixture } from "./member-fixture";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -89,6 +89,16 @@ it("chooses distinct names when two placed hires revalidate the same Keeper's ch
   expect(members.map(m => m.displayName).sort()).toEqual([name, `${name} II`]);
 });
 
+it("permits a new hire when the requested placement differs from the resting member’s", async () => {
+  const f = fixture();
+  const placed = await f.runtime.hire("lead", "project", hire);
+  fixtureActivity(f.k, placed.threadId, "done");
+  await expect(f.runtime.hire("lead", "project", hire)).rejects.toThrow(/is resting.*tavern_tell/);
+  const local = await f.runtime.hire("lead", "project", { ...hire, placement: { kind: "current" } });
+  expect(local.placement).toBeNull();
+  expect(f.k.member(placed.threadId)?.engagement).toBe("resting");
+});
+
 describe("target model failures", () => {
   it.each(["running", "stop-error", "archive-error"])("keeps a visible release hold after a %s first-turn model failure and retries", async fault => {
     const f = fixture();
@@ -155,7 +165,7 @@ describe("target model failures", () => {
     const archive = vi.spyOn(f.bb.sdk.threads, "archive").mockImplementation(async () => { archived = true; return {} as never; });
     f.bb.sdk.threads.stop = vi.fn().mockResolvedValue({} as never);
     await f.runtime.failed(member.threadId, "Failed to resolve Pi model anthropic/claude-sonnet-5-5", "failure-receipt");
-    if (gate === "unrouted") expect(f.k.member(member.threadId)?.engagement).toBe("released");
+    if (gate === "unrouted") expect(f.k.member(member.threadId)).toMatchObject({ engagement: "archived", disposition: "released" });
     else {
       expect(f.k.member(member.threadId)?.engagement).toBe("releasing");
       expect(runtimeFixture(f.k.store, member.threadId).memberEngagement?.operation?.receipt.id).toBe("failure-receipt");

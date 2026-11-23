@@ -36,10 +36,14 @@ it("stops before preservation on release and does not publish a release on save 
   expect(f.stop.mock.invocationCallOrder[0]).toBeLessThan(f.save.mock.invocationCallOrder[0]!);
   expect(runtimeFixture(f.k.store, "child").released).toBeFalsy(); expect(f.archive).not.toHaveBeenCalled();
 });
-it("retains the old unplaced release path without calling preservation", async () => {
+it("preserves local work after stopping an unplaced release and before archiving", async () => {
   const f = await fixture(false);
+  const preserve = vi.spyOn(f.runtime, "preserveWorkOrRefuse").mockResolvedValue(null);
   expect(await f.runtime.release("lead", "child", "Release")).toBe(true);
-  expect(f.stop).toHaveBeenCalledOnce(); expect(f.save).not.toHaveBeenCalled(); expect(f.archive).not.toHaveBeenCalled();
+  expect(f.stop).toHaveBeenCalledOnce(); expect(f.save).not.toHaveBeenCalled(); expect(f.archive).toHaveBeenCalledOnce();
+  expect(preserve).toHaveBeenCalledExactlyOnceWith("child");
+  expect(f.stop.mock.invocationCallOrder[0]).toBeLessThan(preserve.mock.invocationCallOrder[0]!);
+  expect(preserve.mock.invocationCallOrder[0]).toBeLessThan(f.archive.mock.invocationCallOrder[0]!);
 });
 it("keeps a quest stopping and its thread alive until preservation succeeds", async () => {
   const f = await fixture();

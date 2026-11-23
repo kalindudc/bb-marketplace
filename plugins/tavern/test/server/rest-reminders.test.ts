@@ -52,7 +52,7 @@ it("delivers a once-only reminder to an idle Keeper through the real tick loop",
   expect(sends()).toHaveLength(1);
   const text = (sends()[0]!.args[0] as { input: { text: string }[] }).input[0]!.text;
   expect(text).toContain("resting 31 min; work settled");
-  expect(text).toContain("Release or keep this member.");
+  expect(text).toContain("Re-brief or release.");
   await f.runtime.tick("lead", "wake");
   expect(sends()).toHaveLength(1);
   expect(reminders(f)).toHaveLength(1);
@@ -99,12 +99,29 @@ it.each(["none", "keeper"] as const)("counts resting work as settled with the pl
   f.runtime.remindResting("lead");
   expect(reminders(f)).toHaveLength(1);
 });
-it("does not remind about unchecked Smith work", async () => {
-  const f = await fixture("smith");
-  f.port.linkedEntries = () => [waypointEntry(f.m.threadId, f.q.id)];
-  f.advance(60 * 60_000);
-  f.runtime.remindResting("lead");
-  expect(reminders(f)).toHaveLength(0);
+it("lists a stale Warden in the tick even without a rejected waypoint", async () => {
+  const f = await fixture("warden");
+  f.k.settings = () => ({ ...DEFAULT_SETTINGS, keepers: { ...DEFAULT_SETTINGS.keepers, restMinutes: 42 } });
+  f.k.store.patch("lead", { cursor: f.k.store.eventSequence("lead"), userAt: null, reanchor: null });
+  f.advance(41 * 60_000);
+  await f.runtime.tick("lead");
+  const sends = () => f.harness.inspection.sdk.callsTo("threads.send");
+  expect(sends()).toHaveLength(0);
+  f.advance(60_000);
+  await f.runtime.tick("lead");
+  expect(sends()).toHaveLength(1);
+  const text = (sends()[0]!.args[0] as { input: { text: string }[] }).input[0]!.text;
+  expect(text.split("Free hands:")[1]?.split("\n\n")[0]).toMatch(/\(warden, resting\).*resting 42 min.*re-brief or release/);
+  expect(f.bb.sdk.threads.stop).not.toHaveBeenCalled();
+});
+it("lists a resting Warden as soon as the quest's work is complete", async () => {
+  const f = await fixture("warden");
+  const base = planInput(f.q.id);
+  f.k.plan("lead", { ...base, waypoints: [{ ...base.waypoints[0]!, check: "keeper" }] });
+  expect(f.k.restatement("lead").split("Free hands:")[1]?.split("\n\n")[0]).toBe("\nNone");
+  f.port.linkedEntries = () => [waypointEntry("maker", f.q.id)];
+  f.k.settle("lead", { boardQuestId: f.q.id, waypointId: "w1", as: "accepted", reason: "Read the source" });
+  expect(f.k.restatement("lead").split("Free hands:")[1]?.split("\n\n")[0]).toMatch(/\(warden, resting\).*resting 0 min.*re-brief or release/);
 });
 it.each(["verified", "rejected"] as const)("does not automatically release a Warden after a %s verdict", async status => {
   const f = await fixture("warden");
@@ -114,7 +131,8 @@ it.each(["verified", "rejected"] as const)("does not automatically release a War
   f.port.linkedEntries = () => [entry];
   f.advance(60 * 60_000);
   f.runtime.remindResting("lead");
-  expect(reminders(f)).toHaveLength(status === "verified" ? 1 : 0);
+  expect(reminders(f)).toHaveLength(1);
+  expect(reminders(f)[0]?.text.includes("work settled")).toBe(status === "verified");
   expect(runtimeFixture(f.k.store, f.m.threadId).released).toBeUndefined();
   expect(f.bb.sdk.threads.stop).not.toHaveBeenCalled();
 });

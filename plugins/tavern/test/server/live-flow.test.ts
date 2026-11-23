@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { patchThreadFixture } from "./member-fixture";
+import { fixtureActivity, patchThreadFixture } from "./member-fixture";
 import { concludeQuest } from "./support";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
@@ -176,6 +176,32 @@ describe("live Keeper flow regressions", () => {
     expect(f.k.asks("lead").filter((ask) => ask.state === "open")).toHaveLength(
       0,
     );
+  });
+  it("reuses a resting Warden only for its rejected waypoint and pinned maker", async () => {
+    const f = setup();
+    const q = await seedQuest(f.k, "lead", "Two makers", "Check");
+    const first = bind(f, "maker-one", "ranger", q.id);
+    const second = bind(f, "maker-two", "ranger", q.id, "fern");
+    const entries = [waypointEntry(first.threadId, q.id, "w1"), waypointEntry(second.threadId, q.id, "w2")];
+    const get = f.port.get;
+    f.port.get = id => ({ ...get(id), entries: entries.filter(entry => entry.threadId === id) });
+    f.port.linkedEntries = () => entries;
+    const base = planInput(q.id);
+    f.k.plan("lead", { ...base,
+      waypoints: [{ ...base.waypoints[0]!, owner: first.threadId }, { ...base.waypoints[0]!, id: "w2", owner: second.threadId }],
+      party: [{ classId: "warden", characterId: "rook", model: null, purpose: "Check one", waypointIds: ["w1"] },
+        { classId: "warden", characterId: "vex", model: null, purpose: "Check two", waypointIds: ["w2"] }],
+    });
+    f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page", "user");
+    const hire = (waypointId: string) => f.runtime.hire("lead", "project", { classId: "warden", boardQuestId: q.id, waypointId, title: "Check", brief });
+    const resting = await hire("w1");
+    fixtureActivity(f.k, resting.threadId, "done");
+    const [entry] = entries;
+    entry!.status = "rejected";
+    entry!.review = { actor: { kind: "agent", threadId: resting.threadId }, at: f.time(), evidence: [], reason: "Fix", previousNote: null, memberEvidenceAt: null };
+    await expect(hire("w1")).rejects.toThrow(/is resting.*tavern_tell/);
+    await expect(hire("w2")).resolves.toMatchObject({ checkerMakerThreadId: second.threadId });
+    expect(f.k.member(resting.threadId)?.engagement).toBe("resting");
   });
   it("does not accept a completed report while any of the member's linked waypoints is unfinished", async () => {
     const f = setup();

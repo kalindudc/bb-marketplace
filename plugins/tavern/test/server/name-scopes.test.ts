@@ -2,6 +2,7 @@
 import { expect, it } from "vitest";
 import { patchThreadFixture, putMemberFixture } from "./member-fixture";
 import { setup } from "./runtime-fixture";
+import { seedQuest } from "./support";
 
 function party() {
   const { k, runtime } = setup();
@@ -25,9 +26,10 @@ it("lets different Keepers hire the same Ranger, qualifying and ordering the nam
 });
 
 it("holds resting names and reuses released ones without shortening existing names", async () => {
-  const { k, runtime, hire, name } = party();
+  const { k, runtime, input, hire, name } = party();
   k.bind("other", "keeper", "moss", "project");
-  const first = await hire("lead");
+  const q = await seedQuest(k, "lead", "Quest A", "A");
+  const first = await runtime.hire("lead", "project", { ...input, errand: false, boardQuestId: q.id });
   putMemberFixture(k.store, first.threadId, { state: "done" });
   const second = await hire("lead");
   expect(second.displayName).toBe(`${name} II`);

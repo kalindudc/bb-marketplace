@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { runtimeFixture } from "./member-fixture";
+import { patchThreadFixture, runtimeFixture } from "./member-fixture";
 import { concludeQuest, putQuestFixture } from "./support";
 import { afterEach, expect, it, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
@@ -15,7 +15,8 @@ const brief = { outcome: "Draft", doneWhen: "Tests pass", mode: "make-it-work" a
 async function fixture(placed = true) {
   const archived = new Set<string>();
   const archive = vi.fn(async ({ threadId }: { threadId: string }) => { archived.add(threadId); return { ok: true }; });
-  const f = setup({ threads: { archive, stop: async () => ({ ok: true }), queuedMessages: { list: async () => [], delete: async () => ({ ok: true }) }, get: async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, archivedAt: archived.has(threadId) ? 100 : null }) } });
+  const unarchive = vi.fn(async ({ threadId }: { threadId: string }) => { archived.delete(threadId); return { ok: true }; });
+  const f = setup({ threads: { archive, unarchive, stop: async () => ({ ok: true }), queuedMessages: { list: async () => [], delete: async () => ({ ok: true }) }, get: async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, archivedAt: archived.has(threadId) ? 100 : null }) } });
   fixtures.push(f);
   const quest = await seedQuest(f.k, "lead", "Draft", "Tested draft");
   f.k.plan("lead", { ...planInput(quest.id), waypoints: [{ ...planInput(quest.id).waypoints[0]!, optional: true }] });
@@ -28,7 +29,7 @@ async function fixture(placed = true) {
   vi.spyOn(f.runtime.placements(), "host", "get").mockReturnValue({ call: vi.fn(), onWorkerExit: () => () => {} });
   const save = vi.spyOn(f.runtime.placements().preserve, "beforeRelease").mockResolvedValue({ state: "blocked", message: "save refused" });
   const wrap = () => concludeQuest(f.runtime, "lead", quest.id, "Draft tested", "", [{ waypointId: "w1", reason: "Optional" }]);
-  return { ...f, quest, owner, archive, archived, local, save, wrap };
+  return { ...f, quest, owner, archive, unarchive, archived, local, save, wrap };
 }
 
 function confirmPlacementRelease(f: Awaited<ReturnType<typeof fixture>>) {
@@ -52,6 +53,73 @@ it("does not complete a placed release from a host reply alone, and records one 
   expect(await f.runtime.release("lead", "child", "Release")).toBe(true);
   expect(await f.runtime.release("lead", "child", "Release")).toBe(true);
   expect(f.k.store.events("lead").filter(event => event.type === "member.released").map(e => e.data.engagement)).toEqual([{ from: "releasing", to: "released" }]);
+  expect(f.k.member("child")).toMatchObject({ engagement: "archived", disposition: "released" });
+  expect(f.k.store.events("lead").filter(e => e.type === "thread.archived")).toHaveLength(1);
+  expect(f.archive).not.toHaveBeenCalled();
+});
+
+it("preserves local work before archiving a released member and records it on the quest", async () => {
+  const f = await fixture(false);
+  f.local.mockResolvedValueOnce("A patch could not be saved");
+  expect(await f.runtime.release("lead", "child", "Work complete")).toBe(false);
+  expect(f.archive).not.toHaveBeenCalled();
+  expect(f.k.member("child")).toMatchObject({ engagement: "archiving", disposition: "released" });
+  expect(await f.runtime.release("lead", "child", "Work complete")).toBe(true);
+  expect(f.local.mock.invocationCallOrder.at(-1)).toBeLessThan(f.archive.mock.invocationCallOrder[0]!);
+  expect(f.archive).toHaveBeenCalledExactlyOnceWith({ threadId: "child" });
+  expect(f.save).not.toHaveBeenCalled();
+  expect(f.k.member("child")).toMatchObject({ engagement: "archived", disposition: "released" });
+  const history = f.k.store.events("lead").filter(e => e.type === "member.released" || e.type === "thread.archived");
+  expect(history.map(e => e.type)).toEqual(["member.released", "thread.archived"]);
+  expect(history.every(e => e.boardQuestId === f.quest.id)).toBe(true);
+});
+
+it("lets a Keeper find and archive their earlier live releases only on request", async () => {
+  const f = await fixture(false);
+  registerTools(f.bb, f.runtime);
+  for (const id of ["second", "already", "active", "other"]) f.k.bind(id, "smith", "vale", "project", f.owner);
+  f.k.store.put("members", "other", { ...f.k.member("other")!, keeperThreadId: "other-keeper" });
+  for (const id of ["child", "second", "already", "other"])
+    patchThreadFixture(f.k.store, id, { released: { reason: "Released earlier", decisionId: `old-${id}` } });
+  f.archived.add("already");
+  f.runtime.updateThread(await f.bb.sdk.threads.get({ threadId: "already" }));
+  await f.runtime["finishMemberCleanup"]("lead");
+  expect(f.archive).not.toHaveBeenCalled();
+  const call = (name: string, input: Record<string, unknown>) => f.harness.behavior.invokeAgentTool(name, input, { threadId: "lead" });
+  const status = async () => JSON.parse(String(await call("tavern_status", {}))).releasedNotArchived;
+  const firstPage = JSON.parse(String(await call("tavern_status", { limit: 1 })));
+  expect(firstPage).toMatchObject({ releasedNotArchived: [expect.objectContaining({ threadId: "child" })], nextReleasedNotArchivedOffset: 1 });
+  const before = await status();
+  expect(before).toEqual([expect.objectContaining({ threadId: "child" }), expect.objectContaining({ threadId: "second" })]);
+  const release = (threadId: string) => call("tavern_release", { memberThreadId: threadId, reason: "Archive earlier release" });
+  await expect(release("other")).rejects.toThrow(/your own party/);
+  for (const { threadId } of before) {
+    expect(await release(threadId)).toContain("Archived");
+    await release(threadId);
+  }
+  expect(await status()).toEqual([]);
+  expect(f.archive.mock.calls.map(([args]) => args.threadId)).toEqual(["child", "second"]);
+  expect(f.harness.inspection.sdk.callsTo("threads.stop")).toEqual([]);
+  expect(f.k.store.events("lead").filter(e => e.type === "thread.archived" && e.data.keeperArchiveRequested)).toHaveLength(2);
+  expect(f.k.store.events("lead").filter(e => e.type === "member.released")).toHaveLength(0);
+});
+
+it("keeps a placed release final after decision Undo and after opening the thread for reading", async () => {
+  const f = await fixture();
+  f.save.mockImplementation(async () => confirmPlacementRelease(f));
+  expect(await f.runtime.release("lead", "child", "Work complete")).toBe(true);
+  const decision = f.k.store.all("decisions").find(d => d.text.startsWith("Release "))!;
+  await f.runtime.undoDecision(decision.id);
+  expect(f.k.store.get("decisions", decision.id)?.undone).toBe(true);
+  expect(f.unarchive).not.toHaveBeenCalled();
+  expect(f.archived.has("child")).toBe(true);
+  expect(await f.runtime.unarchiveMember("lead", "child")).toMatchObject({ released: true });
+  expect(f.k.member("child")).toMatchObject({ engagement: "released", disposition: "released" });
+  expect(f.k.store.activeStaffing("lead")).toEqual([]);
+  expect(await f.runtime.release("lead", "child", "Done reading")).toBe(true);
+  expect(f.archive).toHaveBeenCalledExactlyOnceWith({ threadId: "child" });
+  expect(f.save).toHaveBeenCalledOnce();
+  expect(f.k.member("child")).toMatchObject({ engagement: "archived", disposition: "released" });
 });
 
 it.each(["wrap", "conclude", "cellar", "delete"] as const)("preserves a placed member before %s archives it and retains a failed save for Retry", async path => {
@@ -99,13 +167,6 @@ it("uses local preservation exactly once before an unplaced errand archive", asy
   expect(f.local.mock.invocationCallOrder[0]).toBeLessThan(f.archive.mock.invocationCallOrder[0]!);
 });
 
-it("keeps unplaced release on main's non-committing path", async () => {
-  const f = await fixture(false);
-  f.local.mockResolvedValue("local save refused");
-  expect(await f.runtime.release("lead", "child", "Release")).toBe(true);
-  expect(f.local).not.toHaveBeenCalled(); expect(f.save).not.toHaveBeenCalled();
-  expect(f.archive).not.toHaveBeenCalled();
-});
 it("does not use the stale pre-preservation active thread after placed release succeeds", async () => {
   const f = await fixture();
   f.bb.sdk.threads.get = vi.fn(async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, status: "active" }));

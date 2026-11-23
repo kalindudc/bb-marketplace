@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { fixtureActivity, patchThreadFixture } from "./member-fixture";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { seedQuest, waypointEntry } from "./support";
 import { readStatus, statusInput } from "../../src/server/status";
@@ -48,12 +48,14 @@ it("omits resting members whose quest has ended", async () => {
   f.k.store.db.prepare("UPDATE tavern_records SET data=json_set(data,'$.phase','done','$.endedAt',?) WHERE kind='quests' AND id=?").run(f.time(), f.q.id);
   expect((readStatus(f.runtime, "lead", statusInput.parse({})) as { freeHands: unknown[] }).freeHands).toEqual([]);
 });
-it("allows a hire while a same-quest Ranger rests and records the candidate", async () => {
+it("refuses a hire while an eligible Ranger rests on the same quest", async () => {
   const f = await restingFixture();
-  const hired = await f.runtime.hire("lead", "project", { classId: "ranger", title: "Follow up", boardQuestId: f.q.id,
+  const quest = f.q;
+  const spawn = vi.spyOn(f.bb.sdk.threads, "spawn");
+  const hire = () => f.runtime.hire("lead", "project", { classId: "ranger", title: "Follow up", boardQuestId: quest.id,
     brief: { outcome: "Answer the follow-up", mode: "make-it-work", outOfScope: "", doneWhen: "Evidence", context: [], questions: ["1. Where?"], timeboxMinutes: 3 } });
-  expect(hired.threadId).not.toBe(f.m.threadId);
-  expect(hired).toHaveProperty("restingCandidates", [expect.objectContaining({ threadId: f.m.threadId })]);
-  const event = f.k.store.unreadEvents("lead", 0, 100).find(e => e.type === "member.hired");
-  expect(event?.data).toHaveProperty("restingCandidates", [expect.objectContaining({ threadId: f.m.threadId })]);
+  await expect(hire()).rejects.toThrow(/Fern \(resting\).*tavern_tell.*tavern_release/);
+  expect(spawn).not.toHaveBeenCalled();
+  patchThreadFixture(f.k.store, f.m.threadId, { released: { reason: "Finished", decisionId: "release-finished" } });
+  await expect(hire()).resolves.toMatchObject({ boardQuestId: quest.id });
 });

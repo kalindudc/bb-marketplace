@@ -62,8 +62,11 @@ export function restingMember(k: Keeper, member: Member, context = restingContex
   const quest = member.boardQuestId ? k.quest(member.boardQuestId).short : "its errand";
   const placement = context.placements.byMember(member.threadId);
   const machineLost = isMemberMachineGone(placement);
+  const restedMinutes = Math.max(0, Math.floor((k.now() - engagement.since) / 60_000));
+  const waypoints = member.boardQuestId ? context.waypoints(member.boardQuestId) : [];
+  const needsCleanup = restedMinutes >= k.settings(member.boardQuestId).keepers.restMinutes || (waypoints.length > 0 && waypoints.every(settled));
   return { threadId: member.threadId, name: k.name(member), classId: member.classId, boardQuestId: member.boardQuestId, quest, ...engagement,
-    settled: !engagement.underReview && workSettled, kept, restedMinutes: Math.max(0, Math.floor((k.now() - engagement.since) / 60_000)),
+    settled: !engagement.underReview && workSettled, kept, restedMinutes, needsCleanup,
     machineHeld: placement !== null && !machineLost, machineLost, mayRebriefFor: machineLost ? null : reuseRule(member.classId, engagement, quest) };
 }
 export function restingParty(k: Keeper, keeperId: string, context = restingContext(k)) {
@@ -74,7 +77,4 @@ export function restingParty(k: Keeper, keeperId: string, context = restingConte
 }
 export function freeHands(k: Keeper, keeperId: string, context?: ReturnType<typeof restingContext>) {
   return restingParty(k, keeperId, context).filter(member => member.mayRebriefFor !== null);
-}
-export function restingCandidates(k: Keeper, keeperId: string, request: { classId: string; boardQuestId?: string | null; waypointId?: string | null }) {
-  return freeHands(k, keeperId).filter(m => m.classId === request.classId && m.boardQuestId === (request.boardQuestId ?? null) && (m.classId !== "warden" || !!request.waypointId && m.rejectedWaypoints.includes(request.waypointId)));
 }

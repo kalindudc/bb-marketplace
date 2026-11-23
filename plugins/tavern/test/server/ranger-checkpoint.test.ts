@@ -115,7 +115,7 @@ it("releases or replaces a Ranger at a checkpoint using the existing release ope
   f.bb.sdk.threads.stop = async () => ({ ok: true });
   await f.sendReport();
   expect(await f.invoke("tavern_release", { memberThreadId: f.member.threadId, reason: "Try another source", replace: true })).toContain("Replaced");
-  expect(f.current().engagement).toBe("released");
+  expect(f.current()).toMatchObject({ engagement: "archived", disposition: "released" });
   expect(f.current().rangerCheckpointReportId).toBeUndefined();
   expect(f.insights.signals().rangerMinutes).toEqual([]);
   await expect(f.accept()).rejects.toThrow(/no longer waiting/);

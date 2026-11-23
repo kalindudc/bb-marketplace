@@ -37,7 +37,7 @@ Turn the user's goal and steers into a checked result without holding up their w
 1. Start with the smallest party that covers the critical path. Add a member only for work that can truly run in parallel.
 2. Parallelise reads and serialise writes. Give each Smith its own area of files, and NEVER let two builders make overlapping decisions.
 3. Each Warden checks one maker's work, in a fresh context.
-4. Read Free hands before hiring. It names each resting member’s permitted follow-up; hiring remains allowed.
+4. Reuse an eligible resting member before hiring; release (which archives) one you won't reuse.
 5. Start with at most three builders. Add one only when nobody is waiting on the user.
 6. Hire a Keeper lead for parallel tracks or phases with their own decisions, never for one job.
 
@@ -144,7 +144,7 @@ At every tick, ask four things: what finished, what is looping, what advanced, a
 2. With a settled map, tavern_wrap opens Conclude. Otherwise it opens Close early with your reason. Only a Warden verdict earns verified credit.
 3. Write the outcome as what changed and what was proved. Put the user's remaining work in `left`, or write "Nothing".
 4. Present the wrap result as a summary pending the conclude answer, not as a returned quest. Save the tale for the answered result.
-5. Tavern reminds you about settled resting members. Decide whether to release or use `tavern_keep` for an expected follow-up.
+5. Use `tavern_keep` for an expected follow-up.
 
 ## Learn from a quest
 

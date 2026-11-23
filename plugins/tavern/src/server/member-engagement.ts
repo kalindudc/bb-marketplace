@@ -16,7 +16,7 @@ export type MemberEngagementData = {
   cancelledInitialBrief?: boolean;
   rest?: { since: number; reminded?: boolean; keep?: { until: number; why: string; decisionId: string } | null } | null;
   operation?: MemberOperation | null;
-  release?: { reason: string; decisionId?: string; at?: number } | null;
+  release?: { reason: string; decisionId?: string; at?: number; operationId?: string } | null;
   replacement?: { reason: string; brief: Brief; threadId?: string };
   archive?: Archive | null;
   archiveAfter?: { receipt: EngagementReceipt; reason: string; archive: Archive } | null;
@@ -47,7 +47,7 @@ export const MEMBER_TRANSITIONS = [
   ...rows([...available, "releasing"], ["stopping"], "quest-stop", ["user", "tavern"], "quest-stop", "member.stop-requested"),
   ...rows([...available, "releasing"], ["stopping"], "hire-cancelled", ["tavern"], "cancelled-hire", "member.stop-requested"),
   ...rows(["stopping"], ["stopped"], "stop-confirmed", ["tavern"], "host-stop", "member.stopped"),
-  ...rows(archiveSources, ["archiving"], "archive-requested", ["tavern", "user"], "archive-authority", "member.archive-requested"),
+  ...rows(archiveSources, ["archiving"], "archive-requested", ["tavern", "user", "agent"], "archive-authority", "member.archive-requested"),
   ...rows(["archiving"], ["archived"], "archive-confirmed", ["tavern"], "host-archive", "thread.archived"),
   ...rows(archiveSources, ["archived"], "host-archived", ["tavern", "user", "agent"], "host-archive", "thread.archived"),
   ...rows(archiveSources, ["archived"], "host-deleted", ["tavern", "user", "agent"], "host-delete", "thread.deleted"),
@@ -126,8 +126,20 @@ export function archiveDisposition(member: Member, finished = false): Archive {
   return { disposition: "retired unfinished", resumeTo: member.engagement === "briefing" ? "briefing" : "active" };
 }
 
-function hasArchiveAuthority(store: KeeperStore, member: Member, receipt: EngagementReceipt): boolean {
+export function releasedThreadOpen(store: KeeperStore, member: Member): boolean {
+  if (member.role !== "member" || member.leadLinkId || member.engagement !== "released") return false;
+  const { archivedAt, deletedAt } = memberHost(store, member);
+  return archivedAt === null && deletedAt === null;
+}
+
+function hasArchiveAuthority(store: KeeperStore, member: Member, actor: Actor, receipt: EngagementReceipt): boolean {
   const cause = receipt.evidence?.cause;
+  if (actor.kind === "agent" || cause === "released-member-cleanup")
+    return cause === "released-member-cleanup" && actor.kind === "agent" && actor.threadId === member.keeperThreadId &&
+      receipt.id === member.threadId && releasedThreadOpen(store, member);
+  if (cause === "member-release")
+    return member.role === "member" && !member.leadLinkId && member.engagement === "released" &&
+      memberDetails(store, member.threadId).release?.operationId === receipt.id;
   if (cause === "errand-report") {
     const report = store.get("reports", receipt.id);
     return member.classId !== "ranger" && member.errand && report?.status === "done" && report.memberThreadId === member.threadId &&
@@ -229,7 +241,7 @@ export function transitionMember(store: KeeperStore, member: Member, to: Engagem
       if (!placement || !failure || failure.model !== execution?.model || failure.providerId !== execution?.providerId || !store.runtime(bound.threadId).placementFirstTurnSettled)
         refuse("provider failure does not match the placed member");
     }
-    if (cause === "archive-requested" && !hasArchiveAuthority(store, bound, receipt)) refuse("archive authority does not match the member");
+    if (cause === "archive-requested" && !hasArchiveAuthority(store, bound, actor, receipt)) refuse("archive authority does not match the member");
     if (cause === "host-archived" || cause === "host-deleted") {
       const observed = cause === "host-deleted" ? details.host?.deletedAt : details.host?.archivedAt;
       if (!Number.isSafeInteger(observed) || receipt.id !== `${bound.threadId}:${observed}`)

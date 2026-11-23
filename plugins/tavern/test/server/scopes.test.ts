@@ -761,7 +761,7 @@ describe("backend scope integration", () => {
     });
     const ask = f.k.store.openAsks("lead").find((ask) => ask.kind === "scope")!;
     await f.runtime.answerAsk(ask.id, "deny", null, "page");
-    expect(f.k.member("child")?.engagement).toBe("released");
+    expect(f.k.member("child")).toMatchObject({ engagement: "archived", disposition: "released" });
     expect(f.k.store.allocated(f.q.id, "smith")).toBe(0);
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
     expect(f.runtime.scopes!.api.status().threads).toHaveLength(0);

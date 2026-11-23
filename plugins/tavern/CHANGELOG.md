@@ -16,6 +16,8 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- Releasing a party member now archives its thread after preserving its work. Ask your Keeper to archive members released before this version.
+- Keepers must reuse a resting party member before hiring if it can take the same work. The next check-in flags resting members when the quest work is done or their rest has gone stale.
 - Walking sprites mirror to face their direction of travel, without changing the characters’ original faces.
 - The Ledger remembers whether you fold Guardrails and opens it by default when there’s a current alert. Earlier violations stay in a separate fold, with the rule, reason and time easy to tell apart.
 

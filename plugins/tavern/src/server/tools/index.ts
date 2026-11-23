@@ -1,4 +1,5 @@
 import { memberDetails } from "../member-engagement";
+import { wasReleased } from "../../shared/member-engagement";
 import { preapprovalWords } from "../../shared/quest-authority";
 import { z } from "zod";
 import { placementPickSchema } from "../placement/picks";
@@ -220,7 +221,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_hire",
     "Hired a party member",
-    "Hire with a bounded brief. title names the task; Tavern names the thread. Include outcome, mode, out-of-scope, re-runnable done-when and context paths. Rangers need numbered questions and a check-in interval; return evidence, not the deliverable. Widening scope opens a never-timed scope ask; the brief stays queued until approval. Only the user can lift the review budget on the quest page. A reversible tavern_decide with exceeds: party or rangers allows one hire, never beyond keepers.partyMax. Scouts and errands may precede greenlight; staffing needs recorded greenlight, by default the user's explicit approval. A waypoint Warden needs a known maker journal entry. Give the maker, entries, trusted worktree and explicit check commands. The checker preset allows standard check runners there. Do not request commands as tool names; quote custom commands. One maker per Warden slot. Repeat the returned review limitation verbatim. A missing maker root must not widen scope. Prefer Pi for scoped hires. Otherwise requestDetectionOnly:true asks without hiring. After the user approves, repeat with detectionOnlyAskId. Remote and scoped local non-Pi hires detect only, not prevent; never claim hooks are installed. Unknown models refuse before allocation; set classes.<classId>.model or the rule model in Where work runs. Report execution substitutions now. Obey the approved party and replacements per slot per plan version. Resting, released and stopped members free slots. Retry or release failed or unbriefed members before replacing. Scouts need no re-plan; check Free hands first. Call tavern_placements with repo, classId and optional boardQuestId. repo defaults to your own project, or the Warden's maker repo for a Warden. placement is {ruleId} or {kind:\"current\"} for your repo only. Only the rule sets consent, inputs, models and forge. No pick uses the matching rule or stays here for your own repo; leads take no automatic rule. Cross-repo hires carry only the pushed default-branch tip. There is no fallback model. The first line names the repo, rule or pick and target.",
+    "Hire with a bounded brief. title names the task; Tavern names the thread. Include outcome, mode, out-of-scope, re-runnable done-when and context paths. Rangers need numbered questions and a check-in interval; return evidence, not the deliverable. Widening scope opens a never-timed scope ask; the brief stays queued until approval. Only the user can lift the review budget on the quest page. A reversible tavern_decide with exceeds: party or rangers allows one hire, never beyond keepers.partyMax. Scouts and errands may precede greenlight; staffing needs recorded greenlight, by default the user's explicit approval. A waypoint Warden needs a known maker journal entry. Give the maker, entries, trusted worktree and explicit check commands. The checker preset allows standard check runners there. Do not request commands as tool names; quote custom commands. One maker per Warden slot. Repeat the returned review limitation verbatim. A missing maker root must not widen scope. Prefer Pi for scoped hires. Otherwise requestDetectionOnly:true asks without hiring. After the user approves, repeat with detectionOnlyAskId. Remote and scoped local non-Pi hires detect only, not prevent; never claim hooks are installed. Unknown models refuse before allocation; set classes.<classId>.model or the rule model in Where work runs. Report execution substitutions now. Obey the approved party and replacements per slot per plan version. Resting, released and stopped members free slots. Retry or release failed or unbriefed members before replacing. Scouts need no re-plan. Call tavern_placements with repo, classId and optional boardQuestId. repo defaults to your own project, or the Warden's maker repo for a Warden. placement is {ruleId} or {kind:\"current\"} for your repo only. Only the rule sets consent, inputs, models and forge. No pick uses the matching rule or stays here for your own repo; leads take no automatic rule. Cross-repo hires carry only the pushed default-branch tip. There is no fallback model. The first line names the repo, rule or pick and target.",
     z.object({
       classId: id,
       brief: briefSchema,
@@ -259,8 +260,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       const adjustments = m.executionNotes.length
         ? `\nExecution adjustments:\n${m.executionNotes.map((note) => `- ${note}`).join("\n")}\n`
         : "\n";
-      const reuse = m.restingCandidates.length ? `Free hands: ${m.restingCandidates.map(candidate => `${candidate.name} (${candidate.threadId})`).join(", ")} could take a bounded re-brief; this hire was allowed.` : null;
-      return `${firstLine}Hired ${runtime.keeper.name(m)}: ${m.threadId}.${m.briefPending ? " Hired, brief pending; Tavern will retry delivery. Do not hire a second member for this slot." : ""}${adjustments}${reuse ? `${reuse}\n` : ""}Write on its own line:\n${m.errand ? `::tavern-errand{member="${m.threadId}"}` : `::tavern-party{quest="${m.boardQuestId}"}`}`;
+      return `${firstLine}Hired ${runtime.keeper.name(m)}: ${m.threadId}.${m.briefPending ? " Hired, brief pending; Tavern will retry delivery. Do not hire a second member for this slot." : ""}${adjustments}Write on its own line:\n${m.errand ? `::tavern-errand{member="${m.threadId}"}` : `::tavern-party{quest="${m.boardQuestId}"}`}`;
     },
   );
   register(
@@ -273,7 +273,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_release",
     "Released a party member",
-    "Stop one stuck member of your own party by name or id, with a reason. replace:true rehires for the same waypoint. A reversible release is Decided for you. Limits and verified credit stay. Leads call confirmRetirement:true after releasing their party and handing off PRs, then end the turn.",
+    "Release one member of your own party by name or id, with a reason. replace:true rehires for the same waypoint. Undo a reversible release in Decided for you. Limits and credit stay. Leads call confirmRetirement:true after releasing their party and handing off PRs, then end the turn.",
     z.union([z.object({ memberThreadId: id, reason: z.string().trim().min(1).max(500), replace: z.boolean().optional() }).strict(), z.object({ confirmRetirement: z.literal(true) }).strict()]),
     async (input, threadId, projectId) => {
       if ("confirmRetirement" in input) {
@@ -286,6 +286,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         const state = runtime.requestLeadRetirement(threadId, member, input.reason);
         return state === "retired" ? "This lead has retired." : "Retirement requested. Tavern waits for the lead's own confirmation.";
       }
+      const alreadyReleased = wasReleased(member);
       const replacement = input.replace ? await runtime.replaceMember(threadId, projectId, member.threadId, input.reason) : null;
       const released = replacement ? replacement.state !== "releasing" : await runtime.release(threadId, member.threadId, input.reason);
       if (released) {
@@ -300,12 +301,16 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
           return `Replaced ${k.name(member)} with ${replacement.threadId}${work}${replacement.briefPending ? " Check tavern_status for brief delivery." : ""}`;
         if (replacement?.state === "hiring") return `Released ${member.threadId}${work} The replacement hire is pending. Do not hire another for this slot.`;
         if (replacement?.state === "blocked") return `Released ${member.threadId}${work} Replacement not confirmed: ${replacement.message} Read tavern_status before retrying with replace:true and the same thread id.`;
+        if (alreadyReleased && k.member(member.threadId)?.engagement === "archived")
+          return `${member.engagement === "archived" ? "Already archived:" : "Archived"} ${k.name(member)}${work}`;
         return loss ? `Released ${k.name(member)}${work}` : `Released ${input.memberThreadId}; its allocation is free${work}`;
       }
       const blocker = memberDetails(k.store, member.threadId).operation?.error;
-      const pending = blocker
-        ? `Release pending for ${input.memberThreadId}: ${blocker} The thread and its allocation stay held. Retry release after resolving the blocker.`
-        : `Stop requested for ${input.memberThreadId}; its allocation stays held until the stop is confirmed. Tavern will retry confirmation.`;
+      const pending = k.member(member.threadId)?.engagement === "archiving"
+        ? `Archive pending for ${input.memberThreadId}${blocker ? `: ${blocker}` : ""}. The allocation is free. Tavern will retry the archive.`
+        : blocker
+          ? `Release pending for ${input.memberThreadId}: ${blocker} The thread and its allocation stay held. Retry release after resolving the blocker.`
+          : `Stop requested for ${input.memberThreadId}; its allocation stays held until the stop is confirmed. Tavern will retry confirmation.`;
       return replacement ? `${pending} Retry with replace:true and thread id ${member.threadId}; no replacement was hired yet.` : pending;
     },
     (input, threadId) => { if ("memberThreadId" in input) k.require(threadId, "keeper"); },
@@ -561,7 +566,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_status",
     "Read the party\'s status",
-    "Read bounded board state. section=pending shows unrouted messages and pending member briefs. Page reports, asks, events or rules. Use reportId and character offset for the full report and brief. memberThreadId accepts your member's unique live name or thread ID. section=requests shows that member's frozen sources; page by sourceIndex and offset. section=placement shows machine rules and slots. Fetch omitted facts and re-read affected quests after a re-anchor.",
+    "Read bounded board state. section=pending shows unrouted messages and pending member briefs. Page reports, asks, events or rules. Use reportId and character offset for the full report and brief. The summary lists released threads you can archive with tavern_release. memberThreadId accepts your member's unique live name or thread ID. section=requests shows that member's frozen sources; page by sourceIndex and offset. section=placement shows machine rules and slots. Fetch omitted facts and re-read affected quests after a re-anchor.",
     statusInput,
     (input, threadId) => readStatus(runtime, threadId, { ...input, ...(input.memberThreadId ? { memberThreadId: k.resolvePartyMember(threadId, input.memberThreadId).threadId } : {}) }),
   );
