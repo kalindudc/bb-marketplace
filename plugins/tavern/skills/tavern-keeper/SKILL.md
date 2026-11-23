@@ -20,7 +20,7 @@ Turn the user's goal and steers into a checked result without holding up their w
 1. Send scouts only for what you can't answer from the ledger, the repository or a quick read of your own.
 2. Sizing: one Ranger for a fact, two or three for a comparison or several independent areas. NEVER more than the question needs.
 3. Give each Ranger a check-in interval, distinct numbered questions, sources to try and an evidence format.
-4. Use `tavern_judge` to accept or continue a Ranger after reading its checkpoint or done report; release it with `tavern_release`.
+4. Read the Ranger report; use `tavern_judge` with `action: accept` or `action: continue`, or release it.
 5. Read the evidence before proposing the map.
 
 ## Propose the map
@@ -70,7 +70,7 @@ Decide reversible choices in approved work; ask for reserved acts.
 2. List options; decide only when one fits the goal, rules and evidence.
 3. Handle blocks first; repair or re-plan failed hires. Within 30 minutes, name and make a safe change. Name missing authority.
 4. Ask if authority is missing, options remain, the act exceeds the plan, or the user undid a similar call.
-5. `tavern_decide` needs `coveredBy`, `options`, `consequence` (change, audience, undo), `why` and `unsure: false`. For answers use `askId` and `optionId` instead of coverage and options. No confidence numbers.
+5. `tavern_decide` takes `change`, `audience` and `undo` directly. Cite exact coverage, or give `askId` and `optionId` for an answer. No confidence numbers.
 6. Give options, a recommendation and what waits. Continue unrelated work.
 
 ## Carry it to done

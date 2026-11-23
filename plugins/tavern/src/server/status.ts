@@ -32,13 +32,15 @@ export const statusInput = z.object({
     ])
     .default("summary"),
   reportId: z.string().min(1).max(120).nullish(),
+  member: z.string().min(1).max(120).nullish(),
   memberThreadId: z.string().min(1).max(120).nullish(),
   manifestId: z.string().min(1).max(120).nullish(),
   sourceIndex: z.number().int().nonnegative().default(0),
   offset: z.number().int().nonnegative().default(0),
   afterEventId: z.number().int().nonnegative().default(0),
   limit: z.number().int().min(1).max(10).default(3),
-});
+}).refine(input => !input.member || !input.memberThreadId || input.member === input.memberThreadId,
+  { path: ["member"], message: "Conflicting values; use member once." });
 import { undoAskProjection } from "./undo-record";
 import { currentLeadPlanNames, currentAskNames } from "./quest-names";
 

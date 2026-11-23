@@ -18,6 +18,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- Keeper tools use the same member field, accept old field names, and show the field that needs fixing. Decisions take flat fields without changing who can approve them.
 - A member accepting a brief no longer wakes the Keeper on its own. The next update includes the acceptance, and members with a pending wake-up or an active keep no longer trigger stale alerts.
 - Released Wardens free their checker slots. A newly hired Warden can check its assigned waypoint without the Keeper reordering the slots or making a new plan.
 - Releasing a party member now archives its thread after preserving its work. Ask your Keeper to archive members released before this version.

@@ -1,0 +1,100 @@
+import { z } from "zod";
+import { decisionSchema } from "../../shared/schema";
+
+const id = z.string().min(1).max(120);
+const reason = z.string().trim().min(1).max(500);
+
+function field(ctx: z.RefinementCtx, name: string, message: string) {
+  ctx.addIssue({ code: "custom", path: name.split("."), message });
+  return z.NEVER;
+}
+
+function alias<T extends string>(ctx: z.RefinementCtx, name: string, expected: string, ...values: (T | undefined)[]): T {
+  const present = values.filter(value => value !== undefined);
+  if (!present.length) return field(ctx, name, expected);
+  if (present.some(value => value !== present[0])) return field(ctx, name, "Conflicting values; use this field once.");
+  return present[0]!;
+}
+
+export function memberInput<T extends z.ZodRawShape>(shape: T) {
+  return z.object({ ...shape, member: id.optional(), memberThreadId: id.optional() }).strict()
+    .transform((value, ctx) => {
+      const { member, memberThreadId, ...input } = value as z.output<z.ZodObject<T>> & { member?: string; memberThreadId?: string };
+      return { ...input, member: alias(ctx, "member", "Give the member's name or thread id.", member, memberThreadId) };
+    });
+}
+
+const action = z.enum(["accept", "continue"]).optional();
+export const judgeInput = z.object({
+  action, op: action, decision: action, reportId: id,
+  reason: reason.optional(), minutes: z.number().int().min(1).max(240).optional(),
+  questionNumbers: z.array(z.number().int().min(1).max(12)).min(1).max(12).optional(),
+}).strict().transform((input, ctx) => {
+  const action = alias(ctx, "action", "Choose accept or continue.", input.action, input.op, input.decision);
+  if (action === "continue") {
+    if (input.minutes === undefined) return field(ctx, "minutes", "Give the next check-in interval.");
+    if (input.reason === undefined) return field(ctx, "reason", "Say why the Ranger should continue.");
+    return { action, reportId: input.reportId, reason: input.reason, minutes: input.minutes, questionNumbers: input.questionNumbers };
+  }
+  if (input.minutes !== undefined || input.questionNumbers !== undefined) return field(ctx, "action", "Use continue with minutes or questionNumbers.");
+  return { action, reportId: input.reportId, reason: input.reason };
+});
+
+const coverageKind = z.enum(["route", "rule", "answer", "plan", "ask"]);
+const planVersion = z.number().int().positive();
+const consequence = decisionSchema.shape.consequence.unwrap();
+const legacyCoverage = z.object({
+  kind: coverageKind, id: id.optional(), routeId: id.optional(), ruleId: id.optional(), askId: id.optional(), ref: id.optional(),
+  version: planVersion.optional(), waypointId: id.optional(),
+}).strict();
+const options = decisionSchema.shape.options.unwrap();
+const option = options.element;
+
+export const decideInput = decisionSchema.pick({ why: true, reversible: true, source: true, leadPlan: true, exceeds: true, askId: true, optionId: true, kind: true }).extend({
+  text: decisionSchema.shape.text.optional(), decision: decisionSchema.shape.text.optional(),
+  boardQuestId: id.nullish(), sourceRef: id.nullish(), source: decisionSchema.shape.source.default("keeper"),
+  unsure: decisionSchema.shape.unsure.unwrap(),
+  coverageKind: coverageKind.optional(), coverageId: id.optional(), planVersion: planVersion.optional(), waypointId: id.optional(),
+  ...consequence.partial().shape, consequence: consequence.optional(), coveredBy: legacyCoverage.optional(),
+  options: z.array(z.union([option, z.object({ label: option, id: id.optional() }).strict()])).min(1).max(5).optional(),
+}).strict().transform((input, ctx) => {
+  const { text, decision, coveredBy, coverageKind, coverageId, planVersion, waypointId, change, audience, undo, consequence, options, ...common } = input;
+  const summary = alias(ctx, "text", "Give the decision text.", text, decision);
+  const flatConsequence = change !== undefined || audience !== undefined || undo !== undefined;
+  if (consequence && flatConsequence) return field(ctx, "change", "Use change, audience and undo without consequence.");
+  if (change === undefined && !consequence) return field(ctx, "change", "Say what changes.");
+  if (audience === undefined && !consequence) return field(ctx, "audience", "Say who is affected.");
+  if (undo === undefined && !consequence) return field(ctx, "undo", "Say how to undo the decision.");
+  const result = { ...common, text: summary, consequence: consequence ?? { change: change!, audience: audience!, undo: undo! } };
+  const flatCoverage = coverageKind !== undefined || coverageId !== undefined || planVersion !== undefined || waypointId !== undefined;
+  if (common.askId !== undefined || common.optionId !== undefined || common.kind !== undefined) {
+    if (coveredBy || flatCoverage || options || common.exceeds || common.leadPlan) return field(ctx, "askId", "Answer with askId and optionId, without coverage, options, exceeds or leadPlan.");
+    if (!common.askId) return field(ctx, "askId", "Give the exact ask id.");
+    if (common.optionId === undefined) return field(ctx, "optionId", "Give the exact option id.");
+    return result;
+  }
+  if (coveredBy && flatCoverage) return field(ctx, "coverageKind", "Use flat coverage fields without coveredBy.");
+  const kind = coverageKind ?? coveredBy?.kind;
+  if (!kind) return field(ctx, "coverageKind", "Choose route, rule, answer or plan.");
+  if (!options) return field(ctx, "options", "List the alternatives you considered.");
+  type Coverage = z.infer<typeof decisionSchema.shape.coveredBy>;
+  let coverage: Coverage;
+  if (kind === "plan") {
+    const version = planVersion ?? coveredBy?.version, waypoint = waypointId ?? coveredBy?.waypointId;
+    if (version === undefined || waypoint === undefined) return field(ctx, "planVersion", "Give planVersion and waypointId for plan coverage.");
+    if (coverageId || coveredBy?.id || coveredBy?.routeId || coveredBy?.ruleId || coveredBy?.askId || coveredBy?.ref) return field(ctx, "planVersion", "Use only planVersion and waypointId for plan coverage.");
+    coverage = { kind, version, waypointId: waypoint };
+  } else {
+    if (planVersion !== undefined || waypointId !== undefined || coveredBy?.version !== undefined || coveredBy?.waypointId !== undefined) return field(ctx, "coverageId", "Give the exact receipt id, not a planVersion or waypointId.");
+    const type = kind === "ask" ? "answer" : kind;
+    const legacyId = type === "route" ? coveredBy?.routeId : type === "rule" ? coveredBy?.ruleId : coveredBy?.askId;
+    if (type !== "route" && coveredBy?.routeId || type !== "rule" && coveredBy?.ruleId || type !== "answer" && coveredBy?.askId)
+      return field(ctx, "coverageId", "Give an id for the stated coverageKind.");
+    coverage = { kind: type, id: alias(ctx, "coverageId", "Give the exact receipt id.", coverageId, coveredBy?.id, coveredBy?.ref, legacyId) };
+  }
+  return { ...result, coveredBy: coverage, options: options.map(option => typeof option === "string" ? option : option.label) };
+});
+
+export function argumentError(error: z.ZodError) {
+  return new Error(error.issues.map(issue => `${issue.path.join(".") || "arguments"}: ${issue.message}`).join("\n"));
+}

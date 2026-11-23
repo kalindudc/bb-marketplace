@@ -288,7 +288,7 @@ const noteFields = z.object({
 }).strict();
 export const noteDraftSchema = z.discriminatedUnion("kind", [
   noteFields.extend({ kind: z.literal("fact") }),
-  noteFields.extend({ kind: z.literal("commitment") }).refine(note => note.dueAt != null, { message: "A commitment needs a deadline (dueAt)." }),
+  noteFields.extend({ kind: z.literal("commitment") }).refine(note => note.dueAt != null, { path: ["dueAt"], message: "A commitment needs a deadline (dueAt)." }),
   noteFields.extend({
     kind: z.literal("waiting-on-user"),
     need: z.string({ error: "Add need: one sentence saying what you need from the user, at most 120 characters." }).trim().min(1).max(120)

@@ -10,7 +10,6 @@ import {
   askSchema,
   checkerHandoffHoldDraftSchema,
   briefSchema,
-  decisionSchema,
   planInputSchema,
   settleWaypointSchema,
   reportSchema,
@@ -35,6 +34,7 @@ import { registerReady } from "./ready";
 import { managePullRequest, pullRequestActionSchema } from "../pull-request-rules";
 import { refreshQuestPullRequests } from "../conclude-pull-requests";
 import { memoryToolInput } from "../../shared/memory";
+import { argumentError, decideInput, judgeInput, memberInput } from "./arguments";
 
 const id = z.string().min(1).max(120);
 const optionalQuest = id.nullish();
@@ -128,7 +128,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_route",
     "Read the user's message",
-    "Record how the oldest unrouted user message was read. notes is REQUIRED on every route kind: separate facts, promises and hand-backs with need (see tavern_note), or []. The goal itself is never a note: open a quest for it. A steer can name one boardQuestId or several boardQuestIds when the user means multiple goals. Asides and questions must not name quests. Route the user's own standing rule as rule. Record an explicit checker-handoff hold with checkerHandoffHold: { reason }. It stays held until a user control releases it; a reporting promise never releases it. Route queued messages before quest writes. steer: apply to every named quest; ask and change nothing if targets are unclear. A still-applicable steer or new-quest route survives later messages until its following Keeper turn ends; never re-route to regain it. question: answer from the ledger or knowledge and change nothing. aside: do quick work directly, otherwise hire an errand helper with errand:true, without a board quest or waypoint; never change board quests. new-quest: open the concrete goal with tavern_quest and scout; a greeting or class selection is not a goal. rule: save the user's standing rule verbatim with tavern_rule and source:message, active for this Keeper by default; global only when the user explicitly names all Keepers or all Tavern threads. Keeper proposals wait for ledger confirmation. Keep facts verbatim and give promises deadlines.",
+    "Record how the oldest unrouted user message was read. notes is REQUIRED on every route kind: separate facts, promises and hand-backs with need (see tavern_note), or []. The goal itself is never a note: open a quest for it. A steer can name one boardQuestId or several boardQuestIds when the user means multiple goals. Asides and questions must not name quests. Route the user's own standing rule as rule. Record an explicit checker-handoff hold with checkerHandoffHold: { reason }. It stays held until a user control releases it; a reporting promise never releases it. Route queued messages before quest writes. steer: apply to every named quest; ask and change nothing if targets are unclear. A still-applicable steer or new-quest route survives later messages until its following Keeper turn ends; never re-route to regain it. question: answer from the ledger or knowledge and change nothing. aside: do quick work directly, otherwise hire an errand helper with errand:true, without a board quest or waypoint; never change board quests. new-quest: open the concrete goal with tavern_quest and scout; a greeting or class selection is not a goal. rule: save the user's standing rule verbatim with tavern_rule and source:message, active for this Keeper by default; global only when the user explicitly names all Keepers or all Tavern threads. Keeper proposals wait for ledger confirmation. Promises need dueAt in Unix milliseconds.",
     z.object({
       kind: z.enum(ROUTE_KINDS),
       boardQuestId: optionalQuest,
@@ -143,6 +143,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       await Promise.all(quests.map(id => refreshQuestPullRequests(runtime, id)));
       return route;
     },
+    "keeper", argumentError,
   );
   register(
     "tavern_summary",
@@ -221,7 +222,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_hire",
     "Hired a party member",
-    "Hire with a bounded brief. title names the task; Tavern names the thread. Include outcome, mode, out-of-scope, re-runnable done-when and context paths. Rangers need numbered questions and a check-in interval; return evidence, not the deliverable. Widening scope opens a never-timed scope ask; the brief stays queued until approval. Only the user can lift the review budget on the quest page. A reversible tavern_decide with exceeds: party or rangers allows one hire, never beyond keepers.partyMax. Scouts and errands may precede greenlight; staffing needs recorded greenlight, by default the user's explicit approval. A waypoint Warden needs a known maker journal entry. Give the maker, entries, trusted worktree and explicit check commands. The checker preset allows standard check runners there. Do not request commands as tool names; quote custom commands. One maker per Warden slot. Repeat the returned review limitation verbatim. A missing maker root must not widen scope. Prefer Pi for scoped hires. Otherwise requestDetectionOnly:true asks without hiring. After the user approves, repeat with detectionOnlyAskId. Remote and scoped local non-Pi hires detect only, not prevent; never claim hooks are installed. Unknown models refuse before allocation; set classes.<classId>.model or the rule model in Where work runs. Report execution substitutions now. Obey the approved party and replacements per slot per plan version. Resting, released and stopped members free slots. Retry or release failed or unbriefed members before replacing. Scouts need no re-plan. Call tavern_placements with repo, classId and optional boardQuestId. repo defaults to your own project, or the Warden's maker repo for a Warden. placement is {ruleId} or {kind:\"current\"} for your repo only. Only the rule sets consent, inputs, models and forge. No pick uses the matching rule or stays here for your own repo; leads take no automatic rule. Cross-repo hires carry only the pushed default-branch tip. There is no fallback model. The first line names the repo, rule or pick and target.",
+    "Hire with a bounded brief. title names the task; Tavern names the thread. Include brief.outcome (2,000 characters max), mode, out-of-scope, re-runnable done-when and context paths. Rangers need numbered questions and a check-in interval; return evidence, not the deliverable. Widening scope opens a never-timed scope ask; the brief stays queued until approval. Only the user can lift the review budget on the quest page. A reversible tavern_decide with exceeds: party or rangers allows one hire, never beyond keepers.partyMax. Scouts and errands may precede greenlight; staffing needs recorded greenlight, by default the user's explicit approval. A waypoint Warden needs a known maker journal entry. Give the maker, entries, trusted worktree and explicit check commands. The checker preset allows standard check runners there. Do not request commands as tool names; quote custom commands. One maker per Warden slot. Repeat the returned review limitation verbatim. A missing maker root must not widen scope. Prefer Pi for scoped hires. Otherwise requestDetectionOnly:true asks without hiring. After the user approves, repeat with detectionOnlyAskId. Remote and scoped local non-Pi hires detect only, not prevent; never claim hooks are installed. Unknown models refuse before allocation; set classes.<classId>.model or the rule model in Where work runs. Report execution substitutions now. Obey the approved party and replacements per slot per plan version. Resting, released and stopped members free slots. Retry or release failed or unbriefed members before replacing. Scouts need no re-plan. Call tavern_placements with repo, classId and optional boardQuestId. repo defaults to your own project, or the Warden's maker repo for a Warden. placement is {ruleId} or {kind:\"current\"} for your repo only. Only the rule sets consent, inputs, models and forge. No pick uses the matching rule or stays here for your own repo; leads take no automatic rule. Cross-repo hires carry only the pushed default-branch tip. There is no fallback model. The first line names the repo, rule or pick and target.",
     z.object({
       classId: id,
       brief: briefSchema,
@@ -262,25 +263,26 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         : "\n";
       return `${firstLine}Hired ${runtime.keeper.name(m)}: ${m.threadId}.${m.briefPending ? " Hired, brief pending; Tavern will retry delivery. Do not hire a second member for this slot." : ""}${adjustments}Write on its own line:\n${m.errand ? `::tavern-errand{member="${m.threadId}"}` : `::tavern-party{quest="${m.boardQuestId}"}`}`;
     },
+    "keeper", argumentError,
   );
   register(
     "tavern_keep",
     "Kept a resting member",
-    "Keep a resting quest member. until is Unix milliseconds, within the Keep limit in Settings.",
-    z.object({ member: id, until: z.number().int().nonnegative(), why: z.string().trim().min(1).max(500) }),
+    "Keep a resting quest member by name or id. until is Unix milliseconds, within the Keep limit in Settings.",
+    memberInput({ until: z.number().int().nonnegative(), why: z.string().trim().min(1).max(500) }),
     (input, threadId) => { runtime.keep(threadId, input.member, input.until, input.why); return `Kept ${input.member} until ${localClock(input.until)}: ${input.why}`; },
   );
   register(
     "tavern_release",
     "Released a party member",
-    "Release one member of your own party by name or id, with a reason. replace:true rehires for the same waypoint. Undo a reversible release in Decided for you. Limits and credit stay. Leads call confirmRetirement:true after releasing their party and handing off PRs, then end the turn.",
-    z.union([z.object({ memberThreadId: id, reason: z.string().trim().min(1).max(500), replace: z.boolean().optional() }).strict(), z.object({ confirmRetirement: z.literal(true) }).strict()]),
+    "Release one member of your own party with member (name or id) and reason. replace:true rehires for the same waypoint. Undo a reversible release in Decided for you. Limits and credit stay. Leads call confirmRetirement:true after releasing their party and handing off PRs, then end the turn.",
+    z.union([memberInput({ reason: z.string().trim().min(1).max(500), replace: z.boolean().optional() }), z.object({ confirmRetirement: z.literal(true) }).strict()]),
     async (input, threadId, projectId) => {
       if ("confirmRetirement" in input) {
         runtime.confirmLeadRetirement(threadId);
         return "Retirement confirmed. End your turn; Tavern will free the seat after cleanup.";
       }
-      const member = k.resolvePartyMember(threadId, input.memberThreadId);
+      const member = k.resolvePartyMember(threadId, input.member);
       if (member.leadLinkId) {
         if (input.replace) throw new Error("A lead must retire before its seat can be filled. Request retirement without replace:true.");
         const state = runtime.requestLeadRetirement(threadId, member, input.reason);
@@ -303,35 +305,37 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         if (replacement?.state === "blocked") return `Released ${member.threadId}${work} Replacement not confirmed: ${replacement.message} Read tavern_status before retrying with replace:true and the same thread id.`;
         if (alreadyReleased && k.member(member.threadId)?.engagement === "archived")
           return `${member.engagement === "archived" ? "Already archived:" : "Archived"} ${k.name(member)}${work}`;
-        return loss ? `Released ${k.name(member)}${work}` : `Released ${input.memberThreadId}; its allocation is free${work}`;
+        return loss ? `Released ${k.name(member)}${work}` : `Released ${input.member}; its allocation is free${work}`;
       }
       const blocker = memberDetails(k.store, member.threadId).operation?.error;
       const pending = k.member(member.threadId)?.engagement === "archiving"
-        ? `Archive pending for ${input.memberThreadId}${blocker ? `: ${blocker}` : ""}. The allocation is free. Tavern will retry the archive.`
+        ? `Archive pending for ${input.member}${blocker ? `: ${blocker}` : ""}. The allocation is free. Tavern will retry the archive.`
         : blocker
-          ? `Release pending for ${input.memberThreadId}: ${blocker} The thread and its allocation stay held. Retry release after resolving the blocker.`
-          : `Stop requested for ${input.memberThreadId}; its allocation stays held until the stop is confirmed. Tavern will retry confirmation.`;
+          ? `Release pending for ${input.member}: ${blocker} The thread and its allocation stay held. Retry release after resolving the blocker.`
+          : `Stop requested for ${input.member}; its allocation stays held until the stop is confirmed. Tavern will retry confirmation.`;
       return replacement ? `${pending} Retry with replace:true and thread id ${member.threadId}; no replacement was hired yet.` : pending;
     },
-    (input, threadId) => { if ("memberThreadId" in input) k.require(threadId, "keeper"); },
+    (input, threadId) => { if ("member" in input) k.require(threadId, "keeper"); },
+    (error, input) => input && typeof input === "object" && "confirmRetirement" in input
+      ? argumentError(error) : new Error("Give member (name or thread id) and reason, or confirmRetirement:true."),
   );
   register(
     "tavern_scope",
     "Updated a member scope",
-    "Narrow or request scope for your own member by unique name or thread id, with a reason. Temporary paths and the member’s own thread storage already allow native write/edit and inspected shell writers; do not request them. Only grants covered by the user-controlled repo policy apply without an ask. Other widening requires an explicit, never-timed scope answer; scope permission never approves a merge, deploy, delete, send or production action. tools.allow accepts tool names or valid patterns, not shell commands such as npm test or node --test: commands are governed by the preset and shell rules. A denied widening means no widening, not a new ban on commands already allowed. Narrowing applies immediately; initial briefs wait for their scope grant and new re-briefs wait while widening is pending. Never deliver dependent work through another channel. Only the user's remember-for-this-repo choice persists grants. Handle scope blocks yourself: inspect tavern_status, redirect, request scope, or release. Use repairGuard:true only if a local Pi guard needs the user to restart it.",
+    "Narrow or request scope for your own member with member (name or id) and reason. Temporary paths and the member’s own thread storage already allow native write/edit and inspected shell writers; do not request them. Only grants covered by the user-controlled repo policy apply without an ask. Other widening requires an explicit, never-timed scope answer; scope permission never approves a merge, deploy, delete, send or production action. tools.allow accepts tool names or valid patterns, not shell commands such as npm test or node --test: commands are governed by the preset and shell rules. A denied widening means no widening, not a new ban on commands already allowed. Narrowing applies immediately; initial briefs wait for their scope grant and new re-briefs wait while widening is pending. Never deliver dependent work through another channel. Only the user's remember-for-this-repo choice persists grants. Handle scope blocks yourself: inspect tavern_status, redirect, request scope, or release. Use repairGuard:true only if a local Pi guard needs the user to restart it.",
     z.union([
-      z.object({ memberThreadId: id, override: scopeOverrideSchema, reason: z.string().trim().min(1).max(500) }).strict(),
-      z.object({ memberThreadId: id, repairGuard: z.literal(true) }).strict(),
+      memberInput({ override: scopeOverrideSchema, reason: z.string().trim().min(1).max(500) }),
+      memberInput({ repairGuard: z.literal(true) }),
     ]).meta({ type: "object" }),
     (input, threadId) => {
       if (!runtime.scopes) throw new Error("Tavern scopes are not registered");
       if ("repairGuard" in input) {
-        const ask = runtime.scopes.requestGuardRepair(threadId, input.memberThreadId);
+        const ask = runtime.scopes.requestGuardRepair(threadId, input.member);
         return `Only the user can restart the Pi session.\n::tavern-ask{id="${ask.id}"}`;
       }
       return runtime.scopes.override(
         threadId,
-        input.memberThreadId,
+        input.member,
         input.override,
         input.reason,
       );
@@ -340,10 +344,10 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_tell",
     "Member brief",
-    "Brief your own members by live name or thread id; never steer into a running tool. Report the actual result: delivered, queued, unconfirmed, retrying, blocked or cancelled. Read Free hands for follow-up limits; a Warden may only re-check its rejected waypoint. For a correction, pass supersedeBriefId from tavern_status to replace only that unconfirmed brief.",
-    z.object({ memberThreadId: id, text: z.string().min(1).max(8000), supersedeBriefId: id.optional() }),
+    "Brief your own members using member (name or id); never steer into a running tool. Report the actual result: delivered, queued, unconfirmed, retrying, blocked or cancelled. Read Free hands for follow-up limits; a Warden may only re-check its rejected waypoint. For a correction, pass supersedeBriefId from tavern_status to replace only that unconfirmed brief.",
+    memberInput({ text: z.string().min(1).max(8000), supersedeBriefId: id.optional() }),
     async (input, threadId) => {
-      const delivery = await runtime.tell(threadId, input.memberThreadId, input.text, input.supersedeBriefId);
+      const delivery = await runtime.tell(threadId, input.member, input.text, input.supersedeBriefId);
       switch (delivery.status) {
         case "delivered":
           return `Brief delivered to ${delivery.memberName}.`;
@@ -361,24 +365,23 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
           return `The pending brief for ${delivery.memberName} was cleared before Tavern could confirm delivery. Read tavern_status before sending fresh work.`;
       }
     },
+    "keeper", argumentError,
   );
   register(
     "tavern_judge",
     "Judged a Ranger report",
-    "Use the current Ranger report id: accept the work or continue with minutes, reason and optional questionNumbers from the current brief. To stop or replace the Ranger instead, use tavern_release.",
-    z.discriminatedUnion("op", [
-      z.object({ op: z.literal("accept"), reportId: id }).strict(),
-      z.object({ op: z.literal("continue"), reportId: id, minutes: z.number().int().min(1).max(240), reason: z.string().trim().min(1).max(500), questionNumbers: z.array(z.number().int().min(1).max(12)).min(1).max(12).optional() }).strict(),
-    ]),
-    (input, threadId) => input.op === "accept" ? runtime.acceptRangerReport(threadId, input.reportId)
+    "Use reportId and action: accept, or continue with minutes, reason and optional questionNumbers. Stop or replace with tavern_release.",
+    judgeInput,
+    (input, threadId) => input.action === "accept" ? runtime.acceptRangerReport(threadId, input.reportId, input.reason)
       : runtime.continueRangerReport(threadId, input.reportId, input.minutes, input.reason, input.questionNumbers),
+    "keeper", argumentError,
   );
   register("tavern_hold", "Held the quest", "Hold only by citing messageId of the user’s uncancelled, unused message routed to this quest, newer than its last phase transition; its quoted text is the receipt.", z.object({ boardQuestId: id, messageId: id }), (input, threadId) => runtime.setQuestHeld(input.boardQuestId, true, { kind: "agent", threadId }, input.messageId));
   register("tavern_resume", "Resumed the quest", "Resume only by citing messageId of the user’s uncancelled, unused message routed to this quest, newer than its last phase transition; its quoted text is the receipt.", z.object({ boardQuestId: id, messageId: id }), (input, threadId) => runtime.setQuestHeld(input.boardQuestId, false, { kind: "agent", threadId }, input.messageId));
   register(
     "tavern_plan",
     "Wrote the quest map",
-    "Write a quest map with done-when, owners, dependencies, lead times, review load, party and at most three questions. Set reversible:true only for fully reversible work. For routine pre-approval, inventory acts: read and workspace-write need relative paths; check needs a recognised command. Each waypoint needs check: warden, keeper, or none for an agent; you for a mark in the Keeper's journal; keeper for an outside answer recorded with tavern_gate. Warden slots name waypointIds from one maker. Await explicit greenlight before staffing; by-size can approve one party slot without open asks, questions or user or outside gates. A larger party or weaker checks need a new greenlight. For a reversible check change, fromSteer cites the user's routed steer for this quest. Emit the exact returned quest-map directive.",
+    "Write a quest map with done-when, owners, dependencies, lead times, review load, party and at most three questions. Set reversible:true only for fully reversible work. For routine pre-approval, inventory acts: read and workspace-write need relative paths; check needs a recognised command. Each waypoint needs check: warden, keeper, or none for an agent; you for a mark in the Keeper's journal; keeper for an outside answer recorded with tavern_gate. Warden slots name waypointIds from one maker. Await explicit greenlight before staffing; by-size can approve one party slot without open asks, questions or user or outside gates. A larger party or weaker checks need a new greenlight. For a reversible check change, fromSteer cites the user's routed steer for this quest. Limit waypoint titles to 200 and changeNote to 500 characters. Emit the returned quest-map directive.",
     planInputSchema,
     async (input, threadId) => {
       const plan = await runtime.plan(threadId, input);
@@ -396,6 +399,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
             : " Await the user’s explicit greenlight before staffing.";
       return `Plan v${plan.version} saved.${approval} Write on its own line:\n::tavern-questmap{quest="${plan.boardQuestId}" version="${plan.version}"}${plan.fromSteer ? `\n::tavern-ledger{quest="${plan.boardQuestId}" version="${plan.version}"}` : ""}`;
     },
+    "keeper", argumentError,
   );
   register(
     "tavern_settle",
@@ -468,21 +472,13 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       return `Ask recorded. Continue the work that does not depend on it. Write on its own line:\n::tavern-ask{id="${ask.id}"}`;
     },
   );
-  const decisionCheck = decisionSchema.pick({ consequence: true, unsure: true }).required();
-  const decisionInput = decisionSchema.pick({ text: true, why: true, reversible: true, source: true })
-    .extend({ ...decisionCheck.shape, boardQuestId: optionalQuest, sourceRef: id.nullish() });
   register(
     "tavern_decide",
     "Recorded a decision",
-    "Record a reversible decision with Undo. Give coveredBy, options, consequence and unsure:false; use leadPlan for a linked plan. Give askId and optionId with source keeper to answer your lane, or source ask to record the user's exact answer without replaying it. If unsure, ask. Never claim the user's consent without an answered ask. exceeds: party or rangers permits one extra hire within hard limits.",
-    z.union([
-      decisionInput.extend(decisionSchema.pick({ coveredBy: true, options: true }).required().shape)
-        .extend(decisionSchema.pick({ exceeds: true, leadPlan: true }).shape).strict(),
-      decisionInput.extend(decisionSchema.pick({ askId: true, optionId: true }).required().shape)
-        .extend(decisionSchema.pick({ kind: true }).shape).strict(),
-    ]).meta({ type: "object" }),
+    "Record a reversible decision with Undo. Give text, why, reversible, unsure:false, change, audience and undo. For a plain call give options and coverageKind: route, rule or answer with coverageId, or plan with planVersion and waypointId. For answers use askId and optionId instead; source keeper answers your lane, source ask records the user's exact answer. Never claim the user's consent without an answered ask. Use leadPlan for a linked plan; exceeds: party or rangers permits one hire within hard limits.",
+    decideInput,
     async (input, threadId) => {
-      if ("askId" in input && input.source === "keeper") {
+      if (input.askId && input.optionId !== undefined && input.source === "keeper") {
         const ask = k.store.get("asks", input.askId), effect = ask?.effect;
         if (ask && effect && keeperRecoveryOptions(effect)) {
           if (input.source !== "keeper" || input.unsure || !input.reversible || ask.boardQuestId !== (input.boardQuestId ?? null) || (input.kind && input.kind !== ask.kind))
@@ -499,6 +495,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       const result = k.decideOrAsk(threadId, input);
       return "question" in result ? keeperCallAsk(result.id) : result;
     },
+    "keeper", argumentError,
   );
   register("tavern_act_verdict", "Verified an exact act", "An assigned Warden records a verdict for a delegated merge or production change from a verified maker journal entry whose review evidence names the exact commit or command.", z.object({ askId: id, entryId: id, target: askSchema.shape.target.unwrap() }), (input, threadId) => { k.authority.recordVerdict(threadId, input.askId, input.entryId, input.target); return "Exact act verdict recorded."; }, "member");
   register(
@@ -559,16 +556,20 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_unarchive",
     "Brought back a member",
-    "Unarchive one member in your own party by its unique name or thread id. Deleted threads are refused. A released member stays released; this does not rehire or restart it.",
-    z.object({ memberThreadId: id }),
-    (input, threadId) => runtime.unarchiveMember(threadId, input.memberThreadId),
+    "Unarchive one member in your own party using member (name or id). Deleted threads are refused. A released member stays released; this does not rehire or restart it.",
+    memberInput({}),
+    (input, threadId) => runtime.unarchiveMember(threadId, input.member),
   );
   register(
     "tavern_status",
     "Read the party\'s status",
-    "Read bounded board state. section=pending shows unrouted messages and pending member briefs. Page reports, asks, events or rules. Use reportId and character offset for the full report and brief. The summary lists released threads you can archive with tavern_release. memberThreadId accepts your member's unique live name or thread ID. section=requests shows that member's frozen sources; page by sourceIndex and offset. section=placement shows machine rules and slots. Fetch omitted facts and re-read affected quests after a re-anchor.",
+    "Read bounded board state. section=pending shows unrouted messages and pending member briefs. Page reports, asks, events or rules. Use reportId and character offset for the full report and brief. The summary lists released threads you can archive with tavern_release. member accepts a unique live name or thread ID. section=requests shows that member's frozen sources; page by sourceIndex and offset. section=placement shows machine rules and slots. Fetch omitted facts and re-read affected quests after a re-anchor.",
     statusInput,
-    (input, threadId) => readStatus(runtime, threadId, { ...input, ...(input.memberThreadId ? { memberThreadId: k.resolvePartyMember(threadId, input.memberThreadId).threadId } : {}) }),
+    ({ member, memberThreadId, ...input }, threadId) => {
+      const reference = member ?? memberThreadId;
+      return readStatus(runtime, threadId, { ...input, memberThreadId: reference ? k.resolvePartyMember(threadId, reference).threadId : null });
+    },
+    "keeper", argumentError,
   );
   register("tavern_pull_request", "Recorded a pull request action",
     "Manage a quest PR by id: ready (optional reviewers) needs the Warden’s full commit in journal review evidence; Undo returns it to draft. Close records why; comment replies on your quest’s PR. For others, draft the URL, operation and full text; in your lane, give the quest and the literal gh or dt command with full URL, allowed once. unsure:true asks the user.",

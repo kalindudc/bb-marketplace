@@ -64,18 +64,31 @@ it("refuses uncertainty without answering or recording a decision", async () => 
   expect(f.k.store.all("decisions")).toHaveLength(0);
 });
 
-it("requires the full plain-decision check in the registered schema", async () => {
+it("publishes flattened decision fields and still requires exact coverage and consequences", async () => {
   const f = await fixture();
   const tool = f.registered.mock.calls.find(([tool]) => tool.name === "tavern_decide")![0];
-  const schema = tool.parameters as { type?: string; anyOf?: { required: string[] }[] };
+  const schema = tool.parameters as { type?: string; properties?: Record<string, unknown>; required?: string[] };
   expect(schema.type).toBe("object");
-  expect(schema.anyOf).toEqual([
-    expect.objectContaining({ required: expect.arrayContaining(["coveredBy", "options", "consequence", "unsure"]) }),
-    expect.objectContaining({ required: expect.arrayContaining(["askId", "optionId", "consequence", "unsure"]) }),
-  ]);
-  expect(schema.anyOf?.[1]?.required).not.toContain("coveredBy");
-  expect(schema.anyOf?.[1]?.required).not.toContain("options");
-  await expect(f.decide({ coveredBy: undefined })).rejects.toThrow();
+  for (const field of ["text", "coverageKind", "coverageId", "planVersion", "waypointId", "change", "audience", "undo", "options", "askId", "optionId"])
+    expect(schema.properties).toHaveProperty(field);
+  expect(schema.required).toContain("unsure");
+  await expect(f.decide({ coveredBy: undefined })).rejects.toThrow(/coverageKind/);
+  await expect(f.decide({ coveredBy: undefined, coverageKind: "plan", planVersion: 1 })).rejects.toThrow(/waypointId/);
+  await expect(f.decide({ consequence: undefined, change: "Staging", audience: "Test party" })).rejects.toThrow(/undo/);
+});
+
+it("uses flat coverage and consequence fields without claiming a user answer", async () => {
+  const f = await fixture();
+  await f.decide({ coveredBy: undefined, consequence: undefined, source: undefined, coverageKind: "plan", planVersion: 1, waypointId: "w1", ...f.fields.consequence });
+  expect(f.k.store.all("decisions")).toMatchObject([{ coveredBy: f.fields.coveredBy, consequence: f.fields.consequence, source: "keeper" }]);
+});
+
+it("accepts the old decision and coverage field names, without treating prose as a receipt", async () => {
+  const f = await fixture();
+  const opening = f.k.store.query("routes", "keeperThreadId", "lead", 50).find(route => route.boardQuestId === f.q.id)!;
+  await expect(f.decide({ text: undefined, decision: f.fields.text, coveredBy: { kind: "plan", ref: "plan v1" } })).rejects.toThrow(/planVersion.*waypointId/);
+  await f.decide({ text: undefined, decision: f.fields.text, coveredBy: { kind: "route", routeId: opening.id } });
+  expect(f.k.store.all("decisions")).toMatchObject([{ text: f.fields.text, coveredBy: { kind: "route", id: opening.id } }]);
 });
 
 it("derives the citation and alternatives from its exact delegated ask", async () => {

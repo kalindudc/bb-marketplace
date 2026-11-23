@@ -1209,7 +1209,7 @@ export class Keeper {
         break;
       }
     }
-    if (!valid) throw new Error("coveredBy must name a real route, active rule, user answer or approved plan step that applies here.");
+    if (!valid) throw new Error("coverageKind and coverageId (or legacy coveredBy) must name a real route, active rule or user answer here; for a plan use its approved planVersion and waypointId.");
   }
   private assertUnusedSoftLimitAnswer(sourceRef: string | null | undefined) {
     if (sourceRef && this.store.get("asks", sourceRef)?.effect?.type === "soft-limit")

@@ -1716,12 +1716,12 @@ export class TavernRuntime {
   async plan(threadId: string, input: PlanInput) {
     const q = this.keeper.owned(threadId, input.boardQuestId);
     this.keeper.guard(threadId, q.id);
-    const links = input.waypoints.flatMap((waypoint) => {
+    const links = input.waypoints.flatMap((waypoint, index) => {
       if (waypoint.actor !== "agent" || !waypoint.owner) return [];
       const member = this.keeper.member(waypoint.owner);
       if (!member) {
         if (waypoint.owner.startsWith("thr_"))
-          throw new Error("Unknown waypoint member");
+          throw new Error(`waypoints.${index}.owner must name a member in this quest.`);
         return [];
       }
       if (
@@ -1732,7 +1732,7 @@ export class TavernRuntime {
         wasReleased(member)
       )
         throw new Error(
-          "A waypoint owner must be an unreleased maker in this board quest, not its checker",
+          `waypoints.${index}.owner must be an unreleased maker in this board quest, not its checker.`,
         );
       return [{ waypoint, member }];
     });
@@ -2965,14 +2965,14 @@ export class TavernRuntime {
       throw new Error(`Ranger brief ${pending.id} is pending. Read tavern_status, then wait for delivery or use tavern_release.`);
     return { member, report };
   }
-  async acceptRangerReport(keeperId: string, reportId: string) {
+  async acceptRangerReport(keeperId: string, reportId: string, reason?: string) {
     this.stopAll.assertRunning();
     const k = this.keeper, { member, report } = this.rangerReportForKeeper(keeperId, reportId);
     const completed = k.store.atomic(() => {
       const actor = { kind: "agent" as const, threadId: keeperId };
       const state = k.store.runtime(member.threadId), run = rangerRun(state, report);
       const completed = transitionMember(k.store, member, "resting", "ranger-accepted", actor, { kind: "report", id: reportId }, k.now(),
-        { patch: { state: "idle" }, data: { reportId, ...run } });
+        { patch: { state: "idle" }, data: { reportId, ...run, ...(reason ? { reason } : {}) } });
       k.memory.clearMemberWait(member.threadId);
       k.store.patch(member.threadId, { rangerAcceptedReportId: reportId });
       if (run) this.record("ranger.completed", { memberThreadId: member.threadId, ...run }, keeperId, member.boardQuestId, `ranger-completed:${reportId}`, report.createdAt);
