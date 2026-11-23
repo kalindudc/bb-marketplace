@@ -622,8 +622,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         archiveBlocker = await runtime.archiveMember(threadId, report.id);
       }
       const warning = report.status === "done" ? await runtime.uncommittedWarning(threadId) : null;
-      const reviewWait = k.pendingReviewPlan(report);
-      return `Report written. End your turn.\nReport id: ${report.id}${reviewWait ? `\nReview for ${reviewWait.waypointIds.join(", ")} waits for the Keeper to record a new plan version.` : ""}${archiveBlocker ? `\nArchive pending: ${archiveBlocker} The thread and its allocation stay held. Tavern will retry preservation before cleanup.` : ""}${warning ? `\n${warning}` : ""}`;
+      return `Report written. End your turn.\nReport id: ${report.id}${archiveBlocker ? `\nArchive pending: ${archiveBlocker} The thread and its allocation stay held. Tavern will retry preservation before cleanup.` : ""}${warning ? `\n${warning}` : ""}`;
     },
     "member",
   );

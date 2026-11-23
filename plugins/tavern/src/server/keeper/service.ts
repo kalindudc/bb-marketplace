@@ -2200,16 +2200,14 @@ export class Keeper {
           return entryIds.length && w.actor === "agent" && waypointCheck(w) === "warden" ? [{ waypointId: w.id, entryIds }] : [];
         })
       : [];
-    const rejections = quest && reviewPlanVersion && reviewWaypoints.length
-      ? this.store.db.prepare(`SELECT DISTINCT json_extract(data,'$.waypointId') AS waypointId, json_extract(data,'$.reportId') AS reportId,
-        json_extract(data,'$.planVersion') AS planVersion
+    const rejections = quest && previous && reviewWaypoints.length
+      ? this.store.db.prepare(`SELECT DISTINCT json_extract(data,'$.waypointId') AS waypointId
         FROM tavern_events WHERE board_quest_id=? AND type IN ('waypoint.review-round','waypoint.review-rejected')
-        AND (json_extract(data,'$.planVersion')=? OR json_extract(data,'$.reportId')=?)
-        AND json_extract(data,'$.verdict')='rejected' AND json_type(data,'$.reportId')='text'`)
-        .all(quest.id, reviewPlanVersion, previous?.id ?? null) as { waypointId: string; reportId: string; planVersion: number }[]
+        AND json_extract(data,'$.reportId')=? AND json_extract(data,'$.verdict')='rejected'`)
+        .all(quest.id, previous.id) as { waypointId: string }[]
       : [];
     if (
-      previous && !rejections.some(rejection => rejection.reportId === previous.id && reviewWaypoints.some(w => w.waypointId === rejection.waypointId)) &&
+      previous && !rejections.some(rejection => reviewWaypoints.some(w => w.waypointId === rejection.waypointId)) &&
       (this.store.runtime(threadId).briefVersion ?? 0) ===
         (this.store.runtime(threadId).reportedBriefVersion ?? 0) &&
       previous.status === report.status &&
@@ -2222,14 +2220,7 @@ export class Keeper {
       return { ...previous, voice: null };
     if (!late && rangerCheckIn && m.rangerCheckpointReportId)
       throw new Error(`Report ${m.rangerCheckpointReportId} is waiting for the Keeper; end your turn.`);
-    const held = reviewWaypoints.filter(({ waypointId }) =>
-      rejections.filter(rejection => rejection.waypointId === waypointId && rejection.planVersion === reviewPlanVersion).length >= 2);
-    if (reviewPlanVersion && held.length) report.reviewWait = { planVersion: reviewPlanVersion, waypointIds: held.map(w => w.waypointId) };
     this.store.atomic(() => {
-      const reviewWaitNotice = !report.reviewWait ? [] : report.reviewWait.waypointIds.filter(waypointId =>
-        !this.store.db.prepare(`SELECT 1 FROM tavern_events WHERE board_quest_id=? AND type='report.filed'
-          AND json_extract(data,'$.reviewPlanVersion')=? AND ? IN (SELECT value FROM json_each(data,'$.reviewWaitNotice')) LIMIT 1`)
-          .get(report.boardQuestId, reviewPlanVersion, waypointId));
       this.store.put("reports", report.id, report);
       if (!late) {
         this.memory.clearMemberWait(threadId);
@@ -2237,8 +2228,7 @@ export class Keeper {
       }
       this.store.patch(threadId, { reportedBriefVersion: this.store.runtime(threadId).briefVersion ?? 0 });
       const text = `${this.name(m)}: ${input.outcome}`, data = { reportId: report.id, status: input.status,
-        ...(reviewWaypoints.length ? { makerThreadId: threadId, reviewPlanVersion, reviewWaypoints } : {}),
-        ...(reviewWaitNotice.length ? { reviewWaitNotice } : {}) };
+        ...(reviewWaypoints.length ? { makerThreadId: threadId, reviewPlanVersion, reviewWaypoints } : {}) };
       if (!late && input.status === "done" && !ranger && m.engagement === "active") {
         transitionMember(this.store, m, memberDetails(this.store, threadId).delivery ? "briefing" : "resting", "done-report", { kind: "agent", threadId }, { kind: "report", id: report.id }, this.now(), { text, data });
       } else {
@@ -2256,28 +2246,12 @@ export class Keeper {
     this.changed(threadId, m.boardQuestId);
     return report;
   }
-  pendingReviewPlan(report: Report) {
-    const quest = report.boardQuestId && this.store.get("quests", report.boardQuestId);
-    const version = quest ? quest.checkPlanVersion ?? quest.greenlitVersion : null;
-    return report.reviewWait && (version == null || version <= report.reviewWait.planVersion) ? report.reviewWait : null;
-  }
   private reviewSubmission(questId: string, makerThreadId: string, waypointId: string) {
     return this.store.db.prepare(`SELECT json_extract(data,'$.reportId') AS reportId,
       json_extract(data,'$.reviewPlanVersion') AS planVersion, json_extract(w.value,'$.entryIds') AS entryIds
       FROM tavern_events, json_each(data,'$.reviewWaypoints') w WHERE board_quest_id=? AND tavern_events.type='report.filed'
       AND json_extract(data,'$.makerThreadId')=? AND json_extract(w.value,'$.waypointId')=? ORDER BY tavern_events.id DESC LIMIT 1`)
       .get(questId, makerThreadId, waypointId) as { reportId: string; planVersion: number; entryIds: string } | undefined;
-  }
-  assertReviewPlan(questId: string, makerThreadId: string, waypointId: string) {
-    const submission = this.reviewSubmission(questId, makerThreadId, waypointId);
-    if (submission) this.assertSubmissionReviewPlan(submission.reportId, waypointId);
-  }
-  private assertSubmissionReviewPlan(reportId: string, waypointId: string) {
-    const report = this.store.get("reports", reportId);
-    const wait = report && this.pendingReviewPlan(report);
-    if (wait?.waypointIds.includes(waypointId))
-      throw new Error(`${waypointId} had two rejected rounds in plan v${wait.planVersion}. This review waits for the Keeper to record a new plan version.`);
-    return report;
   }
   recordWardenRound(actor: Actor, entries: JournalEntry[]) {
     const warden = actor.kind === "agent" ? this.member(actor.threadId) : null;
@@ -2294,15 +2268,13 @@ export class Keeper {
       const submitted = new Set<string>(JSON.parse(submission.entryIds));
       const reviewed = entries.filter(e => e.link?.waypointId === waypointId && submitted.has(e.id));
       if (!reviewed.length) continue;
-      const report = this.assertSubmissionReviewPlan(reportId, waypointId);
       const verdict = reviewed.some(e => e.status === "rejected") ? "rejected" : "verified";
       const prior = this.store.db.prepare(`SELECT json_extract(data,'$.verdict') AS verdict, json_extract(data,'$.planVersion') AS planVersion
         FROM tavern_events WHERE board_quest_id=? AND type IN ('waypoint.review-round','waypoint.review-rejected')
         AND json_extract(data,'$.waypointId')=? AND json_extract(data,'$.reportId')=? ORDER BY id DESC LIMIT 1`)
         .get(q.id, waypointId, reportId) as { verdict: string; planVersion: number } | undefined;
       if (prior && (prior.verdict === "rejected" || verdict === "verified")) continue;
-      const planVersion = prior?.planVersion ?? (report?.reviewWait?.waypointIds.includes(waypointId)
-        ? q.checkPlanVersion ?? q.greenlitVersion ?? submission.planVersion : submission.planVersion);
+      const planVersion = prior?.planVersion ?? submission.planVersion;
       this.store.event(this.now(), q.keeperThreadId, q.id, prior ? "waypoint.review-rejected" : "waypoint.review-round",
         `Warden ${verdict} work on ${waypointId} in plan v${planVersion}`,
         { waypointId, planVersion, verdict, reportId, makerThreadId, entryIds: reviewed.map(entry => entry.id) }, actor);

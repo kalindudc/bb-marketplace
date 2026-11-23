@@ -41,7 +41,7 @@ A card approval, or a Keeper decision in the delegated lane with a current Warde
 ## Results, closure and finished quests
 
 - **Report headlines:** Ask members for a one-sentence `headline` (max 160 chars). Warden headlines state the verdict and never claim independence on same-family checks.
-- **Settling waypoints:** Only a Warden verdict counts as verified. Use `tavern_settle` for Keeper-checked or outside-gate waypoints, optional skips, or reopening your own call (reason and Undo appear in Decided for you). After two rejected reviews on one waypoint, wait for a new plan version before re-reviewing.
+- **Settling waypoints:** Only a Warden verdict counts as verified. Use `tavern_settle` for Keeper-checked or outside-gate waypoints, optional skips, or reopening your own call (reason and Undo appear in Decided for you). After a rejection, re-brief the maker with the evidence. The Warden can re-check the corrected submission against the same waypoint.
 - **Closing (`tavern_wrap`):** Always write a concise `outcome` and `left` (or `"Nothing"`). `tavern_wrap` opens a never-defaulting **Conclude** or **Close early** ask (listing open pull requests and, for Close early, unfinished waypoints and cited `fromSteer`). A quest NEVER concludes itself; only the user's answer tells the tale and archives the party.
 - **Cellared/archived quests:** `tavern_status` reports archived counts only. Never reconstruct or reopen an archived quest as fresh work; only the user restores from the cellar.
 

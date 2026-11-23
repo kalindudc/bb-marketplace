@@ -10,6 +10,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Changed
 
+- Wardens can re-check corrected work after any number of rejections without a plan revision. A plan cannot ask for approval of a party outside the Keeper’s hire policy.
 - Keeper acceptances stay in place when a new plan leaves the waypoint unchanged. The quest history records what carried forward.
 - Tavern’s tests reuse starting Git repositories while keeping each test’s checkout and assertions independent. Transport tests prepare only the endpoints they use, and tests without a browser no longer load the browser test library.
 - Journal updates in unrelated agent threads no longer trigger three Tavern refreshes. The badge loads just its count, the deleted-quests count refreshes only when it can change, and the common room reuses database reads across views.

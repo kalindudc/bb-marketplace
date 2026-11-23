@@ -1706,6 +1706,13 @@ export class TavernRuntime {
       set: { classId: member.classId, characterId: member.characterId },
     });
   }
+  private hireClass(registry: RegistrySnapshot, keeperClassId: string, classId: string) {
+    const policy = registry.classes.find(c => c.id === keeperClassId);
+    const role = registry.classes.find(c => c.id === classId);
+    if (!role?.hireable || !policy?.hires.includes(classId))
+      throw new Error(`classId "${classId}" is not in the "${keeperClassId}" Keeper's hire policy for hireable classes. Allowed there: ${policy?.hires.join(", ") || "none"}.`);
+    return { role, policy };
+  }
   async plan(threadId: string, input: PlanInput) {
     const q = this.keeper.owned(threadId, input.boardQuestId);
     this.keeper.guard(threadId, q.id);
@@ -1730,12 +1737,13 @@ export class TavernRuntime {
       return [{ waypoint, member }];
     });
     const registry = await this.prepareRegistry(this.keeper.store.runtime(threadId).projectId ?? "");
-    validatePartyCharacters(input, registry);
-    for (const slot of input.party) {
-      const role = registry.classes.find(role => role.id === slot.classId);
-      if ((role && classKind(role) === "keeper" || false) !== !!slot.leadEnvelope)
-        throw new Error("Only a lead slot names a lead envelope, and every lead slot needs one.");
+    const keeperClassId = this.keeper.require(threadId, "keeper").classId;
+    for (const [index, slot] of input.party.entries()) {
+      const { role } = this.hireClass(registry, keeperClassId, slot.classId);
+      if ((classKind(role) === "keeper") !== !!slot.leadEnvelope)
+        throw new Error(`party.${index}.leadEnvelope: every lead slot needs one and other slots must omit it.`);
     }
+    validatePartyCharacters(input, registry);
     validateCheckerMakers(input, this.keeper.store.all("members").filter(member => member.boardQuestId === q.id));
     const ids = new Set(input.waypoints.map((waypoint) => waypoint.id));
     if (input.party.some((slot) => slot.waypointIds.some((id) => !ids.has(id))))
@@ -1820,11 +1828,8 @@ export class TavernRuntime {
     const leader = this.keeper.require(threadId, "keeper");
     if (input.boardQuestId) this.keeper.owned(threadId, input.boardQuestId);
     this.keeper.assertCheckerHandoff(input.classId, input.boardQuestId);
-    const snapshot = await loopCall(this.prepareRegistry(projectId), "hire project class lookup"),
-      lead = snapshot.classes.find((c) => c.id === leader.classId);
-    const role = snapshot.classes.find((c) => c.id === input.classId);
-    if (!lead || !role?.hireable || !lead.hires.includes(role.id))
-      throw new Error("This class is not in the Keeper's hire policy");
+    const snapshot = await loopCall(this.prepareRegistry(projectId), "hire project class lookup");
+    const { role, policy: lead } = this.hireClass(snapshot, leader.classId, input.classId);
     const leadHire = classKind(role) === "keeper";
     this.projectClassNotice(threadId, leader.classId, projectId);
     const placementPolicy = this.settings?.placementPolicy();
@@ -1925,7 +1930,6 @@ export class TavernRuntime {
       );
       if (!entries.length)
         throw new Error(`Cannot hire a Warden for ${waypoint.id}: maker ${maker.threadId} has no known journal entry for this waypoint. Link the maker entry first.`);
-      this.keeper.assertReviewPlan(q.id, maker.threadId, waypoint.id);
       reviewTarget = { boardQuestId: q.id, waypointId: waypoint.id, makerThreadId: maker.threadId, entryIds: entries.map(entry => entry.id) };
     }
     let staffingCapacity: number | null = null;

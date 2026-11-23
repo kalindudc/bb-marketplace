@@ -42,6 +42,21 @@ async function fixture() {
 }
 
 describe("planned waypoint checks", () => {
+  it("refuses a party class outside the Keeper's hire policy before requesting greenlight", async () => {
+    const f = await fixture();
+    const registry = await f.runtime.prepareRegistry("project");
+    vi.spyOn(f.runtime, "prepareRegistry").mockResolvedValue({
+      ...registry, classes: registry.classes.map(c => c.id === "keeper" ? { ...c, hires: ["smith"] } : c),
+    });
+    const waypoints = [{ ...baseWaypoint, check: "keeper" }];
+    const slot = { classId: "ranger", characterId: null, model: null, purpose: "Scout", waypointIds: ["w1"] };
+    await expect(f.propose(waypoints, { party: [slot] })).rejects.toThrow(/classId.*ranger.*hire policy.*smith/i);
+    expect(f.summary().phase).toBe("scout");
+    expect(f.k.store.all("plans")).toEqual([]);
+    expect(f.ask("greenlight")).toBeUndefined();
+    await expect(f.propose(waypoints, { party: [{ ...slot, classId: "smith" }] })).resolves.toContain("Plan v1 saved");
+  });
+
   it("takes a three-waypoint watch from scout to done without hiring a Warden or earning verified wins", async () => {
     const f = await fixture();
     expect(f.summary().phase).toBe("scout");

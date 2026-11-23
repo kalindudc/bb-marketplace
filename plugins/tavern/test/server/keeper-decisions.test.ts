@@ -247,7 +247,7 @@ it("counts a first review once when two Wardens verify three separate entries", 
   expect(f.k.store.events("lead", 0, 100).filter(e => e.type === "waypoint.acceptance-carried")).toEqual([]);
 });
 
-it("stores the third report, tells the maker and Keeper, and holds the review until a new plan", async () => {
+it("lets the Warden review another corrected report without forcing a new plan", async () => {
   const f = await reviewFixture();
   const [a, b, c] = f.ids as [string, string, string];
   await f.ready();
@@ -265,19 +265,15 @@ it("stores the third report, tells the maker and Keeper, and holds the review un
   f.k.store.patch("lead", { cursor: f.k.store.eventSequence("lead"), userAt: null, reanchor: null });
   f.k.endTurn("lead");
   const toolResult = await f.reportTool("Third attempt finished");
-  expect(toolResult).toMatch(/Report written[\s\S]*w1[\s\S]*waits for the Keeper/);
+  expect(toolResult).toMatch(/^Report written.*\nReport id: [^\n]+$/);
   const third = f.k.store.all("reports").find(report => report.outcome === "Third attempt finished")!;
-  expect(third).toMatchObject({ reviewWait: { planVersion: 1, waypointIds: ["w1"] } });
-  expect(await f.wardenCall("warden", "verify", [a, b])).toMatchObject({ isError: true });
-  expect(f.journal.get("maker").entries.filter(entry => [a, b].includes(entry.id)).map(entry => entry.status)).toEqual(["done", "done"]);
-  expect(f.rounds()).toHaveLength(2);
-  await f.tick();
+  expect(third).not.toHaveProperty("reviewWait");
   await f.tick();
   const sent = JSON.stringify(f.send.mock.calls);
   expect(sent).toContain("Third attempt finished");
-  expect(sent.match(/record a new plan version before the next review/gi)).toHaveLength(1);
-  f.k.plan("lead", { ...f.plan, changeNote: "Use independent test data" });
-  expect(f.k.store.openAsks("lead", f.q.id)).toHaveLength(0);
+  expect(sent).not.toMatch(/record a new plan version before the next review/i);
   await f.verdict("warden", "verify", [a, b]);
-  expect(f.rounds().map(e => [e.data.reportId, e.data.planVersion])).toEqual([[first.id, 1], [second.id, 1], [third.id, 2]]);
+  expect(f.journal.get("maker").entries.filter(entry => [a, b].includes(entry.id)).map(entry => entry.status)).toEqual(["verified", "verified"]);
+  expect(f.rounds().map(e => [e.data.reportId, e.data.planVersion])).toEqual([[first.id, 1], [second.id, 1], [third.id, 1]]);
+  expect(f.k.quest(f.q.id).planVersion).toBe(1);
 });

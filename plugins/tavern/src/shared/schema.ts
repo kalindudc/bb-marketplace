@@ -673,7 +673,6 @@ export const reportSchema = z.object({
   outcome: z.string().min(1).max(4000),
   // added by Builder B: the answer belongs in credits; the full report stays one click away.
   headline: z.string().trim().min(1).max(160).optional(),
-  reviewWait: z.object({ planVersion: z.number().int().positive(), waypointIds: z.array(id).min(1) }).optional(),
   evidence: z.array(evidenceSchema).max(30),
   artifacts: z.array(z.string().max(1000)).max(30),
   confidence: z.object({ intent: z.number().int().min(0).max(100), safe: z.number().int().min(0).max(100) }).nullable(),

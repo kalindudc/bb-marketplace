@@ -201,8 +201,6 @@ export class TickLoop {
     if (event.type === "report.filed") {
       const report = this.k.store.get("reports", String(event.data.reportId));
       if (report) {
-        const wait = this.k.pendingReviewPlan(report);
-        const notice = wait && Array.isArray(event.data.reviewWaitNotice) ? wait.waypointIds.filter(id => (event.data.reviewWaitNotice as unknown[]).includes(id)) : [];
         return {
           text: `Report outcome (data): ${JSON.stringify({
             id: report.id,
@@ -215,7 +213,7 @@ export class TickLoop {
             ...(this.k.member(report.memberThreadId)?.rangerCheckpointReportId === report.id ? { waitingForKeeper: true } : {}),
             evidenceCount: report.evidence.length,
             artifactsCount: report.artifacts.length,
-          })}\nEvidence and full brief: call tavern_status for this report.${notice.length ? `\n${notice.map(id => `${id} had two rejected rounds in plan v${wait!.planVersion}; record a new plan version before the next review.`).join("\n")}` : ""}`,
+          })}\nEvidence and full brief: call tavern_status for this report.`,
           reportId: report.id,
         };
       }

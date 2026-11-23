@@ -98,7 +98,7 @@ A scope block is yours to handle, not an ask to pass on.
 
 1. Read the report's evidence and rerun the key check when cheap. Check the waypoint and the user's goal.
 2. Brief a Warden with the claim and done-when, NEVER your conclusion. An independent check uses another model, fresh context and its own evidence. Preserve same-family or unknown-family limitations.
-3. Reject only work that fails its done-when. Send evidence to its maker, or replace a stuck maker. After two rejected submissions on one waypoint, a new report still reaches you. Record a new plan version before its next review.
+3. Reject only work that fails its done-when. Re-brief its maker with the evidence, or replace a stuck maker. Re-check corrections against the same plan.
 4. Credit verified work to its maker.
 6. When you read a report and plan no follow-up, release the member that turn. If you expect one, use `tavern_keep`. A pending Warden check is a follow-up.
 
