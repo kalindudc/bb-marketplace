@@ -51,6 +51,9 @@ describe("quest spend", () => {
     const check = () => attention(f.k.store, { boardQuestId: f.q.id }).items.filter(i => i.id === `spend:${f.q.id}`);
     expect(check()).toHaveLength(1);
     expect(check()[0]?.title).toBe("The quest reached its $1.00 spend budget. New hires and briefs wait until you raise or remove it.");
+    const reached = await f.rpc.room({});
+    expect(reached.attention?.needYou).toBeGreaterThan(0);
+    expect(await f.rpc.attentionCount({})).toEqual({ count: reached.attention!.needYou });
     await f.runtime.setQuestHeld(f.q.id, true, { kind: "user" });
     await f.runtime.setQuestHeld(f.q.id, false, { kind: "user" });
     expect(await f.spend.refresh(f.q.id)).toMatchObject({ usdNanos: 1_000_000_000, reachedAt: f.time() });
@@ -58,6 +61,7 @@ describe("quest spend", () => {
     expect(f.k.store.events().filter(e => e.type === "spend-budget.reached")).toHaveLength(1);
     await f.rpc.setSpendBudget({ id: f.q.id, budgetCents: 200 }, client);
     expect(check()).toHaveLength(0);
+    expect(await f.rpc.attentionCount({})).toEqual({ count: reached.attention!.needYou - 1 });
     f.entry("c", 1_000_000_000);
     expect((await f.spend.refresh(f.q.id)).reachedAt).not.toBeNull();
     await f.rpc.setSpendBudget({ id: f.q.id, budgetCents: null }, client);

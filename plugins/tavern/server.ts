@@ -16,6 +16,7 @@ import { Registry } from "./src/server/registry";
 import { TavernRuntime } from "./src/server/runtime";
 import { registerTools } from "./src/server/tools/index";
 import { rpcHandlers } from "./src/server/rpc";
+import { onAuthorityReceipt } from "./src/server/authority";
 import { registerCli } from "./src/server/cli";
 import { registerScopeSettings } from "./src/server/scopes";
 import { SettingsStore } from "./src/server/settings/store";
@@ -61,6 +62,7 @@ export default async function tavern(bb: BbPluginApi) {
   const db = preparedDatabase(storage);
   const store = new KeeperStore(db);
   migrateMemberEngagement(store, Date.now());
+  bb.onDispose(onAuthorityReceipt(db, () => bb.rpc.experimental_invalidate([tags.room()])));
   let applySettings = () => {};
   const settings = new SettingsStore(db, Date.now, () => {
     applySettings();
@@ -182,10 +184,10 @@ export default async function tavern(bb: BbPluginApi) {
   });
   bb.experimental_hooks.on("message.dispatch", (ctx) => runtime.dispatch(ctx));
   bb.onDispose(
-    journal.onChange((threadId) => {
+    journal.onChange((threadId, _entryIds, boardIds) => {
       const member = keeper.member(threadId);
       // The journal sends these with its own signal: one room refetch per change.
-      const stale = keeper.changedTags(threadId, member?.boardQuestId);
+      const stale = keeper.journalChangedTags(member, boardIds);
       if (member?.keeperThreadId)
         store.event(
           Date.now(),

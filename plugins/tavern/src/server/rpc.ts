@@ -5,7 +5,7 @@ import { wasReleased } from "../shared/member-engagement";
 import { askHistory } from "./ask-history";
 import { askMemberTarget, scopeAskMember } from "./ask-effects";
 import { refreshQuestPullRequests } from "./conclude-pull-requests";
-import { askNeedsUser, attention, AttentionSnapshot } from "./attention";
+import { askNeedsUser, attention, attentionCount, AttentionSnapshot } from "./attention";
 import { LimitPolicy } from "./limit-policy";
 import { userActHandlers, requireUserAct, type OptionalRpcContext, commitUserAct, type UserActReceipt } from "./authority";
 import { readUndoLanes, undoAskProjection } from "./undo-record";
@@ -15,14 +15,16 @@ import {
   rpcContract,
   tags,
   type BoardQuestDetail,
+  type BoardQuestSummary,
   type Ledger,
   type Room,
   type ThreadDecor,
 } from "../shared/contract";
 import { currentMoodReport, waypointMoodVerdict } from "../shared/mood";
-import type { Brief, Decision } from "../shared/schema";
+import type { Brief, Decision, Member } from "../shared/schema";
 import { isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
 import { isNotFound } from "./host-errors";
+import type { Runtime } from "./keeper/store";
 import { DecisionViews } from "./decisions";
 import { markSummariesSeen, markVisitSummariesSeen, summariesForQuest, summaryCounts, summaryView } from "./summaries";
 import { markQuestChangesSeen } from "./quest-change-attention";
@@ -56,28 +58,35 @@ export function rpcHandlers(
   const k = runtime.keeper;
   const { identities } = threadIdentities(runtime);
   const placementStore = new PlacementStore(k.store.db);
-  const projectMember = (member: import("../shared/schema").Member, context = restingContext(k)) => ({ ...member, restNote: runtime.restNote(member, context),
-    pullRequests: runtime.keeper.store.pullRequestsForMember(member.threadId),
-    placement: placementStore.byMember(member.threadId) ? runtime.placements().controller.forMember(member.threadId) : null });
-  const projectMembers = (members: import("../shared/schema").Member[]) => {
-    const context = restingContext(k);
-    return members.map(member => projectMember(member, context));
+  const pullRequestsFor = (id: string) => k.store.pullRequestsForMember(id);
+  const memberExtras = (member: Member, context: ReturnType<typeof restingContext>, pullRequestsOf = pullRequestsFor) => {
+    const placement = placementStore.byMember(member.threadId);
+    return { restNote: runtime.restNote(member, context), pullRequests: pullRequestsOf(member.threadId),
+      placement: placement ? runtime.placements().controller.view(placement) : null };
   };
-  const projectQuest = (quest: import("../shared/contract").BoardQuestSummary, snapshot?: AttentionSnapshot) => {
-    const context = restingContext(k);
-    return { ...quest, attention: snapshot ? snapshot.view({ boardQuestId: quest.id }, 0, 0, false) : attention(k.store, { boardQuestId: quest.id }, k.now()), members: quest.members.map(member => projectMember(member, context)),
-      waypoints: quest.waypoints.map(waypoint => ({ ...waypoint, ownerMember: waypoint.ownerMember ? projectMember(waypoint.ownerMember, context) : null })) };
+  const projectMember = (member: Member) => ({ ...member, ...memberExtras(member, restingContext(k)) });
+  const memberProjection = (context: ReturnType<typeof restingContext>, pullRequestsOf = pullRequestsFor) => {
+    const extras = new Map<string, ReturnType<typeof memberExtras>>();
+    return (member: Member) => {
+      if (!extras.has(member.threadId)) extras.set(member.threadId, memberExtras(member, context, pullRequestsOf));
+      return { ...member, ...extras.get(member.threadId)! };
+    };
   };
-  const status = (threadId: string): "listening" | "busy" | "holding" => {
-    if (k.store.runtime(threadId).archivedAt != null) return "listening";
-    if (k.member(threadId)?.state === "working") return "busy";
-    return runtime.held(threadId) ? "holding" : "listening";
+  const projectQuest = (quest: BoardQuestSummary, snapshot?: AttentionSnapshot, project = memberProjection(restingContext(k))) => ({
+    ...quest, attention: snapshot ? snapshot.view({ boardQuestId: quest.id }, 0, 0, false) : attention(k.store, { boardQuestId: quest.id }, k.now()),
+    members: quest.members.map(project),
+    waypoints: quest.waypoints.map(waypoint => ({ ...waypoint, ownerMember: waypoint.ownerMember ? project(waypoint.ownerMember) : null })),
+  });
+  const status = (threadId: string, thread: Runtime, member: Member | null): "listening" | "busy" | "holding" => {
+    if (thread.archivedAt != null) return "listening";
+    if (member?.state === "working") return "busy";
+    return runtime.held(threadId, thread, member) ? "holding" : "listening";
   };
-  const quests = (threadId: string, snapshot?: AttentionSnapshot) =>
+  const quests = (threadId: string, snapshot?: AttentionSnapshot, project?: typeof projectMember, summaryOf = (id: string) => k.summary(id)) =>
     k.store
       .visibleRecords("quests", threadId, 100)
       .reverse()
-      .map((q) => projectQuest(k.summary(q.id), snapshot));
+      .map((q) => projectQuest(summaryOf(q.id), snapshot, project));
   const decisions = new DecisionViews(k.store);
   const decisionsChanged = (changed: Decision[]) => {
     if (!changed.length) return;
@@ -89,7 +98,8 @@ export function rpcHandlers(
       ]),
     ])]);
   };
-  const errands = (threadId: string) => projectMembers(k.store.errandsPage(threadId, 100, 0).members.map(({ member }) => member));
+  const errands = (threadId: string, project = memberProjection(restingContext(k))) =>
+    k.store.errandsPage(threadId, 100, 0).members.map(({ member }) => project(member));
   const partyIds = (threadId: string) => [
     threadId,
     ...k.store
@@ -251,7 +261,7 @@ export function rpcHandlers(
                 ...snapshot!.calls({ keeperThreadId: threadId }),
                 quietSince: k.store.runtime(threadId).manualStopAt ?? null,
                 archived: k.store.runtime(threadId).archivedAt != null,
-                status: status(threadId),
+                status: status(threadId, thread, m),
               }
             : null,
       };
@@ -277,7 +287,6 @@ export function rpcHandlers(
       await k.journal.prepare(threadId);
       k.succession.assertMutable(threadId);
       const result = commitUserAct(k.store, () => k.now(), receipt, () => k.journal.edit(threadId, edit, { kind: "user" }));
-      k.changed(threadId, k.member(threadId)?.boardQuestId);
       return { ok: true, message: result.message };
     },
     resolveHandBack: ({ noteId, how, reply }, _context, receipt?: UserActReceipt) => {
@@ -470,6 +479,7 @@ export function rpcHandlers(
     restoreDeletedQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => {
       return { ok: true, changed: Number(k.restoreDeletedQuest(id, { kind: "user" })) };
     },
+    deletedQuestCount: () => ({ total: k.store.deletedQuestPage(null, 1).total }),
     deletedBoardQuests: ({ cursor, limit }) => {
       const page = k.store.deletedQuestPage(cursor, limit);
       return { boardQuests: page.quests.map(q => projectQuest(k.summary(q.id))), nextCursor: page.nextCursor, total: page.total };
@@ -483,44 +493,58 @@ export function rpcHandlers(
         total: page.total,
       };
     },
+    attentionCount: () => ({ count: attentionCount(k.store) }),
     room: (): Room => {
+      const members = k.store.all("members");
+      const summaries = new Map<string, BoardQuestSummary>();
+      const summaryOf = (id: string) => {
+        if (!summaries.has(id)) summaries.set(id, k.summary(id));
+        return summaries.get(id)!;
+      };
+      const context = restingContext(k, members, summaryOf);
+      const pullRequests = new Map<string, ReturnType<typeof pullRequestsFor>>();
+      for (const request of k.store.all("pullRequests")) for (const id of new Set([request.memberThreadId, request.owner])) {
+        const list = pullRequests.get(id);
+        if (list) list.push(request);
+        else pullRequests.set(id, [request]);
+      }
+      const project = memberProjection(context, id => pullRequests.get(id) ?? []);
       const snapshot = new AttentionSnapshot(k.store);
       const list = snapshot.view({}, 50);
       const askIds = new Set(list.items.filter(item => item.kind === "ask").map(item => item.id));
+      const { hearthFlicker, characterQuietUntil, ambientMotion, repeatSeconds } = runtime.config().tavern;
       return {
-      attention: list,
-      sinceVisit: snapshot.sinceVisit(),
-      away: runtime.away.status(),
-      hearthFlicker: runtime.config().tavern.hearthFlicker,
-      characterQuietUntil: runtime.config().tavern.characterQuietUntil,
-      ambientMotion: runtime.config().tavern.hearthFlicker ? runtime.config().tavern.ambientMotion : "off",
-      repeatSeconds: runtime.config().tavern.repeatSeconds,
-      archivedCount: k.store.archivedQuestCount(),
-      keepers: k.store
-        .all("members")
-        .filter((m) => m.role === "keeper" && runtime.succession.state.current(m.threadId) === m.threadId)
-        .map((m) => {
+        attention: list,
+        sinceVisit: snapshot.sinceVisit(),
+        away: runtime.away.status(),
+        hearthFlicker,
+        characterQuietUntil,
+        ambientMotion: hearthFlicker ? ambientMotion : "off",
+        repeatSeconds,
+        archivedCount: k.store.archivedQuestCount(),
+        keepers: members.filter(m => m.role === "keeper" && runtime.succession.state.current(m.threadId) === m.threadId).map(m => {
           const thread = k.store.runtime(m.threadId);
           return {
-            member: projectMember(m),
-            freeHands: freeHands(k, m.threadId).length,
+            member: project(m),
+            freeHands: freeHands(k, m.threadId, context).length,
             succession: runtime.succession.view(m.threadId),
             archived: !isLiveKeeper(k.store, m, "present"),
             threadTitle: thread.threadTitle ?? null,
             threadCreatedAt: thread.threadCreatedAt ?? null,
             quietSince: thread.manualStopAt ?? null,
             attention: snapshot.view({ keeperThreadId: m.threadId }, 0, 0, false),
-            boardQuests: quests(m.threadId, snapshot),
-            errands: errands(m.threadId),
-            status: status(m.threadId),
+            boardQuests: quests(m.threadId, snapshot, project, summaryOf),
+            errands: errands(m.threadId, project),
+            status: status(m.threadId, thread, m),
           };
         }),
-      asks: snapshot.asks.filter(ask => askIds.has(ask.id)),
-      ...snapshot.calls(),
-      review: runtime.review(),
-      solos: projectMembers(k.store.all("members").filter((m) => m.role === "solo" && isLiveMember(k.store, m, "occupy"))),
-      recent: k.store.roomEvents(60),
-    }; },
+        asks: snapshot.asks.filter(ask => askIds.has(ask.id)),
+        ...snapshot.calls(),
+        review: runtime.review("present", summaryOf),
+        solos: members.filter(m => m.role === "solo" && isLiveMember(k.store, m, "occupy")).map(project),
+        recent: k.store.roomEvents(60),
+      };
+    },
     releaseCheckerHandoff: async ({ boardQuestId, holdId, via }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
       const quest = k.quest(boardQuestId);
       const wasHeld = quest.checkerHandoffHold?.id === holdId && quest.checkerHandoffHold.release === null;

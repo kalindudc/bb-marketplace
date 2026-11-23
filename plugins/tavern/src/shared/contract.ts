@@ -71,7 +71,11 @@ export const tags = {
   boardQuest: (id: string) => `tavern:quest:${id}`,
   undoLanes: () => "tavern:undo-lanes",
   room: () => "tavern:room",
+  attentionCount: () => "tavern:attention-count",
+  deletedQuestCount: () => "tavern:deleted-quest-count",
   mapHistory: () => "tavern:map-history",
+  archivedQuests: () => "tavern:archived-quests",
+  deletedQuests: () => "tavern:deleted-quests",
   rows: () => "tavern:rows",
 };
 
@@ -514,6 +518,11 @@ export const rpcContract = defineContract({
     output: roomSchema,
     tags: () => [tags.room(), tags.settings()],
   },
+  attentionCount: {
+    input: z.object({}).strict(),
+    output: z.object({ count: z.number().int().nonnegative() }),
+    tags: () => [tags.attentionCount(), tags.room(), tags.settings()],
+  },
   // added by Builder C: directive digests and side quests need reports without a board quest.
   reports: {
     input: z.object({ ids: z.array(id).max(30).default([]), memberThreadId: threadId.nullable().default(null) }).strict(),
@@ -615,7 +624,7 @@ export const rpcContract = defineContract({
   archivedBoardQuests: {
     input: z.object({ cursor: z.string().nullable().default(null), limit: z.number().int().min(1).max(100).default(30) }).strict(),
     output: z.object({ boardQuests: z.array(boardQuestSummarySchema), nextCursor: z.string().nullable(), total: z.number().int() }),
-    tags: () => [tags.room()],
+    tags: () => [tags.room(), tags.archivedQuests()],
   },
   deleteBoardQuest: {
     input: z.object({ id }).strict(),
@@ -625,10 +634,15 @@ export const rpcContract = defineContract({
     input: z.object({ id }).strict(),
     output: z.object({ ok: z.literal(true), changed: z.number().int() }),
   },
+  deletedQuestCount: {
+    input: z.object({}).strict(),
+    output: z.object({ total: z.number().int().nonnegative() }),
+    tags: () => [tags.deletedQuestCount()],
+  },
   deletedBoardQuests: {
     input: z.object({ cursor: z.string().nullable().default(null), limit: z.number().int().min(1).max(100).default(30) }).strict(),
     output: z.object({ boardQuests: z.array(boardQuestSummarySchema), nextCursor: z.string().nullable(), total: z.number().int() }),
-    tags: () => [tags.room()],
+    tags: () => [tags.room(), tags.deletedQuests()],
   },
   setHidden: {
     input: z.object({ threadId, hidden: z.boolean() }).strict(),

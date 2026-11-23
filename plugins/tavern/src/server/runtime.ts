@@ -47,6 +47,7 @@ import {
 import { reserveStaffing, settleStaffing } from "./staffing";
 import { SpendBudget } from "./spend-budget";
 import type { HireIntent, PendingBrief, RangerContinuation, ReviewTarget, Runtime } from "./keeper/store";
+import type { BoardQuestSummary } from "../shared/contract";
 import { resolveHireExecution } from "./execution";
 import { ServiceRecords } from "./service-record";
 import { classExecutionFacts, classLimits } from "./class-execution";
@@ -2436,9 +2437,8 @@ export class TavernRuntime {
     });
   }
   restNote(member: Member, context = restingContext(this.keeper)): string | null {
-    const details = memberDetails(this.keeper.store, member.threadId);
     if (wasReleased(member)) {
-      const release = details.release;
+      const release = memberDetails(this.keeper.store, member.threadId).release;
       return release ? `Released${release.at === undefined ? "" : ` at ${localClock(release.at)}`}: ${release.reason}.` : "Released.";
     }
     if (member.engagement === "stopped" || member.disposition === "stopped") return "Stopped.";
@@ -3002,24 +3002,28 @@ export class TavernRuntime {
     this.keeper.changed(memberThreadId, member.boardQuestId);
     return { ...delivery, status, attempts: pending?.attempts ?? null, memberName: this.keeper.name(member) };
   }
-  review(purpose: "present" | "automatic" = "present"): import("../shared/contract").Room["review"] {
-    return purpose === "present" ? this.reviewCache ?? this.readReview(purpose) : this.readReview(purpose);
+  review(purpose: "present" | "automatic" = "present", summaryOf?: (id: string) => BoardQuestSummary): import("../shared/contract").Room["review"] {
+    return purpose === "present" ? this.reviewCache ?? this.readReview(purpose, summaryOf) : this.readReview(purpose);
   }
-  private readReview(purpose: "present" | "automatic" = "present") {
+  private readReview(purpose: "present" | "automatic" = "present", summaryOf = (id: string) => this.keeper.summary(id)) {
     const items: import("../shared/contract").Room["review"]["items"] = [];
+    const live = new Map<string, boolean>();
     for (const quest of this.keeper.store.activeQuests()) {
-      if (!isOpenQuest(quest) || !isLiveKeeper(this.keeper.store, this.keeper.member(quest.keeperThreadId), purpose)) continue;
+      if (!isOpenQuest(quest)) continue;
+      const id = quest.keeperThreadId;
+      if (!live.has(id)) live.set(id, isLiveKeeper(this.keeper.store, this.keeper.member(id), purpose));
+      if (!live.get(id)) continue;
       try {
-        const summary = this.keeper.summary(quest.id);
+        const summary = summaryOf(quest.id);
+        const reported = summary.waypoints.filter(w => w.state === "reported");
+        if (!reported.length) continue;
         const reports = this.keeper.store.query(
           "reports",
           "boardQuestId",
           quest.id,
           100,
         );
-        for (const waypoint of summary.waypoints.filter(
-          (w) => w.state === "reported",
-        )) {
+        for (const waypoint of reported) {
           const report = [...reports]
             .reverse()
             .find((r) => r.waypointId === waypoint.id && r.status === "done");
@@ -3050,9 +3054,8 @@ export class TavernRuntime {
     }
     return { waiting: items.length, budget: this.config().attention.reviewBudget, items };
   }
-  held(threadId: string) {
-    const rt = this.keeper.store.runtime(threadId), member = this.keeper.member(threadId),
-      now = this.keeper.now();
+  held(threadId: string, rt: Runtime = this.keeper.store.runtime(threadId), member: Member | null = this.keeper.member(threadId)) {
+    const now = this.keeper.now();
     return (
       (!member || memberHost(this.keeper.store, member).archivedAt === null) && (
         (rt.typingAt !== null && now - rt.typingAt < this.config().knobs.typingHoldSeconds * 1000) ||

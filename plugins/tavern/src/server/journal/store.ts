@@ -58,7 +58,7 @@ type JournalRow = { thread_id: string; next_id: number; hydrated: number; agent_
 export const QUIET_AFTER_MS = DEFAULT_SETTINGS.journal.journalQuietMinutes * 60_000;
 type HistoryRow = { id: number; before_data: string; after_data: string; action: string; actor: string; state: "undo" | "redo" };
 export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalDeps) {
-  const listeners = new Set<(threadId: string, ids: string[]) => string[] | void>();
+  const listeners = new Set<(threadId: string, ids: string[], boardIds: readonly string[]) => string[] | void>();
   const hydration = new Map<string, Promise<void>>();
   const errors = new Map<string, { text: string; retryAt: number }>();
   const checked = new Map<string, number>();
@@ -175,11 +175,12 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     try { await ownership; } finally { ownership = null; }
   }
   function notify(threadId: string, ids: string[], entries = localEntries(threadId)) {
-    const boardIds = new Set(entries.flatMap(e => e.link ? [e.link.boardQuestId] : []));
-    const signal = new Set([tags.journal(threadId), tags.thread(threadId), tags.room(), tags.rows(), ...[...boardIds].map(tags.boardQuest)]);
+    const changed = new Set(ids);
+    const boardIds = [...new Set(entries.flatMap(e => e.link && changed.has(e.id) ? [e.link.boardQuestId] : []))];
+    const signal = new Set([tags.journal(threadId), tags.thread(threadId), ...boardIds.map(tags.boardQuest)]);
     // Listeners add what else the change makes stale; one signal covers all of it, so a page refetches the room once per change.
     for (const listener of listeners) {
-      try { for (const tag of listener(threadId, ids) ?? []) signal.add(tag); } catch (error) { warn("Journal change listener failed", error); }
+      try { for (const tag of listener(threadId, ids, boardIds) ?? []) signal.add(tag); } catch (error) { warn("Journal change listener failed", error); }
     }
     deps.invalidate([...signal]);
     mirror(threadId);
@@ -366,7 +367,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     const timer = setTimeout(() => {
       quietTimers.delete(threadId);
       if (disposed || deleted.has(threadId) || !journalRow(threadId)) return;
-      try { if (quietSince(threadId, localEntries(threadId)) !== null) deps.invalidate([tags.journal(threadId), tags.room(), tags.rows()]); } catch { /* a read error shows on the next fetch */ }
+      try { if (quietSince(threadId, localEntries(threadId)) !== null) deps.invalidate([tags.journal(threadId)]); } catch { /* a read error shows on the next fetch */ }
     }, wait);
     (timer as { unref?: () => void }).unref?.();
     quietTimers.set(threadId, timer);
@@ -633,7 +634,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       const wasQuiet = quietSince(threadId, entries) !== null;
       db.prepare("UPDATE questlog_logs SET last_tool_at = ? WHERE thread_id = ?").run(at, threadId);
       // Only waking a quiet thread changes what anyone sees; an active thread's tools write the time and refetch nothing.
-      if (wasQuiet) deps.invalidate([tags.journal(threadId), tags.room(), tags.rows()]);
+      if (wasQuiet) deps.invalidate([tags.journal(threadId)]);
       armQuiet(threadId, entries);
     },
     progress: safeProgress,
@@ -680,7 +681,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       });
     },
     flush: async (threadId: string) => { await hydration.get(threadId); await mirrors.get(threadId); },
-    onChange(listener: (threadId: string, ids: string[]) => string[] | void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    onChange(listener: (threadId: string, ids: string[], boardIds: readonly string[]) => string[] | void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
   };
   void refreshOwnership().catch(error => warn("Journal ownership lookup failed", error));
   bb.onDispose(async () => { disposed = true; listeners.clear(); for (const t of quietTimers.values()) clearTimeout(t); quietTimers.clear(); await Promise.allSettled([...hydration.values(), ...mirrors.values(), ...noteLocks.values()]); });

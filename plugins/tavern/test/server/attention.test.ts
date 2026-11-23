@@ -27,6 +27,7 @@ it("every surface reads the same four need-you items", async () => {
   const views = [decor.keeperView, ledger, room, detail, detail.quest];
   expect(views.map(view => attentionView(view?.attention).needYou)).toEqual([4, 4, 4, 4, 4]);
   expect(needYouCount(room)).toBe(4);
+  expect(await f.rpc.attentionCount({})).toEqual({ count: 4 });
   expect(questNeedYouCount(detail.quest)).toBe(4);
   expect(ledger.attention?.items.map(item => item.kind).sort()).toEqual(["ask", "hand-back", "hold", "rule"]);
 });
@@ -41,6 +42,7 @@ it.each(["archivedAt", "deletedAt"] as const)("adds identity and scope for a Kee
   expect(room.keepers.find(keeper => keeper.member.threadId === "lead")?.archived).toBe(true);
   const list = room.attention!;
   expect(list).toMatchObject({ needYou: 4, heldByYou: 0, counts: { ask: 0, hold: 0, "hand-back": 0, rule: 0, stopped: 4 } });
+  expect(await f.rpc.attentionCount({})).toEqual({ count: 4 });
   expect(list.items.find(item => item.id === keeperRule.id)).toMatchObject({ who: { state: "archived", startedAt: 123 }, scope: { kind: "keeper", label: "Wren" } });
   expect(list.items.find(item => item.kind === "rule" && item.questId)).toMatchObject({ who: { state: "archived", questTitle: "Attention" }, scope: { kind: "quest", label: "Attention" } });
   expect(list.items.find(item => item.kind === "hand-back")).toMatchObject({ need: "Please approve access." });
@@ -73,9 +75,20 @@ it("keeps a delegated ask out of every user attention queue", async () => {
   const room = await f.rpc.room({});
   const detail = await f.rpc.boardQuest({ id: f.q.id });
   expect([ledger, decor.keeperView, room, detail, detail.quest].map(view => attentionView(view?.attention).needYou)).toEqual([3, 3, 3, 3, 3]);
+  expect(await f.rpc.attentionCount({})).toEqual({ count: 3 });
   expect(ledger.asks.some(ask => ask.id === f.ask.id)).toBe(false);
   expect(f.k.store.openAsks("lead").some(ask => ask.id === f.ask.id)).toBe(true);
   expect(f.k.store.openAsks("lead", undefined, true).some(ask => ask.id === f.ask.id)).toBe(false);
+});
+
+it("counts a hold and its release ask only once, then omits an archived quest", async () => {
+  const f = await fixture();
+  f.k.store.put("asks", f.ask.id, { ...f.ask, releaseHoldId: "hold" });
+  expect(await f.rpc.attentionCount({})).toEqual({ count: 3 });
+  expect(needYouCount(await f.rpc.room({}))).toBe(3);
+  f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), archivedAt: f.time() });
+  expect(await f.rpc.attentionCount({})).toEqual({ count: 0 });
+  expect(needYouCount(await f.rpc.room({}))).toBe(0);
 });
 
 it("an old open ask survives 150 newer closed asks", async () => {
@@ -101,5 +114,6 @@ it("user-held quests have their own Resume group", async () => {
   const f = setup();
   const q = await seedQuest(f.k, "lead", "Paused", "Paused");
   putQuestFixture(f.k.store, q.id, { ...q, phase: "held", held: { from: "scout", since: f.time() } });
+  expect(await rpcHandlers(f.runtime).attentionCount({})).toEqual({ count: 0 });
   expect(attention(f.k.store)).toMatchObject({ needYou: 0, heldByYou: 1, items: [expect.objectContaining({ kind: "held", action: "Resume" })] });
 });

@@ -12,9 +12,8 @@ import { createFakePluginHost, makeThreadResponse } from "./host";
 import { providerSdk } from "./provider-fixture";
 import { worktreeProvider } from "./environment-fixture";
 
-export function setup(sdkOverrides: Record<string, unknown> = {}, pluginRoot = fileURLToPath(new URL("../../", import.meta.url)), keeperCards?: import("../../src/server/keeper/cards").KeeperCards) {
+export function setup(sdkOverrides: Record<string, unknown> = {}, pluginRoot = fileURLToPath(new URL("../../", import.meta.url)), keeperCards?: import("../../src/server/keeper/cards").KeeperCards, db = new Database(":memory:")) {
   let now = 1_000_000;
-  const db = new Database(":memory:");
   for (const sql of MIGRATIONS) db.exec(sql);
   const host = createFakePluginHost({
     pluginId: "tavern",

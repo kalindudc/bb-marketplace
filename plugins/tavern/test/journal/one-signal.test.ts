@@ -8,7 +8,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import tavern from "../../server";
 import { tags } from "../../src/shared/contract";
 import { setup } from "../server/runtime-fixture";
-import { planInput } from "../server/support";
+import { fakePort, planInput } from "../server/support";
+import { Keeper } from "../../src/server/keeper/service";
+import { KeeperStore } from "../../src/server/keeper/store";
+import { withMemberFixtures } from "../server/member-fixture";
 
 // Beena's live measure: each journal change made every open page fetch the room twice, from the journal's signal and then the Keeper's.
 const cleanups: (() => Promise<void>)[] = [];
@@ -28,14 +31,18 @@ const withRoom = (all: readonly (readonly string[] | null)[]) => all.filter((t) 
 
 describe("a journal change", () => {
   it("sends exactly one signal that includes the room", async () => {
-    const { harness } = await server();
+    const { bb, harness } = await server();
+    const store = new KeeperStore(bb.storage.database());
+    const keeper = withMemberFixtures(new Keeper(store, fakePort(), Date.now));
+    keeper.bind("lead", "keeper", "wren", "project");
+    keeper.bind("t", "smith", "lark", "project", { keeperThreadId: "lead", boardQuestId: null, waypointId: null, errand: true, title: "An errand", brief: { outcome: "Do the errand", mode: "make-it-work", outOfScope: "", doneWhen: "Done", context: [], questions: [], timeboxMinutes: null } });
     await harness.behavior.callAgentTool("journal", { action: "add", descriptions: ["warm up"] }, { threadId: "t" });
     const seen = harness.inspection.experimental_rpcInvalidations;
     const before = seen.length;
     await harness.behavior.callAgentTool("journal", { action: "add", descriptions: ["Measure the room"] }, { threadId: "t" });
     const after = seen.slice(before);
     expect(withRoom(after)).toHaveLength(1);
-    expect(after.find((t) => t?.includes(tags.room()))).toEqual(expect.arrayContaining([tags.room(), tags.rows(), tags.journal("t"), tags.thread("t")]));
+    expect(after.find((t) => t?.includes(tags.room()))).toEqual(expect.arrayContaining([tags.room(), tags.journal("t"), tags.thread("t")]));
   });
 });
 

@@ -130,7 +130,40 @@ export class Keeper {
   changedTags(threadId?: string | null, questId?: string | null): string[] {
     const member = threadId ? this.member(threadId) : null;
     const keeperId = member?.keeperThreadId ?? threadId;
-    const keepers = new Set([keeperId, ...(member?.leadLinkId ? [threadId] : [])]);
+    const keepers = this.syncJournalBoard(keeperId, member);
+    return [...new Set([
+      tags.room(), tags.rows(), tags.attentionCount(),
+      ...(threadId ? [tags.thread(threadId), tags.journal(threadId)] : []),
+      ...[...keepers].flatMap(id => id ? [tags.thread(id)] : []),
+      ...(questId ? this.questChangeTags(questId) : []),
+    ])];
+  }
+  journalChangedTags(member: Member | null, linkedQuestIds: readonly string[]): string[] {
+    const keeperId = member?.keeperThreadId ?? (member && isKeeperIdentity(this.store, member) ? member.threadId : null);
+    const keepers = this.syncJournalBoard(keeperId, member);
+    const memberQuestId = member?.boardQuestId;
+    const quests = new Set([...linkedQuestIds, ...(memberQuestId ? [memberQuestId] : [])]);
+    const stale = [...keepers].flatMap(id => id ? [tags.thread(id)] : []);
+    if (member?.keeperThreadId && !memberQuestId) stale.push(tags.room());
+    for (const id of quests) {
+      const quest = this.store.get("quests", id);
+      if (quest) stale.push(tags.thread(quest.keeperThreadId));
+      const recordedInRoom = member?.keeperThreadId && id === memberQuestId && quest?.archivedAt == null;
+      const shownOnBoard = quest && quest.archivedAt == null && quest.deletedAt == null;
+      if (recordedInRoom || shownOnBoard) stale.push(tags.room());
+      if (quest && linkedQuestIds.includes(id)) {
+        if (quest.deletedAt != null) stale.push(tags.deletedQuests());
+        else if (quest.archivedAt != null) stale.push(tags.archivedQuests());
+      }
+      stale.push(...this.questChangeTags(id));
+    }
+    return stale;
+  }
+  private questChangeTags(questId: string): string[] {
+    return [tags.boardQuest(questId), ...this.store.query("members", "boardQuestId", questId).map(m => tags.thread(m.threadId))];
+  }
+  private syncJournalBoard(keeperId: string | null | undefined, member: Member | null) {
+    const keepers = new Set([keeperId, ...(member?.leadLinkId ? [member.threadId] : [])]);
     for (const id of keepers) {
       if (!id || !isKeeperIdentity(this.store, this.member(id)) || this.syncing.has(id)) continue;
       this.syncing.add(id);
@@ -140,22 +173,7 @@ export class Keeper {
         this.syncing.delete(id);
       }
     }
-    return [
-      ...new Set([
-        tags.room(),
-        tags.rows(),
-        ...(threadId ? [tags.thread(threadId), tags.journal(threadId)] : []),
-        ...[...keepers].flatMap(id => id ? [tags.thread(id)] : []),
-        ...(questId
-          ? [
-              tags.boardQuest(questId),
-              ...this.store
-                .query("members", "boardQuestId", questId)
-                .map((m) => tags.thread(m.threadId)),
-            ]
-          : []),
-      ]),
-    ];
+    return keepers;
   }
   userAction(
     threadId: string,
@@ -383,7 +401,7 @@ export class Keeper {
       this.store.event(this.now(), q.keeperThreadId, id, "quest.deleted", `Deleted ${q.title}; restorable from the cellar`, {}, actor);
     });
     this.changed(q.keeperThreadId, id);
-    this.invalidate([tags.mapHistory(), tags.registry()]);
+    this.invalidate([tags.mapHistory(), tags.registry(), tags.deletedQuestCount()]);
     return true;
   }
   restoreDeletedQuest(id: string, actor: Actor) {
@@ -394,7 +412,7 @@ export class Keeper {
       this.store.event(this.now(), q.keeperThreadId, id, "quest.delete-restored", `Restored ${q.title} to the cellar`, {}, actor);
     });
     this.changed(q.keeperThreadId, id);
-    this.invalidate([tags.mapHistory(), tags.registry()]);
+    this.invalidate([tags.mapHistory(), tags.registry(), tags.deletedQuestCount()]);
     return true;
   }
   /** A returned or stopped quest reopens for deviations; an archived one must be brought up from the cellar first. */
@@ -1695,14 +1713,15 @@ export class Keeper {
         answerData,
         by === "keeper" ? { kind: "agent", threadId: ask.keeperThreadId } : by === "user" ? { kind: "user" } : { kind: "tavern" },
       );
+    }, () => {
+      if (by === "user") this.userAction(ask.keeperThreadId);
+      if (effect.type === "grant-shell-act" && by !== "keeper") this.syncShellGrants(effect.memberThreadId);
+      if (heldCommunication?.act === "draft" && optionId === "approve" && by !== "keeper") this.syncCommunication(heldCommunication.threadId, askId);
+      const target = askMemberTarget({ ...ask, effect });
+      const stale = this.changedTags(ask.keeperThreadId, ask.boardQuestId);
+      if (target && !stale.includes(tags.thread(target))) stale.push(tags.thread(target));
+      this.invalidate(stale);
     });
-    if (by === "user") this.userAction(ask.keeperThreadId);
-    if (effect.type === "grant-shell-act" && by !== "keeper") this.syncShellGrants(effect.memberThreadId);
-    if (heldCommunication?.act === "draft" && optionId === "approve" && by !== "keeper") this.syncCommunication(heldCommunication.threadId, askId);
-    const target = askMemberTarget({ ...ask, effect });
-    const stale = this.changedTags(ask.keeperThreadId, ask.boardQuestId);
-    if (target && !stale.includes(tags.thread(target))) stale.push(tags.thread(target));
-    this.invalidate(stale);
   }
   postSummary(threadId: string, draft: SummaryDraft) {
     this.require(threadId, "keeper");
@@ -2046,7 +2065,7 @@ export class Keeper {
           "Standing rules changed. Re-read the active rules in this ledger.");
       this.changed(member.threadId, member.boardQuestId);
     }
-    this.invalidate([tags.room()]);
+    this.invalidate([tags.room(), tags.attentionCount()]);
   }
   widenRule(id: string, scope: "global" | "project" | "keeper") {
     const rule = this.store.get("rules", id);
@@ -2082,7 +2101,7 @@ export class Keeper {
         );
       this.changed(m.threadId, m.boardQuestId);
     }
-    this.invalidate([tags.room()]);
+    this.invalidate([tags.room(), tags.attentionCount()]);
   }
   rules(threadId: string, questId?: string | null, includeInactive = false) {
     const m = this.member(threadId);
@@ -2310,13 +2329,18 @@ export class Keeper {
       return { added: [...after].filter(id => !before.has(id)).length, removed: [...before].filter(id => !after.has(id)).length };
     })() : null;
     const missed = briefSteers(this, q, members);
+    const byId = new Map<string, Member | null>(members.map(member => [member.threadId, member]));
+    const memberOf = (threadId: string) => {
+      if (!byId.has(threadId)) byId.set(threadId, this.member(threadId));
+      return byId.get(threadId);
+    };
     const released = new Set(
       [
         ...new Set([
           ...members.map((member) => member.threadId),
           ...entries.map((entry) => entry.threadId),
         ]),
-      ].filter((threadId) => wasReleased(this.member(threadId))),
+      ].filter((threadId) => wasReleased(memberOf(threadId))),
     );
     const calls = new Map<string, Decision>();
     const rows = this.store.db.prepare(`SELECT data FROM tavern_records WHERE kind='decisions'
@@ -2336,8 +2360,8 @@ export class Keeper {
       const linked = entries.filter(e =>
         e.link?.boardQuestId === id && e.link.waypointId === w.id &&
         (w.actor === "user" ? e.threadId === q.keeperThreadId : w.actor === "agent" && e.owner !== "You") &&
-        this.member(e.threadId)?.classId !== "warden" &&
-        (!this.member(e.threadId)?.leadLinkId || isLeadResult(e)) &&
+        memberOf(e.threadId)?.classId !== "warden" &&
+        (!memberOf(e.threadId)?.leadLinkId || isLeadResult(e)) &&
         (isLeadResult(e) || !released.has(e.threadId) || e.status === "verified" || e.status === "done" && (w.check === "none" || call?.waypointCall?.as === "accepted")),
       );
       const ownerMember =
@@ -2386,7 +2410,7 @@ export class Keeper {
       const checkedBy = state === "verified" ? [...new Set(linked.flatMap(entry => {
         const author = entry.review?.actor ?? entry.updatedBy;
         if (author.kind !== "agent" || author.threadId === entry.threadId) return [];
-        const member = this.member(author.threadId);
+        const member = memberOf(author.threadId);
         return !member || member.classId === "warden" ? [author.threadId] : [];
       }))] : [];
       return {

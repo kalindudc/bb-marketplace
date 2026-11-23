@@ -62,7 +62,7 @@ it("shows at most three asks per group before expanding", () => {
 });
 it("every rendered count surface reads the four-item server view", async () => {
   function Surface() { const badge = useTavernBadge(); return <><span data-testid="badge">{badge?.count} need you</span><ThreadWidget threadId="keeper-1" /><LedgerTab threadId="keeper-1" environment={null} /><NeedsYouQueue room={room} registry={fixtureRegistry} /><TavernHomepage projectId={null} /></>; }
-  const slot = renderSlot({ component: Surface }, {}, { composer: { scope: { kind: "thread", threadId: "keeper-1" } }, rpc: { registry: () => fixtureRegistry, decor: () => ({ ...fixtureDecor, characters: false, keeperView: { ...fixtureDecor.keeperView!, attention: ledger.attention } }), ledger: () => ledger, room: () => room } } as any);
+  const slot = renderSlot({ component: Surface }, {}, { composer: { scope: { kind: "thread", threadId: "keeper-1" } }, rpc: { registry: () => fixtureRegistry, decor: () => ({ ...fixtureDecor, characters: false, keeperView: { ...fixtureDecor.keeperView!, attention: ledger.attention } }), ledger: () => ledger, room: () => room, attentionCount: () => ({ count: room.attention!.needYou }) } } as any);
   const widget = await slot.findByRole("region", { name: "Tavern widget" });
   expect(slot.getByTestId("badge").textContent).toBe("4 need you");
   expect(slot.container.querySelector(".lg-now-line")?.textContent).toContain("4 need you");

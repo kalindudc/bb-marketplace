@@ -35,13 +35,44 @@ export function requireUserAct(context: ExperimentalPluginRpcHandlerContext | un
   return receipt;
 }
 export type UserActReceipt = { act: Act; surface: string; attribution: string; threadId?: string; grant?: string; references?: Record<string, string> };
-export function commitUserAct<T>(store: KeeperStore, now: () => number, receipt: UserActReceipt | undefined, action: () => T): T {
-  return store.atomic(() => {
-    const result = action();
-    if (result instanceof Promise) throw new Error("A user-act transaction must be synchronous");
-    if (receipt) store.event(now(), null, null, "authority.acted", `${receipt.act}: ${receipt.attribution}`, receipt, receipt.threadId ? { kind: "agent", threadId: receipt.threadId } : { kind: "user" });
-    return result;
+const receiptListeners = new WeakMap<KeeperStore["db"], (eventId: number) => void>();
+export function onAuthorityReceipt(db: KeeperStore["db"], changed: () => void) {
+  const pending: number[] = [];
+  const listen = (id: number) => {
+    pending.push(id);
+    if (pending.length !== 1) return;
+    // The surrounding transaction may still roll back after the receipt is written.
+    queueMicrotask(() => {
+      const ids = pending.splice(0);
+      if (receiptListeners.get(db) !== listen) return;
+      const exists = db.prepare("SELECT 1 FROM tavern_events WHERE id=? AND type='authority.acted'");
+      if (ids.some(id => exists.get(id))) changed();
+    });
+  };
+  receiptListeners.set(db, listen);
+  return () => { receiptListeners.delete(db); };
+}
+function recordAuthorityReceipt(store: KeeperStore, at: number, receipt: UserActReceipt) {
+  return store.event(at, null, null, "authority.acted", `${receipt.act}: ${receipt.attribution}`, receipt,
+    receipt.threadId ? { kind: "agent", threadId: receipt.threadId } : { kind: "user" });
+}
+function notifyAuthorityReceipt(store: KeeperStore, at: number, receipt: UserActReceipt) {
+  const id = recordAuthorityReceipt(store, at, receipt);
+  receiptListeners.get(store.db)?.(id);
+}
+// A caller that already publishes a room change can cover the receipt in that same post-commit notification.
+export function commitUserAct<T>(store: KeeperStore, now: () => number, receipt: UserActReceipt | undefined, action: () => T, publishRoomChange?: () => void): T {
+  const result = store.atomic(() => {
+    const value = action();
+    if (value instanceof Promise) throw new Error("A user-act transaction must be synchronous");
+    if (receipt) {
+      if (publishRoomChange) recordAuthorityReceipt(store, now(), receipt);
+      else notifyAuthorityReceipt(store, now(), receipt);
+    }
+    return value;
   });
+  publishRoomChange?.();
+  return result;
 }
 export function settingsCliReceipt(context: { threadId?: string | null }, enabled: boolean): UserActReceipt {
   if (!context.threadId) {
@@ -59,7 +90,7 @@ export function terminalUserAct<T>(context: { threadId?: string | null }, act: A
   let result: T;
   store.atomic(() => {
     result = action(receipt);
-    if (!(result instanceof Promise)) store.event(now(), null, null, "authority.acted", `${act}: terminal`, receipt, { kind: "user" });
+    if (!(result instanceof Promise)) notifyAuthorityReceipt(store, now(), receipt);
   });
   return result!;
 }
@@ -76,7 +107,7 @@ export function userActHandlers<T extends object>(handlers: T, store: KeeperStor
       let result: unknown;
       store.atomic(() => {
         result = handler(input, context, receipt);
-        if (!(result instanceof Promise)) store.event(now(), null, null, "authority.acted", `${name}: ${receipt.attribution}`, receipt, { kind: "user" });
+        if (!(result instanceof Promise)) notifyAuthorityReceipt(store, now(), receipt);
       });
       return result;
     }];

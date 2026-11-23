@@ -32,7 +32,7 @@ export interface JournalPort {
   /** Called first in the plugin's single message.dispatch handler: a reject message for a Tavern note that would start a turn, else null. */
   dispatchCheck(ctx: HookContext): string | null;
   /** A listener may return further tags the change makes stale; the journal sends them in its one signal. */
-  onChange(listener: (threadId: string, entryIds: string[]) => string[] | void): () => void;
+  onChange(listener: (threadId: string, entryIds: string[], boardIds: readonly string[]) => string[] | void): () => void;
 }
 
 export type JournalReview = { before: JournalEntry; after: JournalEntry; sequence: number; undone?: boolean };

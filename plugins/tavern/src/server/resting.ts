@@ -21,8 +21,7 @@ export function reuseRule(classId: string, engagement: RestingEngagement, quest:
     return `re-checking ${engagement.rejectedWaypoints.join(", ")} after the maker's fix`;
   return null;
 }
-export function restingContext(k: Keeper) {
-  const members = k.store.all("members");
+export function restingContext(k: Keeper, members = k.store.all("members"), summaryOf = (id: string) => k.summary(id)) {
   const reviewing = new Set(members.filter(m => m.classId === "warden" && m.state !== "failed" && ["briefing", "active"].includes(m.engagement ?? "")).map(m => m.checkerMakerThreadId));
   const entries = new Map<string, JournalEntry[]>();
   const waypoints = new Map<string, BoardQuestSummary["waypoints"]>();
@@ -30,7 +29,7 @@ export function restingContext(k: Keeper) {
     if (!entries.has(questId)) entries.set(questId, k.journal.linkedEntries(questId));
     return entries.get(questId)!;
   }, waypoints: (questId: string) => {
-    if (!waypoints.has(questId)) waypoints.set(questId, k.summary(questId).waypoints);
+    if (!waypoints.has(questId)) waypoints.set(questId, summaryOf(questId).waypoints);
     return waypoints.get(questId)!;
   } };
 }
@@ -67,15 +66,14 @@ export function restingMember(k: Keeper, member: Member, context = restingContex
     settled: !engagement.underReview && workSettled, kept, restedMinutes: Math.max(0, Math.floor((k.now() - engagement.since) / 60_000)),
     machineHeld: placement !== null && !machineLost, machineLost, mayRebriefFor: machineLost ? null : reuseRule(member.classId, engagement, quest) };
 }
-export function restingParty(k: Keeper, keeperId: string) {
-  const context = restingContext(k);
+export function restingParty(k: Keeper, keeperId: string, context = restingContext(k)) {
   return k.store.query("members", "keeperThreadId", keeperId, 500).flatMap(member => {
     const row = restingMember(k, member, context);
     return row ? [row] : [];
   });
 }
-export function freeHands(k: Keeper, keeperId: string) {
-  return restingParty(k, keeperId).filter(member => member.mayRebriefFor !== null);
+export function freeHands(k: Keeper, keeperId: string, context?: ReturnType<typeof restingContext>) {
+  return restingParty(k, keeperId, context).filter(member => member.mayRebriefFor !== null);
 }
 export function restingCandidates(k: Keeper, keeperId: string, request: { classId: string; boardQuestId?: string | null; waypointId?: string | null }) {
   return freeHands(k, keeperId).filter(m => m.classId === request.classId && m.boardQuestId === (request.boardQuestId ?? null) && (m.classId !== "warden" || !!request.waypointId && m.rejectedWaypoints.includes(request.waypointId)));

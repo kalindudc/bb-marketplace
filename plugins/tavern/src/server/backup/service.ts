@@ -22,7 +22,7 @@ import { backupName, bundleHash, managedBackupName, safePayloadPath, sealBundle,
 type Input = { withData?: boolean; projects?: boolean; parts?: BackupPart[] };
 export interface BackupProject { id: string; name: string; path: string }
 export interface ProjectInventory { projects: BackupProject[]; problems: string[] }
-export interface BackupOptions { settings: SettingsStore; registry: Registry; version: string; projects: () => Promise<BackupProject[] | ProjectInventory>; now?: () => number; changed?: () => void; beforeRecordsRestore?: () => void; warn?: (message: string) => void }
+export interface BackupOptions { settings: SettingsStore; registry: Registry; version: string; projects: () => Promise<BackupProject[] | ProjectInventory>; now?: () => number; changed?: (kind: "saved" | "restored") => void; beforeRecordsRestore?: () => void; warn?: (message: string) => void }
 type Target = { path: string; logical: string; before: string | null; text: string; kind: "class" | "character" | "scopes" };
 type SaveResult = { code: "ok" | "error"; backup: BackupEntry | null; path: string | null; manifest: BackupManifest | null; pruned: string[]; problem: string | null };
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
@@ -90,7 +90,7 @@ export class BackupService {
     this.root = options.registry.directories().global; this.dir = join(this.root, "backups"); this.now = options.now ?? Date.now;
   }
   private warn(message: string) { (this.options.warn ?? console.warn)(message); }
-  private notify() { try { this.options.changed?.(); } catch (error) { this.warn(`Tavern backup committed but UI refresh failed: ${problem(error)}`); } }
+  private notify(kind: "saved" | "restored") { try { this.options.changed?.(kind); } catch (error) { this.warn(`Tavern backup committed but UI refresh failed: ${problem(error)}`); } }
   private entry(name: string, manifest: BackupManifest): BackupEntry {
     return { name, createdAt: manifest.createdAt, withData: manifest.data.included, projects: manifest.projects.length > 0, bytes: Buffer.byteLength(JSON.stringify(manifest, null, 2)) + manifest.files.reduce((n, file) => n + file.bytes, 0), tavernVersion: manifest.tavernVersion, counts: manifest.counts, problems: [...manifest.problems] };
   }
@@ -208,7 +208,7 @@ export class BackupService {
         rmSync(target, { recursive: true }); pruned.push(row.entry.name);
       }
     } catch (error) { warning = `Backup saved, but retention failed: ${problem(error)}`; }
-    this.notify();
+    this.notify("saved");
     return { code: "ok", backup: this.entry(basename(path), bundle.manifest), path, manifest: bundle.manifest, pruned, problem: warning };
   }
   async export(input: Input, limit: number = LIMITS.backupRpcBytes) {
@@ -301,7 +301,7 @@ export class BackupService {
         this.options.registry.invalidate();
         return { ...plan.result, code: error instanceof RestoreStale || error instanceof SettingsConflict ? "stale" : "invalid", problems: [problem(error), ...rollbackProblems] };
       }
-      this.notify(); return { ...plan.result, code: "applied" };
+      this.notify("restored"); return { ...plan.result, code: "applied" };
     } catch (error) { return invalid(error); }
   }
 }

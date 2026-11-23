@@ -5,12 +5,14 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Registry } from "../registry";
 import type { SettingsStore } from "../settings/store";
 import { BackupService, type ProjectInventory } from "./service";
+import { tags } from "../../shared/contract";
 
 export { BackupService } from "./service";
 export function createBackupService(bb: BbPluginApi, settings: SettingsStore, registry: Registry, beforeRecordsRestore?: () => void) {
   const { version } = z.object({ version: z.string().min(1) }).parse(JSON.parse(readFileSync(join(registry.directories().builtin, "package.json"), "utf8")));
   return new BackupService({ settings, registry, version, beforeRecordsRestore,
-    changed: () => bb.rpc.experimental_invalidate(["tavern:backups", "tavern:registry", "tavern:settings", "tavern:insights", "tavern:board"]),
+    changed: kind => bb.rpc.experimental_invalidate(["tavern:backups", "tavern:registry", "tavern:settings", "tavern:insights", "tavern:board",
+      ...(kind === "restored" ? [tags.deletedQuestCount()] : [])]),
     warn: message => bb.log.warn(message),
     projects: async (): Promise<ProjectInventory> => {
       const config = await bb.sdk.system.config();

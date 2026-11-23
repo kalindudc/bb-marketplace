@@ -105,7 +105,7 @@ function DeletedList() {
 export function ArchivedList({ registry, api, total }: { registry: Registry; api: ArchiveApi; total: number }) {
   const [cursors, setCursors] = useState<(string | null)[]>([null]);
   const [deleted, setDeleted] = useState(false);
-  const count = experimental_useRpcQuery({ contract: rpcContract, method: "deletedBoardQuests", input: { cursor: null, limit: 1 } });
+  const count = experimental_useRpcQuery({ contract: rpcContract, method: "deletedQuestCount", input: {} });
   return <><div className="tv-filters" role="group" aria-label="Cellar views"><button type="button" className="act" aria-pressed={!deleted} onClick={() => setDeleted(false)}>In the cellar ({total})</button><button type="button" className="act" aria-pressed={deleted} onClick={() => setDeleted(true)}>Deleted{count.data && ` (${count.data.total})`}</button></div>{deleted ? <DeletedList /> : !total ? <p className="tv-empty" data-empty>The cellar is empty. Returned and stopped quests go down when you send them to the cellar.</p> : <div className="tv-wrapped">{cursors.map((c, i) => <ArchivePage key={c ?? "first"} cursor={c} registry={registry} api={api} last={i === cursors.length - 1} onMore={(next) => setCursors((prev) => [...prev, next])} />)}</div>}</>;
 }
 
@@ -113,7 +113,7 @@ export function ArchivedList({ registry, api, total }: { registry: Registry; api
 export function ArchiveFold({ room, registry, api }: { room: Room; registry: Registry; api: ArchiveApi }) {
   const [open, setOpen] = usePanelState("room.cellar", false);
   const total = archiveTotal(room, api.hidden, api.shown);
-  const deleted = experimental_useRpcQuery({ contract: rpcContract, method: "deletedBoardQuests", input: { cursor: null, limit: 1 } });
+  const deleted = experimental_useRpcQuery({ contract: rpcContract, method: "deletedQuestCount", input: {} });
   if (!total && !deleted.data?.total) return deleted.error
     ? <p className="tv-problem" role="alert">Could not check for deleted quests. <button type="button" className="btn sm" onClick={() => void deleted.refetch()}>Retry</button></p>
     : null;

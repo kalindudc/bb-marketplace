@@ -70,7 +70,7 @@ describe("Tavern page surfaces", () => {
     await waitFor(() => expect(remove).toHaveBeenCalledWith({ id: ended.quest.id }));
   });
   it("omits a genuinely empty cellar from the room", async () => {
-    const slot = await page("", { room: () => ({ ...room, archivedCount: 0 }), deletedBoardQuests: () => ({ boardQuests: [], total: 0, nextCursor: null }) });
+    const slot = await page("", { room: () => ({ ...room, archivedCount: 0 }), deletedQuestCount: () => ({ total: 0 }) });
     await slot.findByRole("heading", { name: /The quest board/ });
     expect(slot.queryByRole("button", { name: /Cellar \(archived\).*0/ })).toBeNull();
     expect(slot.container.querySelector("[data-sec=cellar]")).toBeNull();
@@ -78,7 +78,7 @@ describe("Tavern page surfaces", () => {
   it("keeps a deleted-only cellar reachable and restores a deleted quest to the cellar", async () => {
     const deleted = { ...detail.quest, phase: "done" as const, archivedAt: 123, deletedAt: 456 };
     const restore = vi.fn(() => ({ ok: true as const, changed: 1 }));
-    const slot = await page("", { room: () => ({ ...room, archivedCount: 0 }), deletedBoardQuests: () => ({ boardQuests: [deleted], total: 1, nextCursor: null }), restoreDeletedQuest: restore });
+    const slot = await page("", { room: () => ({ ...room, archivedCount: 0 }), deletedQuestCount: () => ({ total: 1 }), deletedBoardQuests: () => ({ boardQuests: [deleted], total: 1, nextCursor: null }), restoreDeletedQuest: restore });
     fireEvent.click(await slot.findByRole("button", { name: /cellar.*1 deleted/i }));
     fireEvent.click(slot.getByRole("button", { name: /Deleted/ }));
     fireEvent.click(await slot.findByRole("button", { name: `Restore: ${deleted.short}` }));

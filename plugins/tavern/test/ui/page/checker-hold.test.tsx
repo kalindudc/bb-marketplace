@@ -1,6 +1,6 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
-import { renderAttentionSlot as renderSlot } from "../attention-fixture";
+import { renderAttentionSlot as renderSlot, withAttention } from "../attention-fixture";
 import { act, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rpcContract, type BoardQuestDetail, type Room } from "../../../src/shared/contract";
@@ -196,8 +196,8 @@ describe("a checker-handoff hold in the common room", () => {
 
   it("counts the hold in bb's canonical Tavern attention badge too", async () => {
     const Badge = () => { const b = useTavernBadge(); return <span data-badge>{b ? `${b.count}|${b.label}` : "none"}</span>; };
-    const room = roomWith(hold());
-    const slot = renderSlot({ component: Badge }, {}, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { room: () => structuredClone(room) } as Partial<Handlers> as Handlers });
+    const room = withAttention(roomWith(hold()));
+    const slot = renderSlot({ component: Badge }, {}, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { attentionCount: () => ({ count: room.attention!.needYou }) } as Partial<Handlers> as Handlers });
     slots.push(slot);
     await waitFor(() => expect(slot.container.querySelector("[data-badge]")!.textContent).toBe(`${openAsks + 1}|${openAsks + 1} need you`), LOADED);
   });
