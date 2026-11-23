@@ -1,8 +1,9 @@
 import type { CSSProperties } from "react";
-import { useRef, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { z } from "zod";
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_useAppPanel, useBbNavigate, useComposer, type PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
 import { PlacementFacts } from "../kit/placement";
+import { PlanChanges } from "../kit/plan-changes";
 import { memberName } from "../../shared/member-name";
 import { rpcContract, type BoardQuestDetail } from "../../shared/contract";
 import type { CharacterDef, ClassDef, Report } from "../../shared/schema";
@@ -44,6 +45,17 @@ export function ReportCard({ report, who, onOpen, names, onView, voice = true, p
   );
 }
 
+function PlanMapFold({ count, children }: { count: number; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const content = useId();
+  return <div className="qm-mapfold">
+    <button type="button" className="btn" aria-expanded={open} aria-controls={content} onClick={() => setOpen(!open)}>
+      <ExpandsMark open={open} />{open ? "Hide full map" : `Show full map (${count} ${count === 1 ? "waypoint" : "waypoints"})`}
+    </button>
+    <div id={content} hidden={!open}>{open && children}</div>
+  </div>;
+}
+
 export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; version: number | null }) {
   const undo = experimental_useRpcMutation({ contract: rpcContract, method: "undoDecision" });
   const answer = experimental_useRpcMutation({ contract: rpcContract, method: "answerAsk" });
@@ -67,6 +79,10 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
   const formOption = reviewLead ? null : greenlight?.options.find(o => o.recommended) ?? greenlight?.options[0];
   const unknownLead = plan.waypoints.filter(w => w.leadTime === null).length;
   const redirect = () => { composer.insert(`About ${detail.quest.title}, plan v${plan.version}: `); composer.focus(); };
+  const map = <>
+    <QuestMap quest={quest} mode={sealed ? "live" : "plan"} dealt={sealed} stretch={!sealed} showChecks showAll />
+    <div className="qm-key m"><span><i className="k crest" />agent</span><span><i className="k you" />your move</span><span><i className="k gate" />outside owner</span><span>left to right is order, not a schedule</span></div>
+  </>;
   return (
     <article ref={card} {...moment} className={`tavern tcard qmcard ${sealed ? "sealed" : ""}`} style={glowVars(`map:${detail.quest.id}`) as CSSProperties} aria-label={`Quest map (greenlight): ${detail.quest.title}, plan v${plan.version}`} data-part="QuestMapCard">
       <header className="qm-h">
@@ -75,9 +91,9 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
         <span className="tc-sp" />
         {sealed ? <span className="sealmark"><Glyph name="wax-seal" size={16} /><span>Sealed · party formed</span></span> : current ? <span className="qm-wait">{waitsForParent ? "Hiring Keeper decides" : "Waits for your seal"}</span> : <StatusPill status="superseded">superseded</StatusPill>}
       </header>
+      <PlanChanges plan={plan} plans={detail.plans} quest={quest} registry={registry.data} />
       <p className="qm-goal"><b>{plan.goal}</b><span className="m"> · done when {plan.doneWhen.charAt(0).toLowerCase() + plan.doneWhen.slice(1)}</span></p>
-      <QuestMap quest={quest} mode={sealed ? "live" : "plan"} dealt={sealed} stretch={!sealed} showChecks />
-      <div className="qm-key m"><span><i className="k crest" />agent</span><span><i className="k you" />your move</span><span><i className="k gate" />outside owner</span><span>left to right is order, not a schedule</span></div>
+      {plan.version === 1 ? map : <PlanMapFold key={plan.version} count={quest.waypoints.length}>{map}</PlanMapFold>}
       <div className="qm-cols">
         <section className="qm-qs" aria-label="Questions for you">
           <h4>{plan.questions.length ? `${plan.questions.length} question${plan.questions.length === 1 ? "" : "s"} for you` : "No open questions"}</h4>

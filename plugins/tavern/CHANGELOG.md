@@ -10,6 +10,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Changed
 
+- Updated plan cards and quest pages show what changed since the previous version, starting with the Keeper’s note. On updated cards, you can open the full map when you need it.
 - Keepers can keep a resting member for up to seven days by default. Your explicit Keep limit stays as set.
 - Wardens can re-check corrected work after any number of rejections without a plan revision. A plan cannot ask for approval of a party outside the Keeper’s hire policy.
 - Keeper acceptances stay in place when a new plan leaves the waypoint unchanged. The quest history records what carried forward.

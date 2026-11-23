@@ -30,6 +30,7 @@ import { QuestRename } from "./quest-rename";
 import { QuestSummaries } from "./summaries";
 import { recordedStop } from "./quest-road";
 import { PlacementFacts } from "../kit/placement";
+import { PlanChanges } from "../kit/plan-changes";
 import { LeadChainRows } from "../thread/lead-chain-rows";
 
 
@@ -189,8 +190,8 @@ export function QuestPage({ detail, registry, room, summaryId, recheck }: { deta
     {quest.outcome === "closed-early" && <Section title="Closed early at your request" count={`${quest.waivers?.length ?? 0} not verified`} className="tv-card"><WaiverRows items={quest.waivers ?? []} final /></Section>}
     <section className={`tv-card tv-qmapcard ${finished ? "" : "lit"} ${showMap ? "" : "folded"}`} aria-labelledby="tv-qmap-h" style={finished ? undefined : glowVars(`questmap:${quest.id}`)}>
       <header className="tv-colh"><h2 id="tv-qmap-h"><Vocabulary word="map" /></h2><span className="tv-colh-aside">{mapAside(quest)}</span><span className="tv-sp" />{steer && showMap && <span className="tag tv-steer-tag" title={steer.text}><PageGlyph name="steer" /><span>v{quest.planVersion} from your steer, {clockTime(steer.at)}</span></span>}{finished && <button type="button" className="tv-fold act" aria-label={`${vocab("map")} ${mapAside(quest)} ${mapOpen ? "Hide" : "Show"}`} aria-expanded={mapOpen} aria-controls="tv-qmap-b" onClick={() => setMapOpen(!mapOpen)}><ExpandsMark open={mapOpen} /><span>{mapOpen ? "Hide" : "Show"}</span></button>}</header>
+      {quest.plan && <PlanChanges plan={quest.plan} plans={detail.plans} quest={quest} registry={registry} />}
       {showMap && <div id="tv-qmap-b">
-        {steer && quest.plan?.changeNote && <ChangeNote text={quest.plan.changeNote} />}
         {quest.waypoints.length ? <QuestMap quest={quest} mode="live" /> : <p className="tv-empty tv-qmap-empty" data-empty><PageGlyph name="plan" />No quest map yet: {move.who}{move.next ? ` · ${move.next}` : ""}.</p>}
         <GateRows waypoints={quest.waypoints} />
       </div>}
@@ -259,13 +260,6 @@ export function QuestPage({ detail, registry, room, summaryId, recheck }: { deta
       </aside>
     </div>
   </div>;
-}
-
-/** What the steer changed: two lines, expanded in place. */
-function ChangeNote({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  const long = text.length > 140;
-  return <p className={`tv-changenote ${open ? "open" : ""}`}><span className="tv-changenote-t">{text}</span>{long && <button type="button" className="tv-fold act" aria-expanded={open} onClick={() => setOpen(!open)}><ExpandsMark open={open} /><span>{open ? "Less" : "More"}</span></button>}</p>;
 }
 
 export function ReturnedList({ room, registry, initialView = "board" }: { room: Room; registry: Registry; initialView?: "board" | "archive" }) {
