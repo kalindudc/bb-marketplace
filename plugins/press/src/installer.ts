@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -16,6 +16,7 @@ export const MARKER_NAME = ".press-composer.json";
 
 /** The files of the composer that are copied; nothing else is touched in the target. */
 const COPY_FILES = ["index.ts", "package.json", "README.md"];
+const COMPOSER_PACKAGE = "pi-press-composer";
 
 export type InstallDecision = "install" | "skip" | "update";
 
@@ -145,6 +146,73 @@ async function copyComposer(sourceDir: string, targetDir: string): Promise<void>
   if (existsSync(src)) await copyTree(src, join(targetDir, "src"));
 }
 
+async function readObject(path: string): Promise<Record<string, unknown> | null> {
+  try {
+    const value: unknown = JSON.parse((await readFile(path, "utf8")).replace(/^\uFEFF/, ""));
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function configuredPackagePath(entry: unknown, agent: string): string | null {
+  const value = entry && typeof entry === "object" && "source" in entry ? entry.source : entry;
+  if (typeof value !== "string" || !value.trim()) return null;
+  const source = value.trim();
+  try {
+    if (source.startsWith("npm:")) {
+      const name = source.slice(4).trim().split("@", 1)[0];
+      return name === COMPOSER_PACKAGE ? join(agent, "npm", "node_modules", name) : null;
+    }
+    if (/^(?:git:|(?:https?|ssh):\/\/)/u.test(source)) {
+      const remote = source.startsWith("git:") && !source.startsWith("git://") ? source.slice(4).trim() : source;
+      const scp = /^git@([^:/]+):(.+)$/u.exec(remote);
+      const url = new URL(scp ? `ssh://${scp[1]}/${scp[2]}` : remote.includes("://") ? remote : `https://${remote}`);
+      const path = url.pathname.replace(/^\/+/, "").split("@", 1)[0].replace(/\.git$/u, "");
+      const parts = path.split("/");
+      if (!url.hostname || parts.length < 2 || parts.some((part) => {
+        const decoded = decodeURIComponent(part);
+        return !decoded || decoded === "." || decoded === ".." || /[\\/\0]/u.test(decoded);
+      })) return null;
+      return join(agent, "git", url.hostname, ...parts);
+    }
+    if (source.startsWith("file://")) return fileURLToPath(source);
+    if (source === "~" || /^~[/\\]/u.test(source)) return resolve(agent, "../..", source.slice(2));
+    return resolve(agent, source);
+  } catch {
+    return null;
+  }
+}
+
+async function findDuplicateCopies(target: string): Promise<string[]> {
+  const extensions = dirname(target);
+  const agent = dirname(extensions);
+  const settings = await readObject(join(agent, "settings.json"));
+  const entries = await readdir(extensions, { withFileTypes: true }).catch(() => []);
+  const candidates = entries
+    .filter((entry) => !entry.name.startsWith(".") && entry.name !== "node_modules" && (entry.isDirectory() || entry.isSymbolicLink()))
+    .map((entry) => join(extensions, entry.name)).sort();
+  if (Array.isArray(settings?.packages)) {
+    for (const entry of settings.packages) {
+      const path = configuredPackagePath(entry, agent);
+      if (path !== null) candidates.push(path);
+    }
+  }
+  const seen = new Set([await realpath(target).catch(() => resolve(target))]);
+  const duplicates: string[] = [];
+  for (const candidate of candidates) {
+    const info = await stat(candidate).catch(() => null);
+    if (!info) continue;
+    const dir = info.isDirectory() ? candidate : dirname(candidate);
+    const canonical = await realpath(dir).catch(() => null);
+    if (canonical === null || seen.has(canonical)) continue;
+    seen.add(canonical);
+    const manifest = await readObject(join(canonical, "package.json"));
+    if (manifest?.name === COMPOSER_PACKAGE) duplicates.push(dir);
+  }
+  return duplicates.sort();
+}
+
 export interface ComposerInstallReport {
   action: InstallDecision | "none";
   source: string | null;
@@ -152,6 +220,7 @@ export interface ComposerInstallReport {
   sourceVersion: string | null;
   installedVersion: string | null;
   installedAt: string | null;
+  duplicateCopies: string[];
   error: string | null;
 }
 
@@ -181,9 +250,15 @@ export async function ensureComposerInstalled(options: {
     sourceVersion: null,
     installedVersion: null,
     installedAt: null,
+    duplicateCopies: [],
     error: null,
   };
   try {
+    report.duplicateCopies = await findDuplicateCopies(options.target);
+    if (options.readonly !== true && report.duplicateCopies.length > 0) {
+      const copies = report.duplicateCopies.map((path) => JSON.stringify(path)).join(", ");
+      options.log?.warn(`press composer: additional copies at ${copies}; older copies can run twice. Remove manual copies when using the bundled composer.`);
+    }
     if (options.source === null) {
       report.error = "composer source directory not found next to the plugin";
       options.log?.warn(`press composer: ${report.error}`);

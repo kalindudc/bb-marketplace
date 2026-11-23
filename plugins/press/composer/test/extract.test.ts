@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extract } from "../src/extract.ts";
+import { mergeLedger } from "../src/ledger.ts";
 import type { AnyMessage } from "../src/types.ts";
 
 const NOW = "2026-11-22T00:00:00.000Z";
@@ -68,6 +69,28 @@ test("collects failing test names", () => {
     { now: NOW },
   );
   assert.deepEqual(ledger.state.failingTests, ["queue > requeue drops payload", "queue > retries twice"]);
+});
+
+test("a later successful command clears only its own failures across compactions", () => {
+  const previous = extract([
+    toolCall("a", "bash", { command: "npm test" }),
+    toolResult("a", "bash", " ✕ parses empty input", true),
+    toolCall("b", "bash", { command: "npm run other" }),
+    toolResult("b", "bash", " ✕ retries twice", true),
+  ], { now: NOW });
+  const newer = extract([
+    toolCall("c", "bash", { command: "npm test" }),
+    toolResult("c", "bash", "All tests pass"),
+  ], { now: NOW, previousFailures: previous.state.testFailures });
+  assert.deepEqual(mergeLedger(previous, newer).state.failingTests, ["retries twice"]);
+});
+
+test("a named pass line clears that test even when the run has other failures", () => {
+  const ledger = extract([
+    { role: "bashExecution", command: "npm test", output: "not ok 1 - parses empty input", exitCode: 1 },
+    { role: "bashExecution", command: "npm test", output: "ok 1 - parses empty input\nnot ok 2 - retries twice", exitCode: 1 },
+  ], { now: NOW });
+  assert.deepEqual(ledger.state.failingTests, ["retries twice"]);
 });
 
 test("reads branch and head from git output", () => {

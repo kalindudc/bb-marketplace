@@ -1,9 +1,16 @@
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Snapshot } from "./decide";
 
-/**
- * Everything Press learns from bb, reduced to the numbers and signals `decide` consumes.
- * The derivation is pure and works on plain timeline rows; only `PressService` touches `bb.sdk`.
- */
+type Threads = BbPluginApi["sdk"]["threads"];
+type TimelineRow = Exclude<Awaited<ReturnType<Threads["timeline"]>>, { delta: unknown }>["rows"][number];
+type CompactionRow = Extract<TimelineRow, { kind: "system"; systemKind: "operation" }> & { operationKind: "compaction" };
+type OutputRow = Extract<TimelineRow, { kind: "work"; workKind: "command" | "tool" | "delegation" }>;
+
+export const PHASE_SIGNALS = {
+  planApproved: "plan.approved",
+  testsGreen: "tests.green",
+  prOpened: "pr.opened",
+} as const;
 
 export interface ThreadUsage {
   estimated: boolean;
@@ -11,9 +18,17 @@ export interface ThreadUsage {
   usedTokens: number;
 }
 
-export interface ThreadStatusView {
-  status: "active" | "error" | "idle" | "pending" | "starting" | "stopping";
-  updatedAt: number;
+export type ThreadStatusView = Pick<Awaited<ReturnType<Threads["get"]>>, "status" | "updatedAt">;
+
+/** A thread is running a turn, or starting or stopping one. `error` is not: its last turn ended. */
+export function threadRunning(status: ThreadStatusView["status"]): boolean {
+  return status === "active" || status === "starting" || status === "stopping" || status === "pending";
+}
+
+/** A phase boundary the timeline shows, and when the work that produced it finished. */
+export interface PhaseSignal {
+  signal: string;
+  at: number;
 }
 
 export interface SignalDerivation {
@@ -21,72 +36,60 @@ export interface SignalDerivation {
   sameFileReadMax: number;
   sameCommandFailedMax: number;
   subagentReportBytes: number;
-  phaseSignals: string[];
+  phaseSignals: PhaseSignal[];
   /** When the last context compaction of this thread landed, from its timeline rows. */
   lastCompactionEventAt: number | null;
 }
 
-function asObject(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-/** The original byte length of one command's output, however the row truncated it. */
-function commandBytes(data: Record<string, unknown>): number {
-  const truncation = asObject(data.truncation);
-  for (const key of ["aggregatedOutput", "result", "resultText"]) {
-    const length = asNumber(asObject(truncation[key]).originalLength);
-    if (length !== null) return length;
-  }
-  return 0;
-}
-
-function* timelineEntries(rows: readonly unknown[]): Generator<Record<string, unknown>> {
-  for (const row of rows) {
-    const record = asObject(row);
-    yield record;
-    if (record.kind === "turn" && Array.isArray(record.children)) yield* timelineEntries(record.children);
+function* timelineEntries(rows: readonly unknown[]): Generator<TimelineRow> {
+  for (const value of rows) {
+    if (typeof value !== "object" || value === null || !("kind" in value)) continue;
+    // BB decodes the row payloads. Check the envelope before using them here.
+    const row = value as TimelineRow;
+    if (!Number.isFinite(row.startedAt) || !Number.isFinite(row.createdAt)) continue;
+    yield row;
+    // A delegation's childRows belong to a different thread and context window.
+    if (row.kind === "turn" && Array.isArray(row.children)) yield* timelineEntries(row.children);
   }
 }
 
-function finishedCompaction(row: Record<string, unknown>): number | null {
-  if (row.type === "contextCompaction") return asNumber(row.createdAt) ?? asNumber(row.startedAt);
-  return row.kind === "system" && row.operationKind === "compaction" && row.status === "completed"
-    ? asNumber(row.completedAt) ?? asNumber(row.createdAt)
-    : null;
+function isCompaction(row: TimelineRow): row is CompactionRow {
+  return row.kind === "system" && row.systemKind === "operation" && row.operationKind === "compaction";
+}
+
+function finishedCompaction(row: TimelineRow): number | null {
+  return isCompaction(row) && row.status === "completed" ? row.completedAt ?? row.createdAt : null;
 }
 
 export function* completedCompactions(rows: readonly unknown[]): Generator<{ sequence: number; startedAt: number; finishedAt: number }> {
   for (const row of timelineEntries(rows)) {
     const finishedAt = finishedCompaction(row);
-    const sequence = asNumber(row.sourceSeqEnd);
-    if (finishedAt === null || sequence === null) continue;
-    yield { sequence, startedAt: Math.min(asNumber(row.startedAt) ?? finishedAt, finishedAt), finishedAt };
+    if (finishedAt === null || !Number.isFinite(row.sourceSeqEnd)) continue;
+    yield { sequence: row.sourceSeqEnd, startedAt: Math.min(row.startedAt, finishedAt), finishedAt };
+  }
+}
+
+/** The failed compaction operations in the timeline: when each started and when it failed. */
+export function* failedCompactions(rows: readonly unknown[]): Generator<{ startedAt: number; failedAt: number }> {
+  for (const row of timelineEntries(rows)) {
+    if (!isCompaction(row) || row.status !== "error") continue;
+    yield { startedAt: row.startedAt, failedAt: row.completedAt ?? row.createdAt };
   }
 }
 
 export function pickBoundary(rows: readonly unknown[], finishedAt: number): { createdAt: number; id: string | null } | null {
   let after = finishedAt;
-  let before = Number.POSITIVE_INFINITY;
+  let before = Infinity;
   const messages: Array<{ createdAt: number; id: string | null }> = [];
   for (const row of timelineEntries(rows)) {
-    const end = finishedCompaction(row);
-    const start = asNumber(row.startedAt) ?? asNumber(row.createdAt);
-    if (end !== null && start !== null && start <= finishedAt) after = Math.max(after, end);
-    if (start !== null && start > finishedAt && (end !== null || row.operationKind === "compaction")) {
-      before = Math.min(before, start);
+    if (isCompaction(row)) {
+      const end = finishedCompaction(row);
+      if (end !== null && row.startedAt <= finishedAt) after = Math.max(after, end);
+      if (row.startedAt > finishedAt) before = Math.min(before, row.startedAt);
     }
     // BB labels hidden system prompts as user rows; they never get an in-chat marker slot.
-    if (row.kind !== "conversation" || (row.role !== "user" && row.role !== "assistant") || row.initiator === "system") continue;
-    const createdAt = asNumber(row.createdAt);
-    if (createdAt !== null) messages.push({ createdAt, id: typeof row.id === "string" ? row.id : null });
+    if (row.kind !== "conversation" || (row.role === "user" ? row.initiator === "system" : row.role !== "assistant")) continue;
+    messages.push({ createdAt: row.createdAt, id: typeof row.id === "string" ? row.id : null });
   }
   let first: (typeof messages)[number] | null = null;
   for (const message of messages) {
@@ -95,93 +98,120 @@ export function pickBoundary(rows: readonly unknown[], finishedAt: number): { cr
   return first;
 }
 
-const TEST_COMMAND = /(^|\s|[/=])(npx\s+)?(vitest|pytest|jest|npm\s+test|go\s+test|cargo\s+test)(\s|$)/;
+const TEST_RUNNER = String.raw`(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|(?:npx\s+)?vitest\s+run|pytest|go\s+test|cargo\s+test|jest)`;
+// The runner must be the command itself (first in the line or after `&&`, `||`, `;` or `|`), not an argument.
+const TEST_COMMAND = new RegExp(String.raw`(?:^|&&|\|\||[;|])\s*(?:\w+=\S*\s+)*${TEST_RUNNER}(?=$|\s|[;&|])`);
 const PR_COMMAND = /(^|\s)(gh|hub)\s+pr\s+create\b/;
+const READ_TOOL = /^(read|read_file|view|cat)$/i;
+const REPORT_TOOL = /report/i;
 
-/**
- * Walk plain `threads.timeline` rows and derive every counter and signal `decide` consumes:
- * tool-result volume, thrash signatures (same file re-read, same command re-failing, subagent
- * report bytes), phase boundary signals, and the last landed compaction.
- */
-export function scanTimeline(rows: readonly unknown[]): SignalDerivation {
+function outputBytes(row: OutputRow): number {
+  // A preview only exposes the original character count, not its UTF-8 byte count.
+  const totalChars = row.workKind === "delegation" ? undefined : row.outputPreview?.totalChars;
+  if (typeof totalChars === "number" && Number.isFinite(totalChars)) return totalChars;
+  return typeof row.output === "string" ? Buffer.byteLength(row.output) : 0;
+}
+
+function increment(counts: Map<string, number>, key: string): number {
+  const count = (counts.get(key) ?? 0) + 1;
+  counts.set(key, count);
+  return count;
+}
+
+export function scanTimeline(rows: readonly unknown[], since: number | null): SignalDerivation {
   let toolResultBytes = 0;
   let subagentReportBytes = 0;
+  let sameFileReadMax = 0;
+  let sameCommandFailedMax = 0;
   let lastCompactionEventAt: number | null = null;
-  const phaseSignals: string[] = [];
+  const phaseSignals: PhaseSignal[] = [];
   const failedByCommand = new Map<string, number>();
   const readsByPath = new Map<string, number>();
 
-  for (const record of timelineEntries(rows)) {
-    const type = asString(record.type);
-    const landed = finishedCompaction(record);
-    if (landed !== null) lastCompactionEventAt = Math.max(lastCompactionEventAt ?? 0, landed);
+  const entries = [...timelineEntries(rows)];
+  // A boundary is a moment, not a standing state: phase signals count only in the newest turn that did work.
+  let newestTurn: { id: string; startedAt: number } | null = null;
+  for (const row of entries) {
+    const landed = finishedCompaction(row);
+    if (landed !== null) lastCompactionEventAt = Math.max(lastCompactionEventAt ?? landed, landed);
+    if (row.kind === "work" && typeof row.turnId === "string" && (newestTurn === null || row.startedAt > newestTurn.startedAt)) {
+      newestTurn = { id: row.turnId, startedAt: row.startedAt };
+    }
+  }
+  const newestTurnId = newestTurn?.id ?? null;
+  // A compaction the store never recorded (older than its backfill window) still ends the span.
+  const cutoff = Math.max(since ?? -Infinity, lastCompactionEventAt ?? -Infinity);
 
-    if (type === "commandExecution") {
-      toolResultBytes += commandBytes(record);
-      const command = asString(record.command);
-      if (command === "") continue;
-      const status = asString(record.status);
-      const exitCode = asNumber(record.exitCode);
-      const failed = status === "failed" || status === "error" || (exitCode !== null && exitCode !== 0);
-      if (failed) {
-        failedByCommand.set(command, (failedByCommand.get(command) ?? 0) + 1);
-      } else {
-        if (TEST_COMMAND.test(command)) phaseSignals.push("tests.green");
-        if (PR_COMMAND.test(command)) phaseSignals.push("pr.opened");
+  for (const row of entries) {
+    if (row.kind !== "work" || row.startedAt <= cutoff) continue;
+    const phase = newestTurnId !== null && row.turnId === newestTurnId;
+
+    switch (row.workKind) {
+      case "command": {
+        toolResultBytes += outputBytes(row);
+        if (typeof row.command !== "string" || row.command === "") break;
+        if (row.status === "error" || (typeof row.exitCode === "number" && row.exitCode !== 0)) {
+          sameCommandFailedMax = Math.max(sameCommandFailedMax, increment(failedByCommand, row.command));
+        } else if (row.status === "completed") {
+          const at = row.completedAt ?? row.createdAt;
+          if (phase && TEST_COMMAND.test(row.command)) phaseSignals.push({ signal: PHASE_SIGNALS.testsGreen, at });
+          if (phase && PR_COMMAND.test(row.command)) phaseSignals.push({ signal: PHASE_SIGNALS.prOpened, at });
+        }
+        break;
       }
-    } else if (type === "planSteps") {
-      // A finished plan is a task boundary: the cheapest moment to compact.
-      if (asString(record.status) === "completed") phaseSignals.push("plan.approved");
-    } else if (type === "fileRead") {
-      const path = asString(record.path) || asString(asObject(record.arguments).path);
-      if (path !== "") readsByPath.set(path, (readsByPath.get(path) ?? 0) + 1);
-    } else if (type === "toolCall") {
-      const tool = asString(record.tool).toLowerCase();
-      const args = asObject(record.arguments);
-      if (/^(read|read_file|view|cat)$/.test(tool)) {
-        const path = asString(args.path) || asString(args.file);
-        if (path !== "") readsByPath.set(path, (readsByPath.get(path) ?? 0) + 1);
-      } else if (/report/.test(tool)) {
-        const truncation = asObject(record.truncation);
-        const block = asObject(truncation.resultText ?? truncation.result ?? truncation.aggregatedOutput);
-        const length = asNumber(block.originalLength);
-        if (length !== null) subagentReportBytes += length;
+      case "plan-steps":
+        // Every todo-list update is a completed plan-steps row; only a finished plan is a boundary.
+        if (phase && row.status === "completed" && row.steps.length > 0 && row.steps.every((step) => step.status === "completed")) {
+          phaseSignals.push({ signal: PHASE_SIGNALS.planApproved, at: row.completedAt ?? row.createdAt });
+        }
+        break;
+      case "file-read":
+        if (row.path !== "") sameFileReadMax = Math.max(sameFileReadMax, increment(readsByPath, row.path));
+        break;
+      case "tool": {
+        const bytes = outputBytes(row);
+        toolResultBytes += bytes;
+        if (READ_TOOL.test(row.toolName)) {
+          const path = row.toolArgs?.path;
+          const file = typeof path === "string" && path !== "" ? path : row.toolArgs?.file;
+          if (typeof file === "string" && file !== "") sameFileReadMax = Math.max(sameFileReadMax, increment(readsByPath, file));
+        } else if (REPORT_TOOL.test(row.toolName)) {
+          subagentReportBytes += bytes;
+        }
+        break;
+      }
+      case "delegation": {
+        const bytes = outputBytes(row);
+        toolResultBytes += bytes;
+        subagentReportBytes += bytes;
+        break;
       }
     }
   }
 
-  return {
-    toolResultBytes,
-    sameFileReadMax: Math.max(0, ...readsByPath.values()),
-    sameCommandFailedMax: Math.max(0, ...failedByCommand.values()),
-    subagentReportBytes,
-    phaseSignals,
-    lastCompactionEventAt,
-  };
+  return { toolResultBytes, sameFileReadMax, sameCommandFailedMax, subagentReportBytes, phaseSignals, lastCompactionEventAt };
 }
 
-/** Combine usage, status, the turn counter and the timeline scan into the snapshot `decide` consumes. */
 export function deriveSnapshot(input: {
   usage: ThreadUsage | null;
   thread: ThreadStatusView;
   now: number;
   turnsSinceCompaction: number;
   rows: readonly unknown[];
+  since: number | null;
 }): Snapshot & SignalDerivation {
-  const signals = scanTimeline(input.rows);
-  const usage = input.usage;
-  const window = usage?.modelContextWindow ?? null;
-  const tokens = usage?.usedTokens ?? null;
+  const window = input.usage?.modelContextWindow ?? null;
+  const tokens = input.usage?.usedTokens ?? null;
   const percent = window !== null && window > 0 && tokens !== null ? (tokens / window) * 100 : null;
-  const idleSeconds =
-    input.thread.status === "idle" ? Math.max(0, Math.round((input.now - input.thread.updatedAt) / 1000)) : 0;
+  const midTurn = threadRunning(input.thread.status);
+  const idleSeconds = midTurn ? 0 : Math.max(0, Math.round((input.now - input.thread.updatedAt) / 1000));
   return {
     percent,
     tokens,
     window,
-    midTurn: input.thread.status === "active",
+    midTurn,
     idleSeconds,
     turnsSinceCompaction: input.turnsSinceCompaction,
-    ...signals,
+    ...scanTimeline(input.rows, input.since),
   };
 }

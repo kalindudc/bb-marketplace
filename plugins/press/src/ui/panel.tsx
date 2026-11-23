@@ -1,116 +1,90 @@
-import { experimental_useRpcMutation, experimental_useRpcQuery, experimental_useTabVisible, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
-import { useId, useState, type ReactNode } from "react";
-import { rpcContract, type CompactionSummary, type ThreadStatusDto } from "../contract";
-import { modeSchema, POINT_IDS } from "../policy";
-import { chipText, numberText, POINT_LABELS, secondsText } from "./model";
-import { PressSummary } from "./summary";
+import { experimental_useRpcQuery, experimental_useTabVisible, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
+import { useEffect, useRef, useState } from "react";
+import { rpcContract, type ThreadStatusDto } from "../contract";
+import { PressThreadControls } from "./controls";
+import { PressDecisionPath } from "./decision-path";
+import { PressGauge } from "./gauge";
+import { PressHistory } from "./history";
+import { useNow, usePrevious, useReceivedAt } from "./live";
+import { PressNextStep } from "./next-step";
+import { PressPoints } from "./points";
+import { deriveState, detectLanding, needsClock, nextStep, type Landing } from "./runway";
 
-function Stat({ name, children }: { name: string; children: ReactNode }) {
-  return <div className="press-stat"><dt>{name}</dt><dd>{children}</dd></div>;
-}
+/** How long the "Compacted · freed …" moment stays before the panel returns to its usual next step. */
+export const LANDING_MS = 120_000;
+const REFETCH_GAP_MS = 5_000;
+const TICK_MS = 1_000;
+const QUIET_TICK_MS = 60_000;
 
-function HistoryRow({ row, threadId }: { row: CompactionSummary; threadId: string }) {
-  const [open, setOpen] = useState(false);
-  const detail = [row.ms === null ? null : secondsText(row.ms), row.point, row.outcome === "ok" ? null : row.outcome ?? "pending"]
-    .filter((part) => part !== null).join(" · ");
-  return <details className="press-history" onToggle={(event) => setOpen(event.currentTarget.open)}>
-    <summary>
-      <span>{row.tokensBefore === null && row.tokensAfter === null ? "Context compacted" : `${numberText(row.tokensBefore)} → ${numberText(row.tokensAfter)}`}</span>
-      <small>{detail}</small>
-      <span className="press-chevron" aria-hidden="true">⌄</span>
-    </summary>
-    {open && (row.summaryPath === null ? <p className="press-feedback">No summary is available.</p>
-      : <PressSummary threadId={threadId} at={row.at} />)}
-  </details>;
-}
-
-function ThreadControls({ data }: { data: ThreadStatusDto }) {
-  const { threadId } = data;
-  const radioGroup = useId();
-  const [message, setMessage] = useState<string | null>(null);
-  const compact = experimental_useRpcMutation({ contract: rpcContract, method: "compactNow" });
-  const mode = experimental_useRpcMutation({ contract: rpcContract, method: "setThreadMode",
-    optimistic: ({ threadId, mode }, cache) => cache.update("status", { threadId }, (current) => ({ ...current, mode })),
-  });
-  const point = experimental_useRpcMutation({ contract: rpcContract, method: "setThreadPoint",
-    optimistic: ({ threadId, point, enabled }, cache) => cache.update("status", { threadId }, (current) => ({
-      ...current, points: { ...current.points, [point]: enabled },
-    })),
-  });
-  const busy = compact.isPending || mode.isPending || point.isPending;
-  const update = async (action: () => Promise<string | void>) => {
-    setMessage(null);
-    try {
-      setMessage(await action() ?? null);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Press could not complete the request.");
+function useLanding(d: ThreadStatusDto): Landing | null {
+  const previous = usePrevious(d);
+  const [landing, setLanding] = useState<Landing | null>(null);
+  useEffect(() => {
+    if (d.compacting || d.held) {
+      setLanding(null);
+      return;
     }
-  };
-  return <>
-    <section className="press-section" aria-label="Thread controls">
-      <h3>This thread</h3>
-      <div className="press-stat press-control-mode">
-        <span>Mode</span>
-        <div className="press-segments" role="radiogroup" aria-label="Press mode for this thread">
-          {modeSchema.options.map((value) => <label key={value}>
-            {value}
-            <input type="radio" name={radioGroup} checked={data.mode === value} disabled={busy}
-              onChange={() => void update(async () => { await mode.mutate({ threadId, mode: value }); })} />
-          </label>)}
-        </div>
-      </div>
-      <button type="button" className="press-compact" disabled={busy}
-        onClick={() => void update(async () => (await compact.mutate({ threadId })).message)}>
-        {compact.isPending ? "Requesting compaction…" : "Compact now"}
-      </button>
-      {message !== null && <p className="press-feedback" role="status">{message}</p>}
-    </section>
-    <section className="press-section" aria-label="Compaction points">
-      <h3>Compaction points</h3>
-      {POINT_IDS.map((id) => <label className="press-point" key={id} title={POINT_LABELS[id].description}>
-        {POINT_LABELS[id].label}
-        <input type="checkbox" role="switch" checked={data.points[id]} disabled={busy} aria-label={`${POINT_LABELS[id].label} compaction point`}
-          onChange={(event) => {
-            const enabled = event.currentTarget.checked;
-            void update(async () => { await point.mutate({ threadId, point: id, enabled }); });
-          }} />
-        <span aria-hidden="true" />
-      </label>)}
-    </section>
-  </>;
+    const next = detectLanding(previous, d);
+    if (next) setLanding(next);
+  }, [d, previous]);
+  useEffect(() => {
+    if (landing === null) return;
+    const timer = setTimeout(() => setLanding(null), LANDING_MS);
+    return () => clearTimeout(timer);
+  }, [landing]);
+  return landing;
+}
+
+function PressRunway({ d, stale, refetch }: { d: ThreadStatusDto; stale: boolean; refetch: () => Promise<void> }) {
+  const landing = useLanding(d);
+  const receivedAt = useReceivedAt(d);
+  const now = useNow(needsClock(d) ? TICK_MS : QUIET_TICK_MS, d);
+  const elapsed = Math.max(0, (now - receivedAt) / 1000);
+  const state = deriveState(d, landing);
+  const step = nextStep(d, state, landing, now, elapsed);
+
+  // Nothing on the server announces a cooldown running out, so read the status again when one does.
+  // Only a countdown that was running counts, and at most every few seconds, so a server that still
+  // reports zero left can never start a refetch loop.
+  const expired = d.blockers.some((b) => b.remainingSeconds !== null && b.remainingSeconds > 0 && b.remainingSeconds - elapsed <= 0);
+  const lastRefetch = useRef(0);
+  useEffect(() => {
+    if (!expired || Date.now() - lastRefetch.current < REFETCH_GAP_MS) return;
+    lastRefetch.current = Date.now();
+    void refetch();
+  }, [expired, refetch]);
+
+  return <div className="press-panel" data-state={state.key}>
+    {/* Mounted for the panel's lifetime so a failed refresh is announced when its text arrives. */}
+    <p className="pp-stale" role="status">{stale && <>Could not refresh, showing the last status. <button type="button" className="pp-link" onClick={() => void refetch()}>Retry</button></>}</p>
+    <PressGauge d={d} state={state} landing={landing} />
+    <PressNextStep step={step} state={state} now={now} title={d.held?.reason} />
+    <PressThreadControls d={d} />
+    <PressDecisionPath d={d} state={state} elapsed={elapsed} />
+    <PressHistory d={d} now={now} />
+    <PressPoints d={d} />
+  </div>;
 }
 
 export function PressPanel({ threadId }: ExperimentalThreadTabProps) {
   const visible = experimental_useTabVisible();
-  const { data, error } = experimental_useRpcQuery({ contract: rpcContract, method: "status", input: { threadId }, enabled: visible });
-  if (error && !data) return <div className="press-panel" role="alert">Could not load Press status.</div>;
-  if (!data) return <div className="press-panel" role="status">Loading Press…</div>;
-  const last = data.history.find((row) => row.outcome === "ok");
-  const percent = data.percent === null ? null : Math.min(100, Math.max(0, Math.round(data.percent)));
-  return <div className="press-panel">
-    <header className="press-panel-heading"><h2>Estimated context</h2><strong>{data.percent === null ? "—" : `${Math.round(data.percent)}%`}</strong></header>
-    <div className="press-meter" role={percent === null ? undefined : "meter"} aria-label="Estimated context"
-      aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined}>
-      <span style={{ width: `${percent ?? 0}%` }} />
-    </div>
-    <p className="press-usage">{data.tokens === null ? "No context usage reported yet." : `${numberText(data.tokens)} / ${numberText(data.window)} tokens`}</p>
-    <section className="press-section" aria-label="Compaction stats">
-      <dl>
-        <Stat name="Mode">{data.mode}</Stat>
-        <Stat name="Next point">{data.nextPoint ?? "—"}</Stat>
-        <Stat name="Last compaction">{last ? [
-          last.tokensBefore === null && last.tokensAfter === null ? "Context compacted" : `${numberText(last.tokensBefore)} → ${numberText(last.tokensAfter)} tokens`,
-          last.ms === null ? null : secondsText(last.ms),
-        ].filter((part) => part !== null).join(" · ") : "—"}</Stat>
-        <Stat name="Summary model">{last?.model ?? data.summaryModel ?? "Thread model"}</Stat>
-        <Stat name="Cost">{last?.ms != null ? `last took ${secondsText(last.ms, 0)}` : "—"}</Stat>
-      </dl>
-    </section>
-    <ThreadControls key={threadId} data={data} />
-    <section className="press-section" aria-label="Compaction history">
-      <h3>Compaction history</h3>
-      {data.history.length === 0 ? <p className="press-feedback">No compactions yet.</p>
-        : data.history.map((row) => <HistoryRow key={row.id} row={row} threadId={threadId} />)}
-    </section>
-  </div>;
+  const { data, error, refetch } = experimental_useRpcQuery({ contract: rpcContract, method: "status", input: { threadId }, enabled: visible });
+  if (error && !data) {
+    return <div className="press-panel">
+      <div className="pp-error" role="alert" data-error>
+        <p className="pp-next-title">Could not load Press status</p>
+        <p className="pp-next-sub">{error.message || "The status request failed."}</p>
+        <button type="button" className="pp-quiet" onClick={() => void refetch()}>Retry</button>
+      </div>
+    </div>;
+  }
+  if (!data) {
+    return <div className="press-panel">
+      <div className="pp-loading" role="status" aria-label="Loading Press">
+        <span className="pp-skel is-hero" /><span className="pp-skel" /><span className="pp-skel is-70" />
+        <span className="pp-skel is-85 is-gap" /><span className="pp-skel is-60" />
+      </div>
+    </div>;
+  }
+  return <PressRunway key={threadId} d={data} stale={error !== null} refetch={refetch} />;
 }

@@ -1,33 +1,27 @@
 ---
 name: press
-description: Press is the compaction governor for bb threads. Use the `compaction_point` tool when a phase of your work finishes and it is a good moment to compact this thread's context, and read `bb press status` for the thread's context usage and what Press would do next. Press decides when to compact from a policy of points and vetoes; it never writes summaries.
+description: Press schedules context compaction for bb threads. Use when a phase of work ends, when checking context usage, or when explaining why Press compacted, waited, or held a message. A compaction point is a hint, not a request to compact during the current turn.
 ---
 
 # Press
 
-Press watches a thread's context usage and decides when to compact. It is a governor: it decides and records, and a separate extension (the Press composer) writes the actual summary. It never edits messages and never rewrites the transcript.
+Press decides when to ask the provider to compact. A separate pi extension, the composer, writes pi summaries.
 
-## When to call a compaction point
+## Mark a good time to compact
 
-When a coherent phase of your work just finished — a plan approved, tests went green, a pull request opened, a milestone landed — run `bb press point` through bash. That is the cheapest moment to compact: the next phase needs different context anyway. `bb press point [--reason "tests green"]` records a hint for this thread (defaults: the thread you run it in, reason "agent hint") and prints `hint recorded for <thread> at <time>`; the Press service consumes it on its next evaluation, so the `agent` point fires once.
+Call `compaction_point` after a coherent phase of work, such as finishing a plan or passing a test run. The tool stores its `note` as the hint's reason. If the tool is unavailable, run `bb press point --reason "tests green"` in the thread. Both record a hint that Press considers when the turn ends. The tool's reply is a preview, not confirmation that compaction happened.
 
-If the `compaction_point` tool is available, it does the same in one call. Either way Press applies the policy and the vetoes, so it may record a proposal instead of compacting (advisor mode), or decline (mid-turn, cooldown, minimum turns since the last compaction, below the token floor, or the previous compaction failed). Do not retry in a loop; a declined point is final for that moment.
+Press NEVER compacts a running turn. The policy, mode, and vetoes still apply. The soft line enables points but does not trigger compaction by itself. A failed turn counts as idle once it ends. Force at still waits for idle and cooldown, even though it bypasses the other vetoes. An automatic retry waits at least 60 seconds after a failed attempt. Do not retry a declined point in a loop.
 
-## Reading the state
+Observe records what Press would do. Advisor records a proposal and waits for the user. In auto mode, Press may hold the next message while it compacts before starting that turn. The hold waits for one compaction attempt, for at most 10 minutes. A separate wait of about 3 seconds may appear as “Press is checking this thread before the next turn” while Press reads the timeline. Neither wait means a message failed. Do not tell the user to resend it.
 
-- `bb press status [thread]` — the thread's context percent, the mode Press runs in, the next point that would fire, and when the last compaction landed.
-- `bb press log [--thread <id>] [--limit n]` — every decision Press recorded: which point fired or which veto blocked it, at what percent, with what estimate and outcome.
-- `bb press ledger [thread]` — the workspace ledger: constraints pinned verbatim, mechanical state, the resume contract, and one row per compaction.
-- `bb press policy [show|set|reset]` — the resolved policy, or a workspace/per-thread override.
+## Read the state
 
-## Using Press in bb
+- Use `bb press status <thread> --json` for context usage, mode, blockers, the next candidate, and compaction or hold status.
+- Use `bb press log --thread <id>` to see recorded decisions and outcomes.
+- Use `bb press ledger [thread] --json` to read the thread's pi composer ledger, including saved constraints and resume state.
+- Use `bb press policy show --thread <id>` to see the resolved policy.
 
-The Press chip shows a usage ring and the context percent, then the next point if one is ready: `77% · window`. While Press is in the footer, it hides bb’s duplicate context circle. If that footer is unavailable, look for Press in the thread context row or card, or open the Press tab directly.
+In bb, the chip shows only a usage ring and a percentage. The ring changes colour at the thresholds and spins during a hold or compaction unless reduced motion is enabled. Open the Press tab for the Runway panel: it shows thresholds, the expected next step, current vetoes and recent decisions, history and saved summaries, and thread controls. Off means the provider is disabled in Press policy. Press does not start new compactions for it.
 
-The Press tab shows compaction history, lets you open a saved summary, and lets you override the mode and compaction points for the current thread. **Compact now** and an exact `/compact` in bb’s follow-up composer are explicit: Press skips scheduling thresholds and vetoes, but requires an idle thread and refuses a duplicate or disabled provider. Automated decisions and `bb press compact` still use the governor’s policy. Change the plugin defaults in Settings → Plugins → Press.
-
-## What Press never does
-
-- It never writes or edits the summary itself; the composer does that from the ledger.
-- It never compacts mid-turn, never retries a failed compaction, and never compacts a thread below the token floor.
-- It does not answer questions about the ledger's content; read it with `bb press ledger`.
+Compact now and submitting only `/compact` in bb's follow-up composer with no attachments or mentions are user actions. Both bypass automatic mode and scheduling vetoes but still require an idle thread and an enabled provider. `bb press compact` is different: it evaluates the policy and only acts in auto mode.

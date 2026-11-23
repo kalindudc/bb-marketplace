@@ -1,6 +1,29 @@
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import type { PressSettings } from "./policy";
+import { parseSummaryModel } from "../composer/src/model-spec.ts";
+import { clampSoftPercent, type LayerErrorReporter, type PressSettings } from "./policy";
+
+/** The defaults every install starts from; the settings page and policy defaults both read these. */
+export const DEFAULT_SETTINGS: PressSettings = {
+  mode: "auto",
+  softPercent: 55,
+  hardPercent: 80,
+  floorTokens: 150_000,
+  phasePoint: true,
+  agentPoint: true,
+  volumePoint: true,
+  turnsPoint: false,
+  idlePoint: false,
+  thrashPoint: false,
+  volumeBytes: 1_500_000,
+  turnsBetween: 60,
+  idleSeconds: 300,
+  cooldownSeconds: 600,
+  minTurnsBetween: 2,
+  composerModel: "",
+  maxSummaryTokens: 3000,
+  autoInstallComposer: true,
+};
 
 /**
  * The settings surface: everything the user can set in the UI, in bb plugin config, or on the
@@ -18,127 +41,108 @@ export const pressSettings: Record<string, PluginSettingDescriptor> = {
       advisor: "Advisor — propose and wait",
       auto: "Auto — compact on its own",
     },
-    default: "advisor",
+    default: DEFAULT_SETTINGS.mode,
   },
   softPercent: {
     type: "number",
-    label: "Compact at (percent of window)",
+    label: "Points can fire from (percent of window)",
+    description: "Compaction points without their own minimum only count at or above this percentage.",
     experimental_schema: z.number().int().min(5).max(95),
-    default: 35,
+    default: DEFAULT_SETTINGS.softPercent,
   },
   hardPercent: {
     type: "number",
     label: "Force at (percent of window)",
-    description: "The backstop: fires no matter what the vetoes say",
+    description: "The backstop: waits for an idle thread and for cooldown, but skips the other vetoes.",
     experimental_schema: z.number().int().min(10).max(99),
-    default: 55,
+    default: DEFAULT_SETTINGS.hardPercent,
   },
   floorTokens: {
     type: "number",
     label: "Never compact below (tokens)",
     experimental_schema: z.number().int().min(0),
-    default: 60_000,
+    default: DEFAULT_SETTINGS.floorTokens,
   },
   phasePoint: {
     type: "boolean",
     label: "Compact at phase boundaries (plan approved, tests green, PR opened)",
-    default: true,
+    default: DEFAULT_SETTINGS.phasePoint,
   },
   agentPoint: {
     type: "boolean",
     label: "Compact when an agent marks a point",
     description: "The compaction_point tool or bb press point",
-    default: true,
+    default: DEFAULT_SETTINGS.agentPoint,
   },
   volumePoint: {
     type: "boolean",
     label: "Compact on a large tool result",
-    default: true,
+    default: DEFAULT_SETTINGS.volumePoint,
   },
   volumeBytes: {
     type: "number",
     label: "A large tool result (bytes)",
     experimental_schema: z.number().int().min(0),
-    default: 1_500_000,
+    default: DEFAULT_SETTINGS.volumeBytes,
   },
   turnsPoint: {
     type: "boolean",
     label: "Compact after many turns",
-    default: true,
+    default: DEFAULT_SETTINGS.turnsPoint,
   },
   turnsBetween: {
     type: "number",
     label: "Turns between compactions",
     experimental_schema: z.number().int().min(1),
-    default: 60,
+    default: DEFAULT_SETTINGS.turnsBetween,
   },
   idlePoint: {
     type: "boolean",
     label: "Compact after idle time",
-    default: true,
+    default: DEFAULT_SETTINGS.idlePoint,
   },
   idleSeconds: {
     type: "number",
     label: "Idle time (seconds)",
     experimental_schema: z.number().int().min(0),
-    default: 300,
+    default: DEFAULT_SETTINGS.idleSeconds,
   },
   thrashPoint: {
     type: "boolean",
     label: "Compact on thrash (the same file re-read, the same command failing)",
-    default: true,
+    default: DEFAULT_SETTINGS.thrashPoint,
   },
   cooldownSeconds: {
     type: "number",
-    label: "Cooldown after a compaction (seconds)",
+    label: "Cooldown after a compaction attempt (seconds)",
     experimental_schema: z.number().int().min(0),
-    default: 600,
+    default: DEFAULT_SETTINGS.cooldownSeconds,
   },
   minTurnsBetween: {
     type: "number",
     label: "Minimum turns between compactions",
     experimental_schema: z.number().int().min(0),
-    default: 5,
+    default: DEFAULT_SETTINGS.minTurnsBetween,
   },
   composerModel: {
     type: "string",
     label: "Model that writes the summary",
-    description: "Empty means the thread's own model",
-    default: "",
+    description: "provider/modelId; empty means the thread's own model",
+    experimental_schema: z.string().refine((model) => model === "" || parseSummaryModel(model) !== null, { message: "Expected provider/modelId" }),
+    default: DEFAULT_SETTINGS.composerModel,
   },
   maxSummaryTokens: {
     type: "number",
     label: "Summary budget (tokens)",
     experimental_schema: z.number().int().min(0),
-    default: 3000,
+    default: DEFAULT_SETTINGS.maxSummaryTokens,
   },
   autoInstallComposer: {
     type: "boolean",
     label: "Install the composer into pi automatically",
     description: "Keeps ~/.pi/agent/extensions/press-composer up to date with this plugin's composer",
-    default: true,
+    default: DEFAULT_SETTINGS.autoInstallComposer,
   },
-};
-
-export const DEFAULT_SETTINGS: PressSettings = {
-  mode: "advisor",
-  softPercent: 35,
-  hardPercent: 55,
-  floorTokens: 60_000,
-  phasePoint: true,
-  agentPoint: true,
-  volumePoint: true,
-  turnsPoint: true,
-  idlePoint: true,
-  thrashPoint: true,
-  volumeBytes: 1_500_000,
-  turnsBetween: 60,
-  idleSeconds: 300,
-  cooldownSeconds: 600,
-  minTurnsBetween: 5,
-  composerModel: "",
-  maxSummaryTokens: 3000,
-  autoInstallComposer: true,
 };
 
 function intInRange(value: unknown, fallback: number, min: number, max: number): number {
@@ -156,11 +160,13 @@ function boolOr(value: unknown, fallback: boolean): boolean {
  * fake host can hand us anything, so each field falls back to its default and numbers are clamped
  * to their range: bad stored data degrades to the defaults instead of poisoning every evaluation.
  */
-export function normalizeSettings(values: Record<string, unknown>): PressSettings {
+export function normalizeSettings(values: Record<string, unknown>, onWindowClamp?: LayerErrorReporter): PressSettings {
+  const hardPercent = intInRange(values.hardPercent, DEFAULT_SETTINGS.hardPercent, 10, 99);
+  const softPercent = intInRange(values.softPercent, DEFAULT_SETTINGS.softPercent, 5, 95);
   return {
-    mode: values.mode === "observe" || values.mode === "auto" ? values.mode : "advisor",
-    softPercent: intInRange(values.softPercent, DEFAULT_SETTINGS.softPercent, 5, 95),
-    hardPercent: intInRange(values.hardPercent, DEFAULT_SETTINGS.hardPercent, 10, 99),
+    mode: values.mode === "observe" || values.mode === "advisor" || values.mode === "auto" ? values.mode : DEFAULT_SETTINGS.mode,
+    softPercent: clampSoftPercent(softPercent, hardPercent, "settings", onWindowClamp),
+    hardPercent,
     floorTokens: intInRange(values.floorTokens, DEFAULT_SETTINGS.floorTokens, 0, Number.MAX_SAFE_INTEGER),
     phasePoint: boolOr(values.phasePoint, DEFAULT_SETTINGS.phasePoint),
     agentPoint: boolOr(values.agentPoint, DEFAULT_SETTINGS.agentPoint),
@@ -173,7 +179,7 @@ export function normalizeSettings(values: Record<string, unknown>): PressSetting
     idleSeconds: intInRange(values.idleSeconds, DEFAULT_SETTINGS.idleSeconds, 0, Number.MAX_SAFE_INTEGER),
     cooldownSeconds: intInRange(values.cooldownSeconds, DEFAULT_SETTINGS.cooldownSeconds, 0, Number.MAX_SAFE_INTEGER),
     minTurnsBetween: intInRange(values.minTurnsBetween, DEFAULT_SETTINGS.minTurnsBetween, 0, Number.MAX_SAFE_INTEGER),
-    composerModel: typeof values.composerModel === "string" ? values.composerModel : "",
+    composerModel: typeof values.composerModel === "string" && parseSummaryModel(values.composerModel) !== null ? values.composerModel : "",
     maxSummaryTokens: intInRange(values.maxSummaryTokens, DEFAULT_SETTINGS.maxSummaryTokens, 0, Number.MAX_SAFE_INTEGER),
     autoInstallComposer: boolOr(values.autoInstallComposer, DEFAULT_SETTINGS.autoInstallComposer),
   };

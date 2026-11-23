@@ -36,9 +36,9 @@ test("providers.pi.enabled false disables the composer", () => {
   assert.equal(resolveComposerConfig(cwd, home).enabled, false);
 });
 
-test("ignores a model without a provider prefix", () => {
+test("keeps an unprefixed model so the hook can report it", () => {
   const { cwd, home } = workspace({ composer: { model: "glm-5.3-flash" } });
-  assert.equal(resolveComposerConfig(cwd, home).model, null);
+  assert.equal(resolveComposerConfig(cwd, home).model, "glm-5.3-flash");
 });
 
 test("ignores out-of-range numbers and unknown keys", () => {
@@ -83,5 +83,5 @@ test("a missing or malformed published config changes nothing", () => {
   const base = resolveComposerConfig(cwd, home);
   assert.deepEqual(applyPublishedConfig(base, null), base);
   assert.deepEqual(applyPublishedConfig(base, "nope"), base);
-  assert.deepEqual(applyPublishedConfig(base, { model: "no-provider-prefix" }), base);
+  assert.deepEqual(applyPublishedConfig(base, { model: 42 }), base);
 });

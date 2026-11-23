@@ -1,217 +1,146 @@
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import type { Ledger, LedgerCommand, LedgerConstraint, LedgerFile, LedgerHistoryRow } from "./types.ts";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { emptyLedger, summaryFilePath, summaryRelativePath, writeAtomic } from "./ledger-format.ts";
+import type { Ledger, LedgerConstraint, LedgerIo } from "./types.ts";
+
+export { emptyLedger, readLedger } from "./ledger-format.ts";
 
 export const LEDGER_MAX_BYTES = 24_000;
+export const HISTORY_LIMIT = 50;
 
-export function ledgerPath(cwd: string): string {
-  return join(cwd, ".bb", "press", "ledger.json");
-}
-
-export function summariesDir(cwd: string): string {
-  return join(cwd, ".bb", "press", "summaries");
-}
-
-/** Keep the full summary beside the ledger so a UI can show what replaced the transcript. */
-export function writeSummary(cwd: string, id: string, summary: string): string {
-  const relative = join(".bb", "press", "summaries", `${id}.md`);
-  const absolute = join(cwd, relative);
-  mkdirSync(dirname(absolute), { recursive: true });
-  writeFileSync(absolute, summary, "utf8");
-  return relative;
-}
-
-export function readSummary(cwd: string, relative: string): string | null {
-  try {
-    return readFileSync(join(cwd, relative), "utf8");
-  } catch {
-    return null;
-  }
-}
-
-export function emptyLedger(threadId: string | null = null, now: string = new Date().toISOString()): Ledger {
-  return {
-    schemaVersion: 1,
-    threadId,
-    updatedAt: now,
-    compactions: 0,
-    constraints: [],
-    state: {
-      goal: null,
-      branch: null,
-      head: null,
-      filesRead: [],
-      filesWritten: [],
-      commands: [],
-      failingTests: [],
-      openQuestions: [],
-      nextSteps: [],
-    },
-    resume: null,
-    history: [],
-  };
-}
-
-function asArray<T>(value: unknown): T[] {
-  return Array.isArray(value) ? (value as T[]) : [];
-}
-
-/** Tolerant read: a corrupt or partial file must never break compaction. */
-export function readLedger(path: string): Ledger | null {
-  if (!existsSync(path)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<Ledger>;
-    if (!parsed || typeof parsed !== "object") return null;
-    const base = emptyLedger(parsed.threadId ?? null);
-    const state = (parsed.state ?? {}) as Partial<Ledger["state"]>;
-    return {
-      ...base,
-      ...parsed,
-      schemaVersion: 1,
-      constraints: asArray<LedgerConstraint>(parsed.constraints),
-      history: asArray<LedgerHistoryRow>(parsed.history),
-      state: {
-        goal: state.goal ?? null,
-        branch: state.branch ?? null,
-        head: state.head ?? null,
-        filesRead: asArray<LedgerFile>(state.filesRead),
-        filesWritten: asArray<LedgerFile>(state.filesWritten),
-        commands: asArray<LedgerCommand>(state.commands),
-        failingTests: asArray<string>(state.failingTests),
-        openQuestions: asArray<string>(state.openQuestions),
-        nextSteps: asArray<string>(state.nextSteps),
-      },
-    };
-  } catch {
-    return null;
-  }
-}
-
-function dedupeBy<T>(rows: T[], key: (row: T) => string): T[] {
-  const seen = new Set<string>();
-  const out: T[] = [];
-  for (const row of rows) {
-    const k = key(row);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push(row);
-  }
-  return out;
-}
-
-/** Drop oldest low-value rows until the JSON fits. Constraints and resume are never dropped. */
-export function capLedger(ledger: Ledger, maxBytes: number = LEDGER_MAX_BYTES): Ledger {
-  const next: Ledger = { ...ledger, state: { ...ledger.state } };
-  const size = () => Buffer.byteLength(JSON.stringify(next), "utf8");
-  const shrinkOrder: Array<() => void> = [
-    () => {
-      next.state.filesRead = next.state.filesRead.slice(0, Math.max(0, next.state.filesRead.length - 1));
-    },
-    () => {
-      next.state.commands = next.state.commands.slice(Math.min(1, next.state.commands.length));
-    },
-    () => {
-      next.state.filesWritten = next.state.filesWritten.slice(0, Math.max(0, next.state.filesWritten.length - 1));
-    },
-    () => {
-      next.history = next.history.slice(Math.min(1, next.history.length));
-    },
-    () => {
-      next.state.filesRead = [];
-      next.state.filesWritten = [];
-    },
-    () => {
-      next.state.commands = next.state.commands.slice(-5);
-    },
-    () => {
-      next.history = next.history.slice(-5);
-    },
-  ];
-  let guard = 0;
-  while (size() > maxBytes && guard < 10_000) {
-    const before = size();
-    const step = shrinkOrder[guard % shrinkOrder.length]!;
-    step();
-    if (size() === before) {
-      // Nothing left that this step can drop; move on and eventually give up.
-      const drained = next.state.filesRead.length === 0 && next.state.filesWritten.length === 0 &&
-        next.state.commands.length <= 5 && next.history.length <= 5;
-      if (drained) break;
+export const nodeLedgerIo: LedgerIo = {
+  async read(path) {
+    try {
+      return await readFile(path, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
     }
-    guard += 1;
+  },
+  async write(path, content) {
+    await writeFile(path, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  },
+  async rename(from, to) {
+    try {
+      await rename(from, to);
+    } catch (error) {
+      await rm(from, { force: true }).catch(() => {});
+      throw error;
+    }
+  },
+  async mkdir(path) {
+    await mkdir(path, { recursive: true });
+  },
+};
+
+export async function writeSummary(root: string, threadId: string, id: string, summary: string): Promise<string> {
+  const summaryPath = summaryRelativePath(threadId, id);
+  await writeAtomic(nodeLedgerIo, resolve(root, summaryPath), summary);
+  return summaryPath;
+}
+
+export async function pruneSummaries(root: string, threadId: string, previous: Ledger["history"], retained: Ledger["history"]): Promise<void> {
+  const keep = new Set(retained.map((row) => row.summaryPath));
+  await Promise.all(previous.map(async (row) => {
+    if (keep.has(row.summaryPath) || row.summaryPath !== summaryRelativePath(threadId, row.id)) return;
+    const path = summaryFilePath(root, threadId, row);
+    if (path) await rm(path, { force: true });
+  }));
+}
+
+const serialize = (ledger: Ledger): string => `${JSON.stringify(ledger, null, 2)}\n`;
+
+export function capLedger(ledger: Ledger, maxBytes = LEDGER_MAX_BYTES): Ledger {
+  const next: Ledger = {
+    ...ledger,
+    state: {
+      ...ledger.state,
+      filesRead: [...ledger.state.filesRead], commands: [...ledger.state.commands],
+      filesWritten: [...ledger.state.filesWritten], openQuestions: [...ledger.state.openQuestions],
+      nextSteps: [...ledger.state.nextSteps], testFailures: [...ledger.state.testFailures],
+      failingTests: [...ledger.state.failingTests],
+    },
+    constraints: capConstraints(ledger.constraints),
+    history: ledger.history.slice(-HISTORY_LIMIT),
+    resume: ledger.resume && {
+      state: ledger.resume.state.slice(0, 600), next: ledger.resume.next.slice(0, 600), verify: ledger.resume.verify.slice(0, 600),
+    },
+  };
+  const fits = () => Buffer.byteLength(serialize(next)) <= maxBytes;
+  while (next.history.length > 10 && !fits()) next.history.shift();
+  for (const key of ["filesRead", "commands", "filesWritten", "openQuestions", "nextSteps", "testFailures", "failingTests"] as const) {
+    const rows = next.state[key];
+    while (rows.length && !fits()) rows.shift();
   }
+  while (next.history.length > 1 && !fits()) next.history.shift();
+  while (next.constraints.length && !fits()) next.constraints.shift();
+  if (!fits()) throw new RangeError("Press ledger exceeds its byte limit");
   return next;
 }
 
-export function writeLedger(path: string, ledger: Ledger): void {
+export async function writeLedger(io: LedgerIo, path: string, ledger: Ledger): Promise<Ledger> {
   const capped = capLedger(ledger);
-  capped.updatedAt = new Date().toISOString();
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(capped, null, 2)}\n`, "utf8");
-  chmodSync(tmp, 0o644);
-  if (existsSync(path)) renameSync(path, `${path}.bak`);
-  renameSync(tmp, path);
+  await writeAtomic(io, path, serialize(capped));
+  return capped;
 }
 
-export function constraintsFromText(
-  text: string,
-  source: string,
-  at: string = new Date().toISOString(),
-): LedgerConstraint[] {
+const IMPERATIVE = /^(?:please\s+)?(?:always|never|don['’]t|do not|make sure|remember to|prefer|avoid|use|keep|stick to)\b/i;
+const REQUIREMENT = /\bmust(?:n['’]t)?\b/i;
+
+export function constraintsFromText(text: string, source: string, at = new Date().toISOString()): LedgerConstraint[] {
   const out: LedgerConstraint[] = [];
-  const sentences = text
-    .split(/\n+|(?<=[.!?])\s+/)
-    .map((line) => line.trim().replace(/^[-*+]\s+/, ""))
-    .filter((line) => line.length >= 8 && line.length <= 400);
-  for (const sentence of sentences) {
-    if (!CONSTRAINT_HINT.test(sentence)) continue;
-    out.push({ id: `c${hash(sentence).slice(0, 8)}`, text: sentence, source, at });
+  for (const line of text.split(/\n+|(?<=[.!?])\s+/)) {
+    const sentence = line.trim().replace(/^[-*+]\s+/, "");
+    if (sentence.endsWith("?") || sentence.length < 8 || sentence.length > 400) continue;
+    if (!IMPERATIVE.test(sentence) && !REQUIREMENT.test(sentence)) continue;
+    out.push({ id: `c${createHash("sha256").update(sentence).digest("hex").slice(0, 8)}`, text: sentence, source, at });
   }
   return out;
 }
 
-const CONSTRAINT_HINT =
-  /\b(never|always|must|mustn't|don'?t|do not|not|only|make sure|remember|unless|prefer|avoid|instead|no need|without|keep|stick to|from now on|going forward)\b/i;
-
-export function hash(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
+function capConstraints(rows: LedgerConstraint[]): LedgerConstraint[] {
+  const out: LedgerConstraint[] = [];
+  const seen = new Set<string>();
+  let bytes = 0;
+  for (let i = rows.length - 1; i >= 0 && out.length < 40; i--) {
+    const row = rows[i]!;
+    if (seen.has(row.text)) continue;
+    bytes += Buffer.byteLength(row.text) + 1;
+    if (bytes > 6_000) break;
+    seen.add(row.text);
+    out.push(row);
+  }
+  return out.reverse();
 }
 
-/** Union constraints by text, files by path, commands by cmd+exit, keeping the newest last. */
+function recentUnique<T>(rows: T[], key: (row: T) => string, limit: number): T[] {
+  const byKey = new Map<string, T>();
+  for (const row of rows) {
+    const id = key(row);
+    byKey.delete(id);
+    byKey.set(id, row);
+  }
+  return Array.from(byKey.values()).slice(-limit);
+}
+
 export function mergeLedger(existing: Ledger | null, incoming: Ledger): Ledger {
-  if (!existing) return incoming;
-  const filesRead = dedupeBy([...existing.state.filesRead, ...incoming.state.filesRead], (row) => row.path).slice(-200);
-  const filesWritten = dedupeBy(
-    [...existing.state.filesWritten, ...incoming.state.filesWritten],
-    (row) => row.path,
-  ).slice(-200);
-  const commands = dedupeBy([...existing.state.commands, ...incoming.state.commands], (row) => `${row.cmd}\u0000${row.exit}`).slice(
-    -120,
-  );
-  const constraints = dedupeBy([...existing.constraints, ...incoming.constraints], (row) => row.text).slice(-200);
-  const failingTests = dedupeBy([...incoming.state.failingTests, ...existing.state.failingTests], (t) => t).slice(0, 40);
-  const openQuestions = dedupeBy([...existing.state.openQuestions, ...incoming.state.openQuestions], (t) => t).slice(-40);
-  const nextSteps = incoming.state.nextSteps.length ? incoming.state.nextSteps : existing.state.nextSteps;
+  const base = existing ?? emptyLedger(incoming.threadId);
   return {
-    ...existing,
-    ...incoming,
-    schemaVersion: 1,
-    compactions: Math.max(existing.compactions, incoming.compactions),
-    constraints,
-    history: [...existing.history, ...incoming.history].slice(-50),
-    resume: incoming.resume ?? existing.resume,
+    ...base,
+    threadId: incoming.threadId,
+    updatedAt: incoming.updatedAt,
+    constraints: capConstraints([...base.constraints, ...incoming.constraints]),
     state: {
-      goal: incoming.state.goal ?? existing.state.goal,
-      branch: incoming.state.branch ?? existing.state.branch,
-      head: incoming.state.head ?? existing.state.head,
-      filesRead,
-      filesWritten,
-      commands,
-      failingTests,
-      openQuestions,
-      nextSteps,
+      ...incoming.state,
+      goal: base.state.goal ?? incoming.state.goal,
+      branch: incoming.state.branch ?? base.state.branch,
+      head: incoming.state.head ?? base.state.head,
+      filesRead: recentUnique([...base.state.filesRead, ...incoming.state.filesRead], (row) => row.path, 200),
+      filesWritten: recentUnique([...base.state.filesWritten, ...incoming.state.filesWritten], (row) => row.path, 200),
+      commands: recentUnique([...base.state.commands, ...incoming.state.commands], (row) => `${row.cmd}\u0000${row.exit}`, 120),
+      openQuestions: recentUnique([...base.state.openQuestions, ...incoming.state.openQuestions], (question) => question, 40),
+      nextSteps: incoming.state.nextSteps.length ? incoming.state.nextSteps : base.state.nextSteps,
     },
   };
 }

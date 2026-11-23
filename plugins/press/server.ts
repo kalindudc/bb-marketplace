@@ -11,15 +11,16 @@ import { composerPaths, ensureComposerInstalled } from "./src/installer";
 /**
  * Press, the compaction governor. It decides when a thread should compact, from a policy of
  * compaction points (phase, agent hint, volume, turns, idle, thrash) and vetoes (mid-turn,
- * cooldown, minimum turns, floor, previous failure); it records every decision in its database and
- * the workspace ledger; and it asks the provider to compact (pi: `/compact` with instructions,
- * others: the explicit request). It never writes summaries — the Press composer extension does
- * that, reading the same ledger.
+ * cooldown, minimum turns, floor, previous failure). Its own database keeps a decision log (a row
+ * each time a thread's decision changes) and one history of every compaction that landed; it asks
+ * the provider to compact (`threads.compact`) only while no turn is running, holding the thread's
+ * next turn through the `message.dispatch` hook until the compaction lands. It never writes
+ * summaries: the Press composer extension does that, and keeps a per-thread ledger the governor reads.
  *
  * The settings page owns everything the UI can express; the resolved composer config is published
- * into the workspace ledger so the composer (a pi extension) sees it, and the composer itself is
- * kept installed at `~/.pi/agent/extensions/press-composer/` from this plugin's own `composer/`
- * directory.
+ * per thread (`<workspace>/.bb/press/threads/<id>/composer.json`) so the composer (a pi extension)
+ * sees it, and the composer itself is kept installed at `~/.pi/agent/extensions/press-composer/`
+ * from this plugin's own `composer/` directory.
  */
 export default async function press(bb: BbPluginApi): Promise<void> {
   const db = bb.storage.database();
@@ -36,10 +37,11 @@ export default async function press(bb: BbPluginApi): Promise<void> {
 
   bb.rpc.register(rpcContract, {
     status: ({ threadId }) => service.buildThreadStatus(threadId),
-    summary: ({ threadId, at }) => service.summary(threadId, at),
+    summary: ({ threadId, compactionId }) => service.summary(threadId, compactionId),
     compactNow: ({ threadId }) => service.compactNow(threadId),
     setThreadMode: ({ threadId, mode }) => service.setThreadMode(threadId, mode),
     setThreadPoint: ({ threadId, point, enabled }) => service.setThreadPoint(threadId, point, enabled),
+    resetThread: ({ threadId }) => service.resetThread(threadId),
   });
 
   service.register();
@@ -49,15 +51,18 @@ export default async function press(bb: BbPluginApi): Promise<void> {
     await ensureComposerInstalled({ ...paths, log: bb.log });
   };
 
+  const warn = (message: string) => (error: unknown) =>
+    bb.log.warn(`${message}: ${error instanceof Error ? error.message : String(error)}`);
+
   // The UI settings are part of the policy resolution: when they change, republish the composer
-  // config into the ledgers the service knows about, and refresh the installed composer.
+  // config of every thread the service knows about, and refresh the installed composer.
   settingsHandle.onChange((next) => {
     bb.rpc.experimental_invalidateAll();
     const settings = normalizeSettings(next);
     if (settings.autoInstallComposer) {
-      void installComposer().catch(() => undefined);
+      void installComposer().catch(warn("press composer: install failed"));
     }
-    void service.republishComposerConfigs().catch(() => undefined);
+    void service.republishComposerConfigs().catch(warn("press composer: config republish failed"));
   });
 
   try {
@@ -69,7 +74,7 @@ export default async function press(bb: BbPluginApi): Promise<void> {
   bb.agents.registerTool({
     name: "compaction_point",
     description:
-      "Tell Press, the compaction governor, that now is a good moment to compact this thread — for example right after a phase of the work finished. Press applies the policy and the vetoes, so it may record a proposal instead of compacting. The call returns at once.",
+      "Tell Press, the compaction governor, that now is a good moment to compact this thread — for example right after a phase of the work finished. Press never compacts during your turn: it considers the hint when the turn ends and, if the policy and vetoes allow, compacts before the next turn starts. The call returns at once and says what Press expects to do.",
     instructions:
       "Call compaction_point when a coherent phase of your work just finished (plan approved, tests green, PR opened). Do not retry in a loop: a declined point is final for that moment.",
     presentation: {
@@ -79,8 +84,8 @@ export default async function press(bb: BbPluginApi): Promise<void> {
       },
     },
     parameters: z.object({ note: z.string().describe("One line on what just finished").default("") }),
-    async execute(_input, { threadId }) {
-      return service.compactionPoint(threadId);
+    async execute({ note }, { threadId }) {
+      return service.compactionPoint(threadId, note);
     },
   });
 

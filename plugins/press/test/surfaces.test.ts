@@ -1,81 +1,49 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS } from "../src/settings";
-import { mergeThreadOverride, resolvePressPolicy } from "../src/policy";
-import { emptyLedger, lookupSummaryPath, type LedgerHistoryRow } from "../src/ledger";
-import { pickBoundary, scanTimeline } from "../src/snapshot";
 import { placeInFooter } from "../src/ui/footer";
-import { chatText, chipText, numberText } from "../src/ui/model";
+import { chatText, chipBusy, chipText, numberText, statusLines, usageTone } from "../src/ui/model";
 
 const at = "2026-11-22T00:00:00.000Z";
-const summaryPath = ".bb/press/summaries/press-abc.md";
-
-const historyRow: LedgerHistoryRow = {
-  id: "press-abc", at, summaryPath, point: "manual", tokensBefore: 209_544, tokensAfter: 3_227,
-  ms: 78_600, model: null, summaryHash: "", keptTurns: null,
-};
-
-const message = (createdAt: number, role: string) => ({ id: `message-${createdAt}`, kind: "conversation", role, createdAt });
-
-describe("thread controls", () => {
-  it("merges mode and one point without replacing raw arrays or other overrides", () => {
-    const original = { custom: { retained: 1 }, points: [{ id: "idle", when: "idleSeconds", value: 12 }], pointOverrides: { phase: false } };
-    const mode = mergeThreadOverride(JSON.stringify(original), { mode: "auto" });
-    const point = mergeThreadOverride(JSON.stringify(mode), { pointOverrides: { idle: false } });
-    expect(point).toEqual({ ...original, mode: "auto", pointOverrides: { phase: false, idle: false } });
-    expect(resolvePressPolicy([], DEFAULT_SETTINGS, { source: "test", value: point }).points)
-      .toEqual([{ ...original.points[0], enabled: false }]);
-  });
-
-  it("keeps untouched defaults live and can explicitly enable an absent point", () => {
-    const lookup = (value: unknown) => resolvePressPolicy([], { ...DEFAULT_SETTINGS, turnsBetween: 11 }, { source: "test", value });
-    const value = mergeThreadOverride(null, { pointOverrides: { volume: false } });
-    expect(lookup(value).points.find((p) => p.id === "turns")?.value).toBe(11);
-    const missing = mergeThreadOverride('{"points":[]}', { pointOverrides: { turns: true } });
-    expect(lookup(missing).points).toEqual([{ id: "turns", when: "turnsSinceCompaction", enabled: true, value: 11 }]);
-    expect(() => mergeThreadOverride("[]", { mode: "auto" })).toThrow("JSON object");
-  });
-});
-
-describe("chat boundary", () => {
-  it("selects the earliest user or assistant creation timestamp after completion, including nested turns", () => {
-    const rows = [message(40, "assistant"), message(21, "system"), message(20, "user"),
-      { ...message(22, "user"), initiator: "system" },
-      { kind: "turn", children: [message(17, "user"), message(23, "user")] }];
-    expect(pickBoundary(rows, 20)).toEqual({ createdAt: 23, id: "message-23" });
-    expect(pickBoundary(rows, 40)).toBeNull();
-  });
-
-  it("uses the SDK operation completion time, ignoring pending and failed operations", () => {
-    const operation = (completedAt: number, status: string) => ({ kind: "system", systemKind: "operation", operationKind: "compaction", createdAt: 5, completedAt, status });
-    expect(scanTimeline([{ kind: "turn", children: [operation(20, "completed"), operation(30, "error"), operation(40, "pending")] }]).lastCompactionEventAt).toBe(20);
-    expect(pickBoundary([operation(20, "completed"), message(16, "user"), { ...message(21, "assistant"), startedAt: 19 }], 15))
-      .toEqual({ createdAt: 21, id: "message-21" });
-  });
-});
-
-describe("summary lookup", () => {
-  it("selects the exact, thread-owned summary and rejects unreadable or untrusted paths", () => {
-    const ledger = { ...emptyLedger("thr_a", at), history: [historyRow] };
-    expect(lookupSummaryPath(ledger, "thr_a", at)).toBe(summaryPath);
-    expect(lookupSummaryPath(ledger, "thr_b", at)).toBeNull();
-    expect(lookupSummaryPath(ledger, "thr_a", "unknown")).toBeNull();
-    expect(lookupSummaryPath(null, "thr_a", at)).toBeNull();
-    for (const path of [null, "/tmp/press.md", ".bb/press/summaries/../secret.md", ".bb\\press\\summaries\\..\\secret.md"]) {
-      expect(lookupSummaryPath({ ...ledger, history: [{ ...historyRow, summaryPath: path }] }, "thr_a", at)).toBeNull();
-    }
-  });
-});
 
 describe("surface copy", () => {
-  it("prints the percent first and reports historical duration as rounded seconds", () => {
-    expect(chipText({ percent: 77.1, nextPoint: "window", mode: "auto" })).toBe("77% · window");
-    // No point pending: the mode, because the bare percent repeats bb's own circle beside the chip.
-    expect(chipText({ percent: 11.2, nextPoint: null, mode: "auto" })).toBe("11% · auto");
-    expect(chipText({ percent: 11.2, nextPoint: null, mode: "advisor" })).toBe("11% · advisor");
-    expect(chatText({ ...historyRow, outcome: "ok", boundaryAt: 100, boundaryMessageId: null, summaryPath })).toBe("Pressed · 209k to 3k · 79s · manual");
-    expect(chatText({ ...historyRow, point: "native", tokensBefore: null, tokensAfter: null, ms: 17_540,
-      outcome: "ok", boundaryAt: 100, boundaryMessageId: null, summaryPath: null })).toBe("Pressed · 18s · native");
+  it("shows only the rounded percent on the chip and reports historical duration as rounded seconds", () => {
+    expect(chipText({ percent: 77.1 })).toBe("77%");
+    expect(chipText({ percent: null })).toBe("—");
+    expect(chatText({ point: "manual", tokensBefore: 209_544, tokensAfter: 3_227, ms: 78_600 })).toBe("Pressed · 209k to 3k · 79s · manual");
+    expect(chatText({ point: "native", tokensBefore: null, tokensAfter: null, ms: 17_540 })).toBe("Pressed · 18s · native");
     expect(numberText(null)).toBe("—");
+  });
+});
+
+describe("chip state", () => {
+  const thresholds = { softPercent: 55, hardPercent: 80, floorTokens: 150_000 };
+
+  it("turns from calm to near at compact-at and to over at force-at", () => {
+    expect(usageTone({ percent: null, thresholds })).toBe("calm");
+    expect(usageTone({ percent: 54.9, thresholds })).toBe("calm");
+    expect(usageTone({ percent: 55, thresholds })).toBe("near");
+    expect(usageTone({ percent: 80, thresholds })).toBe("over");
+  });
+
+  it("spins while Press compacts the thread or holds its next message", () => {
+    expect(chipBusy({ compacting: null, held: null })).toBe(false);
+    expect(chipBusy({ compacting: { since: at, point: "window" }, held: null })).toBe(true);
+    expect(chipBusy({ compacting: null, held: { since: at, reason: "Press is compacting this thread before the next turn", count: 1 } })).toBe(true);
+  });
+
+  it("moves the mode, the thresholds, the hold and the next point into the full description", () => {
+    const base = { percent: 37.4, tokens: 374_000, window: 1_000_000, providerEnabled: true, mode: "advisor" as const, thresholds, compacting: null, held: null, nextPoint: null, lastCompaction: null };
+    expect(statusLines(base)).toEqual([
+      "37% of the context window (374k of 1M tokens)",
+      "Advisor: proposes, you compact, from 55%, forced at 80%",
+      "Not compacted yet",
+    ]);
+    const lines = statusLines({ ...base, nextPoint: "phase", compacting: { since: at, point: "window" } });
+    expect(lines[1]).toMatch(/^Compacting since /);
+    expect(lines).toContain("Next point: phase");
+    expect(statusLines({ ...base, nextPoint: "window" })).toContain("Next point: force at 80%");
+    const held = statusLines({ ...base, compacting: { since: at, point: "window" }, held: { since: at, reason: "r", count: 1 } });
+    expect(held[1]).toMatch(/^Holding the next message since .+, until the compaction lands$/);
+    expect(held.filter((line) => line.startsWith("Compacting since"))).toEqual([]);
   });
 });
 

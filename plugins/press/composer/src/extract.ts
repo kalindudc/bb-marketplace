@@ -1,11 +1,12 @@
-import { constraintsFromText, hash } from "./ledger.ts";
-import type { AnyBlock, AnyMessage, Ledger, LedgerCommand, LedgerFile } from "./types.ts";
+import { constraintsFromText } from "./ledger.ts";
+import type { AnyBlock, AnyMessage, Ledger, LedgerCommand, LedgerFile, LedgerState } from "./types.ts";
 
 const FILE_TOOLS = new Set(["read", "write", "edit", "multiedit", "notebookedit", "create"]);
 const WRITE_TOOLS = new Set(["write", "edit", "multiedit", "notebookedit", "create"]);
 const SHELL_TOOLS = new Set(["bash", "shell", "powershell", "run", "exec", "terminal"]);
 
-const FAIL_LINE = /^\s*(?:✕|✗|×|FAIL(?:ED)?|not ok)\s+(.{3,160})$/;
+const TEST_LINE = /^\s*(✕|✗|×|FAIL(?:ED)?|not ok|✓|✔|PASS(?:ED)?|ok)\s+(?:\d+\s+-\s+)?(.{3,160})$/;
+const PASS_MARKER = /^(?:✓|✔|PASS(?:ED)?|ok)$/;
 const EXIT_CODE = /\bexit(?:\s*code)?[:\s]+(-?\d{1,3})\b/i;
 const ON_BRANCH = /^On branch (\S+)/m;
 const HEAD_LINE = /^HEAD detached at (\w+)/m;
@@ -52,6 +53,12 @@ function pushCommand(list: LedgerCommand[], cmd: string, exit: number | null, at
 export interface ExtractOptions {
   now?: string;
   threadId?: string | null;
+  previousFailures?: LedgerState["testFailures"];
+}
+
+export function userGoal(content: unknown): string | null {
+  const text = textOf(content).trim();
+  return text ? text.split("\n", 1)[0]!.slice(0, 300) : null;
 }
 
 /**
@@ -64,7 +71,7 @@ export function extract(messages: AnyMessage[], options: ExtractOptions = {}): L
   const filesRead: LedgerFile[] = [];
   const filesWritten: LedgerFile[] = [];
   const commands: LedgerCommand[] = [];
-  const failingTests: string[] = [];
+  let testFailures = [...(options.previousFailures ?? [])];
   const openQuestions: string[] = [];
   const constraints: Ledger["constraints"] = [];
   const callIndex = new Map<string, { name: string; args?: Record<string, unknown> }>();
@@ -74,6 +81,25 @@ export function extract(messages: AnyMessage[], options: ExtractOptions = {}): L
   let head: string | null = null;
   let userIndex = 0;
 
+  const collectFromOutput = (output: string, command: string | null, succeeded: boolean) => {
+    if (command && succeeded) testFailures = testFailures.filter((row) => row.command !== command);
+    const branchName = ON_BRANCH.exec(output)?.[1];
+    if (branchName) branch = branchName.slice(0, 300);
+    const headName = HEAD_LINE.exec(output)?.[1];
+    if (headName) head = headName.slice(0, 300);
+    for (const line of output.split("\n")) {
+      const match = TEST_LINE.exec(line);
+      if (!match) continue;
+      const name = match[2]!.trim();
+      if (PASS_MARKER.test(match[1]!)) {
+        testFailures = testFailures.filter((row) => row.name !== name);
+      } else if (!succeeded && !testFailures.some((row) => row.name === name && row.command === command)) {
+        testFailures.push({ name, command });
+        if (testFailures.length > 40) testFailures.shift();
+      }
+    }
+  };
+
   for (const message of messages) {
     if (!message || typeof message !== "object") continue;
 
@@ -81,7 +107,7 @@ export function extract(messages: AnyMessage[], options: ExtractOptions = {}): L
       userIndex += 1;
       const text = textOf(message.content).trim();
       if (!text) continue;
-      if (!goal) goal = text.split("\n")[0]!.slice(0, 300);
+      goal ??= userGoal(text);
       constraints.push(...constraintsFromText(text, `user#${userIndex}`, now));
       for (const line of text.split(/\n+/)) {
         const question = line.trim();
@@ -97,7 +123,7 @@ export function extract(messages: AnyMessage[], options: ExtractOptions = {}): L
       const exit = typeof message.exitCode === "number" ? message.exitCode : null;
       pushCommand(commands, cmd, exit, now);
       const output = typeof message.output === "string" ? message.output : "";
-      collectFromOutput(output, failingTests, (b) => (branch = b), (h) => (head = h));
+      collectFromOutput(output, cmd.trim() || null, exit === 0 && message.cancelled !== true);
       continue;
     }
 
@@ -122,15 +148,13 @@ export function extract(messages: AnyMessage[], options: ExtractOptions = {}): L
       const call = typeof message.toolCallId === "string" ? callIndex.get(message.toolCallId) : undefined;
       const output = textOf(message.content);
       const exitMatch = EXIT_CODE.exec(output);
-      const exit = exitMatch ? Number(exitMatch[1]) : message.isError ? 1 : null;
-      if (call?.name && SHELL_TOOLS.has(call.name)) {
-        const cmd = argString(call.args, "command", "cmd", "script");
-        if (cmd) {
-          pushCommand(commands, cmd, exit, now, message.isError ? "error" : undefined);
-          if (typeof message.toolCallId === "string") pendingShell.delete(message.toolCallId);
-        }
+      const cmd = call && SHELL_TOOLS.has(call.name) ? argString(call.args, "command", "cmd", "script") : undefined;
+      const exit = exitMatch ? Number(exitMatch[1]) : message.isError ? 1 : cmd && message.isError === false ? 0 : null;
+      if (cmd) {
+        pushCommand(commands, cmd, exit, now, message.isError ? "error" : undefined);
+        if (typeof message.toolCallId === "string") pendingShell.delete(message.toolCallId);
       }
-      collectFromOutput(output, failingTests, (b) => (branch = b), (h) => (head = h));
+      collectFromOutput(output, cmd ?? null, exit === 0 && message.isError !== true);
     }
   }
 
@@ -150,37 +174,12 @@ export function extract(messages: AnyMessage[], options: ExtractOptions = {}): L
       filesRead: filesRead.slice(-200),
       filesWritten: filesWritten.slice(-200),
       commands: commands.slice(-120),
-      failingTests: failingTests.slice(0, 40),
+      failingTests: [...new Set(testFailures.map((row) => row.name))],
+      testFailures,
       openQuestions: openQuestions.slice(-40),
       nextSteps: [],
     },
     resume: null,
     history: [],
   };
-}
-
-function collectFromOutput(
-  output: string,
-  failingTests: string[],
-  setBranch: (branch: string) => void,
-  setHead: (head: string) => void,
-): void {
-  if (!output) return;
-  const branch = ON_BRANCH.exec(output);
-  if (branch?.[1]) setBranch(branch[1]);
-  const head = HEAD_LINE.exec(output);
-  if (head?.[1]) setHead(head[1]);
-  for (const line of output.split("\n")) {
-    const match = FAIL_LINE.exec(line);
-    if (!match?.[1]) continue;
-    const name = match[1].trim();
-    if (name.length < 3) continue;
-    if (!failingTests.includes(name)) failingTests.push(name);
-    if (failingTests.length >= 40) return;
-  }
-}
-
-/** Stable identity for a summary, so the governor can tell two compactions apart. */
-export function summaryHash(summary: string): string {
-  return `sha256:${hash(summary)}`;
 }

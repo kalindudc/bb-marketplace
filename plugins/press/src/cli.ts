@@ -1,9 +1,10 @@
 import { PluginCliError, cliCommand, defineCli, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { homedir } from "node:os";
-import { resolvePolicy } from "./policy";
+import { resolvePolicy, settingsKeyOf, settingsOwnedPaths } from "./policy";
+import { threadRunning, type ThreadStatusView } from "./snapshot";
 import type { PressStore, DecisionRow } from "./store";
 import type { PressService } from "./service";
-import { ledgerPath, readLedger } from "./ledger";
+import { composerRows, ledgerPath, readLedger } from "./ledger";
 import { composerPaths, ensureComposerInstalled } from "./installer";
 
 const json = { type: "boolean", description: "Print machine-readable JSON" } as const;
@@ -25,6 +26,21 @@ function targetThread(positional: string | undefined, ctx: { threadId?: string }
   return id;
 }
 
+/** Every leaf path a policy layer sets (`window.softPercent`); arrays count as leaves. */
+export function leafPaths(value: unknown, prefix = ""): string[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return prefix === "" ? [] : [prefix];
+  return Object.entries(value).flatMap(([key, child]) => leafPaths(child, prefix === "" ? key : `${prefix}.${key}`));
+}
+
+/** `points[volume].value (volumeBytes)`: each settings-owned path with the setting that owns it. */
+function ownedFields(paths: readonly string[]): string {
+  return paths.map((path) => `${path} (${settingsKeyOf(path)})`).join(", ");
+}
+
+function ownedKeys(paths: readonly string[]): string {
+  return [...new Set(paths.map(settingsKeyOf))].join(", ");
+}
+
 function describeDecision(row: DecisionRow): string {
   const at = new Date(row.at).toISOString();
   const outcome = row.outcome === null ? "" : `  outcome=${row.outcome}${row.outcomeError !== null ? ` (${row.outcomeError})` : ""}`;
@@ -38,8 +54,8 @@ export function registerCli(bb: BbPluginApi, store: PressStore, service: PressSe
       summary: "The compaction governor: status, policy, decision log, manual compaction and the ledger",
       commands: {
         status: cliCommand({
-          summary: "One line per idle thread: context percent, mode, last compaction",
-          positionals: [{ name: "thread", description: "One thread to show; without it, every idle thread" }],
+          summary: "One line per thread not running a turn: context percent, mode, last compaction",
+          positionals: [{ name: "thread", description: "One thread to show; without it, every thread not running a turn" }],
           options: {
             limit: { type: "integer", min: 1, max: 200, default: 20, description: "How many threads, newest first" },
             json,
@@ -51,13 +67,13 @@ export function registerCli(bb: BbPluginApi, store: PressStore, service: PressSe
             }
             const threads = (await bb.sdk.threads.list({ limit: options.limit })) as unknown as Array<{
               id: string;
-              status?: string;
+              status: ThreadStatusView["status"];
               archivedAt?: number | null;
               createdAt: number;
             }>;
             const statuses = [];
             for (const thread of threads) {
-              if (thread.archivedAt != null || thread.status !== "idle") continue;
+              if (thread.archivedAt != null || threadRunning(thread.status)) continue;
               statuses.push(await service.buildThreadStatus(thread.id));
             }
             statuses.sort((a, b) => (b.percent ?? 0) - (a.percent ?? 0) || a.threadId.localeCompare(b.threadId));
@@ -85,7 +101,7 @@ export function registerCli(bb: BbPluginApi, store: PressStore, service: PressSe
               if (positionals.value === undefined) {
                 throw new PluginCliError("No policy to set", {
                   code: "policy_required",
-                  hint: `Pass the policy JSON: bb press policy set '{ "mode": "auto" }'.`,
+                  hint: `Pass the policy JSON: bb press policy set '{ "providers": { "pi": { "enabled": true } } }', or add --thread <id> for a per-thread override.`,
                 });
               }
               let parsed: unknown;
@@ -99,8 +115,18 @@ export function registerCli(bb: BbPluginApi, store: PressStore, service: PressSe
               }
               resolvePolicy([{ source: "cli", value: parsed }]);
               if (options.thread !== undefined) {
-                store.setThreadPolicyOverride(options.thread, JSON.stringify(parsed));
+                service.setThreadOverride(options.thread, JSON.stringify(parsed));
                 return { exitCode: 0, stdout: `Per-thread override saved for ${options.thread}.\n` };
+              }
+              // The plugin settings overwrite these fields in every file layer, so a file setting only
+              // them would save and change nothing.
+              const owned = settingsOwnedPaths(parsed);
+              const leaves = leafPaths(parsed);
+              if (leaves.length > 0 && leaves.every((leaf) => owned.some((path) => leaf === path || leaf.startsWith(`${path}.`)))) {
+                throw new PluginCliError("The plugin settings own every field in this policy", {
+                  code: "settings_owned",
+                  hint: `Set ${ownedKeys(owned)} with \`bb plugin config press set <key> <value>\`, or add --thread <id> for a per-thread override.`,
+                });
               }
               const threadId = ctx.threadId;
               const workspace = threadId !== undefined ? await service.workspaceOfThread(threadId) : null;
@@ -114,11 +140,15 @@ export function registerCli(bb: BbPluginApi, store: PressStore, service: PressSe
               const base = `${workspace.path.replace(/[/\\]+$/, "")}/.bb/press`;
               await io.mkdir(base);
               await io.write(`${base}/policy.json`, `${JSON.stringify(parsed, null, 2)}\n`);
-              return { exitCode: 0, stdout: `Workspace policy saved to ${base}/policy.json.\n` };
+              service.forgetPolicies();
+              const ignored = owned.length > 0
+                ? `The plugin settings own ${ownedFields(owned)}, so those fields have no effect here; use \`bb plugin config press set\`.\n`
+                : "";
+              return { exitCode: 0, stdout: `Workspace policy saved to ${base}/policy.json.\n${ignored}` };
             }
             if (action === "reset") {
               if (options.thread !== undefined) {
-                store.setThreadPolicyOverride(options.thread, null);
+                await service.resetThread(options.thread);
                 return { exitCode: 0, stdout: `Per-thread override cleared for ${options.thread}.\n` };
               }
               const threadId = ctx.threadId;
@@ -135,6 +165,7 @@ export function registerCli(bb: BbPluginApi, store: PressStore, service: PressSe
                   path,
                   ...(workspace.hostId !== null ? { hostId: workspace.hostId } : {}),
                 });
+                service.forgetPolicies();
                 return { exitCode: 0, stdout: `Workspace policy removed: ${path}\n` };
               } catch {
                 return { exitCode: 0, stdout: `No workspace policy at ${path}\n` };
@@ -235,6 +266,7 @@ export function registerCli(bb: BbPluginApi, store: PressStore, service: PressSe
               ...paths,
               force: options.install === true,
               readonly: options.install !== true,
+              ...(options.install === true ? { log: bb.log } : {}),
             });
             if (options.json) return { exitCode: 0, stdout: `${JSON.stringify(report, null, 2)}\n` };
             const lines: string[] = [];
@@ -249,12 +281,13 @@ export function registerCli(bb: BbPluginApi, store: PressStore, service: PressSe
                 ? `source  version=${report.sourceVersion ?? "?"}  path=${report.source}`
                 : "source  not found next to the plugin",
             );
+            lines.push(`duplicates  ${report.duplicateCopies.length > 0 ? report.duplicateCopies.join(", ") : "none"}`);
             lines.push(`decision=${report.action}`);
             return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
           },
         }),
         ledger: cliCommand({
-          summary: "Read a thread's workspace ledger",
+          summary: "Read a thread's composer ledger",
           positionals: [{ name: "thread", description: "Thread id; defaults to the thread you run it from" }],
           options: { json },
           async run({ positionals, options }, ctx) {
@@ -266,17 +299,27 @@ export function registerCli(bb: BbPluginApi, store: PressStore, service: PressSe
                 hint: "The ledger lives in the thread's workspace; pick a thread with one.",
               });
             }
-            const ledger = await readLedger(service.ledgerIo(workspace), ledgerPath(workspace.path));
-            if (ledger === null) {
-              return { exitCode: 0, stdout: options.json ? `${JSON.stringify({ ledger: null }, null, 2)}\n` : "No ledger yet.\n" };
+            let path: string;
+            try {
+              path = ledgerPath(workspace.path, threadId);
+            } catch (error) {
+              throw new PluginCliError("This thread id cannot name a ledger", {
+                code: "invalid_thread",
+                hint: error instanceof Error ? error.message : String(error),
+              });
             }
-            if (options.json) return { exitCode: 0, stdout: `${JSON.stringify({ ledger }, null, 2)}\n` };
+            const ledger = await readLedger(service.ledgerIo(workspace), path);
+            if (ledger === null) {
+              return { exitCode: 0, stdout: options.json ? `${JSON.stringify({ path, ledger: null }, null, 2)}\n` : `No ledger yet at ${path}.\n` };
+            }
+            if (options.json) return { exitCode: 0, stdout: `${JSON.stringify({ path, ledger }, null, 2)}\n` };
             const lines = [
               `thread ${ledger.threadId ?? "-"}  compactions=${ledger.compactions}  updated=${ledger.updatedAt}`,
+              `path ${path}`,
               `constraints: ${ledger.constraints.length}`,
               ...ledger.constraints.map((constraint) => `  [${constraint.id}] ${constraint.text}`),
               `resume: ${ledger.resume !== null ? `${ledger.resume.state} | ${ledger.resume.next} | ${ledger.resume.verify}` : "-"}`,
-              `history: ${ledger.history.length}`,
+              `history: ${composerRows(ledger).length}`,
             ];
             return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
           },

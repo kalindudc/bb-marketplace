@@ -1,92 +1,38 @@
 # Press composer
 
-The pi half of [Press](../README.md). It writes the summary when a pi session compacts, so
-the next turn keeps the constraints verbatim and the state mechanically instead of trusting a
-model to remember them.
+The composer is the pi extension that writes summaries for [Press](../README.md). It runs only when `BB_THREAD_ID` is set. Press installs it automatically by default; do not also install it through `pi install`. Run `bb press composer --status` to check for duplicates. An older copy may still run alongside the bundled one. Find its package source with `pi list` and remove it with `pi remove <source>` (add `--local` for a project install).
 
-```
-pi install <path-to-this-directory>
-```
+## How it handles a compaction
 
-It rides pi's own `session_before_compact` hook, so pi keeps its cut point, split-turn
-handling, iterative previous summary and file lists. On any error it returns nothing and pi
-compacts natively.
+The composer uses pi's `session_before_compact` hook for manual compaction, threshold compaction, and overflow recovery. Pi still chooses the cut point and the conversation that stays verbatim. In pi itself, `/press [focus]` passes optional instructions to the summariser through the same hook. Pi's built-in `/compact` is not replaced.
 
-## Every compaction goes through it
+The summary starts with the pre-compaction token count. It includes the ledger block, with selected constraints quoted verbatim and state extracted by rules, a working summary written by the model, and a three-line resume contract: `state`, `next`, and `verify`. The ledger block and resume section are configurable.
 
-The hook fires for all three ways a session compacts — `/compact`, pi's own threshold, and
-overflow recovery — so a Press summary is what replaces the transcript in every case.
+The summary prompt uses the configured token budget as its target. The model call gets more room: the larger of twice that budget or 8,000 tokens, capped by the model's output limit. A cut-off response (`stopReason: "length"`) or an empty normal response gets one retry if the model allows a larger cap. The retry doubles the first cap up to the model's limit. The composer only applies nonempty text from a normal stop (`stopReason: "stop"`). Otherwise it returns no replacement and lets pi handle compaction. If it cannot resolve a configured model, it logs the problem and uses the thread's model if available.
 
-`/press [focus]` is Press's own command: it compacts through the same hook and passes `focus`
-to the summariser. `/compact` is not replaced as a name, because pi drops an extension command
-that collides with a built-in one; it needs no replacing, since it runs through this hook too.
+The composer prepares the result in memory and writes the extracted constraints and state when pi emits `session_compact`, even if pi applied its own summary or another extension's. It only saves Markdown, adds a history row, or updates the resume contract when pi applied the matching Press summary. It discards prepared work on `session_compact_failed`. A file-write failure is logged; it does not undo pi's compaction.
 
-The ledger records each compaction with the point that triggered it (`manual`, `threshold`,
-`overflow`), which is how the governor sees a compaction it did not request.
-
-## What the summary becomes
-
-Five parts, in this order:
-
-1. **Constraints** — every user instruction that looks like a rule, verbatim, deduped, with
-   the message it came from. Never summarised. This is the part compaction usually loses:
-   measured on real sessions, instructions about *how to work* are dropped about six times
-   more often than specifications of *what to build*.
-2. **State** — extracted by rules, not by a model: goal, branch and HEAD, files read and
-   written, commands with exit codes, failing tests, open questions. Mechanical extraction
-   retains 79.1% of recurring details where LLM summaries retain at most 16.0%.
-3. **Working summary** — the model's narrative: Goal, Progress, Key Decisions, Next Steps,
-   Critical Context.
-4. **Resume** — three lines the next turn must honour: `state:`, `next:`, `verify:`. The
-   cheapest known counter to a summary turning an open question into a conclusion.
-5. **Provenance** — the token count it compacted at, so a reader can tell a 40K compaction
-   from an 800K one.
+The composer sets `tokensAfter` to `null` because pi does not yet know the post-compaction count. Press fills it in the plugin history, not the ledger, from the next non-estimated usage reading it sees within 15 minutes of compaction. If the pre-compaction count is known, the new reading must be lower.
 
 ## Configuration
 
-Read from `<workspace>/.bb/press/policy.json`, then `~/.bb/press/policy.json`, under the
-`composer` key. The same file the Press plugin reads.
+The composer reads `~/.bb/press/policy.json`, then `<workspace>/.bb/press/policy.json`. The governor's per-thread `composer.json` takes precedence for the model, summary token budget, and whether to include the ledger block and resume contract. Use `provider/modelId` to choose a summary model. Press settings and policy reject other model names. Leave the setting empty or use `null` in policy for the thread's own model. By default the composer uses that model and a 3,000-token target, with both sections included. Set `providers.pi.enabled` to `false` in the workspace policy to disable the composer there without uninstalling it.
 
-```jsonc
-{
-  "composer": {
-    "model": "z-ai/glm-5.3-flash",   // provider/modelId; null uses the thread's model
-    "keepRecentTurns": 6,            // advisory: pi still chooses the cut point
-    "maxSummaryTokens": 2500,
-    "ledger": true,
-    "resumeContract": true,
-    "inputBudgetRatio": 0.7          // share of the summariser's window the transcript may fill
-  },
-  "providers": { "pi": { "enabled": true } }
-}
-```
+The ledger block switch controls what appears in the summary; it does not turn off the ledger file. Pi controls how much recent context to keep verbatim with `compaction.keepRecentTokens`.
 
-`providers.pi.enabled: false` turns the composer off without uninstalling it.
+## Files and limits
 
-## Files it writes
+| Path, relative to the workspace | What it holds |
+| --- | --- |
+| `.bb/press/threads/<threadId>/ledger.json` | The composer's extracted constraints and state, plus resume information and history for matching Press summaries that pi applied. |
+| `.bb/press/threads/<threadId>/composer.json` | Settings published by the Press plugin. The composer only reads this file. |
+| `.bb/press/threads/<threadId>/summaries/<compactionId>.md` | Markdown saved after pi applies the matching summary. |
+| `.bb/press/composer.log` and `.bb/press/composer.log.1` | Workspace-wide JSON Lines diagnostics. The active file rotates before an append would put it over 256 KB (256,000 bytes); one rotated file is kept. |
 
-| Path | What |
-|---|---|
-| `<workspace>/.bb/press/ledger.json` | constraints, state, resume, compaction history. Atomic write, previous copy kept as `.bak`, capped at 24 KB |
-| `<workspace>/.bb/press/composer.log` | one JSON line per compaction attempt, including failures |
+The composer replaces the ledger and summary files atomically using uniquely named temporary files. It ignores the old workspace ledger at `.bb/press/ledger.json`; there is no migration.
 
-Add `.bb/press/` to the workspace `.gitignore` unless you want the ledger committed.
-
-## What it does not do
-
-- It does not choose *when* to compact. That is the Press plugin's job.
-- It does not override pi's cut point. `keepRecentTurns` is advisory until a cut-point
-  override lands; raise pi's `compaction.keepRecentTokens` if you want a longer verbatim tail.
-- It does not summarise for providers other than pi. Codex and Claude Code compact inside
-  their own runtimes.
+The ledger keeps at most 40 distinct explicit constraints, with a 6 KB budget for their text. It favours recent constraints and retains the original user goal. A recognised passing test or successful rerun clears matching previous failures. The full ledger is capped at 24 KB (24,000 bytes), so it can keep fewer than the 50 allowed history rows. To fit the cap, the composer trims old history down to ten rows before trimming extracted state. If it still needs room, it can drop more history and constraints. It prunes summaries when their rows are dropped.
 
 ## Development
 
-```sh
-npm install
-npm test          # node --test, 31 cases, no network
-npx tsc --noEmit
-```
-
-The pure modules (`src/config.ts`, `src/ledger.ts`, `src/extract.ts`, `src/prompt.ts`) import
-nothing from pi, so they run under plain `node --test`. Only `index.ts` touches the pi API.
+With dependencies installed, run `npm test` from this directory. It runs 52 tests on Node 24, including the pi hook lifecycle, configuration, extraction, prompt, and ledger tests.

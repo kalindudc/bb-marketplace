@@ -59,6 +59,7 @@ export interface LedgerState {
   filesWritten: LedgerFile[];
   commands: LedgerCommand[];
   failingTests: string[];
+  testFailures: Array<{ name: string; command: string | null }>;
   openQuestions: string[];
   nextSteps: string[];
 }
@@ -69,21 +70,34 @@ export interface LedgerResume {
   verify: string;
 }
 
-export interface LedgerHistoryRow {
+export interface ComposerRow {
   id: string;
   at: string;
+  finishedAt: number | null;
   point: string;
   tokensBefore: number;
   tokensAfter: number | null;
   model: string | null;
   ms: number | null;
-  keptTurns: number | null;
-  summaryHash: string;
-  /** Where the full summary text is kept, relative to the workspace. */
-  summaryPath?: string | null;
-  /** One line from the summary, for a list row. */
-  preview?: string | null;
-  outcome?: "ok" | "failed" | "cancelled";
+  /** Relative to the workspace so the governor can route reads to its host. */
+  summaryPath: string | null;
+  outcome: "ok" | "failed" | "cancelled";
+}
+
+export interface PublishedComposer {
+  model: string | null;
+  maxSummaryTokens: number;
+  ledger: boolean;
+  resumeContract: boolean;
+  updatedAt: string;
+}
+
+export interface LedgerIo {
+  read(path: string): Promise<string | null>;
+  write(path: string, content: string): Promise<void>;
+  /** Atomically replace the destination, including when it already exists. */
+  rename(from: string, to: string): Promise<void>;
+  mkdir(path: string): Promise<void>;
 }
 
 export interface Ledger {
@@ -94,6 +108,5 @@ export interface Ledger {
   constraints: LedgerConstraint[];
   state: LedgerState;
   resume: LedgerResume | null;
-  history: LedgerHistoryRow[];
-  [key: string]: unknown;
+  history: ComposerRow[];
 }

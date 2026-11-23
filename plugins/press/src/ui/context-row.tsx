@@ -7,37 +7,10 @@ import {
 import { useState } from "react";
 import { rpcContract } from "../contract";
 import { useFooterPresence } from "./footer";
-import { chipText, PRESS_TAB, shortTokens } from "./model";
+import { PressRing } from "./footer-chip";
+import { chipBusy, chipText, PRESS_TAB, statusLines, usageTone } from "./model";
 
 const Row = experimental_ThreadContextCardRow;
-
-function clock(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function summary(dto: {
-  percent: number | null;
-  tokens: number | null;
-  window: number | null;
-  mode: string;
-  nextPoint: string | null;
-  lastCompaction: { at: string; point: string; tokensBefore: number | null; tokensAfter: number | null } | null;
-}): string {
-  const parts: string[] = [];
-  if (dto.tokens !== null) parts.push(`${shortTokens(dto.tokens)} of ${shortTokens(dto.window)} tokens`);
-  if (dto.mode !== "auto") parts.push(`mode ${dto.mode}`);
-  if (dto.lastCompaction) {
-    const before = shortTokens(dto.lastCompaction.tokensBefore);
-    const after = shortTokens(dto.lastCompaction.tokensAfter);
-    parts.push(`last ${dto.lastCompaction.point} at ${clock(dto.lastCompaction.at)}: ${before} to ${after}`);
-  } else {
-    parts.push("never compacted");
-  }
-  if (dto.nextPoint) parts.push(`next point: ${dto.nextPoint}`);
-  return parts.join(" · ");
-}
 
 function ContextChip({ threadId, card }: { threadId: string; card: boolean }) {
   const { data } = experimental_useRpcQuery({
@@ -51,9 +24,11 @@ function ContextChip({ threadId, card }: { threadId: string; card: boolean }) {
   const hasFooter = useFooterPresence(anchor);
   if (!data || data.percent === null) return null;
 
-  const title = summary(data);
-  const chip = <button type="button" className="press-chip" title={title} aria-label={`Press: ${chipText(data)}`}
-    onClick={() => panel.openTab({ tab: PRESS_TAB })}>{chipText(data)}</button>;
+  const lines = statusLines(data);
+  const title = lines.join("\n");
+  const chip = <button type="button" className="press-chip" data-tone={usageTone(data)} data-busy={chipBusy(data) ? "" : undefined}
+    title={title} aria-label={`Press: ${lines.join(". ")}. Open Press`}
+    onClick={() => panel.openTab({ tab: PRESS_TAB })}><PressRing data={data} />{chipText(data)}</button>;
   return card
     ? <div ref={setAnchor} hidden={hasFooter}>{!hasFooter && <Row label="Press" title={title} trailing={chip} />}</div>
     : <span ref={setAnchor} hidden={hasFooter}>{!hasFooter && chip}</span>;

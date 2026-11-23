@@ -1,49 +1,211 @@
-.press-panel, .press-settings, .press-chat, .press-chip {
+/* bb loads this stylesheet into the whole window: every rule starts at a .press-* root (test/ui/styles.test.ts). */
+
+/* ---------- Side panel ("Runway") ---------- */
+.press-panel {
+  /* Lifted text and tints, mixed from bb's tokens under new names (never a token in terms of itself). */
+  --press-muted: color-mix(in oklab, var(--muted-foreground) 82%, var(--foreground));
+  --press-edge: color-mix(in oklab, var(--muted-foreground) 72%, var(--background));
+  --press-rule: color-mix(in oklab, var(--border) 70%, var(--background));
+  --press-bad: color-mix(in oklab, var(--destructive) 75%, var(--foreground));
+  --press-attn-surface: color-mix(in oklab, var(--primary) 9%, transparent);
+  --press-bad-surface: color-mix(in oklab, var(--destructive) 9%, transparent);
+  --press-hover: color-mix(in oklab, var(--foreground) 7%, transparent);
+  --press-ease: cubic-bezier(.2, .8, .2, 1);
+  container-type: inline-size;
   color: var(--foreground);
+  font-size: 13px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  padding: 16px 16px 32px;
+  text-align: left;
+}
+.press-panel *, .press-panel *::before, .press-panel *::after { box-sizing: border-box; }
+.press-panel :where(h3, h4, p, ol, ul, dl, dd, dt, figure, figcaption) { margin: 0; padding: 0; }
+.press-panel :where(ol, ul) { list-style: none; }
+.press-panel button { font: inherit; }
+.press-panel .pp-g, .press-chat .pp-g { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.press-panel .pp-vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+
+/* Gauge */
+.press-panel .pp-head { display: flex; align-items: flex-end; gap: 12px; }
+.press-panel .pp-pct { font-size: 36px; line-height: 1; font-weight: 700; letter-spacing: -0.03em; }
+.press-panel .pp-pct-unit { font-size: 15px; font-weight: 650; letter-spacing: 0; margin-left: 2px; }
+.press-panel .pp-state { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding-bottom: 1px; }
+.press-panel .pp-state-word { display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 650; line-height: 1.2; }
+.press-panel .pp-tokens { font-size: 12px; color: var(--press-muted); }
+.press-panel .tone-attn .pp-g, .press-panel .pp-state-word.tone-attn .pp-g { color: var(--primary); }
+.press-panel .tone-bad .pp-g { color: var(--press-bad); }
+.press-panel .pp-meter { margin-top: 16px; }
+.press-panel .pp-track { position: relative; height: 14px; background: var(--muted); }
+.press-panel .pp-zone-over { position: absolute; top: 0; bottom: 0; right: 0; background: color-mix(in oklab, var(--destructive) 24%, var(--muted)); }
+.press-panel .pp-fill {
+  --pp-base: linear-gradient(90deg, var(--primary) 0 var(--pp-hard), var(--destructive) var(--pp-hard) 100%);
+  position: absolute; inset: 0; background: var(--pp-base);
+  clip-path: inset(0 calc(100% - var(--pp-p)) 0 0);
+  transition: clip-path 480ms var(--press-ease);
+}
+.press-panel .pp-fill.is-pressing { background: repeating-linear-gradient(135deg, color-mix(in oklab, var(--background) 42%, transparent) 0 3px, transparent 3px 7px), var(--pp-base); animation: press-stripes 900ms linear infinite; background-size: 9.9px 9.9px, auto; }
+@keyframes press-stripes { to { background-position: 9.9px 0, 0 0; } }
+.press-panel .pp-freed { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, color-mix(in oklab, var(--primary) 55%, transparent) 0 2px, transparent 2px 6px); outline: 1px dashed color-mix(in oklab, var(--primary) 70%, transparent); outline-offset: -1px; animation: press-freed-in 700ms var(--press-ease) both; }
+@keyframes press-freed-in { from { opacity: 0; } to { opacity: 1; } }
+.press-panel .pp-tick { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--foreground); }
+.press-panel .pp-tick.is-floor { width: 0; background: none; border-left: 2px dotted var(--foreground); top: 0; bottom: -4px; }
+.press-panel .pp-marks { position: relative; height: 32px; margin-top: 4px; }
+.press-panel .pp-mark { position: absolute; top: 0; display: flex; flex-direction: column; padding-left: 4px; border-left: 1px solid var(--press-edge); font-size: 11px; line-height: 14px; color: var(--press-muted); white-space: nowrap; }
+.press-panel .pp-mark.is-end { transform: translateX(-100%); padding: 0 4px 0 0; border-left: 0; border-right: 1px solid var(--press-edge); align-items: flex-end; }
+.press-panel .pp-mark b { font-size: 12px; font-weight: 650; color: var(--foreground); }
+@container (max-width: 300px) { .press-panel .pp-at { display: none; } }
+
+/* Next step */
+.press-panel .pp-next { margin-top: 12px; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; column-gap: 8px; row-gap: 2px; align-items: start; padding: 10px 12px 10px 10px; border-left: 3px solid var(--muted); }
+.press-panel .pp-next.tone-attn { background: var(--press-attn-surface); border-left-color: var(--primary); }
+.press-panel .pp-next.tone-bad { background: var(--press-bad-surface); border-left-color: var(--destructive); }
+.press-panel .pp-next-glyph { padding-top: 1px; display: flex; }
+.press-panel .pp-next-title, .press-panel .pp-next-elapsed { font-weight: 650; }
+.press-panel .pp-next-sub { grid-column: 2 / 4; font-size: 12px; color: var(--press-muted); overflow-wrap: anywhere; }
+.press-panel .pp-progress { grid-column: 2 / 4; height: 4px; margin-top: 6px; background: color-mix(in oklab, var(--muted) 80%, var(--foreground) 6%); position: relative; overflow: hidden; }
+.press-panel .pp-progress > span { position: absolute; inset: 0 auto 0 0; background: var(--primary); transition: width 900ms linear; }
+
+/* Actions */
+.press-panel .pp-actions { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.press-panel .pp-seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--press-edge); border-radius: var(--radius, 0); }
+.press-panel .pp-seg label { position: relative; display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; font-size: 12px; cursor: pointer; border-radius: var(--radius, 0); transition: background-color 100ms; }
+.press-panel .pp-seg label:hover { background: var(--press-hover); }
+.press-panel .pp-seg input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.press-panel .pp-seg label:has(input:checked) { background: var(--accent); color: var(--accent-foreground); font-weight: 650; box-shadow: inset 0 -2px 0 var(--primary); }
+.press-panel .pp-seg label:has(input:focus-visible) { outline: 2px solid var(--ring); outline-offset: 1px; }
+.press-panel .pp-seg[aria-disabled="true"] label { cursor: progress; }
+.press-panel .pp-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 28px; padding: 0 12px; border: 1px solid var(--primary); border-radius: var(--radius, 0); background: var(--primary); color: var(--primary-foreground); font-size: 13px; font-weight: 650; cursor: pointer; transition: background-color 100ms, transform 80ms; }
+.press-panel .pp-btn:not([aria-disabled="true"]):hover { background: color-mix(in oklab, var(--primary) 86%, var(--foreground)); }
+.press-panel .pp-btn:not([aria-disabled="true"]):active { transform: translateY(1px); }
+.press-panel .pp-btn[aria-disabled="true"] { background: var(--muted); border-color: var(--muted); color: var(--foreground); font-weight: 500; cursor: default; }
+.press-panel .pp-btn:focus-visible, .press-panel .pp-quiet:focus-visible, .press-panel .pp-link:focus-visible, .press-panel summary:focus-visible, .press-panel .pp-summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.press-panel .pp-quiet { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--press-edge); border-radius: var(--radius, 0); background: transparent; color: var(--foreground); font-size: 12px; cursor: pointer; }
+.press-panel .pp-quiet:hover { background: var(--press-hover); }
+.press-panel .pp-quiet[aria-disabled="true"] { cursor: progress; color: var(--press-muted); }
+.press-panel .pp-link { display: inline-flex; align-items: center; min-height: 24px; padding: 0 2px; border: 0; background: none; color: var(--foreground); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.press-panel .pp-feedback { margin-top: 6px; font-size: 12px; color: var(--press-muted); overflow-wrap: anywhere; }
+.press-panel .pp-feedback:empty { margin: 0; }
+.press-panel .pp-stale { margin-bottom: 12px; padding: 4px 8px; border-left: 3px solid var(--press-edge); font-size: 12px; color: var(--press-muted); }
+.press-panel .pp-stale:empty { margin: 0; padding: 0; border: 0; }
+
+/* Sections */
+.press-panel .pp-section { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--press-rule); }
+.press-panel .pp-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 650; }
+.press-panel .pp-meta { font-size: 12px; font-weight: 400; color: var(--press-muted); }
+.press-panel .pp-subh { margin-top: 14px; display: flex; align-items: baseline; gap: 8px; font-size: 12px; font-weight: 650; }
+.press-panel .pp-empty { margin-top: 8px; font-size: 12px; color: var(--press-muted); }
+
+/* Decision path */
+.press-panel .pp-gates { margin-top: 8px; }
+.press-panel .pp-gate { position: relative; display: grid; grid-template-columns: 16px 96px minmax(0, 1fr); column-gap: 8px; padding: 4px 0; align-items: start; }
+.press-panel .pp-gate::before { content: ""; position: absolute; left: 7.5px; top: 22px; bottom: -6px; width: 1px; background: var(--press-edge); }
+.press-panel .pp-gate:last-child::before { display: none; }
+.press-panel .pp-gate-mark { display: flex; padding-top: 1px; color: var(--press-muted); }
+.press-panel .pp-gate-name { font-weight: 600; }
+.press-panel .pp-gate-val { font-size: 12px; color: var(--press-muted); display: flex; flex-direction: column; padding-top: 1px; overflow-wrap: anywhere; }
+.press-panel .pp-gate.is-live .pp-gate-mark { color: var(--primary); }
+.press-panel .pp-gate.is-live .pp-gate-val, .press-panel .pp-gate.is-block .pp-gate-val { color: var(--foreground); }
+.press-panel .pp-gate.is-bad .pp-gate-mark { color: var(--press-bad); }
+.press-panel .pp-gate.is-bad .pp-gate-val { color: var(--foreground); font-weight: 600; }
+@container (max-width: 300px) {
+  .press-panel .pp-gate { grid-template-columns: 16px minmax(0, 1fr); }
+  .press-panel .pp-gate-val { grid-column: 2; }
+}
+.press-panel .pp-veto s { text-decoration-thickness: 1px; color: var(--press-muted); }
+.press-panel .pp-veto em { font-style: normal; font-weight: 600; color: var(--foreground); }
+.press-panel .pp-decisions { margin-top: 4px; }
+.press-panel .pp-dec { display: grid; grid-template-columns: 40px 16px 56px minmax(0, 1fr) 32px; column-gap: 8px; align-items: baseline; padding: 4px 0; font-size: 12px; }
+.press-panel .pp-dec time, .press-panel .pp-hist time { color: var(--press-muted); }
+.press-panel .pp-dec-glyph { align-self: center; display: flex; color: var(--press-muted); }
+.press-panel .pp-dec.is-compact .pp-dec-glyph { color: var(--primary); }
+.press-panel .pp-dec-what { font-weight: 600; }
+.press-panel .pp-dec-detail { overflow-wrap: anywhere; }
+.press-panel .pp-dec-pct { text-align: right; }
+
+/* History */
+.press-panel .pp-totals { margin-top: 4px; font-size: 12px; color: var(--press-muted); }
+.press-panel .pp-chart { margin-top: 10px; }
+.press-panel .pp-chart-area { position: relative; height: 72px; border-bottom: 1px solid var(--press-edge); }
+/* The plot leaves 6 px on the sides for markers and a 28 px gutter for the threshold labels. */
+.press-panel .pp-chart-plot { position: absolute; top: 4px; bottom: 4px; left: 6px; right: 34px; }
+.press-panel .pp-chart-line { position: absolute; left: -6px; right: -34px; height: 14px; margin-top: -7px; }
+.press-panel .pp-chart-line::before { content: ""; position: absolute; left: 0; right: 28px; top: 7px; border-top: 1px dashed var(--press-edge); }
+.press-panel .pp-chart-line span { position: absolute; right: 0; top: 0; width: 26px; font-size: 11px; line-height: 14px; color: var(--press-muted); }
+.press-panel .pp-drop { position: absolute; width: 2px; margin-left: -1px; background: var(--primary); }
+.press-panel .pp-drop::before { content: ""; position: absolute; top: -1px; left: -3px; width: 8px; height: 2px; background: var(--primary); }
+.press-panel .pp-drop::after { content: ""; position: absolute; bottom: -1px; left: -3px; border: 4px solid transparent; border-top: 5px solid var(--primary); border-bottom: 0; }
+.press-panel .pp-now { position: absolute; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%; background: var(--foreground); }
+.press-panel .pp-chart-axis { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; color: var(--press-muted); }
+.press-panel .pp-hist-list { margin-top: 8px; }
+.press-panel .pp-hist { border-top: 1px solid var(--press-rule); }
+.press-panel .pp-hist-list > li:last-child .pp-hist { border-bottom: 1px solid var(--press-rule); }
+.press-panel .pp-hist summary { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto 36px 16px; column-gap: 8px; align-items: center; min-height: 32px; padding: 0 4px; margin: 0 -4px; list-style: none; cursor: pointer; font-size: 12px; }
+.press-panel .pp-hist summary::-webkit-details-marker { display: none; }
+.press-panel .pp-hist summary:hover { background: var(--press-hover); }
+.press-panel .pp-hist-point { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+.press-panel .pp-hist-tokens, .press-panel .pp-hist-ms { text-align: right; }
+.press-panel .pp-hist.is-failed .pp-hist-tokens { color: var(--press-bad); font-weight: 600; }
+.press-panel .pp-chev { display: flex; color: var(--press-muted); transition: transform 150ms var(--press-ease); }
+.press-panel .pp-hist[open] .pp-chev, .press-panel .pp-points[open] .pp-chev { transform: rotate(180deg); }
+.press-panel .pp-hist-body { padding: 4px 0 12px; }
+.press-panel .pp-facts { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); column-gap: 8px; row-gap: 2px; font-size: 12px; }
+.press-panel .pp-facts dt { color: var(--press-muted); }
+.press-panel .pp-facts dd { overflow-wrap: anywhere; }
+.press-panel .pp-facts .wide { grid-column: 2 / 5; }
+
+/* Summary, in the panel and under the chat line */
+:is(.press-panel, .press-chat) .pp-summary { margin-top: 10px; padding: 10px 12px; background: var(--card); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; color: var(--foreground); }
+:is(.press-panel, .press-chat) .pp-summary.is-clamped { max-height: 236px; overflow: hidden; }
+:is(.press-panel, .press-chat) .pp-summary-tools { margin-top: 6px; display: flex; gap: 8px; align-items: center; font-size: 12px; }
+:is(.press-panel, .press-chat) .pp-summary-note { margin-top: 8px; font-size: 12px; color: var(--press-muted, var(--muted-foreground)); }
+.press-chat .pp-quiet { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--border); background: transparent; color: var(--foreground); font-size: 12px; cursor: pointer; }
+.press-chat .pp-quiet:focus-visible, .press-chat .pp-summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+/* Points */
+.press-panel .pp-points > summary { list-style: none; cursor: pointer; min-height: 28px; align-items: center; }
+.press-panel .pp-points > summary::-webkit-details-marker { display: none; }
+.press-panel .pp-points > summary .pp-meta { display: inline-flex; align-items: center; gap: 6px; }
+.press-panel .pp-point-list { margin-top: 6px; }
+.press-panel .pp-point { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: center; padding: 6px 4px; margin: 0 -4px; cursor: pointer; }
+.press-panel .pp-point:hover { background: var(--press-hover); }
+.press-panel .pp-point input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.press-panel .pp-point:has(input:focus-visible) { outline: 2px solid var(--ring); outline-offset: -2px; }
+.press-panel .pp-point:has(input[aria-disabled="true"]) { cursor: progress; }
+.press-panel .pp-point-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.press-panel .pp-point-desc { display: block; font-size: 12px; color: var(--press-muted); }
+.press-panel .pp-tag { font-size: 11px; line-height: 16px; padding: 0 4px; border: 1px solid var(--press-edge); color: var(--foreground); }
+.press-panel .pp-switch { position: relative; width: 32px; height: 18px; border: 1px solid var(--press-edge); background: transparent; transition: background-color 120ms; border-radius: var(--radius, 0); }
+.press-panel .pp-switch::before { content: ""; position: absolute; top: 3px; left: 3px; width: 10px; height: 10px; background: var(--press-muted); transition: transform 120ms var(--press-ease); border-radius: var(--radius, 0); }
+.press-panel .pp-point input:checked + .pp-switch { background: var(--primary); border-color: var(--primary); }
+.press-panel .pp-point input:checked + .pp-switch::before { transform: translateX(14px); background: var(--primary-foreground); }
+.press-panel .pp-reset { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--press-muted); }
+.press-panel .pp-model { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--press-rule); display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.press-panel .pp-model span:first-child { color: var(--press-muted); }
+
+/* Loading and error */
+.press-panel .pp-skel { display: block; height: 12px; margin-top: 10px; background: var(--muted); }
+.press-panel .pp-skel.is-hero { width: 30%; height: 32px; margin-top: 0; }
+.press-panel .pp-skel.is-70 { width: 70%; }
+.press-panel .pp-skel.is-85 { width: 85%; }
+.press-panel .pp-skel.is-60 { width: 60%; }
+.press-panel .pp-skel.is-gap { margin-top: 24px; }
+.press-panel .pp-error { padding: 12px; border-left: 3px solid var(--destructive); background: var(--press-bad-surface); display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.press-panel .pp-error .pp-next-sub { overflow-wrap: anywhere; }
+
+@media (prefers-reduced-motion: reduce) {
+  .press-panel *, .press-panel *::before, .press-panel *::after { transition: none !important; animation: none !important; }
+}
+
+/* ---------- Chips: context card row, context segment and the composer footer ---------- */
+.press-chip {
+  display: inline-flex; align-items: center; gap: 5px; background: transparent; color: var(--muted-foreground);
+  white-space: nowrap; min-height: 24px; padding: 0 5px; border-radius: 3px; font-size: 11px; cursor: pointer;
   font-variant-numeric: tabular-nums;
 }
-.press-panel { padding: 12px; font-size: 11px; line-height: 1.4; }
-.press-panel :where(h2,h3,p,dl,dt,dd), .press-settings :where(h3,p,dl,dt,dd) { margin: 0; }
-.press-panel-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.press-panel-heading h2, .press-section h3 { font-size: 11px; font-weight: 650; }
-.press-panel-heading strong { font-size: 22px; font-weight: 650; }
-.press-meter { height: 5px; margin-top: 5px; overflow: hidden; background: var(--muted); }
-.press-meter span { display: block; height: 100%; background: var(--primary); }
-.press-panel .press-usage { margin-top: 5px; color: var(--muted-foreground); }
-.press-section { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--border); }
-.press-section h3 { margin-bottom: 5px; }
-.press-stat { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(0, auto); align-items: baseline; gap: 6px; padding: 3px 0; }
-.press-stat dt { color: var(--muted-foreground); }
-.press-stat dd { text-align: right; overflow-wrap: anywhere; }
-.press-control-mode { align-items: center; }
-.press-segments { display: flex; border: 1px solid var(--border); padding: 1px; gap: 1px; }
-.press-segments label { position: relative; display: grid; align-items: center; min-height: 24px; padding: 1px 5px; cursor: pointer; }
-.press-segments input, .press-point input { opacity: 0; position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
-.press-segments label:has(input:checked) { background: var(--accent); color: var(--accent-foreground); }
-.press-segments label:has(input:focus-visible), .press-point:has(input:focus-visible) { outline: 2px solid var(--ring, var(--primary)); outline-offset: -2px; }
-.press-segments label:has(input:disabled), .press-point:has(input:disabled), .press-compact:disabled { opacity: .65; }
-.press-compact { width: 100%; min-height: 28px; margin-top: 5px; background: var(--primary); color: var(--primary-foreground); font-weight: 650; border-radius: 3px; }
-.press-compact:enabled { cursor: pointer; }
-.press-compact:enabled:hover { filter: brightness(1.08); }
-.press-panel .press-feedback { margin: 5px 0; color: var(--muted-foreground); overflow-wrap: anywhere; }
-.press-point { position: relative; display: flex; align-items: center; justify-content: space-between; min-height: 25px; gap: 6px; }
-.press-point span { display: flex; align-items: center; width: 22px; height: 12px; padding: 1px; border-radius: 10px; border: 1px solid var(--muted-foreground); }
-.press-point span::before { content: ""; display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted-foreground); }
-.press-point input:checked + span { justify-content: flex-end; background: var(--primary); border-color: var(--primary); }
-.press-point input:checked + span::before { background: var(--primary-foreground); }
-.press-history { border-top: 1px solid var(--border); }
-.press-history:last-child { border-bottom: 1px solid var(--border); }
-.press-history summary { min-height: 27px; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; list-style: none; cursor: pointer; }
-.press-history summary::-webkit-details-marker { display: none; }
-.press-history small { margin-left: auto; color: var(--muted-foreground); font-size: 10px; }
-.press-history[open] .press-chevron { transform: rotate(180deg); }
-.press-summary { text-align: left; max-height: 260px; overflow: auto; overflow-wrap: anywhere; border-top: 1px solid var(--border); padding: 8px 0 10px; font-size: 11px; line-height: 1.5; }
-.press-chip { background: transparent; color: var(--muted-foreground); white-space: nowrap; min-height: 24px; padding: 0 5px; border-radius: 3px; font-size: 11px; cursor: pointer; }
 .press-chip:hover { color: var(--foreground); background: var(--accent); }
-.press-footer-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+.press-chip:focus-visible { outline: 2px solid var(--ring); outline-offset: -1px; }
+.press-chip.press-footer-chip {
   min-height: 20px;
   line-height: 16px;
   padding: 0 7px;
@@ -52,24 +214,28 @@
   border: 1px solid var(--border);
   border-radius: 999px;
 }
-.press-ring-track { stroke: var(--muted-foreground); opacity: .45; }
-.press-ring-arc { stroke: var(--primary); transition: stroke-dashoffset 300ms ease-out; }
-@media (prefers-reduced-motion: reduce) { .press-ring-arc { transition: none; } }
+.press-chip .press-ring { flex: none; }
+.press-chip .press-ring-track { stroke: var(--muted-foreground); opacity: .45; }
+.press-chip .press-ring-arc { stroke: var(--primary); transition: stroke-dashoffset 300ms ease-out, stroke 300ms ease-out; }
+/* Past "compact at" the arc turns amber, past "force at" red: the chip says how close Press is to acting. */
+.press-chip[data-tone="near"] .press-ring-arc { stroke: var(--warning); }
+.press-chip[data-tone="over"] .press-ring-arc { stroke: var(--destructive); }
+.press-chip[data-busy] .press-ring { animation: press-spin 1.1s linear infinite; }
+@keyframes press-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .press-chip .press-ring-arc { transition: none; }
+  .press-chip[data-busy] .press-ring { animation: none; }
+  .press-chip[data-busy] .press-ring-arc { stroke-dasharray: 6 4; stroke-dashoffset: 0; }
+}
 /* Removing the portaled chip makes the native control available again without JS or a layout shim. */
 [data-follow-up-composer-footer] :has(> [data-press-chip] > .press-footer-chip) > button[aria-label^="Context window"] {
   display: none;
 }
-.press-chip:focus-visible, .press-compact:focus-visible, .press-chat button:focus-visible, .press-history summary:focus-visible { outline: 2px solid var(--ring, var(--primary)); outline-offset: -1px; }
-.press-chat { text-align: left; font-size: 11px; }
-.press-chat-line { min-height: 26px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; color: var(--muted-foreground); }
-.press-chat-line span { display: inline-flex; align-items: center; gap: 5px; }
-.press-chat-line svg { flex: none; }
-.press-chat-line button, .press-settings a { text-decoration: underline; text-underline-offset: 2px; cursor: pointer; color: var(--foreground); }
-.press-chat-line button { min-height: 24px; }
-.press-settings { font-size: 13px; line-height: 1.45; }
-.press-settings > p { color: var(--muted-foreground); }
-.press-settings section { margin: 14px 0; }
-.press-settings h3 { font-size: 13px; font-weight: 650; margin-bottom: 6px; }
-.press-setting { display: grid; grid-template-columns: minmax(0, 2fr) minmax(65px, 1fr); align-items: baseline; gap: 12px; padding: 7px 0; border-top: 1px solid var(--border); }
-.press-setting small { display: block; color: var(--muted-foreground); font-size: 11px; }
-.press-setting dd { text-align: right; overflow-wrap: anywhere; }
+
+/* ---------- In-chat "Pressed" line ---------- */
+.press-chat { color: var(--foreground); text-align: left; font-size: 11px; font-variant-numeric: tabular-nums; }
+.press-chat .press-chat-line { min-height: 26px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; color: var(--muted-foreground); }
+.press-chat .press-chat-line span { display: inline-flex; align-items: center; gap: 5px; }
+.press-chat .press-chat-line svg { flex: none; }
+.press-chat .press-chat-line button { min-height: 24px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; color: var(--foreground); }
+.press-chat .press-chat-line button:focus-visible { outline: 2px solid var(--ring); outline-offset: -1px; }

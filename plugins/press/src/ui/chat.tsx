@@ -1,7 +1,7 @@
 import { experimental_useRpcQuery, type ExperimentalMessageMetadataProps } from "@get-bb/plugin-sdk/app";
 import { useId, useState } from "react";
 import { rpcContract, type CompactionSummary } from "../contract";
-import { boundaryEntry, chatText } from "./model";
+import { boundaryEntry, chatText, timeText } from "./model";
 import { PressSummary } from "./summary";
 
 function BoundaryRow({ entry, threadId }: { entry: CompactionSummary; threadId: string }) {
@@ -15,11 +15,11 @@ function BoundaryRow({ entry, threadId }: { entry: CompactionSummary; threadId: 
         </svg>
         {chatText(entry)}
       </span>
-      {entry.summaryPath !== null && <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
+      {entry.hasSummary && <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
         {open ? "Hide summary" : "Show summary"}
       </button>}
     </div>
-    <div id={id} hidden={!open}>{open && <PressSummary threadId={threadId} at={entry.at} />}</div>
+    <div id={id} hidden={!open}>{open && <PressSummary threadId={threadId} compactionId={entry.id} label={`Press summary from ${timeText(entry.at)}`} />}</div>
   </div>;
 }
 

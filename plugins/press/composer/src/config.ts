@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { composerConfigPath } from "./ledger-format.ts";
 
 export interface ComposerConfig {
   /** `provider/modelId` that writes the summary, or null for the thread's own model. */
@@ -25,6 +26,8 @@ export const DEFAULT_COMPOSER_CONFIG: ComposerConfig = {
 };
 
 const CONFIG_KEYS = new Set(Object.keys(DEFAULT_COMPOSER_CONFIG));
+
+export { parseSummaryModel } from "./model-spec.ts";
 
 function readJson(path: string): Record<string, unknown> | undefined {
   if (!existsSync(path)) return undefined;
@@ -55,7 +58,7 @@ function coerce(base: ComposerConfig, patch: Record<string, unknown>): ComposerC
   const next = { ...base };
   if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
   if (patch.model === null || patch.model === false) next.model = null;
-  else if (typeof patch.model === "string" && patch.model.includes("/")) next.model = patch.model;
+  else if (typeof patch.model === "string") next.model = patch.model;
   if (Number.isFinite(patch.keepRecentTurns as number) && (patch.keepRecentTurns as number) >= 0) {
     next.keepRecentTurns = Math.floor(patch.keepRecentTurns as number);
   }
@@ -73,8 +76,7 @@ function coerce(base: ComposerConfig, patch: Record<string, unknown>): ComposerC
 
 /**
  * The governor resolves the policy (defaults, files, bb settings, per-thread override) and publishes
- * the composer half into the ledger, because a pi extension cannot read bb's database. That published
- * value wins over the files: it is what the user set in bb.
+ * the composer half into a per-thread config file because a pi extension cannot read bb's database.
  */
 export function applyPublishedConfig(
   config: ComposerConfig,
@@ -84,7 +86,7 @@ export function applyPublishedConfig(
   const row = published as Record<string, unknown>;
   const next = { ...config };
   if (row.model === null) next.model = null;
-  else if (typeof row.model === "string" && row.model.includes("/")) next.model = row.model;
+  else if (typeof row.model === "string") next.model = row.model;
   if (Number.isFinite(row.maxSummaryTokens as number) && (row.maxSummaryTokens as number) > 0) {
     next.maxSummaryTokens = Math.floor(row.maxSummaryTokens as number);
   }
@@ -104,4 +106,8 @@ export function resolveComposerConfig(
     config = coerce(config, pickComposer(policy));
   }
   return config;
+}
+
+export function resolveThreadComposerConfig(cwd: string, threadId: string): ComposerConfig {
+  return applyPublishedConfig(resolveComposerConfig(cwd), readJson(composerConfigPath(cwd, threadId)));
 }

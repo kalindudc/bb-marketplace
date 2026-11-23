@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   MARKER_NAME,
@@ -59,7 +60,79 @@ afterAll(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
 });
 
+async function composerPackage(dir: string, name = "pi-press-composer") {
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "package.json"), JSON.stringify({ name, version: "0.1.0", type: "module",
+    pi: { extensions: ["./index.ts"] } }));
+  await writeFile(join(dir, "index.ts"), "export default function () {}\n");
+}
+
 describe("ensureComposerInstalled", () => {
+  it("reports another extensions directory and logs one warning when installing, not on status", async () => {
+    const home = await mkdtemp(join(tmpdir(), "press-installer-"));
+    roots.push(home);
+    const source = join(home, "bundled");
+    const target = composerTargetDir(home);
+    const manual = join(dirname(target), "manual-copy");
+    await composerPackage(source);
+    await composerPackage(manual);
+    await composerPackage(join(dirname(target), "other"), "unrelated");
+    await composerPackage(join(dirname(target), ".disabled"));
+    await symlink(manual, join(dirname(target), "manual-link"), "junction");
+    const warnings: string[] = [];
+    const log = { info: () => {}, warn: (m: string) => warnings.push(m) };
+
+    const status = await ensureComposerInstalled({ source, target, readonly: true, log });
+    expect(status.duplicateCopies).toEqual([manual]);
+    expect(warnings).toEqual([]);
+    await expect(readFile(join(target, "index.ts"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    const installed = await ensureComposerInstalled({ source, target, log });
+    expect(installed).toMatchObject({ action: "install", duplicateCopies: [manual], error: null });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(manual);
+    expect(await readFile(join(manual, "index.ts"), "utf8")).toBe("export default function () {}\n");
+  });
+
+  it("resolves local package settings relative to the agent or home and deduplicates aliases", async () => {
+    const home = await mkdtemp(join(tmpdir(), "press-installer-"));
+    roots.push(home);
+    const target = composerTargetDir(home);
+    const agent = dirname(dirname(target));
+    const relativeCopy = join(home, "checkout");
+    const homeCopy = join(home, "another-copy");
+    await composerPackage(target);
+    await composerPackage(relativeCopy);
+    await composerPackage(homeCopy);
+    await symlink(target, join(home, "bundled-link"), "junction");
+    await writeFile(join(agent, "settings.json"), JSON.stringify({ packages: [
+      "../../checkout",
+      { source: "~/another-copy", extensions: ["./index.ts"] },
+      pathToFileURL(join(relativeCopy, "index.ts")).href,
+      "~/bundled-link",
+      "~/missing-copy",
+    ] }));
+    const status = await ensureComposerInstalled({ source: null, target, readonly: true });
+    expect(status.duplicateCopies).toEqual([homeCopy, relativeCopy]);
+  });
+
+  it("checks cached npm and git packages without installing packages or scanning unconfigured checkouts", async () => {
+    const home = await mkdtemp(join(tmpdir(), "press-installer-"));
+    roots.push(home);
+    const target = composerTargetDir(home);
+    const agent = dirname(dirname(target));
+    const npm = join(agent, "npm", "node_modules", "pi-press-composer");
+    const git = join(agent, "git", "github.com", "example", "composer");
+    await composerPackage(npm);
+    await composerPackage(git);
+    await composerPackage(join(agent, "git", "github.com", "example", "other-copy"));
+    await writeFile(join(agent, "settings.json"), JSON.stringify({ packages: [
+      "npm:pi-press-composer@0.1.0", "git:git@github.com:example/composer.git@v0.1.0",
+    ] }));
+    const status = await ensureComposerInstalled({ source: null, target, readonly: true });
+    expect(status.duplicateCopies).toEqual([git, npm]);
+  });
+
   it("installs, skips on the second run, updates on a version change, keeps unrelated files", async () => {
     const root = await mkdtemp(join(tmpdir(), "press-installer-"));
     roots.push(root);

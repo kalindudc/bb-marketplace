@@ -1,6 +1,6 @@
 {
   "name": "pi-press-composer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Writes a compaction summary that keeps constraints verbatim and state mechanically. The pi half of Press.",
@@ -17,7 +17,7 @@
     ]
   },
   "scripts": {
-    "test": "node --test test/",
+    "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
