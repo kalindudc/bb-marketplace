@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_useAppPanel, useBbNavigate, type ExperimentalTabReference, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
 import { rpcContract } from "../../shared/contract";
 import type { Decision, Rule } from "../../shared/schema";
-import { QuestAuthority, activeHold, heldQuests, CheckIndependence, GuardPosture, Clamp, characterName, stoppingWords, useToday, RULE_SCOPE, localTime, ruleScopeLabel, useWidenRule, DecidedForYou, useDecisionSeen, QuietNotice, useRemembered, useRememberedView, GateRows, KeeperNoteRows, KeptInMind, ExpandsMark, Glyph, OpensMark, PartyPicture, PhaseStrip, QueryState, QuestMap, SkCrest, SkDecided, SkLine, SkLines, SkPhaseStrip, StatusPill, TimeAgo, Vocabulary, clockTime, glowVars, plural, useRegistry, useSkeletonCount, useSkeletonDelay } from "../kit";
+import { QuestAuthority, activeHold, heldQuests, CheckIndependence, GuardPosture, Clamp, characterName, stoppingWords, useToday, RULE_SCOPE, localTime, ruleScopeLabel, useWidenRule, DecidedForYou, useDecisionSeen, QuietNotice, useRemembered, useRememberedView, GateRows, KeeperNoteRows, KeptInMind, ExpandsMark, FoldSummary, Glyph, OpensMark, PartyPicture, PhaseStrip, QueryState, QuestMap, SkCrest, SkDecided, SkLine, SkLines, SkPhaseStrip, StatusPill, TimeAgo, Vocabulary, clockTime, glowVars, plural, useRegistry, useSkeletonCount, useSkeletonDelay } from "../kit";
 import { revealAsk } from "./state";
 import { BriefSteerLine } from "../kit/brief-steer";
 import { NewSummaries } from "./new-summaries";
@@ -13,7 +13,8 @@ import { keeperGuards, keeperState, useKeeperStop } from "./keeper-state";
 import { KeeperSuccessionRecord } from "../kit/succession";
 import { LeadChainRows } from "./lead-chain-rows";
 import { AlertAction } from "../kit/alert-action";
-import { ScopeRecords } from "../page/record";
+import { recordedScopes, ScopeRecords } from "../page/record";
+import { guardAlerts } from "../kit/guard-alerts";
 import "./skeletons.css";
 export { JournalTab } from "./journal";
 
@@ -105,6 +106,7 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
   useEffect(() => {
     if (!data || (attentionGroup !== "need" && attentionGroup !== "new" && attentionGroup !== "guard")) return;
     const target = root.current?.querySelector(`[data-attention-group="${attentionGroup}"]`);
+    if (target instanceof HTMLDetailsElement) target.open = true;
     target?.scrollIntoView({ block: "start" });
   }, [threadId, attentionGroup, !!data]);
   const seen = useDecisionSeen({ keeperThreadId: threadId, throughId: data?.decidedThroughId });
@@ -114,6 +116,8 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
   if (decor.data && decor.data.member?.role !== "keeper") return <div className="tavern ledger" ref={root}><p className="m">The ledger belongs to Keeper threads.</p></div>;
   const list = attentionView(data?.attention);
   const openAsks = data?.asks.filter(a => list.items.some(item => item.kind === "ask" && item.id === a.id)) ?? [];
+  const guardMembers = new Map([...(decor.data?.member ? [decor.data.member] : []), ...(keeper?.errands ?? []), ...(data?.boardQuests ?? []).flatMap(quest => quest.members)].map(member => [member.threadId, member]));
+  const hasGuardAlerts = recordedScopes(data?.scopes ?? [], guardMembers).some(scope => guardAlerts(scope).length > 0);
   return (
     <div className="tavern ledger" data-part="LedgerTab" ref={root}>
       <header className="journal-head">
@@ -125,12 +129,13 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
       {data?.succession && <KeeperSuccessionRecord view={data.succession} threadId={threadId} />}
       {data && <QuietNotice threadId={threadId} since={data.quietSince} />}
       {activity && activity.word !== "Quiet" && <p className="m small lg-keeper-state">{activity.word}{activity.since != null && <> since <time dateTime={new Date(activity.since).toISOString()}>{new Date(activity.since).toLocaleString()}</time></>} · {activity.detail}</p>}
-      {data && <section className="lg-card" aria-label="Guardrails" data-attention-group="guard">
-        <h3><Glyph name="shield" /><span>Guardrails</span></h3>
-        {guard.words.length ? <ul className="lg-rows">{guard.words.map(word => <li key={word}>{word}</li>)}</ul> : <p className="m small">No guard status is recorded for this Keeper.</p>}
-        {registry.data && <ScopeRecords scopes={data.scopes} observations={data.violations} keeperThreadId={threadId} registry={registry.data}
-          members={new Map([...(decor.data?.member ? [decor.data.member] : []), ...(decor.data?.keeperView?.errands ?? []), ...data.boardQuests.flatMap(quest => quest.members)].map(member => [member.threadId, member]))}
-          compact bare recheck={query.refetch} />}
+      {data && <section className="lg-card lg-guards" aria-label="Guardrails">
+        <details data-fold="guardrails" data-attention-group="guard" open={hasGuardAlerts}>
+          <FoldSummary><Glyph name="shield" /><span>Guardrails</span></FoldSummary>
+          {guard.words.length ? <ul className="lg-rows">{guard.words.map(word => <li key={word}>{word}</li>)}</ul> : <p className="m small">No guard status is recorded for this Keeper.</p>}
+          {registry.data && <ScopeRecords scopes={data.scopes} observations={data.violations} keeperThreadId={threadId} registry={registry.data}
+            members={guardMembers} compact bare foldViolations recheck={query.refetch} />}
+        </details>
       </section>}
       {data && (() => {
         const live = data.boardQuests.filter(q => q.archivedAt === null && q.phase !== "done" && q.phase !== "stopped");

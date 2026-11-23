@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { rpcContract, type BoardQuestDetail, type Room } from "../../shared/contract";
 import type { Decision, Member, Report, Rule } from "../../shared/schema";
 import { memberName } from "../../shared/member-name";
-import { voiceShown, CheckIndependence, GuardPosture, ExpandsMark, OpensMark, RULE_SCOPE, guardRecordWords, useToday, isFinished, ReportView, memberReportNames, ruleScopeLabel, useWidenRule } from "../kit";
+import { voiceShown, CheckIndependence, GuardPosture, Clamp, ExpandsMark, FoldSummary, OpensMark, RULE_SCOPE, guardRecordWords, useToday, isFinished, ReportView, memberReportNames, ruleScopeLabel, useWidenRule } from "../kit";
 import { Ago, CrestOf, Section, SegFilter, StateMark, characterName, plural, type Registry } from "./common";
 import { PageGlyph } from "./glyphs";
 import { describeEvent, foldRuns, questsIn, taleHeadline, visibleMembers, type EventLine } from "./model";
@@ -119,15 +119,19 @@ export function Guardrails({ detail, registry, members, bare = false, compact = 
     members={members} ended={isFinished(detail.quest.phase)} bare={bare} compact={compact} recheck={recheck} />;
 }
 
-export function ScopeRecords({ scopes: input = [], observations = [], keeperThreadId, registry, members, ended = false, bare = false, compact = false, recheck }: {
-  scopes?: BoardQuestDetail["scopes"]; observations?: BoardQuestDetail["violations"]; keeperThreadId: string;
-  registry: Registry; members: Map<string, Member>; ended?: boolean; bare?: boolean; compact?: boolean; recheck?: () => unknown;
-}) {
-  const scopes = [...new Map(input.map(scope => [scope.threadId, scope])).values()].filter(scope => {
+export function recordedScopes(input: NonNullable<BoardQuestDetail["scopes"]>, members: Map<string, Member>, ended = false) {
+  return [...new Map(input.map(scope => [scope.threadId, scope])).values()].filter(scope => {
     if (ended) return true;
     const member = members.get(scope.threadId);
     return scope.live !== false && member?.engagement !== "released" && member?.engagement !== "archived" && member?.engagement !== "stopped";
   });
+}
+
+export function ScopeRecords({ scopes: input = [], observations = [], keeperThreadId, registry, members, ended = false, bare = false, compact = false, foldViolations = false, recheck }: {
+  scopes?: BoardQuestDetail["scopes"]; observations?: BoardQuestDetail["violations"]; keeperThreadId: string;
+  registry: Registry; members: Map<string, Member>; ended?: boolean; bare?: boolean; compact?: boolean; foldViolations?: boolean; recheck?: () => unknown;
+}) {
+  const scopes = recordedScopes(input, members, ended);
   const violations = [...observations].sort((a, b) => b.at - a.at);
   const day = useToday();
   const [showEach, setShowEach] = usePanelState("quest.guards.members", false);
@@ -135,6 +139,14 @@ export function ScopeRecords({ scopes: input = [], observations = [], keeperThre
   const name = (id: string) => { const m = members.get(id); return m ? characterName(registry, m) : "A member"; };
   const alerts = ended ? [] : scopes.filter(scope => guardAlerts(scope).length > 0);
   const shown = compact && !showEach ? alerts : scopes;
+  const history = violations.length > 0 && <ol className="tv-violations">{(foldViolations ? violations : violations.slice(0, 8)).map(v => <li key={`${v.threadId}-${v.eventId}-${v.seq}`} className="tv-violation">
+    <div className="tv-violation-head">
+      <span className="tv-violation-status"><span className="tv-violation-member"><PageGlyph name={v.mode === "watch" ? "eye" : v.stopped ? "stop" : "fail"} size={13} /><b>{name(v.threadId)}</b></span>{" "}<span>{v.mode === "watch" ? "tripped a rule · recorded, not stopped" : v.prevented ? "had a call blocked before it ran" : v.stopped ? `was stopped in ${v.latencyMs} ms` : `tripped a rule; the stop failed${v.stopError ? `: ${v.stopError}` : ""}`}</span></span>
+      <Ago at={v.at} />
+    </div>
+    <code className="tag tv-violation-rule">{v.ruleId}</code>
+    <Clamp text={v.reason} className="tv-violation-reason" />
+  </li>)}</ol>;
   const body = <>
     {compact && <p className="tv-guard-summary">{plural(scopes.length, "member")} · {alerts.length ? `${alerts.length} need attention` : "no current alerts"} · {plural(violations.length, "violation")}</p>}
     {shown.length > 0 && <ul className="tv-card tv-rows tv-guardrows">{shown.map((sc) => {
@@ -150,11 +162,7 @@ export function ScopeRecords({ scopes: input = [], observations = [], keeperThre
       </li>;
     })}</ul>}
     {compact && scopes.length > 0 && <button type="button" className="tv-fold act" aria-expanded={showEach} onClick={() => setShowEach(!showEach)}><ExpandsMark open={showEach} />{showEach ? "Show summary" : "Show each member"}</button>}
-    {violations.length > 0 && <ol className="tv-evs tv-viol">{violations.slice(0, 8).map((v) => <li key={`${v.eventId}-${v.seq}`} className={`tv-ev ${v.mode === "watch" ? "t-plain" : v.stopped ? "t-bad" : "t-warn"}`}>
-      <PageGlyph name={v.mode === "watch" ? "eye" : v.stopped ? "stop" : "fail"} size={13} className="tv-ev-g" />
-      <span className="tv-ev-b"><span className="tv-ev-h"><b>{name(v.threadId)}</b> <span>{v.mode === "watch" ? "tripped a rule · recorded, not stopped" : v.prevented ? "had a call blocked before it ran" : v.stopped ? `was stopped in ${v.latencyMs} ms` : `tripped a rule; the stop failed${v.stopError ? `: ${v.stopError}` : ""}`}</span></span><span className="tv-ev-d" title={`${v.ruleId}: ${v.reason}`}><code>{v.ruleId}</code> {v.reason}</span></span>
-      <Ago at={v.at} />
-    </li>)}</ol>}
+    {history && (foldViolations ? <details className="tv-violation-history"><FoldSummary>{plural(violations.length, "earlier violation")}</FoldSummary>{history}</details> : history)}
   </>;
   if (bare) return <div className="tv-guards">{body}</div>;
   return <Section title="Guardrails" count={plural(violations.length, "violation")} level={2} className="tv-guards">{body}</Section>;

@@ -879,7 +879,19 @@
 .tavern.tv-page .tv-changenote.open .tv-changenote-t { display: block; -webkit-line-clamp: unset; }
 .tavern.tv-page .tv-changenote .tv-fold { flex: none; }
 
-/* Guardrails on the quest page */
+.tavern .lg-guards { padding-block: 0; }
+.tavern .lg-guards .fold-summary { font-size: 12px; }
+.tavern .lg-guards [data-fold="guardrails"] > .fold-summary > span { display: flex; align-items: center; gap: 6px; font-weight: 700; }
+.tavern .lg-guards [data-fold="guardrails"][open] { padding-bottom: 8px; }
+.tavern .lg-guards .tv-guard-summary { margin-block: 4px 0; font-size: 12px; color: var(--tavern-muted); }
+.tavern.ledger .tv-guards .tv-fold { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; background: transparent; border: 0; color: var(--tavern-muted); font-size: 12px; }
+.tavern .tv-violations { padding: 0; margin: 0; list-style: none; }
+.tavern .tv-violation { display: grid; gap: 3px; justify-items: start; padding: 8px 0; border-top: 1px solid var(--tavern-line); font-size: 12px; overflow-wrap: anywhere; }
+.tavern .tv-violation-head { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px; }
+.tavern .tv-violation-member { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; vertical-align: middle; }
+.tavern .tv-violation-member svg { flex: none; }
+.tavern .tv-violation-rule { max-width: 100%; white-space: normal; font-size: 11px; }
+.tavern .tv-violation-reason { width: 100%; color: var(--tavern-muted); }
 .tavern .tv-guardrows { margin: 0; padding: 0; list-style: none; }
 .tavern .tv-guard { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; padding: 6px 10px; font-size: 12px; }
 .tavern .tv-guard-t { display: flex; flex-direction: column; min-width: 0; }

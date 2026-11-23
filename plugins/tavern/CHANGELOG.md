@@ -7,6 +7,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 ### Fixed
 
 - Walking sprites mirror to face their direction of travel, without changing the characters’ original faces.
+- The Ledger remembers whether you fold Guardrails and opens it by default when there’s a current alert. Earlier violations stay in a separate fold, with the rule, reason and time easy to tell apart.
 
 ## 0.2.0 (2026-11-23)
 
