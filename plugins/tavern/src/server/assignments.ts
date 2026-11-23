@@ -1,5 +1,6 @@
 import { hasEndedEngagement, wasReleased } from "../shared/member-engagement";
 import type { CharacterDef, ClassDef, Member, Plan } from "../shared/schema";
+import { keeperSubject } from "../shared/waypoint";
 
 export function validatePartyCharacters(plan: Pick<Plan, "party">, registry: { classes: ClassDef[]; characters: CharacterDef[] }) {
   for (const slot of plan.party) {
@@ -11,18 +12,19 @@ export function validatePartyCharacters(plan: Pick<Plan, "party">, registry: { c
   }
 }
 
-export function makerForWaypoint(plan: Pick<Plan, "waypoints">, members: Member[], id: string): string | null {
+export function makerForWaypoint(plan: Pick<Plan, "waypoints">, members: Member[], id: string, keeperThreadId?: string): string | null {
   const waypoint = plan.waypoints.find(waypoint => waypoint.id === id);
+  if (waypoint && keeperThreadId && keeperSubject(waypoint, keeperThreadId)) return keeperThreadId;
   const makers = members.filter(member => member.role === "member" && member.classId !== "warden");
   return makers.find(member => member.threadId === waypoint?.owner)?.threadId ?? makers.find(member => member.waypointId === id)?.threadId ?? null;
 }
 
-export function validateCheckerMakers(plan: Pick<Plan, "party" | "waypoints">, members: Member[] = []) {
-  const assignments = checkerAssignments(plan, members);
+export function validateCheckerMakers(plan: Pick<Plan, "party" | "waypoints">, members: Member[] = [], keeperThreadId?: string) {
+  const assignments = checkerAssignments(plan, members, keeperThreadId);
   for (const [index, slot] of plan.party.entries()) {
     if (slot.classId !== "warden") continue;
     const pairs = slot.waypointIds.flatMap(id => {
-      const maker = makerForWaypoint(plan, members, id);
+      const maker = makerForWaypoint(plan, members, id, keeperThreadId);
       return maker ? [{ id, maker }] : [];
     });
     const details = () => pairs.map(({ id, maker }) => `${id} (maker ${maker})`).join(", ");
@@ -35,7 +37,7 @@ export function validateCheckerMakers(plan: Pick<Plan, "party" | "waypoints">, m
   }
 }
 
-export function checkerAssignments(plan: Pick<Plan, "party" | "waypoints">, members: Member[]) {
+export function checkerAssignments(plan: Pick<Plan, "party" | "waypoints">, members: Member[], keeperThreadId?: string) {
   const remaining = members
     .filter((member) => member.classId === "warden" && !wasReleased(member))
     .sort((a, b) => {
@@ -55,7 +57,7 @@ export function checkerAssignments(plan: Pick<Plan, "party" | "waypoints">, memb
     if (!member) continue;
     const pinnedMaker = member.checkerMakerThreadId;
     const waypointIds = pinnedMaker
-      ? party.waypointIds.filter(id => makerForWaypoint(plan, members, id) === pinnedMaker)
+      ? party.waypointIds.filter(id => makerForWaypoint(plan, members, id, keeperThreadId) === pinnedMaker)
       : party.waypointIds;
     assignments.push({ memberThreadId: member.threadId, slot, waypointIds });
     remaining.splice(remaining.indexOf(member), 1);

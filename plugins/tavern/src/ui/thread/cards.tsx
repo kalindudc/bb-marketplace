@@ -7,7 +7,7 @@ import { PlanChanges } from "../kit/plan-changes";
 import { memberName } from "../../shared/member-name";
 import { rpcContract, type BoardQuestDetail } from "../../shared/contract";
 import type { CharacterDef, ClassDef, Report } from "../../shared/schema";
-import { voiceShown, AskCard, Clamp, Crest, levelsShown, reachedInParty, reachedWords, DecidedForYou, EvidenceList, FigureRow, taleFigures, ExpandsMark, Glyph, OpensMark, QuestMap, QueryState, ReportView, SkCrest, SkFigureRow, SkGlyph, SkLine, SkLines, SkMapNode, StatusPill, TimeAgo, Vocabulary, clockTime, levelFor, memberIdentity, questNames, readable, summaryNames, useRegistry, useSkeletonCount } from "../kit";
+import { voiceShown, AskCard, Clamp, Crest, levelsShown, reachedInParty, reachedWords, DecidedForYou, EvidenceList, FigureRow, taleFigures, ExpandsMark, Glyph, OpensMark, QuestMap, QueryState, ReportView, SkCrest, SkFigureRow, SkGlyph, SkLine, SkLines, SkMapNode, StatusPill, TimeAgo, VOCABULARY, Vocabulary, clockTime, levelFor, memberIdentity, questNames, readable, summaryNames, useRegistry, useSkeletonCount } from "../kit";
 import type { ReportHeadlineNames } from "../../shared/report-headline";
 import { TaleAction } from "../kit/tale-delivery";
 import { TaleResults } from "../kit/tale-results";
@@ -65,7 +65,9 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
   const [more, setMore] = useState<null | "findings" | "decided">(null);
   const plan = version === null ? detail.quest.plan : detail.plans.find(p => p.version === version);
   const card = useRef<HTMLElement>(null);
-  const isSealed = !!plan && ((detail.quest.greenlitVersion ?? 0) >= plan.version || detail.quest.checkPlanVersion === plan.version && detail.quest.planVersion === plan.version && detail.quest.phase !== "greenlight");
+  const currentChecks = !!plan && detail.quest.checkPlanVersion === plan.version && detail.quest.planVersion === plan.version && detail.quest.phase !== "greenlight";
+  const noStaffingGreenlight = currentChecks && detail.quest.greenlitVersion === null;
+  const isSealed = !!plan && !noStaffingGreenlight && ((detail.quest.greenlitVersion ?? 0) >= plan.version || currentChecks);
   // The seal stamps and the party is dealt once per device: when sealed here, or the first time this device sees it sealed.
   const moment = useMoment(card, { surface: `thread:${detail.quest.keeperThreadId ?? "chat"}`, kind: "party forms", rememberKey: `moment:seal:${detail.quest.id}:${plan?.version ?? 0}`, active: isSealed, className: "mo-seal", ms: 1200 });
   if (!plan) return <p className="tavern problem" role="alert">This plan version is not available.</p>;
@@ -80,16 +82,16 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
   const unknownLead = plan.waypoints.filter(w => w.leadTime === null).length;
   const redirect = () => { composer.insert(`About ${detail.quest.title}, plan v${plan.version}: `); composer.focus(); };
   const map = <>
-    <QuestMap quest={quest} mode={sealed ? "live" : "plan"} dealt={sealed} stretch={!sealed} showChecks showAll />
+    <QuestMap quest={quest} mode={sealed || noStaffingGreenlight ? "live" : "plan"} dealt={sealed} stretch={!sealed} showChecks showAll />
     <div className="qm-key m"><span><i className="k crest" />agent</span><span><i className="k you" />your move</span><span><i className="k gate" />outside owner</span><span>left to right is order, not a schedule</span></div>
   </>;
   return (
-    <article ref={card} {...moment} className={`tavern tcard qmcard ${sealed ? "sealed" : ""}`} style={glowVars(`map:${detail.quest.id}`) as CSSProperties} aria-label={`Quest map (greenlight): ${detail.quest.title}, plan v${plan.version}`} data-part="QuestMapCard">
+    <article ref={card} {...moment} className={`tavern tcard qmcard ${sealed ? "sealed" : ""}`} style={glowVars(`map:${detail.quest.id}`) as CSSProperties} aria-label={`Quest map${noStaffingGreenlight ? "" : " (greenlight)"}: ${detail.quest.title}, plan v${plan.version}`} data-part="QuestMapCard">
       <header className="qm-h">
-        <span className="qm-t"><b><Vocabulary word="map" /></b><span className="qm-q">{detail.quest.title} · plan v{plan.version}</span></span>
+        <span className="qm-t"><b>{noStaffingGreenlight ? VOCABULARY.map[0] : <Vocabulary word="map" />}</b><span className="qm-q">{detail.quest.title} · plan v{plan.version}</span></span>
         {plan.fromSteer && <span className="qm-steer" title={`From your steer: ${plan.fromSteer.text}`}><Glyph name="route" size={12} /><span>from your steer, {clockTime(plan.fromSteer.at)}</span></span>}
         <span className="tc-sp" />
-        {sealed ? <span className="sealmark"><Glyph name="wax-seal" size={16} /><span>Sealed · party formed</span></span> : current ? <span className="qm-wait">{waitsForParent ? "Hiring Keeper decides" : "Waits for your seal"}</span> : <StatusPill status="superseded">superseded</StatusPill>}
+        {sealed ? <span className="sealmark"><Glyph name="wax-seal" size={16} /><span>Sealed · party formed</span></span> : noStaffingGreenlight ? <span className="qm-wait">No staffing greenlight needed</span> : current ? <span className="qm-wait">{waitsForParent ? "Hiring Keeper decides" : "Waits for your seal"}</span> : <StatusPill status="superseded">superseded</StatusPill>}
       </header>
       <PlanChanges plan={plan} plans={detail.plans} quest={quest} registry={registry.data} />
       <p className="qm-goal"><b>{plan.goal}</b><span className="m"> · done when {plan.doneWhen.charAt(0).toLowerCase() + plan.doneWhen.slice(1)}</span></p>
@@ -113,9 +115,9 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
       <QueryState error={error} />
       {current && !sealed && (
         <footer className="qm-f">
-          {reviewLead && detail.quest.keeperThreadId ? <button type="button" className="btn" onClick={() => revealAsk(detail.quest.keeperThreadId, reviewLead.id)}>Review lead plan and limits</button> : greenlight && formOption ? <button type="button" className="btn pri seal" disabled={answer.isPending} onClick={() => void answer.mutate({ askId: greenlight.id, optionId: formOption.id, note: null, via: "chat" }).catch(setError)}><Glyph name="wax-seal" />{answer.isPending ? "Sealing…" : greenlight.effect?.type === "greenlight" && greenlight.effect.requiresExplicit ? "Approve the updated plan" : "Form the party (greenlight)"}</button> : waitsForParent ? <span className="m small">Staffing waits for the hiring Keeper’s decision.</span> : <span className="m small">The greenlight ask is not open yet.</span>}
+          {noStaffingGreenlight ? null : reviewLead && detail.quest.keeperThreadId ? <button type="button" className="btn" onClick={() => revealAsk(detail.quest.keeperThreadId, reviewLead.id)}>Review lead plan and limits</button> : greenlight && formOption ? <button type="button" className="btn pri seal" disabled={answer.isPending} onClick={() => void answer.mutate({ askId: greenlight.id, optionId: formOption.id, note: null, via: "chat" }).catch(setError)}><Glyph name="wax-seal" />{answer.isPending ? "Sealing…" : greenlight.effect?.type === "greenlight" && greenlight.effect.requiresExplicit ? "Approve the updated plan" : "Form the party (greenlight)"}</button> : waitsForParent ? <span className="m small">Staffing waits for the hiring Keeper’s decision.</span> : <span className="m small">The greenlight ask is not open yet.</span>}
           <button type="button" className="btn" onClick={redirect}>Redirect in chat</button>
-          {!reviewLead && !waitsForParent && <span className="qm-scope m">Approves the party and these checks. Production steps and anything sent as you still ask you. Or reply in chat, e.g. “seal, 1 Monday”.</span>}
+          {!noStaffingGreenlight && !reviewLead && !waitsForParent && <span className="qm-scope m">Approves the party and these checks. Production steps and anything sent as you still ask you. Or reply in chat, e.g. “seal, 1 Monday”.</span>}
         </footer>
       )}
       {!sealed && !current && <p className="m small qm-old">This plan was superseded; it cannot be greenlit here.</p>}

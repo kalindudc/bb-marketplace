@@ -169,7 +169,7 @@ function questBlock(k: Keeper, summary: BoardQuestSummary) {
         ? `${next.id}: ${short(next.title, 80)}; ${next.actor} ${next.actor === "agent" && next.ownerMember ? `${k.name(next.ownerMember)} (${next.ownerMember.classId})` : (next.owner ?? "unassigned")}; lead time ${next.leadTime ?? "unknown"}`
         : summary.move.text;
   const lines = [
-    `${short(summary.title, 80)} (${summary.id}) — ${summary.phase}, plan v${summary.planVersion}, ${summary.greenlitVersion === null ? "not approved yet" : `approved v${summary.greenlitVersion}`}`,
+    `${short(summary.title, 80)} (${summary.id}) — ${summary.phase}, plan v${summary.planVersion}, ${summary.greenlitVersion !== null ? `approved v${summary.greenlitVersion}` : summary.checkPlanVersion === summary.planVersion && summary.phase !== "greenlight" ? "no staffing greenlight needed" : "not approved yet"}`,
     `Done when: ${plan?.doneWhen ?? "Not planned yet"}`,
     `Next link: ${nextLink}`,
     `Allocated party: ${plan?.party.map((p) => `${p.classId} for ${p.waypointIds.join(",") || p.purpose}`).join("; ") || "not planned"}`,

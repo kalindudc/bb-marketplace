@@ -46,6 +46,18 @@ it("shows the checks beside owners and the resolution and reason in the Ledger w
   } finally { map.lifecycle.unmount(); ledger.lifecycle.unmount(); vi.unstubAllGlobals(); }
 });
 
+it("shows an unsealed Ranger map without pretending that the party needed approval", () => {
+  const rangerPlan = { ...plan, party: [{ classId: "ranger", characterId: null, model: null, purpose: "Scout", waypointIds: ["w1"] }] };
+  const research = { ...detail, asks: [], plans: [rangerPlan], quest: { ...detail.quest, plan: rangerPlan, greenlitVersion: null, checkPlanVersion: 1 } };
+  const slot = renderSlot({ component: () => <QuestMapCard detail={research} version={1} /> } as never, {}, { composer: { scope: { kind: "thread", threadId: "keeper-1" } }, rpc: { registry: () => fixtureRegistry } });
+  try {
+    expect(slot.getByText("No staffing greenlight needed")).toBeTruthy();
+    expect(slot.queryByText("Sealed · party formed")).toBeNull();
+    expect(slot.queryByText(/greenlight ask is not open/)).toBeNull();
+    expect(slot.queryByRole("button", { name: /Form the party/ })).toBeNull();
+  } finally { slot.lifecycle.unmount(); }
+});
+
 it("tells a three-waypoint watch as done with no check and no verified loot", async () => {
   const quest = { ...detail.quest, phase: "done" as const, endedAt: 2000, members: [], waypoints: waypoints.map(w => ({ ...w, check: "none" as const, state: "done" as const, resolutionReason: null })) };
   const slot = renderSlot({ component: () => <TalePage detail={{ ...detail, quest }} registry={fixtureRegistry} /> } as never, {}, { rpc: { registry: () => fixtureRegistry } });

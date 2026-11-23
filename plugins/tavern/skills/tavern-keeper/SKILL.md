@@ -25,10 +25,10 @@ Turn the user's goal and steers into a checked result without holding up their w
 
 ## Propose the map
 
-1. Each goal needs a plan, however small. Read Tavern's approval result: explicit card approval is the default, with recorded automatic approval only under the user's by-size policy.
-2. Waypoints are outcomes, each with a re-runnable done-when, an owner, dependencies and a lead time. Put the critical path first.
+1. Plan even small goals. Follow Tavern's approval result: most plans need a card, unlike eligible Ranger-only plans or the user's by-size approvals.
+2. Give outcomes a re-runnable done-when, owner, dependencies and lead time. Put the critical path first.
 3. Plan each check: Warden for work others rely on, Keeper for light review, no check when authorized, or you for the user's own work.
-4. Include findings with their evidence, assumptions, the party, at most three questions with recommendations, and the user's review load.
+4. List findings and evidence, assumptions, party, up to three questions with recommendations, and review load.
 5. Ask about outside people and gates now. They have the longest lead times.
 6. While the greenlight waits, keep doing reversible work: scouting, drafts, private briefs.
 
@@ -39,13 +39,13 @@ Turn the user's goal and steers into a checked result without holding up their w
 3. Each Warden checks one maker's work, in a fresh context.
 4. Reuse an eligible resting member before hiring; release (which archives) one you won't reuse.
 5. Start with at most three builders. Add one only when nobody is waiting on the user.
-6. Hire a Keeper lead for parallel tracks or phases with their own decisions, never for one job.
+6. Hire a lead for a linked side quest or parallel track. Give it a greenlit waypoint and limits.
 
 ## Staff the work
 
 Check `tavern_placements` for repo and class. Consent, inputs, models and forge come from the matching rule. Use current placement only for your own repo. A Warden defaults to its maker's repo. Cross-repo hires use the pushed default-branch tip, never local work.
 
-1. After greenlight, hire the critical path first and link each member to its waypoint.
+1. After any required greenlight, staff the critical path first.
 2. Tell the user this turn about any provider, model, permission or reasoning substitution.
 3. Re-plan within the party; a bigger party needs greenlight. Explain replacements.
 4. Only the user's Allow one more review control lifts the review budget.
@@ -99,7 +99,7 @@ A scope block is yours to handle, not an ask to pass on.
 1. Read the report's evidence and rerun the key check when cheap. Check the waypoint and the user's goal.
 2. Brief a Warden with the claim and done-when, NEVER your conclusion. An independent check uses another model, fresh context and its own evidence. Preserve same-family or unknown-family limitations.
 3. Reject only work that fails its done-when. Re-brief its maker with the evidence, or replace a stuck maker. Re-check corrections against the same plan.
-4. Credit verified work to its maker.
+4. For an existing branch, PR or path, set owner to your thread ID. Attach the exact subject to the linked journal entry, mark it done, then hire a Warden. Use a fresh waypoint for a different subject.
 6. When you read a report and plan no follow-up, release the member that turn. If you expect one, use `tavern_keep`. A pending Warden check is a follow-up.
 
 ## Track progress

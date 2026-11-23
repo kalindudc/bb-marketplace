@@ -115,5 +115,5 @@ export function reviewWaypointFingerprint(keepers: KeeperStore, target: ReviewTa
   // Preserve existing fingerprints when a plan makes its implicit Warden check explicit.
   const { check, ...work } = waypoint;
   const binding = check === "warden" ? work : waypoint;
-  return createHash("sha256").update(JSON.stringify({ waypoint: binding, maker: makerForWaypoint(plan, members, waypoint.id) })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ waypoint: binding, maker: makerForWaypoint(plan, members, waypoint.id, quest.keeperThreadId) })).digest("hex");
 }

@@ -381,7 +381,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_plan",
     "Wrote the quest map",
-    "Write a quest map with done-when, owners, dependencies, lead times, review load, party and at most three questions. Set reversible:true only for fully reversible work. For routine pre-approval, inventory acts: read and workspace-write need relative paths; check needs a recognised command. Each waypoint needs check: warden, keeper, or none for an agent; you for a mark in the Keeper's journal; keeper for an outside answer recorded with tavern_gate. Warden slots name waypointIds from one maker. Await explicit greenlight before staffing; by-size can approve one party slot without open asks, questions or user or outside gates. A larger party or weaker checks need a new greenlight. For a reversible check change, fromSteer cites the user's routed steer for this quest. Limit waypoint titles to 200 and changeNote to 500 characters. Emit the returned quest-map directive.",
+    "Map owners, done-when, dependencies, lead times, review load, party and at most three questions. Set reversible:true only for fully reversible work. List acts for pre-approval: read/workspace-write need relative paths; check needs a recognised command. Check: warden, keeper or none (agent), you (user mark), keeper (outside, tavern_gate). Warden slots name one maker's waypoints or your subjects (owner: your thread ID). Follow Tavern's explicit greenlight, Ranger exception or by-size approval for one party slot. For a reversible check change, fromSteer cites the user's routed steer. Limit waypoint titles to 200 and changeNote to 500 characters. Emit the returned quest-map directive verbatim.",
     planInputSchema,
     async (input, threadId) => {
       const plan = await runtime.plan(threadId, input);
@@ -396,7 +396,9 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
           ? " Automatically greenlit by the configured by-size policy; Undo is in Decided for you."
           : quest.greenlitVersion !== null
             ? ` Staffing remains within approved plan v${quest.greenlitVersion}.`
-            : " Await the user’s explicit greenlight before staffing.";
+            : quest.checkPlanVersion === plan.version
+              ? " No staffing greenlight is needed for this Ranger-only plan."
+              : " Await the user’s explicit greenlight before staffing.";
       return `Plan v${plan.version} saved.${approval} Write on its own line:\n::tavern-questmap{quest="${plan.boardQuestId}" version="${plan.version}"}${plan.fromSteer ? `\n::tavern-ledger{quest="${plan.boardQuestId}" version="${plan.version}"}` : ""}`;
     },
     "keeper", argumentError,

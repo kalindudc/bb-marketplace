@@ -57,6 +57,45 @@ describe("planned waypoint checks", () => {
     await expect(f.propose(waypoints, { party: [{ ...slot, classId: "smith" }] })).resolves.toContain("Plan v1 saved");
   });
 
+  it("records a Ranger-only plan without inventing approval, then concludes after the Keeper's check", async () => {
+    const f = await fixture();
+    const party = [{ classId: "ranger", characterId: null, model: null, purpose: "Research", waypointIds: ["w1"] }];
+    const waypoints = [{ ...baseWaypoint, owner: "ranger", check: "keeper" }];
+    expect(await f.propose(waypoints, { party })).toContain("No staffing greenlight is needed");
+    expect(f.ask("greenlight")).toBeUndefined();
+    expect(f.k.quest(f.q.id)).toMatchObject({ phase: "build", greenlitVersion: null, checkPlanVersion: 1 });
+
+    f.bind("scout", "ranger");
+    f.entries([waypointEntry("scout", f.q.id)]);
+    await f.settle("accepted");
+    await f.conclude();
+    expect(f.summary()).toMatchObject({ phase: "done", outcome: "concluded" });
+  });
+
+  it("withdraws an unapproved mixed plan's card when replaced by Ranger-only work", async () => {
+    const f = await fixture();
+    const ranger = { classId: "ranger", characterId: null, model: null, purpose: "Research", waypointIds: ["w1"] };
+    const waypoints = [{ ...baseWaypoint, owner: "ranger", check: "keeper" }];
+    await f.propose(waypoints, { party: [ranger, { ...ranger, classId: "smith" }] });
+    const ask = f.ask("greenlight")!;
+    await f.propose(waypoints, { party: [ranger] });
+    expect(f.k.store.get("asks", ask.id)?.state).toBe("withdrawn");
+    expect(f.k.quest(f.q.id)).toMatchObject({ phase: "build", greenlitVersion: null, checkPlanVersion: 2 });
+    await f.propose(waypoints, { party: [ranger, { ...ranger, classId: "smith" }] });
+    expect(f.ask("greenlight")?.effect).toMatchObject({ type: "greenlight", planVersion: 3 });
+  });
+
+  it.each(["user", "outside", "spend", "weaker check"])("preserves approval for Ranger plans with %s", async gate => {
+    const f = await fixture();
+    const party = [{ classId: "ranger", characterId: null, model: null, purpose: "Research", waypointIds: ["w1"] }];
+    if (gate === "weaker check") await f.propose([{ ...baseWaypoint, check: "keeper" }], { party });
+    await f.propose([{
+      ...baseWaypoint, owner: "ranger",
+      actor: gate === "user" || gate === "outside" ? gate : "agent",
+      check: gate === "user" ? "you" : gate === "weaker check" ? "none" : "keeper",
+    }], { party, ...(gate === "spend" ? { spendBudgetCents: 500 } : {}) });
+    expect(f.ask("greenlight")?.effect).toMatchObject({ type: "greenlight", planVersion: gate === "weaker check" ? 2 : 1 });
+  });
   it("takes a three-waypoint watch from scout to done without hiring a Warden or earning verified wins", async () => {
     const f = await fixture();
     expect(f.summary().phase).toBe("scout");
@@ -193,7 +232,7 @@ describe("planned waypoint checks", () => {
 
   it("does not let automatic approval replace explicit greenlight for weaker checks", async () => {
     const f = await fixture();
-    const party = [{ classId: "ranger", characterId: null, model: null, purpose: "Watch", waypointIds: ["w1"] }];
+    const party = [{ classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] }];
     await f.propose([{ ...baseWaypoint, check: "warden" }], { party });
     await f.approve();
     const settings = f.k.settings;

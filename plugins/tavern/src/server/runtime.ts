@@ -21,7 +21,7 @@ import type {
 } from "@get-bb/plugin-sdk";
 import { actorSchema, classKind, type Actor, type Brief, type ClassDef, type LeadLink, type Member, type Report } from "../shared/schema";
 import { TICK_PREFIX } from "../shared/text";
-import { settled, verifiedWaypoint } from "../shared/waypoint";
+import { KEEPER_SUBJECT_OWNER, keeperSubject, settled, verifiedWaypoint } from "../shared/waypoint";
 import { isCloseEffect, unsettledWaypointSchema, waiverLine, type PullRequestChoices } from "../shared/closing";
 import { keeperRecoveryOptions, type AskEffect } from "./ask-effects";
 import { askNeedsUser } from "./attention";
@@ -1718,21 +1718,24 @@ export class TavernRuntime {
   async plan(threadId: string, input: PlanInput) {
     const q = this.keeper.owned(threadId, input.boardQuestId);
     this.keeper.guard(threadId, q.id);
-    const links = input.waypoints.flatMap((waypoint, index) => {
+    const waypoints = input.waypoints.map(waypoint => keeperSubject(waypoint, threadId)
+      ? { ...waypoint, owner: KEEPER_SUBJECT_OWNER } : waypoint);
+    const links = waypoints.flatMap((waypoint, index) => {
       if (waypoint.actor !== "agent" || !waypoint.owner) return [];
-      const member = this.keeper.member(waypoint.owner);
+      const recordsSubject = keeperSubject(waypoint);
+      const member = this.keeper.member(recordsSubject ? threadId : waypoint.owner);
       if (!member) {
         if (waypoint.owner.startsWith("thr_"))
           throw new Error(`waypoints.${index}.owner must name a member in this quest.`);
         return [];
       }
-      if (
+      if (!recordsSubject && (
         member.keeperThreadId !== threadId ||
         member.boardQuestId !== q.id ||
         member.errand ||
         member.classId === "warden" ||
         wasReleased(member)
-      )
+      ))
         throw new Error(
           `waypoints.${index}.owner must be an unreleased maker in this board quest, not its checker.`,
         );
@@ -1746,7 +1749,8 @@ export class TavernRuntime {
         throw new Error(`party.${index}.leadEnvelope: every lead slot needs one and other slots must omit it.`);
     }
     validatePartyCharacters(input, registry);
-    validateCheckerMakers(input, this.keeper.store.all("members").filter(member => member.boardQuestId === q.id));
+    const draft = { ...input, waypoints };
+    validateCheckerMakers(draft, this.keeper.store.all("members").filter(member => member.boardQuestId === q.id), threadId);
     const ids = new Set(input.waypoints.map((waypoint) => waypoint.id));
     if (input.party.some((slot) => slot.waypointIds.some((id) => !ids.has(id))))
       throw new Error("Party assignments must name waypoints in this plan");
@@ -1754,7 +1758,7 @@ export class TavernRuntime {
     for (const memberId of new Set([...links.map(link => link.member.threadId), ...(userWaypoints.length ? [threadId] : [])]))
       await this.keeper.journal.prepare(memberId);
     return this.keeper.store.atomic(() => {
-      const plan = this.keeper.plan(threadId, input);
+      const plan = this.keeper.plan(threadId, draft);
       for (const waypoint of userWaypoints) {
         this.keeper.journal.linkWaypoint(threadId, { boardQuestId: q.id, waypointId: waypoint.id }, waypoint.title, "You", { kind: "agent", threadId });
       }
@@ -1766,7 +1770,7 @@ export class TavernRuntime {
           member.threadId,
           { kind: "agent", threadId },
         );
-        if (!member.waypointId)
+        if (member.threadId !== threadId && !member.waypointId)
           this.keeper.store.put("members", member.threadId, {
             ...this.keeper.member(member.threadId)!,
             waypointId: waypoint.id,
@@ -1777,7 +1781,7 @@ export class TavernRuntime {
         .filter(
           (member) => !wasReleased(member),
         );
-      const assignments = checkerAssignments(plan, members);
+      const assignments = checkerAssignments(plan, members, threadId);
       for (const member of members.filter(
         (member) => member.classId === "warden",
       )) {
@@ -1787,7 +1791,7 @@ export class TavernRuntime {
         this.keeper.store.put("members", member.threadId, {
           ...member,
           checkerWaypointId: assignment?.waypointIds[0] ?? null,
-          checkerMakerThreadId: member.checkerMakerThreadId ?? (assignment?.waypointIds[0] ? makerForWaypoint(plan, members, assignment.waypointIds[0]) : null),
+          checkerMakerThreadId: member.checkerMakerThreadId ?? (assignment?.waypointIds[0] ? makerForWaypoint(plan, members, assignment.waypointIds[0], threadId) : null),
         });
       }
       this.keeper.changed(threadId, q.id);
@@ -1917,22 +1921,27 @@ export class TavernRuntime {
     if (waypoint && waypoint.actor !== "agent")
       throw new Error("A human or outside gate cannot be assigned to an agent");
     let reviewTarget: ReviewTarget | null = null;
+    const recordsSubject = !!waypoint && keeperSubject(waypoint, threadId);
     if (role.id === "warden" && !waypoint) throw new Error("A Warden hire needs exactly one planned waypoint to pin its maker and review posture.");
     if (role.id === "warden" && q && waypoint) {
       const currentMaker = this.keeper.summary(q.id).waypoints.find(item => item.id === waypoint.id)?.ownerMember;
-      const lead = currentMaker ? currentLead(this.keeper.store, currentMaker) : this.keeper.store.leadLinksBy("parentQuestId", q.id).reverse()
+      const lead = recordsSubject ? null : currentMaker ? currentLead(this.keeper.store, currentMaker) : this.keeper.store.leadLinksBy("parentQuestId", q.id).reverse()
         .find(link => link.parentWaypointId === waypoint.id && (holdsLeadSeat(link) || link.result));
       const maker = lead?.result ? this.keeper.member(lead.result.makerThreadId) : currentMaker;
       if (lead && !lead.result) throw new Error(`Wait for the lead's concluded child outcome before hiring a Warden for ${waypoint.id}.`);
-      if (!maker || !lead && !["smith", "ranger", "wanderer"].includes(maker.classId))
+      const makerThreadId = recordsSubject ? threadId : maker && (lead || ["smith", "ranger", "wanderer"].includes(maker.classId)) ? maker.threadId : null;
+      if (!makerThreadId)
         throw new Error(`Cannot hire a Warden for ${waypoint.id}: the maker and its journal entries are unknown. Assign the maker and link its entry first.`);
-      await this.keeper.journal.prepare(maker.threadId);
-      const entries = this.keeper.journal.get(maker.threadId).entries.filter(entry =>
-        entry.link?.boardQuestId === q.id && entry.link.waypointId === waypoint.id && (!lead?.result || entry.id === lead.result.entryId),
+      await this.keeper.journal.prepare(makerThreadId);
+      const entries = this.keeper.journal.get(makerThreadId).entries.filter(entry =>
+        entry.link?.boardQuestId === q.id && entry.link.waypointId === waypoint.id && (!lead?.result || entry.id === lead.result.entryId) &&
+        (!recordsSubject || entry.owner === threadId && entry.evidence.length > 0 && (entry.status === "done" || entry.status === "verified")),
       );
       if (!entries.length)
-        throw new Error(`Cannot hire a Warden for ${waypoint.id}: maker ${maker.threadId} has no known journal entry for this waypoint. Link the maker entry first.`);
-      reviewTarget = { boardQuestId: q.id, waypointId: waypoint.id, makerThreadId: maker.threadId, entryIds: entries.map(entry => entry.id) };
+        throw new Error(recordsSubject
+          ? `Cannot hire a Warden for ${waypoint.id}: record the subject as evidence in your linked journal entry and mark it done first.`
+          : `Cannot hire a Warden for ${waypoint.id}: maker ${makerThreadId} has no known journal entry for this waypoint. Link the maker entry first.`);
+      reviewTarget = { boardQuestId: q.id, waypointId: waypoint.id, makerThreadId, entryIds: entries.map(entry => entry.id) };
     }
     let staffingCapacity: number | null = null;
     const scouting =
@@ -2041,13 +2050,13 @@ export class TavernRuntime {
       }
     }
     const hirePlan = q ? this.keeper.summary(q.id).plan : null;
-    if (hirePlan) { validatePartyCharacters(hirePlan, snapshot); validateCheckerMakers(hirePlan, this.keeper.store.all("members").filter(member => member.boardQuestId === q?.id)); }
+    if (hirePlan) { validatePartyCharacters(hirePlan, snapshot); validateCheckerMakers(hirePlan, this.keeper.store.all("members").filter(member => member.boardQuestId === q?.id), threadId); }
     const occupied = [...party.filter(member => member.boardQuestId === questId), ...reserved.filter(intent => intent.owner.boardQuestId === questId).map(intent => ({ classId: intent.classId, characterId: intent.characterId, waypointId: intent.owner.waypointId }))];
     const slot = hirePlan?.party.find(slot => slot.classId === role!.id &&
       (!input.waypointId || slot.waypointIds.includes(input.waypointId) || role.id === "warden" && slot.waypointIds.length === 0) &&
       !occupied.some(member => member.classId === slot.classId && (slot.characterId ? member.characterId === slot.characterId : !!member.waypointId && slot.waypointIds.includes(member.waypointId))));
     const reviewMaker = reviewTarget?.makerThreadId;
-    if (role.id === "warden" && slot && reviewMaker !== undefined && hirePlan && slot.waypointIds.some(id => makerForWaypoint(hirePlan, this.keeper.store.all("members").filter(member => member.boardQuestId === q?.id), id) !== reviewMaker))
+    if (role.id === "warden" && slot && reviewMaker !== undefined && hirePlan && slot.waypointIds.some(id => makerForWaypoint(hirePlan, this.keeper.store.all("members").filter(member => member.boardQuestId === q?.id), id, threadId) !== reviewMaker))
       throw new Error("Every waypoint in this Warden slot must name the same maker as its review target. Assign those maker threads first; a different maker needs its own Warden.");
     if (slot?.characterId && input.characterId && slot.characterId !== input.characterId)
       throw new Error(`This plan slot requires character ${slot.characterId}; propose a new plan to change it.`);
@@ -2113,7 +2122,7 @@ export class TavernRuntime {
     };
     let brief = `Your brief:\n${JSON.stringify(input.brief, null, 2)}\n${leadHire ? "Open one linked child quest with tavern_quest. The hire is its receipt; do not route the brief as a user message." : "Report through tavern_report; do not message the Keeper directly."}`;
     if (reviewTarget)
-      brief += `\nTrusted journal review target:\n${JSON.stringify(reviewTarget, null, 2)}\nVerify or reject these entry ids in the maker's thread, not in your own journal. Keep the waypoint and maker thread identifiers with your evidence.`;
+      brief += `\nTrusted journal review target:\n${JSON.stringify(reviewTarget, null, 2)}\n${recordsSubject ? "Check the exact subject recorded by the Keeper. Verify or reject these entries in the Keeper's journal, not your own." : "Verify or reject these entry ids in the maker's thread, not in your own journal."} Keep the waypoint and target thread identifiers with your evidence.`;
     owner.assignmentText = brief;
     brief += `\n\n${requestSourcePacket(this.keeper, requestSources)}`;
     const intent: HireIntent = {
@@ -2205,7 +2214,7 @@ export class TavernRuntime {
         }
         brief += reviewTarget?.snapshotId
           ? `\nTrusted checker execution:\n${JSON.stringify(checking.checks, null, 2)}\nRun checks in your own checkout, using the cwd returned by tavern_ready. The pinned submitted tree is ${reviewTarget.expectedTree}, snapshot ${reviewTarget.snapshotId}. Default test/check/lint/typecheck runners accepted by the checker preset need no tool-name widening or user-run workaround. Additional commands above are verbatim from this plan, not the brief. The observed checker posture is shown once the machine is ready; use the posture returned by tavern_ready. Tracked files, Git metadata, publishing and network writes remain protected.`
-          : `\nTrusted checker execution:\n${JSON.stringify(checking.checks, null, 2)}\nDefault test/check/lint/typecheck runners accepted by the checker preset need no tool-name widening or user-run workaround. Additional commands above are verbatim from this plan, not the brief. Run checks inside the exact maker worktree (or change to it first), never the Warden/Keeper checkout. Tracked files, Git metadata, publishing and network writes remain protected.`;
+          : `\nTrusted checker execution:\n${JSON.stringify(checking.checks, null, 2)}\nDefault test/check/lint/typecheck runners accepted by the checker preset need no tool-name widening or user-run workaround. Additional commands above are verbatim from this plan, not the brief. ${recordsSubject ? "Run checks only in the trusted checkout and only if it matches the recorded subject." : "Run checks inside the exact maker worktree (or change to it first), never the Warden/Keeper checkout."} Tracked files, Git metadata, publishing and network writes remain protected.`;
         if (!reviewTarget?.snapshotId && !checking.checks.worktree) brief += `\n${checking.problems.join("\n")} Do not run checks until the trusted maker binding is repaired.`;
         this.keeper.store.put("hires", token, { ...this.keeper.store.get("hires", token)!, owner, initialInput: brief, scopeResolution });
       }

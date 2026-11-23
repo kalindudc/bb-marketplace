@@ -42,6 +42,19 @@ it("separates the estimate from the verified mark on the same waypoint", () => {
   } finally { slot.lifecycle.unmount(); }
 });
 
+it("credits the Warden, not a maker, when the Keeper recorded the subject", () => {
+  const warden = detail.quest.members.find(member => member.classId === "warden")!;
+  const waypoint = { ...detail.quest.waypoints[0]!, owner: "this-keeper", ownerMember: null, evidenceCount: 1, state: "verified" as const, checkedBy: [warden.threadId], madeBy: [], verifiedBy: warden.threadId };
+  const quest = { ...detail.quest, waypoints: [waypoint], members: [{ ...warden, checkIndependence: "same-family" as const }] };
+  const memberCredits = [{ memberThreadId: warden.threadId, madeWaypointIds: [], verifiedWaypointIds: [waypoint.id] }];
+  const slot = renderSlot({ component: () => <QuestMap quest={quest} mode="tale" memberCredits={memberCredits} rowsOnly /> }, {}, {});
+  try {
+    const row = within(slot.getByRole("list", { name: "Waypoints in order" })).getByRole("listitem");
+    expect(row.textContent).toMatch(/Subject recorded by the Keeper.*verified.*same-family check \(not independent\)/);
+    expect(row.textContent).not.toContain(" made");
+  } finally { slot.lifecycle.unmount(); }
+});
+
 it.runIf(process.env.TAVERN_UI_ITEMS_HARNESS === "1")("exports the three report surfaces and the separate waypoint verdicts", () => {
   const slot = view();
   try { process.stdout.write("MEMBER_ESTIMATE=" + JSON.stringify(slot.container.innerHTML) + "\n"); }

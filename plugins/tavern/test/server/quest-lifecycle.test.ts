@@ -5,6 +5,7 @@ import { KeeperStore } from "../../src/server/keeper/store";
 import { MIGRATIONS } from "../../src/server/migrations";
 import { transitionQuest, QUEST_TRANSITIONS, displayStage, nextNewsBy } from "../../src/server/keeper/quest-lifecycle";
 import type { BoardQuest } from "../../src/shared/schema";
+import { planInput } from "./support";
 
 function fixture(phase: BoardQuest["phase"] = "scout") {
   const db = new Database(":memory:");
@@ -17,7 +18,7 @@ function fixture(phase: BoardQuest["phase"] = "scout") {
 
 describe("quest lifecycle", () => {
   it("pins the allowed rows and records each cause atomically", () => {
-    expect([...new Set(QUEST_TRANSITIONS.map(row => row.cause))].sort()).toEqual(["approve", "approve-lead", "approve-lead-user", "auto-approve", "close", "close-early", "conclude", "conclude-lead", "conclude-open-at-upgrade", "conclude-withdrawn", "extensions", "hold", "keep-open", "open", "open-lead", "plan", "reopen", "replacement-plan", "resume", "stop", "stop-chain", "stopped", "undo"]);
+    expect([...new Set(QUEST_TRANSITIONS.map(row => row.cause))].sort()).toEqual(["approve", "approve-lead", "approve-lead-user", "auto-approve", "close", "close-early", "conclude", "conclude-lead", "conclude-open-at-upgrade", "conclude-withdrawn", "extensions", "hold", "keep-open", "open", "open-lead", "plan", "ranger-plan", "reopen", "replacement-plan", "resume", "stop", "stop-chain", "stopped", "undo"]);
     for (const row of QUEST_TRANSITIONS) {
       const { store, quest } = fixture(row.from ?? "scout");
       if (row.from === null) store.remove("quests", quest.id);
@@ -30,7 +31,15 @@ describe("quest lifecycle", () => {
         store.db.prepare("UPDATE tavern_records SET data=? WHERE id=?").run(JSON.stringify(quest), quest.id);
       }
       const actor = row.actors.includes("user") ? { kind: "user" as const } : row.actors.includes("agent") ? { kind: "agent" as const, threadId: "k" } : { kind: "tavern" as const };
-      const receipt = { kind: row.receipt, id: "receipt" };
+      const receipt = { kind: row.receipt, id: row.cause === "ranger-plan" ? "q:1" : "receipt" };
+      const patch = row.cause === "ranger-plan" ? { checkPlanVersion: 1 } : undefined;
+      if (patch) {
+        expect(() => transitionQuest(store, quest, row.to, row.cause, actor, receipt, 2, { patch })).toThrow(/recorded Ranger-only plan/);
+        store.put("plans", receipt.id, {
+          ...planInput(quest.id), reversible: false, version: 1, fromSteer: null, createdAt: 1, alwaysAskKinds: [],
+          party: [{ classId: "ranger", characterId: null, model: null, purpose: "Scout", waypointIds: ["w1"] }],
+        });
+      }
       if (row.cause === "replacement-plan") {
         expect(() => transitionQuest(store, quest, row.to, row.cause, actor, receipt, 2)).toThrow(/earlier party approval/);
         continue;
@@ -47,7 +56,7 @@ describe("quest lifecycle", () => {
         expect(store.events("k")).toEqual([]);
         continue;
       }
-      const result = transitionQuest(store, quest, row.to, row.cause, actor, receipt, 2);
+      const result = transitionQuest(store, quest, row.to, row.cause, actor, receipt, 2, { patch });
       expect(result.phase).toBe(row.to);
       const event = store.events("k", 0, 10).at(-1)!;
       expect(event.data.phase).toEqual({ from: row.from, to: row.to });

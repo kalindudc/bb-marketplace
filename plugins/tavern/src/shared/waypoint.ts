@@ -1,7 +1,18 @@
-import type { Waypoint, WaypointState } from "./schema";
+import type { Plan, Waypoint, WaypointState } from "./schema";
 
 export function waypointCheck(waypoint: Pick<Waypoint, "actor" | "check">) {
   return waypoint.check ?? (waypoint.actor === "user" ? "you" : waypoint.actor === "outside" ? "keeper" : "warden");
+}
+
+export function rangerOnlyPlan(plan: Pick<Plan, "party" | "waypoints">) {
+  return plan.party.length > 0 && plan.party.every(slot => slot.classId === "ranger") && plan.waypoints.every(w => w.actor === "agent");
+}
+
+export const KEEPER_SUBJECT_OWNER = "this-keeper";
+
+export function keeperSubject(waypoint: Pick<Waypoint, "actor" | "check" | "owner">, keeperThreadId?: string) {
+  return (waypoint.owner === KEEPER_SUBJECT_OWNER || waypoint.owner === keeperThreadId) &&
+    waypoint.actor === "agent" && waypointCheck(waypoint) === "warden";
 }
 
 export function resolutionWords(waypoint: Pick<Waypoint, "actor" | "check"> & { state: WaypointState; acceptedBy?: string | null; resolutionReason?: string | null }) {

@@ -99,7 +99,7 @@ export const routeQuestIds = (
 import { localClock } from "../clock";
 import { moveTime } from "../../shared/time";
 import { assertQuestTransition, transitionQuest, displayStage, nextNewsBy, storedPhase, partyFits, checksFit, approvedPartyReceipt } from "./quest-lifecycle";
-import { settled, verifiedWaypoint, waypointCheck } from "../../shared/waypoint";
+import { keeperSubject, rangerOnlyPlan, settled, verifiedWaypoint, waypointCheck } from "../../shared/waypoint";
 import { isCloseEffect, waiverWords } from "../../shared/closing";
 import { assertUndoLane, readUndoLanes, undoAskProjection } from "../undo-record";
 import { captureLegacyForwarding, currentAskNames, forwardedAskQuestion } from "../quest-names";
@@ -976,7 +976,8 @@ export class Keeper {
     const proposesBudget = plan.spendBudgetCents !== undefined && (plan.spendBudgetCents !== previousBudget || carriesPendingBudget) && plan.spendBudgetCents !== q.spendBudget?.cents && !q.spendBudget?.reached;
     const spendProposal = proposesBudget ? { planVersion: plan.version, cents: plan.spendBudgetCents! }
       : plan.spendBudgetCents !== undefined && plan.spendBudgetCents === previousBudget ? q.spendProposal : null;
-    const needsGreenlight = leadPath.length > 0 || approved === null || !partyFits(plan, approved) || weakensChecks && !steer || proposesBudget;
+    const rangers = rangerOnlyPlan(plan);
+    const needsGreenlight = leadPath.length > 0 || !rangers && (approved === null || !partyFits(plan, approved)) || weakensChecks && !steer || proposesBudget;
     const automatic =
       needsGreenlight && !weakensChecks && !leadPath.length && !plan.party.some(slot => slot.leadEnvelope) &&
       this.settings().keepers.greenlight === "by-size" &&
@@ -992,6 +993,8 @@ export class Keeper {
       const data = { version: plan.version, routeId: r?.id ?? null };
       if (needsGreenlight && storedPhase(q.phase) !== "greenlight") {
         transitionQuest(this.store, q, "greenlight", "plan", { kind: "agent", threadId }, { kind: "plan", id: `${q.id}:${plan.version}` }, this.now(), { patch: updated, text: `Plan v${plan.version}`, data });
+      } else if (!needsGreenlight && rangers && (q.phase === "scout" || q.phase === "greenlight")) {
+        transitionQuest(this.store, q, "build", "ranger-plan", { kind: "agent", threadId }, { kind: "plan", id: `${q.id}:${plan.version}` }, this.now(), { patch: updated, text: `Ranger-only plan v${plan.version}; no staffing greenlight needed`, data });
       } else if (!needsGreenlight && q.phase === "greenlight") {
         const receipt = approvedPartyReceipt(this.store, q);
         if (!receipt) throw new Error("Replacement plan requires this quest\'s earlier party approval");
@@ -1027,7 +1030,7 @@ export class Keeper {
       }
       if (leadPath.length) proposeLeadPlan(this, q, plan, leadPath);
       else if (needsGreenlight && !automatic) this.askGreenlight(q, plan, weakensChecks ? "This plan reduces the checks you approved. Review its checks before it can proceed." : "Staffing requires your explicit greenlight.", weakensChecks);
-      if (!needsGreenlight) {
+      if (!needsGreenlight && (!rangers || steer)) {
         this.decide(threadId, {
           boardQuestId: q.id,
           text: steer ? `Changed checks in plan v${plan.version} from your steer` : `Replanned to v${plan.version} within the greenlit party`,
@@ -2298,7 +2301,7 @@ export class Keeper {
       .filter((member) => !wasReleased(member));
     const waitingLeads = new Set(this.store.leadLinksBy("parentQuestId", quest.id)
       .filter(link => link.state === "linked" && !link.result).map(link => link.parentWaypointId));
-    return checkerAssignments(plan, members).find(assignment => assignment.memberThreadId === threadId)
+    return checkerAssignments(plan, members, quest.keeperThreadId).find(assignment => assignment.memberThreadId === threadId)
       ?.waypointIds.filter(id => !waitingLeads.has(id)) ?? [];
   }
   private waypointCalls(questId: string, version: number) {
@@ -2352,16 +2355,18 @@ export class Keeper {
     ).map((w) => {
       const call = calls.get(w.id);
       const waiver = q.waivers?.find(waiver => waiver.waypointId === w.id && waiver.planVersion === q.planVersion);
+      const recordsSubject = keeperSubject(w, q.keeperThreadId);
       const isLeadResult = (e: JournalEntry) => leadSeats.some(link => link.parentWaypointId === w.id && link.result?.entryId === e.id && link.result.makerThreadId === e.threadId);
       const linked = entries.filter(e =>
         e.link?.boardQuestId === id && e.link.waypointId === w.id &&
-        (w.actor === "user" ? e.threadId === q.keeperThreadId : w.actor === "agent" && e.owner !== "You") &&
+        (w.actor === "user" ? e.threadId === q.keeperThreadId : w.actor === "agent" && e.owner !== "You" &&
+          (recordsSubject ? e.threadId === q.keeperThreadId : e.threadId !== q.keeperThreadId)) &&
         memberOf(e.threadId)?.classId !== "warden" &&
-        (!memberOf(e.threadId)?.leadLinkId || isLeadResult(e)) &&
+        (recordsSubject || !memberOf(e.threadId)?.leadLinkId || isLeadResult(e)) &&
         (isLeadResult(e) || !released.has(e.threadId) || e.status === "verified" || e.status === "done" && (w.check === "none" || call?.waypointCall?.as === "accepted")),
       );
       const ownerMember =
-        (w.actor === "agent" && members.find(
+        (!recordsSubject && w.actor === "agent" && members.find(
           (m) =>
             m.classId !== "warden" &&
             (m.threadId === w.owner || m.waypointId === w.id) &&
@@ -2401,7 +2406,7 @@ export class Keeper {
       else if (linked.some(e => e.status === "doing")) state = "doing";
       else if (reported && w.actor === "agent") state = "reported";
       else state = linked.length ? "todo" : "planned";
-      const madeBy = state === "reported" || state === "verified" || (state === "accepted" || state === "done") && w.actor === "agent"
+      const madeBy = !recordsSubject && (state === "reported" || state === "verified" || (state === "accepted" || state === "done") && w.actor === "agent")
         ? [...new Set(linked.map(e => e.threadId))] : [];
       const checkedBy = state === "verified" ? [...new Set(linked.flatMap(entry => {
         const author = entry.review?.actor ?? entry.updatedBy;

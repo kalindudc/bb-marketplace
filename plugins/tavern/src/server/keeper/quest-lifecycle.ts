@@ -1,6 +1,6 @@
 import type { Actor, BoardQuest, Phase, Plan, WaypointState } from "../../shared/schema";
 import type { KeeperStore } from "./store";
-import { settled, waypointCheck } from "../../shared/waypoint";
+import { rangerOnlyPlan, settled, waypointCheck } from "../../shared/waypoint";
 
 export const STORED_PHASES = ["scout", "greenlight", "build", "held", "closing", "done", "stopping", "stopped"] as const;
 type StoredPhase = typeof STORED_PHASES[number];
@@ -10,6 +10,7 @@ export const QUEST_TRANSITIONS: readonly Row[] = [
   ...rows([null], ["scout"], "open", ["agent"], "user-message", "quest.opened"),
   ...rows([null], ["scout"], "open-lead", ["agent"], "hire", "quest.opened"),
   ...rows(["scout", "build"], ["greenlight"], "plan", ["agent"], "plan", "plan.proposed"),
+  ...rows(["scout", "greenlight"], ["build"], "ranger-plan", ["agent"], "plan", "plan.proposed"),
   ...rows(["greenlight"], ["build"], "replacement-plan", ["agent"], "ask-answer", "plan.proposed"),
   ...rows(["greenlight"], ["build"], "replacement-plan", ["agent"], "decision", "plan.proposed"),
   ...rows(["greenlight"], ["build"], "approve", ["user"], "ask-answer", "ask.answered"),
@@ -104,6 +105,13 @@ export function assertQuestTransition(store: KeeperStore, quest: BoardQuest, to:
           ask?.boardQuestId !== quest.id || ask.keeperThreadId !== quest.keeperThreadId ||
           ask.answer?.by !== "keeper" || ask.answer.optionId !== "conclude")
         throw new Error("This conclusion requires the current hiring Keeper and exact child request.");
+    }
+    if (cause === "ranger-plan") {
+      const plan = store.get("plans", receipt.id);
+      if (!current || actor.kind !== "agent" || actor.threadId !== current.keeperThreadId ||
+          !plan || plan.boardQuestId !== current.id || plan.version !== options.patch?.checkPlanVersion ||
+          !rangerOnlyPlan(plan) || store.leadLinksBy("childQuestId", current.id).length)
+        throw new Error("Proceeding without staffing approval requires this quest's recorded Ranger-only plan.");
     }
     if (cause === "replacement-plan") {
       const approval = current && approvedPartyReceipt(store, current);

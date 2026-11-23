@@ -2,7 +2,8 @@ import { memberName } from "../../shared/member-name";
 import { useEffect, useRef, useState } from "react";
 import type { BoardQuestDetail, BoardQuestSummary } from "../../shared/contract";
 import { SHAPE_PATHS } from "../../shared/heraldry";
-import { resolutionWords, settled, verifiedWaypoint, waypointCheck } from "../../shared/waypoint";
+import { keeperSubject, resolutionWords, settled, verifiedWaypoint, waypointCheck } from "../../shared/waypoint";
+import { reviewLimitation } from "../../shared/check-posture";
 import { useRegistry, memberIdentity, type Registry } from "./registry";
 import { Crest } from "./crest";
 import { levelFor, type Level } from "./level";
@@ -45,6 +46,7 @@ type Owner = { kind: "member" | "proposed" | "class" | "you" | "outside"; name: 
 function ownerOf(w: WaypointView, quest: BoardQuestSummary, registry: Registry | undefined): Owner {
   if (w.actor === "user") return { kind: "you", name: "You", identity: null };
   if (w.actor === "outside") return { kind: "outside", name: w.owner ?? "Outside owner", identity: null };
+  if (keeperSubject(w)) return { kind: "class", name: "The Keeper", identity: null };
   if (w.ownerMember && registry) { const identity = memberIdentity(registry, w.ownerMember); return { kind: "member", name: identity?.character.name ?? memberName(w.ownerMember, registry), identity, level: levelFor(registry, w.ownerMember.characterId, w.ownerMember.classId) }; }
   const slot = quest.plan?.party.find(p => p.waypointIds.includes(w.id));
   const cls = registry?.classes.find(c => c.id === (slot?.classId ?? w.owner));
@@ -62,6 +64,13 @@ function creditLine(w: WaypointView, owner: Owner, quest: BoardQuestSummary, reg
   const nameOf = (threadId: string | null) => { const m = threadId ? quest.members.find(x => x.threadId === threadId) : undefined; return m && registry ? memberIdentity(registry, m)?.character.name ?? null : null; };
   const madeRow = credits.find(c => c.madeWaypointIds.includes(w.id));
   const verifiedRow = credits.find(c => c.verifiedWaypointIds.includes(w.id));
+  if (keeperSubject(w)) {
+    const checker = verifiedWaypoint(w) ? quest.members.find(m => m.threadId === w.verifiedBy) : undefined;
+    const verdict = verifiedWaypoint(w) ? `${nameOf(w.verifiedBy) ?? "A Warden"} verified` : STATE_WORD[w.state];
+    const posture = verifiedWaypoint(w) ? reviewLimitation(checker?.checkIndependence) ?? (checker?.checkIndependence === "independent" ? "different-family check" : "check independence not established") : null;
+    const subject = w.evidenceCount > 0 ? "Subject recorded by the Keeper" : "Keeper records the subject";
+    return `${subject} · ${verdict}${posture ? ` · ${posture}` : ""}`;
+  }
   const classed = owner.kind === "class" ? owner.name.replace(/^A /, "a ") : owner.name;
   const maker = madeRow ? nameOf(madeRow.memberThreadId) ?? classed : classed;
   const checker = verifiedWaypoint(w) ? nameOf(verifiedRow?.memberThreadId ?? w.verifiedBy) ?? "a Warden" : null;
@@ -144,7 +153,7 @@ export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, s
   return (
     <section ref={container} className={`tavern quest-map-container qmap m-${mode} ${rowsOnly || narrow ? "list-only" : ""} ${dealt ? "dealt" : ""} ${stretch ? "stretch" : ""}`} data-part="QuestMap" aria-label={`Quest map: ${quest.title}`}>
       {showChecks && !quest.waypoints.some(w => waypointCheck(w) === "warden") && <p className="wp-check-note m">No Warden checks on this map</p>}
-      {!rowsOnly && <svg className="qsvg" viewBox={`0 0 ${width} ${height}`} style={{ maxWidth: spread ? "none" : width }} role="img" aria-label={visible.map(n => describe(n.waypoint)).join("; ")}>
+      {!rowsOnly && <svg className="qsvg" viewBox={`0 0 ${width} ${height}`} style={{ maxWidth: spread ? "none" : width }} role="img" aria-label={visible.map(({ waypoint }) => [describe(waypoint), credit(waypoint)].filter(Boolean).join(", ")).join("; ")}>
         {visible.flatMap(n => n.waypoint.dependsOn.map(id => { const from = byId.get(id); if (!from) return null; const mx = (from.x + n.x) / 2; const done = settled(from.waypoint); return <path key={`${id}-${n.waypoint.id}`} className={`road ${done ? "done" : ""}`} d={from.y === n.y ? `M${from.x + 18} ${from.y}H${n.x - 18}` : `M${from.x + 18} ${from.y}C${mx} ${from.y} ${mx} ${n.y} ${n.x - 18} ${n.y}`} />; }))}
         {visible.map((n, i) => { const w = n.waypoint; const o = owners.get(w.id)!; return (
           <g key={w.id} className={`wp s-${w.state} o-${o.kind}`} style={{ ["--i" as string]: i }}>

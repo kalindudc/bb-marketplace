@@ -6,6 +6,7 @@ import { SettingsStore } from "../../src/server/settings/store";
 import { InsightsReader } from "../../src/server/insights";
 import { registerRpc } from "../../src/server/rpc";
 import { registerTools } from "../../src/server/tools";
+import { createJournalStore } from "../../src/server/journal/store";
 import type { Member } from "../../src/shared/schema";
 import { setup } from "./runtime-fixture";
 import { catalog, model } from "./provider-fixture";
@@ -136,6 +137,47 @@ describe("Warden model family evidence", () => {
 });
 
 describe("Warden target briefing", () => {
+  it("pins a Warden to a recorded Keeper subject and credits verification without crediting a maker", async () => {
+    const f = setup();
+    const q = await seedQuest(f.k, "lead", "Validate a release", "Validate");
+    const base = planInput(q.id);
+    const subject = "Validate the release branch";
+    f.bb.sdk.threads.getPluginMetadata = async () => ({});
+    const journal = createJournalStore(f.bb, f.k.store.db, {
+      invalidate: () => {},
+      roleOf: id => {
+        const member = f.k.member(id);
+        return member?.classId === "warden" ? { ...member, checkerWaypointIds: f.k.checkerWaypoints(id) } : member;
+      },
+    });
+    Object.assign(f.port, journal);
+    const plan = await f.runtime.plan("lead", { ...base, reversible: false, waypoints: [{ ...base.waypoints[0]!, title: subject, owner: "lead", check: "warden" }], party: [{ classId: "warden", characterId: null, model: null, purpose: "Validate", waypointIds: ["w1"] }] });
+    expect(plan.waypoints[0]?.owner).toBe("this-keeper");
+    const entry = journal.linkedEntries(q.id)[0]!;
+    expect(entry).toMatchObject({ threadId: "lead", owner: "lead", description: subject, link: { boardQuestId: q.id, waypointId: "w1" } });
+    const input = { classId: "warden", boardQuestId: q.id, waypointId: "w1", title: "Check release", brief };
+    await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(/greenlight/);
+    f.k.answerAsk(f.k.store.openAsks("lead", q.id).find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
+
+    await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(/record.*subject/i);
+    expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
+    const record = await journal.runTool("lead", { action: "done", id: entry.id, evidence: [{ kind: "query", ref: "refs/heads/release", detail: "Release subject", exitCode: null }] });
+    expect(record).toMatchObject({ isError: false });
+
+    const member = await f.runtime.hire("lead", "project", input);
+    expect(f.k.store.runtime(member.threadId).reviewTarget).toMatchObject({ makerThreadId: "lead", waypointId: "w1", entryIds: [entry.id] });
+    expect(f.k.checkerWaypoints(member.threadId)).toEqual(["w1"]);
+    const spawn = f.harness.inspection.sdk.callsTo("threads.spawn")[0]!.args[0] as { input: { text: string }[] };
+    expect(spawn.input[0]!.text).toContain("subject recorded by the Keeper");
+
+    const target = { threadId: "lead", id: entry.id };
+    const evidence = [{ kind: "command" as const, ref: "git rev-parse refs/heads/release", detail: "Release ref resolves", exitCode: 0 }];
+    expect(await journal.runTool("lead", { ...target, action: "verify", evidence })).toMatchObject({ isError: true });
+    expect(await journal.runTool(member.threadId, { ...target, action: "done", evidence })).toMatchObject({ isError: true });
+    expect(await journal.runTool(member.threadId, { ...target, action: "verify" })).toMatchObject({ isError: true });
+    expect(await journal.runTool(member.threadId, { ...target, action: "verify", evidence })).toMatchObject({ isError: false });
+    expect(f.k.summary(q.id).waypoints[0]).toMatchObject({ state: "verified", madeBy: [], checkedBy: [member.threadId] });
+  });
   it.each(["smith", "ranger"])("compares the checked %s, not the Keeper, and includes the exact maker journal references", async classId => {
     const f = await review(classId);
     f.bb.sdk.threads.defaultExecutionOptions = vi.fn<typeof f.bb.sdk.threads.defaultExecutionOptions>(async ({ threadId }) => ({ model: threadId === "maker" ? anthropic : openai, permissionMode: "full", reasoningLevel: "high", serviceTier: "standard", source: "client/turn/start" }));
