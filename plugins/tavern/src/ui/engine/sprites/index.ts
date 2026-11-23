@@ -1,7 +1,8 @@
 import { readPalette, type CharacterPalette } from "../../kit/characters";
 import { isLampKind, type ArtFactory, type ArtFrame, type ArtInput, type LightAnchor, type Mood } from "../art";
+import { SUN_WARM } from "../light";
 import { actor, dayShadow, lamp, rainCloud } from "./parts";
-import { blit, GROUND, HEIGHT, spriteColours, WIDTH } from "./pixels";
+import { blit, GROUND, HEIGHT, spriteColours, sunRim, WIDTH } from "./pixels";
 import { poseBook, smallIdle } from "./poses";
 import { classKit, HANDWORK, seedTraits } from "./traits";
 
@@ -14,6 +15,11 @@ const LIGHTS = {
 const RAIN = rainCloud();
 const DAY_SHADOW = dayShadow();
 
+type Drawing = ReturnType<typeof actor> & {
+  bodyKey: number;
+  rims?: [ReturnType<typeof sunRim>?, ReturnType<typeof sunRim>?];
+};
+
 function spriteFacing(frame: ArtFrame): ArtFrame["facing"] {
   if (frame.activity !== "walk" || frame.still || smallIdle(frame)) return frame.facing;
   return frame.facing === 1 ? -1 : 1;
@@ -24,17 +30,17 @@ export const createArt: ArtFactory = input => {
   const kit = classKit(input.classId);
   const handwork = (mood: Mood) => mood === "blocked" || mood === "error" ? "hands" : kit.quiet[mood] ?? kit.idle;
   const { poses, at, index } = poseBook(handwork, traits.blinkOffset, kit.signature);
-  const drawings = new Map<number, { runs: Uint8Array; anchor: LightAnchor | null; bodyKey: number }>();
+  const drawings = new Map<number, Drawing>();
   const bodies = new Map<string, number>();
   const drawing = (i: number, dark = false) => {
     const key = i * 2 + Number(dark);
     const cached = drawings.get(key);
     if (cached) return cached;
-    const { runs, anchor } = actor(traits, poses[i]!, input.charge, dark);
+    const { runs, anchor, chin } = actor(traits, poses[i]!, input.charge, dark);
     const encoding = `${runs}|${anchor?.x},${anchor?.y}|${dark}`;
     const bodyKey = bodies.get(encoding) ?? bodies.size;
     bodies.set(encoding, bodyKey);
-    const result = { runs, anchor, bodyKey };
+    const result: Drawing = { runs, anchor, chin, bodyKey };
     drawings.set(key, result);
     return result;
   };
@@ -89,25 +95,26 @@ export const createArt: ArtFactory = input => {
       const x = anchor.x + (lamp?.flameX ?? 0);
       return { kind, x: spriteFacing(frame) === -1 ? WIDTH - 1 - x : x, y: anchor.y + (lamp?.flameY ?? 0) };
     },
-    draw(ctx, frame, palette, lift = 0) {
+    draw(ctx, frame, palette, options) {
       const { index: i, ember } = at(frame);
-      const { runs, anchor } = drawing(i, frame.dark);
+      const body = drawing(i, frame.dark);
+      const { runs, anchor, chin } = body;
       const facing = spriteFacing(frame);
       const colours = coloursFor(palette);
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
-      if (!frame.dark) {
-        if (lift > 0) {
-          const scale = 1 / (1 + lift / 12);
-          ctx.save();
-          ctx.translate(WIDTH / 2, GROUND - 1 + lift);
-          ctx.scale(scale, scale);
-          ctx.translate(-WIDTH / 2, 1 - GROUND);
-          ctx.globalAlpha *= scale;
-        }
-        blit(ctx, DAY_SHADOW, colours, 1);
-        if (lift > 0) ctx.restore();
-      }
+      if (!frame.dark && !options) blit(ctx, DAY_SHADOW, colours, 1);
       blit(ctx, runs, colours, facing);
+      if (!frame.dark && options) {
+        const rims = body.rims ??= [];
+        const { rim, glint } = rims[Number(facing === -1)] ??= sunRim(runs, facing, chin);
+        ctx.save();
+        ctx.fillStyle = SUN_WARM;
+        for (const index of rim) {
+          ctx.globalAlpha = index === glint || index === glint + 1 ? options.sunGlint : 0.24;
+          ctx.fillRect(index % WIDTH, Math.floor(index / WIDTH), 1, 1);
+        }
+        ctx.restore();
+      }
       if (anchor && isLampKind(anchor.kind)) {
         const lamp = LIGHTS[anchor.kind][swingFor(frame, i)]![brightFor(frame, i, ember) as 0 | 1];
         blit(ctx, lamp.runs, colours, facing, anchor.x - 4, anchor.y + lamp.topOffset);

@@ -6,7 +6,7 @@ import { motion, stuckInView, type Surface } from "../kit/motion";
 import { Actor, type Reaction } from "./actor";
 import { CUE_MS, type Cue, type LightAnchor, type Mood } from "./art";
 import { CharacterMenu } from "./character-menu";
-import { connectStripLantern, lightBreath } from "./light";
+import { connectStripLantern, daylightGlint, drawDaylight, lightBreath } from "./light";
 import { isAttentionMood, type MotionMode } from "./rules";
 import { observeWorld, scheduler, type EngineWorld } from "./scheduler";
 import { createArt } from "./sprites";
@@ -127,7 +127,7 @@ export function PartyStrip(props: PartyStripProps) {
     };
     const mode = () => latest.current.quiet ? "off" : scene ? sceneMode : latest.current.mode ?? "calm";
     let activeRules = { mode: mode(), ...holds() };
-    let painted: { x: number; y: number; key: number; art: typeof art; palette: CharacterPalette; badge: boolean } | null = null;
+    let painted: { x: number; y: number; key: number; art: typeof art; palette: CharacterPalette; badge: boolean; stride: number; glint: number } | null = null;
     const world: EngineWorld = {
       mode,
       refresh() {
@@ -187,19 +187,23 @@ export function PartyStrip(props: PartyStripProps) {
         if (!ctx) return;
         const badge = !!latest.current.askDisclosure;
         const key = actor.art.pixelKey(frame);
-        if (painted?.x === x && painted.y === y && painted.key === key && painted.art === actor.art && painted.palette === palette && painted.badge === badge) return;
-        painted = { x, y, key, art: actor.art, palette, badge };
+        const stride = !frame.dark && frame.activity === "walk" ? 2 + Number(frame.step % 4 >= 2) : 0;
+        const glint = frame.dark ? 0 : daylightGlint(frame, activeRules.typing);
+        if (painted?.x === x && painted.y === y && painted.key === key && painted.art === actor.art && painted.palette === palette &&
+            painted.badge === badge && painted.stride === stride && painted.glint === glint) return;
+        painted = { x, y, key, art: actor.art, palette, badge, stride, glint };
         ctx.clearRect(0, 0, width, height);
         ctx.save();
         ctx.translate(x, y);
         ctx.beginPath();
-        ctx.rect(0, 0, spriteWidth, spriteHeight + (frame.dark ? 0 : lift));
+        ctx.rect(0, 0, spriteWidth, spriteHeight);
         // Reserve the badge's full CSS box, including its transparent corners.
         if (badge) ctx.rect(32, 4, 13, 13);
         ctx.clip("evenodd");
         ctx.scale(SCALE, SCALE);
-        actor.art.draw(ctx, frame, palette, lift / SCALE);
+        actor.art.draw(ctx, frame, palette, frame.dark ? undefined : { sunGlint: glint });
         ctx.restore();
+        if (!frame.dark) drawDaylight(ctx, palette.ink, x + spriteWidth / 2, ground, width, SCALE, lift, stride);
       },
       lightAnchors() {
         if (!drawnLight) return [];

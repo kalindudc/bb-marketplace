@@ -59,8 +59,8 @@ export interface CharacterArt {
   nextChange(frame: ArtFrame): number | null;
   /** A key for the rendered layers with the palette held fixed. */
   pixelKey(frame: ArtFrame): number;
-  /** Clears its own width by height first. Lift is in art pixels so the daytime shadow can stay on the ground. */
-  draw(ctx: CanvasRenderingContext2D, frame: ArtFrame, palette: CharacterPalette, lift?: number): void;
+  /** Clears its own width by height first. Strips supply their own daytime ground paint. */
+  draw(ctx: CanvasRenderingContext2D, frame: ArtFrame, palette: CharacterPalette, options?: { sunGlint: number }): void;
   /** Where a carried light emits from, in art pixels, for this frame; null when the character carries none. */
   lightAnchor(frame: ArtFrame): LightAnchor | null;
   /** The name of the class's quiet idle for a mood (for example "reads a scroll"), for tests and the debug readout. */

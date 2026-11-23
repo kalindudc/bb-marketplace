@@ -78,6 +78,35 @@ export function spriteColours(hue: string, traits: SeedTraits, p: CharacterPalet
   ];
 }
 
+export function sunRim(runs: Run, facing: 1 | -1, chin: number) {
+  const cells = new Uint8Array(WIDTH * (chin - 4));
+  for (let i = 0; i < runs.length; i += 4) {
+    const ink = runs[i]!;
+    if (ink === Ink.TopEdge) continue; // TopEdge is transparent in the daytime palette.
+    const x = runs[i + 1]!, y = runs[i + 2]!, w = runs[i + 3]!;
+    const start = y * WIDTH + (facing === 1 ? x : WIDTH - x - w);
+    cells.fill(ink, start, start + w);
+  }
+  const rim: number[] = [];
+  let glint = -2;
+  // Read the mirrored silhouette from screen left, stopping before the character's face.
+  for (let y = 0; y < chin - 4; y++) {
+    let left = true;
+    for (let x = 0; x <= WIDTH / 2; x++) {
+      const index = y * WIDTH + x;
+      const ink = cells[index]!;
+      if (!ink) continue;
+      const top = y === 0 || cells[index - WIDTH] === Ink.Empty;
+      if (x > 0 && y > 0 && ink === Ink.Edge && (left || top)) {
+        rim.push(index);
+        if (top && glint < 0) glint = index;
+      }
+      left = false;
+    }
+  }
+  return { rim, glint };
+}
+
 export function blit(ctx: CanvasRenderingContext2D, runs: Run, colours: readonly string[], facing: 1 | -1, ox = 0, oy = 0) {
   let last = -1;
   for (let i = 0; i < runs.length; i += 4) {

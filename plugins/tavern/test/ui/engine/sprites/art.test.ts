@@ -26,6 +26,7 @@ function recorder(width = 24, height = 28) {
   let scale = 1;
   const ctx = {
     fillStyle: "",
+    globalAlpha: 1, save() {}, restore() { this.globalAlpha = 1; },
     clearRect() { pixels.fill(""); },
     setTransform(a: number) { scale = a; },
     fillRect(x: number, y: number, w: number, h: number) {
@@ -131,32 +132,12 @@ describe("seeded character art", () => {
     expect(ground().every(pixel => !pixel)).toBe(true);
   });
 
-  it("leaves the daytime shadow on the ground and makes it smaller and fainter at the top of a hop", () => {
+  it("leaves the daytime ground clear when the strip paints its own", () => {
     const art = createArt(input);
-    const measure = (lift: number) => {
-      let x = 0, y = -lift, scale = 1;
-      const points: { left: number; right: number; top: number; bottom: number; alpha: number }[] = [];
-      const ctx = {
-        fillStyle: "", globalAlpha: 1, clearRect() {}, save() {},
-        restore() { x = 0; y = -lift; scale = this.globalAlpha = 1; },
-        translate(dx: number, dy: number) { x += dx * scale; y += dy * scale; },
-        scale(s: number) { scale *= s; },
-        fillRect(left: number, top: number, width: number, height: number) {
-          if (!this.fillStyle.startsWith("rgba(59, 52, 42,")) return;
-          points.push({ left: x + left * scale, right: x + (left + width) * scale,
-            top: y + top * scale, bottom: y + (top + height) * scale, alpha: this.globalAlpha });
-        },
-      };
-      art.draw(ctx as unknown as CanvasRenderingContext2D, rest, palette, lift);
-      return { width: Math.max(...points.map(p => p.right)) - Math.min(...points.map(p => p.left)),
-        centreY: (Math.max(...points.map(p => p.bottom)) + Math.min(...points.map(p => p.top))) / 2,
-        alpha: Math.max(...points.map(p => p.alpha)) };
-    };
-    const standing = measure(0), airborne = measure(5);
-    expect(airborne.width).toBeGreaterThan(0);
-    expect(airborne.width).toBeLessThan(standing.width);
-    expect(airborne.alpha).toBeLessThan(standing.alpha);
-    expect(Math.abs(airborne.centreY - standing.centreY)).toBeLessThan(0.5);
+    const { ctx, pixels } = recorder();
+    art.draw(ctx, rest, palette, { sunGlint: 0.48 });
+    expect(pixels.slice(art.width * (art.ground + 1)).every(pixel => !pixel)).toBe(true);
+    expect(pixels).toContain("#f7edd4");
   });
 
   it("has stable shipped ids and snapshots traits for their original seeds", () => {

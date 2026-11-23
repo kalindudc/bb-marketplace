@@ -11,9 +11,11 @@ export function lanternAlpha(strength: keyof typeof LANTERN_STRENGTH, dark: bool
   return LANTERN_STRENGTH[strength] * (dark ? 0.3 : 0.22);
 }
 
+export const SUN_WARM = "#ffd996";
+
 const CLASS_GLOW = {
   runewood: { colour: "#9fdf9a", strength: 0.88 },
-  shutter: { colour: "#ffd996", strength: 0.66 },
+  shutter: { colour: SUN_WARM, strength: 0.66 },
   ember: { colour: "#ff713b", strength: 0.96 },
   crystal: { colour: "#abacff", strength: 0.83 },
 } satisfies Record<ClassLight, { colour: string; strength: number }>;
@@ -109,6 +111,53 @@ export function lightBreath(kind: LightAnchor["kind"], frame: ArtFrame, mode: Mo
   const shimmer = warm ? 0.18 * Math.sin(frame.t / 410 + 3 * phase) : 0;
   const depth = mode === "calm" ? 0.06 : 0.09;
   return Math.round((1 - depth * (1.18 - wave - shimmer)) * 1000) / 1000;
+}
+
+const SUN_SHADOW = [[-5, 3, 0.035], [-6, 8, 0.1], [-5, 11, 0.08], [-1, 10, 0.035]] as const;
+const SUN_PATCH = [[-4, 4, 0.03], [-7, 7, 0.06], [-8, 8, 0.09], [-7, 7, 0.065], [-4, 4, 0.035]] as const;
+const STRIP_RAYS = [
+  [1, 2, [0.03, 0.075, 0.14, 0.18, 0.18, 0.14, 0.075, 0.03]],
+  [-2, 7, [0.03, 0.07, 0.11, 0.14, 0.11, 0.06, 0.025]],
+] as const;
+const SUN_GLINT = [0.48, 0.58, 0.7, 0.57] as const;
+
+export function daylightGlint(frame: ArtFrame, typing: boolean) {
+  if (frame.still || frame.small || typing) return SUN_GLINT[0];
+  const phase = (frame.motionSeed ?? 0) % 3200;
+  return SUN_GLINT[Math.floor((frame.t + phase) / 800) % SUN_GLINT.length]!;
+}
+
+export function drawDaylight(ctx: CanvasRenderingContext2D, ink: string, centre: number, ground: number, width: number, cell: number, lift: number, stride: number) {
+  const x = Math.round(centre / cell) * cell;
+  const last = Math.floor(width / cell) * cell - cell;
+  const hop = Math.ceil(lift / (2 * cell));
+  const row = (origin: number, y: number, from: number, to: number, alpha: number) => {
+    const left = Math.max(cell, origin + from * cell);
+    const right = Math.min(last, origin + to * cell);
+    if (right <= left) return;
+    // Taper the row even when the strip edge shortens it, and leave a whole transparent cell.
+    ctx.globalAlpha = alpha / 2;
+    ctx.fillRect(left, y, cell, cell);
+    if (right - left === cell) return;
+    ctx.fillRect(right - cell, y, cell, cell);
+    if (right - left > 2 * cell) {
+      ctx.globalAlpha = alpha;
+      ctx.fillRect(left + cell, y, right - left - 2 * cell, cell);
+    }
+  };
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-over";
+  ctx.fillStyle = ink;
+  SUN_SHADOW.forEach(([left, right, alpha], i) => {
+    // Light comes from above left. A rising actor's shorter shadow moves further right.
+    row(x, ground + (i - 2) * cell, left + 3 * hop, right + hop + stride, alpha * (1 - hop / 8));
+  });
+  ctx.fillStyle = SUN_WARM;
+  SUN_PATCH.forEach(([left, right, alpha], i) => row(x, ground + (i - 3) * cell, left, right, alpha));
+  for (const [left, top, bands] of STRIP_RAYS) {
+    bands.forEach((alpha, i) => row(0, (top + i) * cell, left + i, left + i + 3, alpha));
+  }
+  ctx.restore();
 }
 
 export type CarrierLight = LightAnchor & { ground: number; intensity: number; holdRim: boolean };

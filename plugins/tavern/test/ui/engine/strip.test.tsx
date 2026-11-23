@@ -9,6 +9,7 @@ import { roundToLightCell, subscribeStripLantern } from "../../../src/ui/engine/
 import { watchLantern } from "../../../src/ui/engine/light-overlay";
 import type { LightAnchor } from "../../../src/ui/engine/art";
 import { fakeEngineClock } from "./fake-clock";
+import * as characters from "../../../src/ui/kit/characters";
 import { motion } from "../../../src/ui/kit/motion";
 
 const character = { id: "wren", avatar: "a-new-roll", name: "Wren", hue: "teal", charge: "chevron", look: { hat: "pointy" } } as const;
@@ -276,6 +277,158 @@ it.each(["off", "calm", "lively"] as const)("adds no wakes in %s while drawing o
     expect(lit).toBeGreaterThan(1);
     expect(lit).toBeLessThan(on.draws);
   }
+});
+
+type GroundStroke = { x: number; y: number; w: number; h: number; colour: string; alpha: number };
+
+function mountDaylight(mode: "off" | "calm" | "lively" = "lively", mood: "idle" | "working" = "idle", width = 390) {
+  document.documentElement.classList.remove("dark");
+  const clock = fakeEngineClock();
+  vi.spyOn(engine, "observeWorld").mockImplementation((_, candidate) => {
+    const handle = clock.scheduler.register(candidate);
+    handle.setVisible(true);
+    return handle;
+  });
+  vi.spyOn(engine.scheduler, "isActive").mockReturnValue(true);
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(width);
+  const palette = characters.CHARACTER_PALETTE_FALLBACK;
+  vi.spyOn(characters, "readPalette").mockReturnValue(palette);
+  const paint: GroundStroke[] = [], rim: GroundStroke[] = [];
+  const ctx = {
+    fillStyle: "", globalAlpha: 1, globalCompositeOperation: "source-over",
+    clearRect(_x: number, _y: number, w: number) { if (w === width) paint.length = rim.length = 0; },
+    save() {}, restore() { this.globalAlpha = 1; this.globalCompositeOperation = "source-over"; },
+    translate() {}, scale() {}, beginPath() {}, rect() {}, clip() {},
+    fillRect(x: number, y: number, w: number, h: number) {
+      const stroke = { x, y, w, h, colour: this.fillStyle, alpha: this.globalAlpha };
+      if (this.globalCompositeOperation === "destination-over") paint.push(stroke);
+      else if (this.globalAlpha < 1 && this.fillStyle === "#ffd996") rim.push(stroke);
+    },
+  };
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+  const view = render(<PartyStrip {...wanderer} mode={mode} mood={mood} />);
+  const setMode = (next: typeof mode) => view.rerender(<PartyStrip {...wanderer} mode={next} mood={mood} />);
+  const button = screen.getByRole("button", { name: /Wren, Wanderer/ });
+  Object.defineProperty(button, "animate", { value: () => ({ finished: new Promise(() => {}), playState: "running", finish() {}, cancel() {} }) });
+  const position = () => button.style.transform.match(/-?\d+(?=px)/g)!.map(Number);
+  const shadow = () => paint.filter(pixel => pixel.colour === palette.ink);
+  return { ...clock, button, position, paint, rim, shadow, setMode };
+}
+
+const shadowBounds = (pixels: GroundStroke[]) => {
+  expect(pixels.length).toBeGreaterThan(0);
+  return {
+    left: Math.min(...pixels.map(p => p.x)), right: Math.max(...pixels.map(p => p.x + p.w)),
+    top: Math.min(...pixels.map(p => p.y)), bottom: Math.max(...pixels.map(p => p.y + p.h)),
+  };
+};
+
+it("paints a daytime cast shadow and a faint warm patch, not an extra layer at night", async () => {
+  const { paint, shadow, rim } = mountDaylight("calm");
+  const shade = shadowBounds(shadow());
+  const warmth = paint.filter(pixel => pixel.colour === "#ffd996" && pixel.y >= 58);
+  expect(shade.right).toBeGreaterThan(shadowBounds(warmth).right);
+  expect(new Set(shadow().map(pixel => pixel.alpha)).size).toBeGreaterThan(1);
+  expect(Math.max(...shadow().map(pixel => pixel.alpha))).toBe(0.1);
+  expect(Math.max(...warmth.map(pixel => pixel.alpha))).toBe(0.09);
+  document.documentElement.classList.add("dark");
+  await Promise.resolve();
+  expect(paint).toEqual([]);
+  expect(rim).toEqual([]);
+});
+
+it("lets stepped sunrays approach from the upper left without touching the strip edge", () => {
+  const { paint } = mountDaylight("calm");
+  const rays = paint.filter(pixel => pixel.colour === "#ffd996" && pixel.y < 40);
+  expect(rays.length).toBeGreaterThan(0);
+  expect(Math.max(...rays.map(pixel => pixel.alpha))).toBe(0.18);
+  expect(Math.min(...rays.map(pixel => pixel.alpha))).toBeLessThan(0.03);
+  const centres = rays.filter(pixel => pixel.alpha >= 0.16);
+  expect(centres.map(({ x, y }) => [x - centres[0]!.x, y - centres[0]!.y])).toEqual([[0, 0], [2, 2]]);
+  expect(rays.every(p => p.x >= 2 && p.y >= 2)).toBe(true);
+});
+
+it("lets only the small crown highlight shimmer on Calm's existing draws", () => {
+  const { advance, rim, paint } = mountDaylight("calm");
+  const ground = [...paint];
+  const peaks = new Set<number>();
+  for (let i = 0; i < 480; i += 6) {
+    const peak = Math.max(...rim.map(pixel => pixel.alpha));
+    expect(rim.filter(pixel => pixel.alpha === peak).length).toBeLessThanOrEqual(2);
+    expect(rim.filter(pixel => pixel.alpha !== peak).every(pixel => pixel.alpha === 0.24)).toBe(true);
+    peaks.add(peak);
+    advance(6);
+  }
+  expect(peaks.size).toBeGreaterThan(1);
+  expect(paint).toEqual(ground);
+});
+
+it.each([61, 390])("keeps whole cells and zero boundary alpha across the %ipx strip", width => {
+  const { advance, paint, shadow, position } = mountDaylight("lively", "working", width);
+  let furthest = 0;
+  for (let i = 0; i <= 800; i += 4) {
+    const shade = shadowBounds(shadow());
+    expect(shade.left).toBeGreaterThan(0);
+    expect(shade.right).toBeLessThan(width);
+    for (const { x, y, w, h } of paint) {
+      expect([x % 2, y % 2, w % 2, h % 2]).toEqual([0, 0, 0, 0]);
+      expect(x).toBeGreaterThan(0);
+      expect(x + w).toBeLessThan(width);
+      expect(y).toBeGreaterThan(0);
+      expect(y + h).toBeLessThan(70);
+    }
+    furthest = Math.max(furthest, position()[0]!);
+    advance(4);
+  }
+  expect(furthest).toBeGreaterThanOrEqual(width - 50);
+});
+
+it("moves the shadow on a walk and click hop while the sunrays stay at the strip corner", () => {
+  const { advance, button, position, paint, shadow, setMode } = mountDaylight("calm", "working");
+  const rays = () => paint.filter(pixel => pixel.colour === "#ffd996" && pixel.y < 40);
+  const cornerRays = rays();
+  expect(cornerRays.length).toBeGreaterThan(0);
+  const standing = shadowBounds(shadow());
+  setMode("lively");
+  advance(50);
+  const walking = shadowBounds(shadow());
+  const [walkX, restY] = position();
+  expect(walkX).toBeGreaterThan(0);
+  expect(rays()).toEqual(cornerRays);
+  expect(walking.left).toBe(walkX! + standing.left);
+  expect(walking.right - walking.left).toBeGreaterThan(standing.right - standing.left);
+  fireEvent.click(button);
+  const span = (bounds: ReturnType<typeof shadowBounds>) => bounds.right - bounds.left;
+  const takeoff = shadowBounds(shadow());
+  let peak = takeoff;
+  let highest = restY!;
+  const offsets = new Set<number>();
+  for (let i = 0; i < 52; i++) {
+    advance(1);
+    const [x, y] = position();
+    expect(rays()).toEqual(cornerRays);
+    if (y! < restY!) offsets.add(shadowBounds(shadow()).left - x!);
+    if (y! < highest) { highest = y!; peak = shadowBounds(shadow()); }
+  }
+  expect(highest).toBeLessThan(restY!);
+  expect(offsets.size).toBeGreaterThan(1);
+  expect(span(peak)).toBeLessThan(span(takeoff));
+  expect(peak.bottom).toBeLessThanOrEqual(takeoff.bottom);
+  expect(position()[1]).toBe(restY);
+  expect(span(shadowBounds(shadow()))).toBe(span(takeoff));
+});
+
+it.each(["off", "reduced"] as const)("holds the daylight shadow steady on click with motion %s", setting => {
+  const { scheduler, advance, button, position, paint, rim } = mountDaylight(setting === "off" ? "off" : "lively", "working");
+  if (setting === "reduced") {
+    vi.spyOn(motion, "getReduced").mockReturnValue(true);
+    scheduler.setEnvironment({ hidden: false, reduced: true });
+  }
+  expect(paint.length).toBeGreaterThan(0);
+  const before = { position: position(), paint: [...paint], brightness: Math.max(...rim.map(pixel => pixel.alpha)), wakes: scheduler.snapshot().timerWakes };
+  fireEvent.click(button);
+  advance(120);
+  expect({ position: position(), paint, brightness: Math.max(...rim.map(pixel => pixel.alpha)), wakes: scheduler.snapshot().timerWakes }).toEqual(before);
 });
 
 it("follows the Wanderer's lantern swing on a Calm click, then returns to sparse idle draws", () => {
