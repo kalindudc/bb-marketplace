@@ -4,7 +4,9 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ## Unreleased
 
-Machine rules put a project's party members on their own new machines through the user's chosen providers, a returned or stopped quest reopens for deviations without a new quest, the checker recognises the check runners a repository actually uses, the pages and composer lose their rough edges, and the party is drawn as animated pixel art.
+## 0.2.0 (2026-11-23)
+
+Machine rules place party members on the machines you choose for each project. Keepers can lead linked quests and hand over to a fresh thread without losing open requests. The common room gathers decisions that need you, and you can reopen a returned or stopped quest when work changes. Wardens recognise the check runners your repository uses. Keepers and party members can save and find durable project notes. Animated pixel-art characters react to work and carry their own lights at night.
 
 ### Added
 
