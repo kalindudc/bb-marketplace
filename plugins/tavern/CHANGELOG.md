@@ -27,6 +27,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- Keeper cards on the board show the Keeper’s name once, keep quest badges inside the card, and put Refresh Keeper below the quests. Long titles and next steps show an ellipsis with the full text on hover.
 - UI tests no longer leave query notification timers running after the test browser closes.
 - Keeper tools use the same member field, accept old field names, and show the field that needs fixing. Decisions take flat fields without changing who can approve them.
 - A member accepting a brief no longer wakes the Keeper on its own. The next update includes the acceptance, and members with a pending wake-up or an active keep no longer trigger stale alerts.

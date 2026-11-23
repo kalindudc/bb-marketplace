@@ -1,5 +1,5 @@
 import { experimental_useRpcMutation, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { rpcContract, type SuccessionView } from "../../shared/contract";
 import { clockTime, QueryState } from "./primitives";
 import { OpensMark } from "./glyphs";
@@ -14,6 +14,7 @@ export function RefreshKeeper({ threadId, view }: { threadId: string; view?: Suc
   const [confirm, setConfirm] = useState(false);
   const [requested, setRequested] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const restoreFocus = useRef(false);
   if (view && view.current !== threadId) return null;
   const pending = waiting(view) || requested && !view;
   const canCancel = view?.state === "proposed" || view?.state === "recovering";
@@ -29,8 +30,16 @@ export function RefreshKeeper({ threadId, view }: { threadId: string; view?: Suc
     }}>Finish handover</button> : confirm && !pending ? <>
       <p>Hand this charge to a fresh Keeper? The old thread stays, but its Tavern composer will be locked.</p>
       <button type="button" className="btn sm" disabled={refresh.isPending} onClick={request}>Hand over to a fresh Keeper</button>
-      <button type="button" className="btn sm ghost" disabled={refresh.isPending} onClick={() => setConfirm(false)}>Keep this Keeper</button>
-    </> : <button type="button" className="btn sm" disabled={pending} onClick={() => setConfirm(true)}>{pending ? "Keeper refresh in progress" : "Refresh Keeper"}</button>}
+      <button type="button" className="btn sm ghost" disabled={refresh.isPending} autoFocus onClick={() => {
+        restoreFocus.current = true;
+        setConfirm(false);
+      }}>Keep this Keeper</button>
+    </> : <button type="button" className="btn sm" disabled={pending} onClick={() => setConfirm(true)} ref={node => {
+      if (node && restoreFocus.current) {
+        restoreFocus.current = false;
+        node.focus();
+      }
+    }}>{pending ? "Keeper refresh in progress" : "Refresh Keeper"}</button>}
     {canCancel && <button type="button" className="btn sm ghost" disabled={cancel.isPending} onClick={() => {
       setError(null);
       void cancel.mutate({ threadId, successionId: view.id }).catch(setError);

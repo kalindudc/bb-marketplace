@@ -33,18 +33,19 @@ describe("QuestRow", () => {
     const title = "Write the migration notes for every caller of parseDuration in the monorepo";
     const hire = { ...live, waypoints: live.waypoints.map((w, i) => ({ ...w, state: i === 0 ? "todo" as const : w.state, actor: "agent" as const, ownerMember: null, title: i === 0 ? title : w.title })) };
     const slot = await mount(() => <QuestRow quest={hire} room={{ ...richRoom, asks: [] }} registry={registry} keeper={{ ...keeper, archived: false }} />);
-    await slot.findByRole("button", { name: hire.short });
+    const button = await slot.findByRole("button", { name: hire.short });
     const mark = slot.container.querySelector(".qrow-m .tv-st")!;
     const name = characterName(registry, keeper.member);
     expect(mark.querySelector(".qrow-mv")!.textContent).toBe(`${name} · hire for\u00a0`);
     expect(mark.querySelector(".qrow-mt")!.textContent).toBe(title);
     expect(mark.getAttribute("title")).toBe(`${name} · hire for ${title}`);
+    expect(button.title).toBe(`Open the quest page: ${hire.title}\n${name} · hire for ${title}`);
     expect(mark.textContent!.replace(/\u00a0/g, " ")).toBe(`${name} · hire for ${title}`);
   });
   it("opens the quest page from its name, which covers the row", async () => {
     const slot = await mount(() => <QuestRow quest={live} room={richRoom} registry={registry} keeper={keeper} />);
     const name = await slot.findByRole("button", { name: live.short });
-    expect(name.title).toBe(`Open the quest page: ${live.title}`);
+    expect(name.title.split("\n")[0]).toBe(`Open the quest page: ${live.title}`);
     expect(slot.container.querySelector(".qrow")?.getAttribute("data-variant")).toMatch(/active|your-move/);
     fireEvent.click(name);
     expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "tavern", options: { subPath: `quest/${live.id}` } });

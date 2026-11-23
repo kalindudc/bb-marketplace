@@ -13,8 +13,16 @@ it("requests refresh from the Keeper card", async () => {
   const refreshKeeper = vi.fn((_input: unknown) => ({ ok: true }));
   const slot = renderSlot({ component: () => <div className="tavern tv-page"><KeeperNotice keeper={richRoom.keepers[0]!} room={richRoom} registry={registry} api={{ hidden: new Set() } as never} lit={false} /></div> }, {}, { rpc: { refreshKeeper } });
   const markup = slot.container.innerHTML;
-  fireEvent.click(await slot.findByRole("button", { name: "Refresh Keeper" }));
+  const trigger = await slot.findByRole("button", { name: "Refresh Keeper" });
+  trigger.focus();
+  fireEvent.click(trigger);
   expect(refreshKeeper).not.toHaveBeenCalled();
+  const keep = slot.getByRole("button", { name: "Keep this Keeper" });
+  expect(document.activeElement).toBe(keep);
+  fireEvent.click(keep);
+  const restored = slot.getByRole("button", { name: "Refresh Keeper" });
+  expect(document.activeElement).toBe(restored);
+  fireEvent.click(restored);
   if (process.env.TAVERN_SUCCESSION_LAYOUT === "1") process.stdout.write(`SUCCESSION_CONFIRM=${JSON.stringify(slot.container.innerHTML)}\n`);
   fireEvent.click(await slot.findByRole("button", { name: "Hand over to a fresh Keeper" }));
   await waitFor(() => expect(refreshKeeper.mock.calls[0]?.[0]).toEqual({ threadId: richRoom.keepers[0]!.member.threadId }));

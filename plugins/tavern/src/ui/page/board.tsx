@@ -6,7 +6,7 @@ import type { BoardQuestSummary, Room } from "../../shared/contract";
 import type { Member } from "../../shared/schema";
 import type { CellarStopReceipt } from "../../shared/stop-all";
 import type { ArchiveApi } from "./archive";
-import { CrestOf, Faces, StateMark, characterName, classLabel, type Registry } from "./common";
+import { CrestOf, Faces, StateMark, characterName, type Registry } from "./common";
 import { PageGlyph } from "./glyphs";
 import { boardQuestState, isFinished, questMove } from "./model";
 import { usePanelState } from "./panel-state";
@@ -65,7 +65,11 @@ export function KeeperNotice({ keeper, room, registry, api, lit, since }: { keep
   useReturnCue(rows, { also: ".rm-more" });
   const id = keeper.member.threadId;
   const name = characterName(registry, keeper.member);
-  const title = keeper.threadTitle ?? null;
+  const threadTitle = keeper.threadTitle?.trim();
+  const prefix = `${name} ·`;
+  const topic = threadTitle?.startsWith(prefix) ? threadTitle.slice(prefix.length).trimStart() : threadTitle === name ? null : threadTitle;
+  const title = topic ? `${prefix} ${topic}` : name;
+  const stateId = useId();
   const all = inRoom(keeper, api);
   const order = (q: BoardQuestSummary) => { const t = questMove(q, room.asks, names(registry, keeper.member), { now: day }).tone; return t === "you" ? 0 : t === "bad" ? 1 : 2; };
   const active = all.filter(q => boardQuestState(keeper, q) === "active").sort((a, b) => order(a) - order(b) || b.updatedAt - a.updatedAt);
@@ -74,34 +78,38 @@ export function KeeperNotice({ keeper, room, registry, api, lit, since }: { keep
   const failed = party.filter((m) => m.state === "failed").length;
   const stale = party.filter((m) => m.strikes > 0).length;
   const health = failed ? `${failed} failed` : stale ? `${stale} quiet` : null;
-  const cls = classLabel(registry, keeper.member.classId);
   const started = keeperStartedLabel(keeper, room.keepers, registry, day);
   const decided = unseenDecided(room, keeper);
   const steered = active.map((q) => q.plan?.fromSteer).filter((s): s is NonNullable<typeof s> => !!s).sort((a, b) => b.at - a.at)[0];
   const versions = active.filter((q) => q.planVersion > 0).map((q) => `v${q.planVersion}`);
   const ledger = steered ? `steer ${clockTime(steered.at)}` : versions.length ? `quest map ${versions.slice(0, 3).join(", ")}` : null;
   const status = keeperStatus(keeper);
-  const label = `Open ${name}'s thread${title ? `: ${title}` : ""}${started ? `, ${started}` : ""}`;
-  return <article className={`tv-notice rm-notice ${needsYou(room, keeper) ? "needs" : ""} ${lit ? "lit" : ""}`} aria-label={`${name}${title ? `, ${title}` : ""}, Keeper`} style={lit ? glowVars(`notice:${id}`) : undefined} data-part="KeeperNotice">
+  const label = `Open ${name}'s thread${topic ? `: ${topic}` : ""}${started ? `, ${started}` : ""}`;
+  return <article className={`tv-notice rm-notice ${needsYou(room, keeper) ? "needs" : ""} ${lit ? "lit" : ""}`} aria-label={`${title}, Keeper`} style={lit ? glowVars(`notice:${id}`) : undefined} data-part="KeeperNotice">
     <span className="tack" aria-hidden="true" />
     <header className="rm-nh">
-      <button type="button" className="rm-nh-who act" onClick={() => navigate.toThread(id)} title={label} aria-label={label}>
+      <button type="button" className="rm-nh-who act" onClick={() => navigate.toThread(id)} title={label} aria-label={label} aria-describedby={stateId}>
         <CrestOf member={keeper.member} registry={registry} size={28} />
-        <span className="rm-nh-t"><span className="rm-nh-l1"><b>{name}</b><span className="rm-nh-title" data-content>{title ?? cls?.label ?? "Keeper"}</span>{started && <span className="rm-nh-st">· {started}</span>}<OpensMark /></span>
-          {health && <span className="rm-nh-l2"><b className="tv-health" data-stuck={failed > 0 || undefined}>{health}</b></span>}</span>
+        <span className="rm-nh-t">
+          <b className="rm-nh-title" data-content title={title}>{title}</b>
+          {started && <span className="rm-nh-st" title={started}>{started}</span>}
+          {health && <b className="tv-health" data-stuck={failed > 0 || undefined}>{health}</b>}
+        </span>
+        <span className="rm-nh-s" id={stateId}><StateMark tone={status.tone}>{status.label}</StateMark></span><OpensMark />
       </button>
-      <span className="rm-nh-s"><StateMark tone={status.tone}>{status.label}</StateMark></span>
     </header>
     <QuietNotice threadId={id} since={keeper.quietSince} />
-    {!keeper.archived && <RefreshKeeper threadId={id} view={keeper.succession} />}
-    {(keeper.freeHands ?? 0) > 0 && <p className="m small">{keeper.freeHands} free {keeper.freeHands === 1 ? "hand" : "hands"}</p>}
+    {(keeper.freeHands ?? 0) > 0 && <p className="rm-free m small">{keeper.freeHands} free {keeper.freeHands === 1 ? "hand" : "hands"}</p>}
     {party.length > 0 && <NoticeParty party={party} registry={registry} id={id} />}
     <div className="rm-qs" ref={rows}>
       {(moreA ? active : active.slice(0, ACTIVE_CAP)).map((q) => <QuestRow key={q.id} quest={q} room={room} registry={registry} keeper={keeper} arrival={{ since }} />)}
       {active.length > ACTIVE_CAP && <button type="button" className="tv-fold act rm-more" aria-expanded={moreA} onClick={() => setMoreA(!moreA)}><ExpandsMark open={moreA} /><span>{moreA ? "Show fewer" : `+${active.length - ACTIVE_CAP} more active ${active.length - ACTIVE_CAP === 1 ? "quest" : "quests"}`}</span></button>}
 
     </div>
-    {(decided > 0 || ledger) && <footer className="tv-nf">{decided > 0 && <span className="tag tv-decided-tag" title="Reversible calls made for you, not yet seen"><PageGlyph name="seal" /><span>{decided} decided</span></span>}{ledger && <span className="tv-nf-t">{ledger}</span>}</footer>}
+    {(!keeper.archived || decided > 0 || ledger) && <footer className="rm-notice-foot">
+      {(decided > 0 || ledger) && <div className="tv-nf">{decided > 0 && <span className="tag tv-decided-tag" title="Reversible calls made for you, not yet seen"><PageGlyph name="seal" /><span>{decided} decided</span></span>}{ledger && <span className="tv-nf-t" title={ledger}>{ledger}</span>}</div>}
+      {!keeper.archived && <RefreshKeeper threadId={id} view={keeper.succession} />}
+    </footer>}
   </article>;
 }
 

@@ -207,12 +207,12 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
   const path = pathProgress(quest), verified = verifiedOf(quest), change = pathChangeWords(quest);
   const unread = attentionView(quest.attention).summaries ?? 0;
   const summaryCount = unread > 0 && <span className="qrow-unread m">{summaryCountWords(unread)}</span>;
-  const name = <button type="button" className="qrow-name act" data-quest-name onClick={() => open(`quest/${quest.id}`)} title={`${isFinished(quest.phase) ? "Open the quest record" : "Open the quest page"}: ${quest.title}`}><b data-content>{quest.short}</b></button>;
+  const name = (detail?: string) => <button type="button" className="qrow-name act" data-quest-name onClick={() => open(`quest/${quest.id}`)} title={`${isFinished(quest.phase) ? "Open the quest record" : "Open the quest page"}: ${quest.title}${detail ? `\n${detail}` : ""}`}><b data-content>{quest.short}</b></button>;
   if (isFinished(quest.phase)) {
     const returned = quest.phase === "done";
     return <div className={`tavern qrow qrow-done ${returned ? "" : "stopped"}`} data-variant={returned ? "returned" : "stopped"} data-quest={quest.id} data-part="QuestRow">
       <Glyph name={returned ? "verified" : "rejected"} size={13} className="qrow-g" />
-      {name}
+      {name()}
       {arrival && <ArrivalMark at={quest.endedAt ?? quest.updatedAt} since={arrival.since} surface="page" cueKey={`row:${quest.id}`} still={!returned} />}
       <span className="qrow-f num"><span>{returned ? "returned" : "stopped"}</span>{returned && verified && <span className="qrow-v"> · {verifiedWords(verified)}</span>}{summaryCount}</span>
       <TimeAgo at={quest.endedAt ?? quest.updatedAt} />
@@ -224,16 +224,18 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
   const need = questNeedYouCount(quest, room.asks);
   const yours = need > 0 || move.tone === "you";
   if (yours) move.tone = "you";
+  // The name button covers the row, so its tooltip must include the move beneath it.
+  const moveTitle = `${move.who}${move.next ? ` · ${move.next}` : ""}`;
   // showKeeper adds mixed-Keeper labels and ask/hold tags; every row keeps questMove’s edge rule.
   return <div className={`tavern qrow qrow-live t-${move.tone}${showKeeper ? " qrow-home" : ""}`} data-variant={yours ? "your-move" : move.tone === "archived" ? "archived" : quest.phase === "stopping" ? "stopping" : "active"} data-quest={quest.id} {...(yours ? { "data-ask": "" } : {})} data-part="QuestRow">
-    {name}
+    {name(moveTitle)}
+    <TimeAgo at={quest.updatedAt} />
     {/* A stopping quest gets no "new" cue: nothing new is happening on it. */}
     {arrival && quest.phase !== "stopping" && <ArrivalMark at={quest.updatedAt} since={arrival.since} surface="page" cueKey={`row:${quest.id}`} still={yours || move.tone === "bad"} />}
-    <TimeAgo at={quest.updatedAt} />
     <OpensMark />
     <span className="qrow-l2">{showKeeper && <span className="qrow-k"><CrestOf member={keeper.member} registry={registry} size={12} /><span title={characterName(registry, keeper.member)}>{characterName(registry, keeper.member)}</span></span>}{showKeeper && need > 0 && <span className="tag status-needs-decision">{need} need you</span>}<span className="qrow-p"><PhaseMark phase={quest.phase} tone={move.tone} /><span className="qrow-path num">{path ? `${path.done} of ${path.total}` : "no map yet"}</span></span>
     {path && change && <span className="qrow-path-change m">{change}</span>}
-    <span className="qrow-m"><StateMark tone={move.tone} title={`${move.who}${move.next ? ` · ${move.next}` : ""}`}>
+    <span className="qrow-m"><StateMark tone={move.tone} title={moveTitle}>
       {/* Whose move and the verb are the state and never cut; only the waypoint's title truncates, with the whole phrase in the tooltip. */}
       <span className="qrow-mv"><b>{move.who}</b>{move.task !== undefined ? ` ·${move.verb ? ` ${move.verb}` : ""}\u00a0` : move.next ? ` · ${move.next}` : ""}</span>{move.task !== undefined && <span className="qrow-mt" data-content>{move.task}</span>}
     </StateMark></span>{summaryCount}</span>

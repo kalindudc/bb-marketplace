@@ -32,6 +32,23 @@ it("has only live notices and puts gone, returned and stopped quests in separate
   expect(within(goneFold).getByRole("button", { name: gone.short })).toBeTruthy();
 });
 
+it.each([
+  ["Wren · Restore the observatory", "Wren · Restore the observatory", "Open Wren's thread: Restore the observatory"],
+  ["Restore the observatory", "Wren · Restore the observatory", "Open Wren's thread: Restore the observatory"],
+  ["Wren", "Wren", "Open Wren's thread"],
+  [null, "Wren", "Open Wren's thread"],
+])("shows the Keeper once when the thread title is %s", (threadTitle, display, label) => {
+  const data = { ...room, keepers: [{ ...room.keepers[0]!, threadTitle }] };
+  const slot = renderSlot({ component: () => <Board room={data} registry={registry} api={useArchive()} /> }, {}, {});
+  const notice = slot.getByRole("article", { name: /^Wren.*Keeper$/ });
+  const thread = within(notice).getByRole("button", { name: /^Open Wren's thread/ });
+  expect(thread.textContent?.match(/Wren/g)).toHaveLength(1);
+  expect(within(thread).getByText(display).title).toBe(display);
+  expect(thread.getAttribute("aria-label")).toBe(label);
+  fireEvent.click(thread);
+  expect(slot.inspection.navigateCalls).toContainEqual({ method: "toThread", threadId: data.keepers[0]!.member.threadId });
+});
+
 it("agrees with the sidebar and phone picker about what is active, without merging Keepers who share a character", () => {
   const main = room.keepers[0]!;
   const second = { ...main, member: { ...main.member, threadId: "second", displayName: "Wren II" },

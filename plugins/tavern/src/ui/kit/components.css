@@ -760,9 +760,11 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern.qrow .qrow-name.act:hover:not(:disabled), .tavern.krow .krow-who.act:hover:not(:disabled) { background: none; }
 .tavern .qrow-name:focus-visible { outline: none; }
 .tavern.qrow:has(.qrow-name:focus-visible) { outline: 2px solid var(--ring); outline-offset: -2px; }
-.tavern.qrow-live { grid-template-columns: minmax(0, 1fr) auto 12px; grid-template-areas: "n a i" "l l l"; min-height: 54px; padding: 8px 10px 8px 12px; }
+.tavern.qrow-live { grid-template-columns: minmax(0, 1fr) repeat(3, auto); grid-template-areas: "n a b i" "l l l l"; column-gap: 0; min-height: 54px; padding: 8px var(--rm-card-inset, 12px); }
 .tavern.qrow-live > .qrow-name { grid-area: n; }
-.tavern.qrow-live > time { grid-area: a; justify-self: end; }
+.tavern.qrow-live > :is(time, .arrival-mark, .act-i) { margin-inline-start: 8px; }
+.tavern.qrow-live > time { grid-area: a; }
+.tavern.qrow-live > .arrival-mark { grid-area: b; }
 .tavern.qrow-live > .act-i { grid-area: i; }
 .tavern .qrow-l2 { grid-area: l; display: flex; align-items: center; flex-wrap: wrap; gap: 2px 12px; min-width: 0; }
 .tavern .qrow-k { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; font-size: 11px; color: var(--tavern-muted); }
@@ -775,7 +777,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .qrow-m { margin-left: auto; min-width: 0; max-width: 100%; overflow: hidden; font-size: 12px; }
 .tavern .qrow-m .tv-st { max-width: 100%; }
 .tavern .qrow-m .tv-st > span { display: flex; min-width: 0; white-space: nowrap; }
-.tavern .qrow-mv { flex: none; }
+.tavern .qrow-mv { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 /* The space before it is a no-break space at the end of .qrow-mv: a flex container drops plain spaces between its items. */
 .tavern .qrow-mt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tavern.qrow-live.t-you { box-shadow: inset 3px 0 0 var(--tavern-you); }
@@ -798,7 +800,6 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
   .tavern.qrow-home .qrow-l2:has(> .tag) { grid-template-columns: minmax(0, 1fr) auto auto; }
   .tavern.qrow-home .qrow-m { grid-column: 1 / -1; }
   .tavern .qrow-v, .tavern .qrow-xl { display: none; }
-  .tavern.qrow-live { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "n a" "l l"; }
   .tavern.qrow-live > .act-i { display: none; }
   .tavern .qrow-m { margin-left: 0; }
 }
