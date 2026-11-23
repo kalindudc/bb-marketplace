@@ -104,6 +104,7 @@ describe("class character and quality policy", () => {
     const plan = await f.runtime.plan("lead", input);
     const member = f.k.bind("check", "warden", "vex", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: "w1", title: "Check", errand: false, brief, reviewTarget: { boardQuestId: q.id, waypointId: "w1", makerThreadId: "maker", entryIds: ["a1"] } });
     expect(checkerAssignments(plan, f.k.store.all("members"))[0]!.waypointIds).toEqual(["w1", "w2"]);
-    await expect(f.runtime.plan("lead", { ...input, waypoints: input.waypoints.map(waypoint => waypoint.id === "w2" ? { ...waypoint, owner: "other" } : waypoint) })).rejects.toThrow(/one maker|different maker|mixed maker/i);
+    const mixed = { ...input, waypoints: input.waypoints.map(waypoint => waypoint.id === "w2" ? { ...waypoint, owner: "other" } : waypoint) };
+    await expect(f.runtime.plan("lead", mixed)).rejects.toThrow(/w1.*maker.*w2.*other.*one Warden slot per maker/i);
   });
 });

@@ -66,6 +66,13 @@ export function openBriefBlocker(store: KeeperStore, pending: PendingBrief) {
   return ask?.state === "open" && ask.effect?.type === "retry-brief" && ask.effect.briefId === pending.id ? ask : null;
 }
 
+export function briefProgress(store: KeeperStore, pending: PendingBrief, now: number) {
+  const createdAt = pending.createdAt ?? pending.attemptedAt ?? pending.nextAttemptAt;
+  const state = openBriefBlocker(store, pending) ? "blocked" as const
+    : pending.state ?? (pending.attemptedAt === null ? "queued" : "unconfirmed");
+  return { id: pending.id, state, createdAt, ageMs: Math.max(0, now - createdAt) };
+}
+
 export function withdrawBriefBlocker(store: KeeperStore, pending: PendingBrief, at: number) {
   const ask = openBriefBlocker(store, pending);
   if (!ask) return;

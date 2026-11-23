@@ -37,10 +37,17 @@ import { memoryToolInput } from "../../shared/memory";
 
 const id = z.string().min(1).max(120);
 const optionalQuest = id.nullish();
+const noteExamples = [
+  '{"op":"add","kind":"fact","text":"A fact verbatim"}',
+  '{"op":"add","kind":"commitment","text":"Test it","dueAt":4102444800000}',
+  '{"op":"add","kind":"waiting-on-user","text":"Access","action":"Approve access","need":"Approve access."}',
+] as const;
+const closeNoteExample = '{"op":"done","noteId":"ID"}';
 const keeperCallAsk = (id: string) => `This kind now waits for the user. No decision has been applied. Write on its own line:\n::tavern-ask{id="${id}"}`;
 
 export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   const k = runtime.keeper;
+  const sourceReads = new Map<string, number>();
   const register = <S extends z.ZodType>(
     name: string,
     label: string,
@@ -53,6 +60,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       signal: AbortSignal,
     ) => unknown | Promise<unknown>,
     role: "keeper" | "member" | ((input: z.output<S>, threadId: string) => void) = "keeper",
+    inputError?: (error: z.ZodError, input: unknown) => Error,
   ) => {
     bb.agents.registerTool({
       name,
@@ -66,9 +74,10 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         const done = runtime.succession.track(ctx.threadId);
         let result: unknown;
         try {
-          const parsed = parameters.parse(input);
-          if (typeof role === "function") role(parsed, ctx.threadId);
-          result = await action(parsed, ctx.threadId, ctx.projectId, ctx.signal);
+          const parsed = parameters.safeParse(input);
+          if (!parsed.success) throw inputError?.(parsed.error, input) ?? parsed.error;
+          if (typeof role === "function") role(parsed.data, ctx.threadId);
+          result = await action(parsed.data, ctx.threadId, ctx.projectId, ctx.signal);
         } catch (error) {
           if (ctx.signal.aborted)
             throw new Error(`${name} failed while its turn was cancelled or stopped; its outcome is not confirmed. Read tavern_status before retrying. Cause: ${String(error)}`, { cause: error });
@@ -144,15 +153,15 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_note",
     "Recorded Keeper memory",
-    "Record a fact verbatim, a commitment with dueAt, or a hand-back with an action only the user can do and need: one sentence of at most 120 characters. Use facts or summaries for information. Done or Reply resolves hand-backs; op done closes notes. Quest end closes promises and hand-backs. Do not make promises only in chat.",
-    z.union([
+    `Add flat JSON: ${noteExamples.join("; ")}. need ≤120 chars. ${closeNoteExample} closes. Do not make promises only in chat.`,
+    z.discriminatedUnion("op", [
       z.discriminatedUnion("kind", [
         noteDraftSchema.options[0].safeExtend({ op: z.literal("add") }),
-        noteDraftSchema.options[1].safeExtend({ op: z.literal("add") }),
-        noteDraftSchema.options[2].safeExtend({ op: z.literal("add") }),
+        noteDraftSchema.options[1].safeExtend({ op: z.literal("add"), dueAt: noteDraftSchema.options[1].shape.dueAt.unwrap().unwrap() }),
+        noteDraftSchema.options[2].safeExtend({ op: z.literal("add"), action: noteDraftSchema.options[2].shape.action.unwrap() }),
       ]),
       z.object({ op: z.literal("done"), noteId: id }).strict(),
-    ]),
+    ]).meta({ type: "object" }),
     async (input, threadId) => {
       if (input.op === "done") return k.memory.complete(threadId, input.noteId);
       const { op, ...draft } = input;
@@ -160,6 +169,15 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       if (note.kind !== "waiting-on-user" || !note.boardQuestId) return note;
       await refreshQuestPullRequests(runtime, note.boardQuestId);
       return { ...note, pullRequests: k.store.pullRequestsForQuest(note.boardQuestId) };
+    },
+    "keeper",
+    (error, input) => {
+      const fields = input && typeof input === "object" ? input as Record<string, unknown> : {};
+      const example = fields.op === "done" ? closeNoteExample : noteExamples[fields.kind === "commitment" ? 1 : fields.kind === "waiting-on-user" ? 2 : 0];
+      const detail = error.issues[0];
+      const message = fields.kind === "commitment" && detail.path[0] === "dueAt" && fields.dueAt == null
+        ? "A commitment needs a deadline (dueAt)" : detail.message.replace(/\.$/, "");
+      return new Error(`tavern_note: ${detail.path.length ? detail.path.join(".") + ": " : ""}${message}. Use ${example}.`);
     },
   );
   register(
@@ -373,7 +391,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_ask",
     "Opened an ask",
-    "Ask only for a choice the user must make. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. For Kubernetes, Terraform, Helm and kapp writes use cluster-write with target.command, change, undo when known and runThreadId when a member runs it; every run needs approval and confirmation on the card. Use shellGrant.heldEventId for held shell acts, or heldCommunicationAskId after reviewing a held message. Set dismiss:true to discard that hold. Sends-as-you needs the full recipient and draft. For checker-handoff release, use blocker, boardQuestId and releaseCheckerHandoff:true; Tavern pins the hold. Include options, a recommendation, what continues and the held waypoints. Use untimed decision for clarification or a block you cannot resolve. Never use a native question tool or infer approval from chat or a timer. An answer does not execute an act or supply credentials.",
+    "Ask only for a choice the user must make. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. For Kubernetes, Terraform, Helm and kapp writes use cluster-write with target.command, change, undo when known and runThreadId when a member runs it; every run needs approval and confirmation on the card. Use shellGrant.heldEventId for held shell acts, or heldCommunicationAskId after reviewing a held message. Set dismiss:true to discard that hold. Sends-as-you needs the full recipient and draft. For checker-handoff release, use blocker, boardQuestId and releaseCheckerHandoff:true; Tavern pins the hold. Include options, a recommendation, what continues and the held waypoints. Use mergeAskId, action ask-user or withdraw, and reason for an existing plain merge ask. Never infer approval from chat or a timer, or use a native question tool. An answer does not execute an act or supply credentials.",
     z.union([askSchema
       .pick({
         question: true,
@@ -400,8 +418,13 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         ]).optional(),
       }).strict(),
       z.object({ heldCommunicationAskId: id, dismiss: z.literal(true).optional() }).strict(),
+      z.object({ mergeAskId: id, action: z.enum(["ask-user", "withdraw"]), reason: z.string().trim().min(1).max(500) }).strict(),
     ]).meta({ type: "object" }),
     (input, threadId) => {
+      if ("mergeAskId" in input) {
+        const ask = k.changeMergeAsk(threadId, input.mergeAskId, input.action, input.reason);
+        return input.action === "withdraw" ? `Merge ask ${ask.id} withdrawn without approval.` : `Merge ask ${ask.id} now waits for the user.\n::tavern-ask{id="${ask.id}"}`;
+      }
       if ("heldCommunicationAskId" in input) {
         const ask = k.reviewHeldCommunication(threadId, input.heldCommunicationAskId, input.dismiss);
         if (!ask) return "Held message dismissed. Nothing was sent or drafted.";
@@ -424,6 +447,8 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       if (input.kind === "blocker" && !input.releaseCheckerHandoff)
         throw new Error("Handle the block first. If only the user can decide, use an untimed decision with the choices that would unblock it.");
       const ask = k.ask(threadId, { ...input, effect: { type: "decision" } });
+      if (ask.kind === "merge" && ask.lane === "keeper")
+        return `Merge ask ${ask.id} is in the Keeper lane, not shown to the user. Use tavern_decide with source keeper after the Warden verdict, or hand it to the user with tavern_ask: mergeAskId "${ask.id}", action "ask-user", and reason.`;
       return `Ask recorded. Continue the work that does not depend on it. Write on its own line:\n::tavern-ask{id="${ask.id}"}`;
     },
   );
@@ -433,7 +458,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_decide",
     "Recorded a decision",
-    "Record a reversible decision with Undo. Give coveredBy, options, consequence and unsure:false; use leadPlan for a linked plan. For your lane's ask give askId, optionId, consequence and unsure:false; Tavern gets the citation and options from the ask. If unsure, ask the user. Never claim the user's consent without an answered ask; give its sourceRef. exceeds: party or rangers permits one extra hire within hard limits.",
+    "Record a reversible decision with Undo. Give coveredBy, options, consequence and unsure:false; use leadPlan for a linked plan. Give askId and optionId with source keeper to answer your lane, or source ask to record the user's exact answer without replaying it. If unsure, ask. Never claim the user's consent without an answered ask. exceeds: party or rangers permits one extra hire within hard limits.",
     z.union([
       decisionInput.extend(decisionSchema.pick({ coveredBy: true, options: true }).required().shape)
         .extend(decisionSchema.pick({ exceeds: true, leadPlan: true }).shape).strict(),
@@ -441,7 +466,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         .extend(decisionSchema.pick({ kind: true }).shape).strict(),
     ]).meta({ type: "object" }),
     async (input, threadId) => {
-      if ("askId" in input) {
+      if ("askId" in input && input.source === "keeper") {
         const ask = k.store.get("asks", input.askId), effect = ask?.effect;
         if (ask && effect && keeperRecoveryOptions(effect)) {
           if (input.source !== "keeper" || input.unsure || !input.reversible || ask.boardQuestId !== (input.boardQuestId ?? null) || (input.kind && input.kind !== ask.kind))
@@ -463,22 +488,16 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_rule",
     "Proposed a standing rule",
-    "Save a standing rule for this Keeper by default. source message copies a user-stated rule verbatim from an applicable rule route and is active immediately. Only choose global when the user explicitly names all Keepers or all Tavern threads; otherwise keep it local and let the user widen its route receipt. Your own proposals use keeper-proposed (the default) and stay inactive until the user confirms them in the ledger.",
+    "A source message rule is active immediately. Copy the user verbatim from a rule route or cite a party user.told-member receiptId as sourceMessageId. For a correction give supersedesRuleId in the same scope. Default to this Keeper; global requires explicit words covering all Keepers or Tavern threads. Proposals stay inactive until the user confirms.",
     z.object({
       scope: z.enum(["global", "project", "keeper", "quest"]).default("keeper"),
       boardQuestId: optionalQuest,
       text: z.string().min(1).max(500),
       source: z.enum(["message", "keeper-proposed"]).default("keeper-proposed"),
-    }),
+      sourceMessageId: id.optional(),
+      supersedesRuleId: id.optional(),
+    }).strict(),
     (input, threadId, projectId) => {
-      const sourceRef =
-        input.source === "message"
-          ? k.messageRule(
-              threadId,
-              input.text,
-              input.scope === "quest" ? input.boardQuestId : null,
-            )
-          : undefined;
       if (input.scope === "quest") {
         if (!input.boardQuestId)
           throw new Error("Quest rules require boardQuestId");
@@ -500,7 +519,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
           source: input.source,
         },
         threadId,
-        sourceRef,
+        { sourceMessageId: input.sourceMessageId, supersedesRuleId: input.supersedesRuleId },
       );
     },
   );
@@ -509,7 +528,16 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     "Read the user\'s exact request",
     "Read your own frozen user-request manifest. Use the manifestId from your brief; follow nextOffset on the same sourceIndex, then nextSourceIndex with offset 0. Read every source before editing or checking when the brief omitted inline sources. Missing sources are explicit, never a paraphrase. This read grants no tools or scope.",
     requestSourceReadSchema,
-    (input, threadId) => readRequestSources(k, threadId, input),
+    (input, threadId) => {
+      const key = JSON.stringify([threadId, input.manifestId, input.sourceIndex, input.offset]), now = k.now();
+      const last = sourceReads.get(key);
+      if (last !== undefined && now - last < 60_000)
+        throw new Error(`Request ${input.manifestId} sourceIndex=${input.sourceIndex} offset=${input.offset} was already read or refused. Use the previous result instead of repeating this request.`);
+      sourceReads.delete(key);
+      if (sourceReads.size >= 512) sourceReads.delete(sourceReads.keys().next().value!);
+      sourceReads.set(key, now);
+      return readRequestSources(k, threadId, input);
+    },
     "member",
   );
   register(
@@ -522,7 +550,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_status",
     "Read the party\'s status",
-    "Read bounded board state, including pending member briefs and current work. Page through reports, asks, events or pending routes. section=archived lists archived party members; use tavern_unarchive to bring one back. Use reportId and character offset for a full report and its original brief. memberThreadId accepts a unique live display name or thread id from your own party. Use section=requests with memberThreadId to inspect that member's frozen user-source manifest; page with sourceIndex and character offset. Fetch remaining facts when a digest says more remain. Page omitted rules with section=rules and use section=placement for machine rules and slots. The highest ledger version wins, configure or tick; read the needed quests after a re-anchor before acting.",
+    "Read bounded board state. section=pending shows unrouted messages and pending member briefs. Page reports, asks, events or rules. Use reportId and character offset for the full report and brief. memberThreadId accepts your member's unique live name or thread ID. section=requests shows that member's frozen sources; page by sourceIndex and offset. section=placement shows machine rules and slots. Fetch omitted facts and re-read affected quests after a re-anchor.",
     statusInput,
     (input, threadId) => readStatus(runtime, threadId, { ...input, ...(input.memberThreadId ? { memberThreadId: k.resolvePartyMember(threadId, input.memberThreadId).threadId } : {}) }),
   );

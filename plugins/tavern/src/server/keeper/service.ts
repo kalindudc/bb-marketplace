@@ -1105,6 +1105,19 @@ export class Keeper {
   }
   decideOrAsk(threadId: string, input: Parameters<Keeper["decide"]>[1]): Decision | Ask {
     this.require(threadId, "keeper");
+    if (input.source === "user") return this.decide(threadId, input);
+    if (input.askId && input.source === "ask") {
+      if (input.unsure !== false || !input.consequence) throw new Error(`To record the answer to ${input.askId}, give consequence and unsure:false.`);
+      const ask = this.store.get("asks", input.askId);
+      if (!ask || ask.keeperThreadId !== threadId || ask.state !== "answered" || ask.answer?.by !== "user")
+        throw new Error(`Ask ${input.askId} is not a user-answered ask of this Keeper. ${ask?.keeperThreadId === threadId && ask.kind === "merge" && ask.state === "open" && ask.effect?.type === "decision" ? `Use tavern_ask with mergeAskId "${ask.id}", action "ask-user", and reason so the user can answer its card.` : "Read tavern_status section=asks for the recorded answer."}`);
+      if (input.boardQuestId !== undefined && input.boardQuestId !== ask.boardQuestId)
+        throw new Error(`Ask ${ask.id} belongs to ${ask.boardQuestId ?? "no quest"}. Record it with boardQuestId ${JSON.stringify(ask.boardQuestId)}.`);
+      if (input.optionId !== ask.answer.optionId || input.kind && input.kind !== ask.kind || input.sourceRef && input.sourceRef !== ask.id)
+        throw new Error(`Ask ${ask.id} was answered with optionId ${JSON.stringify(ask.answer.optionId)}. Record it with source "ask", that option and no kind or sourceRef.`);
+      return this.decide(threadId, { ...input, boardQuestId: ask.boardQuestId, sourceRef: ask.id,
+        coveredBy: { kind: "answer", id: ask.id }, options: ask.options.map(option => option.label) });
+    }
     const quest = input.boardQuestId ? this.liveQuest(threadId, input.boardQuestId) : null;
     if (quest) this.guard(threadId, quest.id);
     if (input.askId) {
@@ -1119,8 +1132,8 @@ export class Keeper {
       if (input.unsure !== true) this.checkDecision(threadId, quest, input);
       return decideLeadPlan(this, threadId, input);
     }
-    if (input.source !== "user") this.checkDecision(threadId, quest, input);
-    if (!input.exceeds || input.source === "user" || !input.reversible || input.kind) return this.decide(threadId, input);
+    this.checkDecision(threadId, quest, input);
+    if (!input.exceeds || !input.reversible || input.kind) return this.decide(threadId, input);
     this.assertUnusedSoftLimitAnswer(input.sourceRef);
     const shift = this.keeperCallShift(threadId, input.exceeds);
     if (!shift) return this.decide(threadId, input);
@@ -1358,7 +1371,8 @@ export class Keeper {
     if (runner && (!exactCommand?.trim() || !input.change?.trim()))
       throw new Error("Cluster writes need the exact command and what it changes.");
     if (input.kind === "cluster-write" || (input.effect.type !== "grant-shell-act" && ["merge", "production"].includes(input.kind))) {
-      const detail = runner ? "Approve this exact command for the named thread. Nothing runs until you confirm." : "Authorize the exact act; Keeper approval needs a current Warden verdict.";
+      const detail = runner ? "Approve this exact command for the named thread. Nothing runs until you confirm."
+        : "Record approval for the exact act. This does not run it. In the Keeper lane, approval needs a current Warden verdict.";
       input = { ...input, options: [{ id: "approve", label: runner ? "Approve" : "Approve the act", detail, recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], effect: { type: "decision", outcomes: [{ optionId: runner ? "confirm-run" : "approve", outcome: "approve" }, { optionId: "deny", outcome: "decline" }] } };
     }
     const lane = this.authority.baseLane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure, effect: input.effect, sendTarget: input.sendTarget });
@@ -1432,6 +1446,41 @@ export class Keeper {
         console.warn(`Tavern ask notification ${ask.id}: ${String(error)}`),
       );
     return projected;
+  }
+  changeMergeAsk(threadId: string, askId: string, action: "ask-user" | "withdraw", reason: string) {
+    this.require(threadId, "keeper");
+    const ask = this.store.get("asks", askId);
+    if (!ask || ask.keeperThreadId !== threadId || ask.kind !== "merge" || ask.effect?.type !== "decision")
+      throw new Error(`Ask ${askId} is not a plain merge ask owned by this Keeper. Read tavern_status section=asks for the right ID.`);
+    if (action === "withdraw" && ask.state === "withdrawn" && ask.withdrawnCause === "merge-moot") return ask;
+    if (ask.state !== "open")
+      throw new Error(`Merge ask ${askId} is no longer open (${ask.state}). Read its outcome in tavern_status section=asks.`);
+    if (ask.boardQuestId) {
+      this.liveQuest(threadId, ask.boardQuestId);
+      this.guard(threadId, ask.boardQuestId);
+    }
+    if (action === "withdraw") {
+      const withdrawn = this.withdrawAsk(askId, "merge-moot", this.now(), { kind: "agent", threadId }, reason)!;
+      this.changed(threadId, ask.boardQuestId);
+      return withdrawn;
+    }
+    if (ask.lane === "user" && ask.unsure) return ask;
+    const link = ask.boardQuestId ? this.store.leadLinksBy("childQuestId", ask.boardQuestId)[0] : undefined;
+    const forwarded = !ask.forwardedQuestion && link?.childKeeperThreadId === threadId ? (() => {
+      const parent = this.quest(link.parentQuestId), keeper = this.member(parent.keeperThreadId);
+      const forwardedQuestion = { parentQuestId: parent.id, byline: `${this.name(this.require(threadId, "keeper"))} asks, for ${keeper ? this.name(keeper) + "’s " : ""}`, body: ask.question };
+      return { forwardedQuestion, question: forwardedAskQuestion(forwardedQuestion, parent.short) };
+    })() : {};
+    const moved = this.store.atomic(() => {
+      const record = this.store.put("asks", askId, { ...ask, ...forwarded, lane: "user", unsure: true, options: ask.options.filter(o => o.id !== "delegate") });
+      this.store.event(this.now(), threadId, ask.boardQuestId, "ask.lane-changed", reason, { askId, from: ask.lane ?? "user", to: "user" }, { kind: "agent", threadId });
+      return record;
+    });
+    this.changed(threadId, ask.boardQuestId);
+    void Promise.resolve().then(() => {
+      if (this.store.get("asks", askId)?.state === "open") return this.askOpened(currentAskNames(this.store, moved));
+    }).catch(error => console.warn(`Tavern ask notification ${askId}: ${String(error)}`));
+    return moved;
   }
   reviewHeldCommunication(threadId: string, askId: string, dismiss = false) {
     this.require(threadId, "keeper");
@@ -1683,10 +1732,10 @@ export class Keeper {
       this.liveQuest(threadId, questId);
       this.guard(threadId, questId);
     }
-    if (input.source === "user")
-      throw new Error(
-        "A tool cannot assert user consent; reference an answered ask or a recorded steer instead",
-      );
+    if (input.source === "user") {
+      const citation = input.askId ?? (input.coveredBy?.kind === "answer" ? input.coveredBy.id : input.sourceRef);
+      throw new Error(`A tool cannot assert user consent${citation ? ` for ${citation}` : ""}; record the user's answer with source "ask", askId and the selected optionId.`);
+    }
     if (input.source === "keeper" && !input.reversible)
       throw new Error(
         "Consequential decisions need a user ask, not an autonomous decision",
@@ -1702,9 +1751,9 @@ export class Keeper {
         ask.state !== "answered" ||
         ask.answer?.by !== "user"
       )
-        throw new Error(
-          "Decision source must be an ask answered by the user for this quest",
-        );
+        throw new Error(`Decision source ${input.sourceRef ?? "(missing)"} must be an ask answered by the user for this quest. Read tavern_status section=asks for the recorded answer.`);
+      if (input.askId && (input.askId !== ask.id || input.optionId !== ask.answer.optionId))
+        throw new Error(`Ask ${ask.id} was answered with optionId ${JSON.stringify(ask.answer.optionId)}. Record that exact ask and option.`);
     }
     if (input.source === "steer") {
       const route = input.sourceRef
@@ -1742,29 +1791,33 @@ export class Keeper {
       createdAt: this.now(),
     });
     this.store.atomic(() => {
-      if (input.askId) {
+      if (input.askId && input.source !== "ask") {
         const ask = this.store.get("asks", input.askId);
         if (!ask || ask.keeperThreadId !== threadId || ask.boardQuestId !== questId || input.source !== "keeper" || !input.optionId || (input.kind && input.kind !== ask.kind)) throw new Error("A Keeper answer needs its own exact quest ask, kind and option");
         this.answerAsk(ask.id, input.optionId, input.why, "chat", "keeper");
-      } else if (input.kind) throw new Error("A delegated kind needs its exact askId and optionId");
+      } else if (!input.askId && input.kind) throw new Error("A delegated kind needs its exact askId and optionId");
       this.store.put("decisions", decision.id, decision);
       if (autoApproval) {
         transitionQuest(this.store, this.quest(autoApproval.questId), "build", "auto-approve", { kind: "agent", threadId }, { kind: "decision", id: decision.id }, this.now(), { patch: { greenlitVersion: autoApproval.planVersion, checkPlanVersion: autoApproval.planVersion }, text: decision.text, data: { decisionId: decision.id } });
       } else {
+      const askSource = !input.askId ? {} : input.source === "ask"
+        ? { askId: input.askId, optionId: input.optionId, answeredBy: "user" }
+        : { askId: input.askId, answeredBy: "keeper", keeperName: this.name(this.require(threadId, "keeper")), ...this.authority.keeperDecisionSource(this.store.get("asks", input.askId)!) };
       this.store.event(
         this.now(),
         threadId,
         questId,
         "decision.made",
         decision.text,
-        { decisionId: decision.id, ...(effect?.waypointCall ? { waypoint: { ...effect.waypointCall, reason: decision.why } } : {}), ...(input.askId ? { askId: input.askId, answeredBy: "keeper", keeperName: this.name(this.require(threadId, "keeper")), ...this.authority.keeperDecisionSource(this.store.get("asks", input.askId)!) } : {}), ...(decision.answerReceipt ? { askId: decision.answerReceipt, answeredBy: "user" } : {}) },
+        { decisionId: decision.id, ...(effect?.waypointCall ? { waypoint: { ...effect.waypointCall, reason: decision.why } } : {}), ...askSource, ...(decision.answerReceipt ? { askId: decision.answerReceipt, answeredBy: "user" } : {}) },
         decision.answerReceipt ? { kind: "user" } : { kind: "agent", threadId },
       );
       }
     });
-    const grant = input.askId ? this.store.get("shellGrants", input.askId) : null;
+    const keeperAskId = input.source === "keeper" ? input.askId : undefined;
+    const grant = keeperAskId ? this.store.get("shellGrants", keeperAskId) : null;
     if (grant) this.syncShellGrants(grant.memberThreadId);
-    const answered = input.askId ? this.store.get("asks", input.askId) : null;
+    const answered = keeperAskId ? this.store.get("asks", keeperAskId) : null;
     if (answered?.effect?.type === "communication-hold" && answered.effect.hold.act === "draft" && answered.answer?.optionId === "approve") this.syncCommunication(answered.effect.hold.threadId, answered.id);
     this.changed(threadId, questId);
     return decision;
@@ -1859,14 +1912,26 @@ export class Keeper {
     this.userAction(d.keeperThreadId);
     this.invalidate([...this.changedTags(d.keeperThreadId, d.boardQuestId), tags.undoLanes()]);
   }
-  messageRule(threadId: string, text: string, questId?: string | null) {
+  private messageRule(threadId: string, text: string, questId: string | null, sourceMessageId?: string) {
+    if (sourceMessageId) {
+      const receipt = this.store.partyMessageReceipt(threadId, sourceMessageId);
+      const member = receipt && this.member(receipt.thread_id);
+      if (!receipt || member?.role !== "member" || member.keeperThreadId !== threadId ||
+          questId && (receipt.board_quest_id !== questId || member.boardQuestId !== questId))
+        throw new Error(`Source ${sourceMessageId} is not a user message to a member of this party for that scope. Cite the receiptId of an applicable user.told-member event.`);
+      if (receipt.accepted !== 1)
+        throw new Error(`Source ${sourceMessageId} in ${member.threadId} was not accepted. Cite an accepted user message instead.`);
+      if (receipt.text.trim() !== text.trim())
+        throw new Error(`Copy the user's rule verbatim from ${sourceMessageId} in ${member.threadId}.`);
+      return { sourceMessageId, sourceThreadId: member.threadId, at: receipt.at };
+    }
     const routes = this.applicableRoutes(threadId).filter(
       (route) =>
         route.kind === "rule" &&
         (!questId || routeQuestIds(route).includes(questId)),
     );
     if (!routes.length)
-      throw new Error("A source message needs an applicable user rule route");
+      throw new Error("Source message needs an applicable user rule route or sourceMessageId from a user.told-member event.");
     const metadata = this.store.runtime(threadId).routes ?? [];
     const route = routes.find((route) => {
       const receiptId = metadata.find(
@@ -1880,12 +1945,12 @@ export class Keeper {
       throw new Error(
         "Copy the user's rule verbatim for source message; otherwise propose it for confirmation",
       );
-    return route.id;
+    return { sourceRef: route.id, at: route.messageAt };
   }
   addRule(
     input: Pick<Rule, "scope" | "scopeId" | "text" | "source">,
     keeperThreadId: string | null = null,
-    sourceRef?: string,
+    evidence?: { sourceMessageId?: string; supersedesRuleId?: string },
   ) {
     if (input.scope === "quest" && input.scopeId && !isOpenQuest(this.quest(input.scopeId))) throw new Error("This board quest has ended or is stopping");
     if ((input.scope === "global") !== (input.scopeId === null))
@@ -1897,8 +1962,19 @@ export class Keeper {
       if (!broad || local || denied)
         throw new Error("Keep this rule scoped to this Keeper unless the user's own words explicitly apply it to all Keepers or all Tavern threads. The user can widen it on its route receipt.");
     }
+    const supersedesRuleId = evidence?.supersedesRuleId;
+    if (evidence && input.source !== "message" && (supersedesRuleId || evidence.sourceMessageId))
+      throw new Error(`Only a user's exact message can ${supersedesRuleId ? `supersede rule ${supersedesRuleId}` : `cite ${evidence.sourceMessageId}`}. Use source "message" with the user's verbatim correction.`);
+    const origin = input.source === "message" && keeperThreadId && evidence
+      ? this.messageRule(keeperThreadId, input.text, input.scope === "quest" ? input.scopeId : null, evidence.sourceMessageId)
+      : undefined;
+    const previous = supersedesRuleId ? this.store.get("rules", supersedesRuleId) : null;
+    if (supersedesRuleId && (!origin || !previous?.active || previous.keeperThreadId !== keeperThreadId ||
+        previous.scope !== input.scope || previous.scopeId !== input.scopeId || origin.at < previous.createdAt))
+      throw new Error(`Cannot supersede rule ${supersedesRuleId}: it needs a newer user message and an active rule of this Keeper in the same scope. Read tavern_status section=rules for the active rule and its scope.`);
     const r = ruleSchema.parse({
       ...input,
+      supersedesRuleId,
       id: this.store.id("rule"),
       keeperThreadId,
       active: input.source !== "keeper-proposed",
@@ -1906,6 +1982,8 @@ export class Keeper {
     });
     this.store.atomic(() => {
       this.store.put("rules", r.id, r);
+      if (previous) this.store.put("rules", previous.id, { ...previous, active: false, supersededByRuleId: r.id });
+      const sourceRef = origin?.sourceRef;
       if (sourceRef) {
         const route = this.store.get("routes", sourceRef);
         if (!route || route.kind !== "rule" || route.keeperThreadId !== keeperThreadId)
@@ -1914,7 +1992,9 @@ export class Keeper {
       }
       this.store.event(
         this.now(), keeperThreadId, input.scope === "quest" ? input.scopeId : null,
-        "rule.added", r.text, { ruleId: r.id, sourceRef: sourceRef ?? null, scope: r.scope, scopeId: r.scopeId },
+        "rule.added", r.text, { ruleId: r.id, sourceRef: sourceRef ?? null, scope: r.scope, scopeId: r.scopeId,
+          ...(origin?.sourceMessageId ? { sourceMessageId: origin.sourceMessageId, sourceThreadId: origin.sourceThreadId } : {}),
+          ...(previous ? { supersedesRuleId: previous.id } : {}) },
       );
     });
     this.invalidateRule(r, r.active, keeperThreadId);
@@ -1923,6 +2003,7 @@ export class Keeper {
   confirmRule(id: string, active: boolean) {
     const r = this.store.get("rules", id);
     if (!r) throw new Error("Unknown rule");
+    if (active && r.supersededByRuleId) throw new Error(`Rule ${id} was superseded by ${r.supersededByRuleId}. Review the replacement instead.`);
     this.store.put("rules", id, { ...r, active, confirmedAt: this.now() });
     this.store.event(
       this.now(),

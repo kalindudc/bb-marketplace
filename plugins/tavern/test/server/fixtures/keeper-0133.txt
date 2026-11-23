@@ -22,7 +22,7 @@ Vex (warden), waiting; waypoint ; strikes 0; doing "Tavern refused to let me ver
 
 Summary reminder: aim for at most 6 summaries per quest per day.
 
-Open asks:
+Open user asks:
 None
 
 Last thing you told the user (01:33 (local with offset)):

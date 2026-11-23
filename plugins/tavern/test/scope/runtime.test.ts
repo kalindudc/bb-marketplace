@@ -67,6 +67,21 @@ describe("scope persistence and env", () => {
   });
 });
 describe("provider-neutral watcher", () => {
+  it.each([
+    { type: "fileChange", changes: [{ path: "draft.txt" }] },
+    { type: "commandExecution", command: "rm draft.txt" },
+  ])("identifies readonly workspace writes and how to proceed: %j", async item => {
+    const { store, s } = fixture();
+    store.write("t1", { ...s, writes: { ...s.writes, allow: [join(store.dataDir, "scratch")] } });
+    const rows = [{ id: "write", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { ...item, cwd: store.dataDir } } }];
+    const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: {
+      events: { list: async () => rows }, stop: async () => ({}),
+    }, environments: {} } });
+    registerWatcher(bb, store, { onViolation: vi.fn() });
+    await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1" }), sequence: 1 });
+    expect(store.violations()[0]?.reason).toMatch(/draft\.txt.*readonly.*shell write.*write-path.*tell your Keeper/is);
+    await harness.lifecycle.dispose();
+  });
   it.each(["enforce", "watch"] as const)("records Keeper acts without stopping in %s", async mode => {
     const { store } = fixture();
     const s = bindPaths({ ...scopeForClass("keeper"), mode, threadId: "t1", issuedAt: 1 }, { home: temp(), tmp: [tmpdir()], scopesDir: store.directory });
@@ -87,19 +102,36 @@ describe("provider-neutral watcher", () => {
   it("binds a late worktree from SDK environment data once and checks relative writes against it", async () => {
     const store = new ScopeStore(temp()), { worktree } = linkedWorktree(temp()), outside = temp();
     store.write("t1", bindPaths({ ...scopeForClass("smith"), threadId: "t1", issuedAt: Date.now() - 1 }, { home: temp(), tmp: [join(store.dataDir, "scratch")], scopesDir: store.directory }));
-    let rows = [{ id: "e1", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { type: "fileChange", changes: [{ path: "inside" }] } } }];
+    let rows = [{ id: "e1", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { type: "fileChange", cwd: "", changes: [{ path: "inside" }] } } }];
     const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: {
       get: async () => ({ environmentId: "env1" }), stop: async () => ({}), events: { list: async () => rows },
     }, environments: { get: async () => ({ path: worktree, isWorktree: true }) } } });
     registerWatcher(bb, store, { onViolation: vi.fn() });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1" }), sequence: 1 });
     expect(store.violations()).toEqual([]);
-    rows = [{ ...rows[0], id: "e2", seq: 2, data: { item: { type: "fileChange", changes: [{ path: join(outside, "outside") }] } } }];
+    rows = [{ ...rows[0], id: "e2", seq: 2, data: { item: { type: "fileChange", cwd: "", changes: [{ path: join(outside, "outside") }] } } }];
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1" }), sequence: 2 });
-    expect(store.violations()[0].ruleId).toBe("write-path");
+    expect(store.violations()[0]).toMatchObject({ ruleId: "write-path", call: { cwd: worktree } });
     expect(harness.inspection.sdk.callsTo("threads.get")).toHaveLength(1);
     expect(harness.inspection.sdk.callsTo("environments.get")).toHaveLength(1);
     expect(store.records.get("t1")?.scope?.writes.allow).toContain("${worktree}");
+    await harness.lifecycle.dispose();
+  });
+  it.each(["relative", "absolute", "file URL", "@absolute"] as const)("checks a %s write with no member directory", async target => {
+    const { store } = fixture();
+    const absolute = join(store.dataDir, "draft.txt");
+    const path = target === "relative" ? "draft.txt" : target === "file URL" ? "file://" + absolute : target === "@absolute" ? "@" + absolute : absolute;
+    const scope = bindPaths({ ...scopeForClass("wanderer"), threadId: "t1", issuedAt: 1 }, { home: temp(), tmp: [tmpdir()], scopesDir: store.directory });
+    store.write("t1", scope);
+    const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { stop: async () => ({}),
+      events: { list: async () => [{ id: "write", seq: 1, type: "item/started", createdAt: Date.now(), data: {
+        item: { type: "fileChange", cwd: "", changes: [{ path }] },
+      } }] } } } });
+    registerWatcher(bb, store, { onViolation: vi.fn() });
+    await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1" }), sequence: 1 });
+    expect(store.violations()).toEqual(target === "relative"
+      ? [expect.objectContaining({ ruleId: "write-cwd-missing", reason: expect.stringMatching(/draft\.txt.*no working directory/) })]
+      : []);
     await harness.lifecycle.dispose();
   });
   it.each([null, "/", homedir(), "lookup-error"])("allows reader work when late worktree resolution fails, but still catches writes: %s", async path => {

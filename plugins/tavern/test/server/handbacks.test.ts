@@ -22,6 +22,36 @@ it("requires the hand-back tool caller to say what it needs in at most 120 chara
   await expect(tool.execute({ ...input, need: "Approve my access request." }, context)).resolves.toContain("Approve my access request.");
 });
 
+it("creates the three notes advertised in the registered tool description", async () => {
+  const f = setup();
+  const registered = vi.spyOn(f.bb.agents, "registerTool");
+  registerTools(f.bb, f.runtime);
+  const tool = registered.mock.calls.find(([spec]) => spec.name === "tavern_note")![0];
+  const examples = [...tool.description.matchAll(/\{"op":"add",[^{}]+\}/g)].map(([json]) => JSON.parse(json));
+  expect(examples.map(note => note.kind)).toEqual(["fact", "commitment", "waiting-on-user"]);
+  expect(tool.parameters).toMatchObject({ type: "object", oneOf: [
+    { oneOf: [
+      { required: expect.arrayContaining(["op", "kind", "text"]) },
+      { required: expect.arrayContaining(["op", "kind", "text", "dueAt"]) },
+      { required: expect.arrayContaining(["op", "kind", "text", "action", "need"]) },
+    ] },
+    { required: ["op", "noteId"] },
+  ] });
+  for (const note of examples) {
+    const result = await f.harness.behavior.invokeAgentTool("tavern_note", note, { threadId: "lead" });
+    expect(JSON.parse(result as string)).toMatchObject({ kind: note.kind, text: note.text });
+  }
+});
+
+it.each([{ kind: "fact", title: "Fact", body: "Text", source: "User", appliesTo: "Quest", tags: [] },
+  { kind: "fact", text: "Text" }, { op: "save", note: { kind: "fact", text: "Text" } }])("explains the one valid create shape after refusing %j", async input => {
+  const f = setup();
+  registerTools(f.bb, f.runtime);
+  await expect(f.harness.behavior.invokeAgentTool("tavern_note", input, { threadId: "lead" }))
+    .rejects.toThrow(/\{"op":"add","kind":"fact","text":"/);
+  expect(f.k.store.all("notes")).toEqual([]);
+});
+
 it.each(["done", "replied"] as const)("a user %s resolves once, records the action, and wakes the Keeper", async how => {
   const f = setup();
   const note = f.k.memory.note("lead", { kind: "waiting-on-user", text: "The access request is pending", action: "Approve the Okta request", need: "Approve the access request.", why: "The member cannot sign in" } as any);

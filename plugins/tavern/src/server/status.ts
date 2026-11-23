@@ -1,4 +1,4 @@
-import { memberDetails, memberHost, openBriefBlocker } from "./member-engagement";
+import { briefProgress, memberDetails, memberHost } from "./member-engagement";
 import type { MemberBriefRow } from "../shared/contract";
 import { memberActivityWord, wasReleased } from "../shared/member-engagement";
 import { z } from "zod";
@@ -44,12 +44,10 @@ import { currentLeadPlanNames, currentAskNames } from "./quest-names";
 export function memberBriefRows(k: TavernRuntime["keeper"], threadId: string, boardQuestId?: string, memberThreadId?: string): MemberBriefRow[] {
   const now = k.now();
   return k.store.pendingMemberBriefs(threadId, boardQuestId, memberThreadId).map(({ member, pending }) => {
-    const createdAt = pending.createdAt ?? pending.attemptedAt ?? pending.nextAttemptAt;
     return { memberThreadId: member.threadId, name: k.name(member), doing: member.doing,
       pendingBrief: {
-        id: pending.id, state: openBriefBlocker(k.store, pending) ? "blocked"
-          : pending.state ?? (pending.attemptedAt === null ? "queued" : "unconfirmed"),
-        attempts: pending.attempts, receiptChecks: pending.receiptChecks ?? 0, createdAt, ageMs: Math.max(0, now - createdAt),
+        ...briefProgress(k.store, pending, now),
+        attempts: pending.attempts, receiptChecks: pending.receiptChecks ?? 0,
         firstLine: (pending.assignmentText ?? pending.text).split("\n", 1)[0]!.trim().slice(0, 300),
       },
     };
@@ -263,12 +261,16 @@ function statusData(
       ).map(undoAskProjection(k.store)).map(ask => currentAskNames(k.store, ask)),
     };
   const pending = k.store.runtime(threadId).pending;
-  if (input.section === "pending")
+  if (input.section === "pending") {
+    const briefs = memberBriefRows(k, threadId, input.boardQuestId ?? undefined, input.memberThreadId ?? undefined);
     return {
       archivedCount,
       pending: pending.slice(input.offset, input.offset + input.limit),
       total: pending.length,
+      memberBriefs: briefs.slice(input.offset, input.offset + input.limit),
+      memberBriefTotal: briefs.length,
     };
+  }
   const resting = restingParty(k, threadId);
   const review = runtime.review();
   return {

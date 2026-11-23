@@ -1,6 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { hostContract, type HostOutput } from "../host-contract";
-import { BLOCK_MARKER, HELD_MARKER, blocked, evaluate, type Decision, type ScopeCall } from "./engine";
+import { BLOCK_MARKER, HELD_MARKER, blocked, evaluate, isWriteCall, type Decision, type ScopeCall } from "./engine";
 import { matchedDraftReceipt, observedDraftReceipt } from "./communication-holds";
 import { ACT_KINDS, type ActKind } from "./acts";
 import { actAskKind } from "./act-routing";
@@ -33,7 +33,7 @@ const emergency = new Set(["tavern_report", "journal", "quest", "tavern_ready"])
 const identity = (value: Extract<RemoteScopeObservation, { kind: "ready" }>): ScopeObservationBinding => scopeObservationBindingSchema.parse({ ...value.binding, hostId: value.hostId, cwd: value.cwd });
 const sameBinding = (a: ScopeObservationBinding, b: ScopeObservationBinding) => a.placementId === b.placementId && a.generation === b.generation && a.endpointId === b.endpointId && a.revision === b.revision && a.scopeDigest === b.scopeDigest && a.hostId === b.hostId && a.cwd === b.cwd;
 export function callsFromItem(item: Item, fallbackCwd: string): ScopeCall[] {
-  const cwd = typeof item.cwd === "string" ? item.cwd : fallbackCwd;
+  const cwd = typeof item.cwd === "string" && item.cwd.startsWith("/") ? item.cwd : fallbackCwd;
   if (item.type === "commandExecution") return [{ kind: "bash", toolName: "bash", input: { command: item.command }, cwd }];
   if (item.type === "fileRead") return [{ kind: "read", toolName: "read", input: { path: item.path }, cwd }];
   if (item.type === "fileChange") {
@@ -227,9 +227,12 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
             const reason = resultTexts(item).find(text => text.startsWith(BLOCK_MARKER));
             if (reason) {
               const at = Date.now(), call = rawCalls[0];
+              const remote = lookup(threadId);
+              const cwd = call?.cwd || (remote?.kind === "ready" ? remote.cwd : remote ? ""
+                : deps.cwdForThread?.(threadId) || worktrees.get(threadId)?.root || record.scope?.expectedWorktree || record.scope?.checks?.worktree || "");
               const rule = /\nTavern scope rule: ([\w:.-]{1,120})$/.exec(reason);
               await notify({ threadId, providerId, eventId: row.id, seq: row.seq, at, ruleId: rule?.[1] ?? "guard-preflight", reason: reason.slice(0, rule?.index ?? 2000).slice(0, 2000),
-                ...(call ? { call: { ...call, input: {} } } : {}), mode: "enforce", prevented: true, stopped: false, latencyMs: Math.max(0, at - row.createdAt) });
+                ...(call ? { call: { ...call, cwd, input: {} } } : {}), mode: "enforce", prevented: true, stopped: false, latencyMs: Math.max(0, at - row.createdAt) });
             }
           }
           advance(); continue;
@@ -274,7 +277,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
         }
         if (acceptedGrant) continue;
         advance();
-        const calls = callsFromItem(item, deps.cwdForThread?.(threadId) ?? process.cwd());
+        const calls = callsFromItem(item, deps.cwdForThread?.(threadId) || record.scope?.expectedWorktree || record.scope?.checks?.worktree || "");
         if (providerId === "pi") {
           if (modeFor(threadId) === "enforce" && !store.isArmed(threadId)) {
             await contain(threadId, providerId, row.id, row.seq, row.createdAt, blocked("tool call", "guard-not-loaded", "guard not loaded; restart Pi after repairing Tavern's guard"), calls[0]);
@@ -298,7 +301,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
               worktrees.set(threadId, { root, record });
             }
             scope = bindWorktree(scope, root);
-            for (const call of calls) if (typeof item.cwd !== "string") call.cwd = root;
+            if (!rawCalls[0]?.cwd) for (const call of calls) call.cwd = root;
           } catch (error) {
             if (needsWorktree(scope) && !record.binding) scope = readerFallback(scope);
             else {
@@ -309,10 +312,16 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
           }
         }
         for (const call of calls) {
+          const path = call.input.path ?? call.input.file_path;
+          if (isWriteCall(call) && !call.cwd && typeof path === "string" && path.trim() && !path.includes("\0") &&
+              !/^@?(?:\/|~(?:\/|$)|file:\/\/)/.test(path)) {
+            await contain(threadId, providerId, row.id, row.seq, row.createdAt, blocked(`write to ${path}`, "write-cwd-missing", "no working directory was recorded or bound for this relative target"), call);
+            break;
+          }
           let decision: Decision;
           try {
             scope = bindChecks(scope);
-            const local = { ...call, containment: providerId === "pi" && process.platform === "darwin" && scope.sandbox ? "sandbox" as const : undefined };
+            const local = { ...call, cwd: call.cwd || process.cwd(), containment: providerId === "pi" && process.platform === "darwin" && scope.sandbox ? "sandbox" as const : undefined };
             const id = observedPullRequestReceipt(item) ?? row.id;
             const prepared = prepareCall(local, { scope });
             const receipt = providerId === "pi" ? observedActReceipt(item) : undefined;

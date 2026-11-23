@@ -931,6 +931,18 @@ export class BackendScopes {
       k.store.event(k.now(), keeperThreadId, member.boardQuestId, "scope.violation",
         `${memberName}: ${violation.reason}${violation.stopError ? `; STOP FAILED: ${violation.stopError}` : ""}`,
         { ...violation, memberName }, { kind: "tavern" });
+      if (member.role === "member" && keeperThreadId && violation.mode !== "watch" && isLiveMember(k.store, member, "brief")) {
+        const refusalClass = ["write-path", "shell-write", "shell-location"].includes(violation.ruleId) ? "write" : violation.ruleId;
+        const counts = k.store.runtime(member.threadId).scopeRefusalCounts ?? {};
+        const count = Object.hasOwn(counts, refusalClass) ? counts[refusalClass]! : 0;
+        if (count < 3) {
+          k.store.patch(member.threadId, { scopeRefusalCounts: { ...counts, [refusalClass]: count + 1 } });
+          if (count === 2)
+            k.store.event(k.now(), keeperThreadId, member.boardQuestId, "scope.repeated-refusal",
+              `${memberName} (${member.threadId}) hit three ${refusalClass} scope refusals. Review the block, then re-scope with tavern_scope or use tavern_release with memberThreadId "${member.threadId}", a reason and replace:true if the member needs replacing.`,
+              { memberThreadId: member.threadId, refusalClass, eventId: violation.eventId }, { kind: "tavern" });
+        }
+      }
       return true;
     });
     if (!saved) return;

@@ -9,7 +9,11 @@ import { briefSteerFact } from "../../src/server/tick";
 const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
 const body = read("classes/keeper.md").split(/^---\s*$/m).slice(2).join("---").trim();
 const skill = read("skills/tavern-keeper/SKILL.md");
-const tools = new Map([...read("src/server/tools/index.ts").matchAll(/register\(\s*"(tavern_\w+)",\s*"(?:[^"\\]|\\.)*",\s*("(?:[^"\\]|\\.)*")/g)].map(match => [match[1]!, JSON.parse(match[2]!.replace(/\\'/g, "'")) as string]));
+const fixture = setup();
+const registrations = vi.spyOn(fixture.bb.agents, "registerTool");
+registerTools(fixture.bb, fixture.runtime);
+const tools = new Map(registrations.mock.calls.map(([tool]) => [tool.name, tool.description]));
+fixture.k.store.db.close();
 const sections = new Map([...skill.matchAll(/^## (.+)\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)].map(match => [match[1]!, match[0]]));
 const sentences = (text: string) => text.replace(/^---\n[\s\S]*?\n---\n/, "").replace(/^#+ .*$/gm, "").replace(/^\d+\.\s*/gm, "").split(/[.!?](?:\s|$)/).map(s => s.replace(/^[\s-]+/, "").replace(/\s+/g, " ").trim()).filter(s => s.split(/\s+/).length >= 8);
 
@@ -26,12 +30,20 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   expect(replacementSchemaDelta).toBeGreaterThan(0);
   const opening = z.toJSONSchema(z.object({ title: z.string().min(1).max(200), short: z.string().min(1).max(40) }), { io: "input" });
   const source = read("src/server/tools/index.ts");
-  const metadata = [...source.matchAll(/register\(\s*"(tavern_\w+)",\s*"((?:[^"\\]|\\.)*)",\s*("(?:[^"\\]|\\.)*")/g)].map(match => match[1]! + match[2]! + JSON.parse(match[3]!)).join("");
+  const note = registered.mock.calls.find(([tool]) => tool.name === "tavern_note")![0];
+  const metadata = [...source.matchAll(/register\(\s*"(tavern_\w+)",\s*"((?:[^"\\]|\\.)*)",\s*("(?:[^"\\]|\\.)*")/g)]
+    .filter(match => match[1] !== note.name).map(match => match[1]! + match[2]! + JSON.parse(match[3]!)).join("");
+  const noteLabel = typeof note.presentation?.label === "object" ? note.presentation.label.pending : note.presentation?.label;
+  const noteMetadata = note.name + (noteLabel ?? "") + note.description;
+  const ask = registered.mock.calls.find(([tool]) => tool.name === "tavern_ask")![0];
+  const mergeAskSchema = (ask.parameters as { anyOf: object[] }).anyOf.at(-1);
+  expect(mergeAskSchema).toMatchObject({ required: ["mergeAskId", "action", "reason"] });
+  const mergeAskSchemaDelta = 1 + Buffer.byteLength(JSON.stringify(mergeAskSchema));
   const structure = Buffer.byteLength(JSON.stringify(keep)) - Buffer.byteLength(keep.name + keep.description + "Kept a resting member")
     + Buffer.byteLength(JSON.stringify(refresh)) - Buffer.byteLength(refresh.name + refresh.description + "Requested Keeper refresh");
   const briefWarning = briefSteerFact("Wren XVIII", { at: 0, excerpt: "x".repeat(160), memberThreadId: "thr_abcdefghij" });
   const questSchemaDelta = Buffer.byteLength(JSON.stringify(quest.parameters)) - Buffer.byteLength(JSON.stringify(opening));
-  const bytes = Buffer.byteLength(metadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
+  const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + mergeAskSchemaDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
   if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${bytes}\n`);
   expect(bytes).toBeLessThanOrEqual(34754);
 });

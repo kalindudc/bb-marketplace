@@ -632,6 +632,25 @@ describe("backend scope integration", () => {
       .filter((call) => (call.args[0] as { threadId: string }).threadId === "lead");
     expect(JSON.stringify(ticks)).toContain("STOP FAILED");
   });
+  it("records one Keeper-only notice on a third distinct refusal of the same class", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    const scopes = f.runtime.scopes!;
+    const member = f.k.member("child")!, name = f.k.name(member);
+    const refused = (seq: number, ruleId = "write-path") => scopes.violation({ threadId: "child", providerId: "pi",
+      at: f.time(), eventId: `blocked-${seq}`, seq, ruleId, reason: "Blocked write", mode: "enforce", prevented: true, stopped: false, latencyMs: 0 });
+    const notices = () => f.k.store.events("lead").filter(e => e.type === "scope.repeated-refusal");
+    await refused(1); await refused(1); await refused(2); await refused(3, "tool");
+    expect(notices()).toHaveLength(0);
+    await refused(4, "shell-write"); await refused(5); await refused(6, "shell-write");
+    expect(notices()).toEqual([expect.objectContaining({
+      text: expect.stringMatching(new RegExp(`${name}.*write.*tavern_scope.*replace`)),
+      data: expect.objectContaining({ memberThreadId: "child", refusalClass: "write" }),
+    })]);
+    expect(new AttentionSnapshot(f.k.store).asks).toEqual([]);
+    expect(f.harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(0);
+    expect(f.harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
+  });
   it("lets the Keeper request one manual Pi repair and keeps Done open until the guard is armed", async () => {
     const f = await fixture(true);
     await f.runtime.hire("lead", "project", f.input);

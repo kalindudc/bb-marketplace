@@ -109,13 +109,13 @@ export function readRequestSources(k: Keeper, actorId: string, input: { manifest
   const state = k.store.runtime(memberId);
   const manifests = [memberDetails(k.store, member.threadId).delivery?.requestSources, state.requestSources].filter(value => value != null).map(value => requestSourcesSchema.parse(value));
   const manifest = input.manifestId ? manifests.find(value => value.id === input.manifestId) : manifests[0];
-  if (!manifest) throw new Error("Unknown frozen request manifest for this member.");
-  if (k.succession.current(manifest.keeperThreadId) !== member.keeperThreadId || manifest.boardQuestId !== member.boardQuestId) throw new Error("The request manifest belongs to another quest.");
+  if (!manifest) throw new Error(`Request manifest ${input.manifestId ?? "(missing)"} is not current for member ${memberId}. Use the manifestId in that member's current brief.`);
+  if (k.succession.current(manifest.keeperThreadId) !== member.keeperThreadId || manifest.boardQuestId !== member.boardQuestId) throw new Error(`Request manifest ${manifest.id} does not match ${memberId}'s current quest. Ask the Keeper for the current brief.`);
   const sourceIndex = input.sourceIndex ?? 0, offset = input.offset ?? 0;
-  if (!Number.isSafeInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= manifest.sources.length && (sourceIndex !== 0 || manifest.sources.length !== 0)) throw new Error("Source index is outside the manifest.");
+  if (!Number.isSafeInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= manifest.sources.length && (sourceIndex !== 0 || manifest.sources.length !== 0)) throw new Error(`Source index ${sourceIndex} is outside manifest ${manifest.id}. Start at sourceIndex=0 and follow the returned page cursors.`);
   const source = manifest.sources[sourceIndex] ?? null;
   const text = source ? sourceText(k, manifest, source) : undefined;
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > (text?.length ?? 0)) throw new Error("Source character offset is out of range.");
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > (text?.length ?? 0)) throw new Error(`Offset ${offset} is outside source ${sourceIndex} in manifest ${manifest.id}. Start that source at offset=0 and follow nextOffset.`);
   const end = Math.min(offset + PAGE_CHARS, text?.length ?? 0);
   const nextOffset = end < (text?.length ?? 0) ? end : null;
   return { manifestId: manifest.id, boardQuestId: manifest.boardQuestId, openingMissing: manifest.openingMissing,

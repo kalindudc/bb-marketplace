@@ -47,6 +47,7 @@ export const NEWS = new Set([
   "hire.expired",
   "tick.failed",
   "scope.violation",
+  "scope.repeated-refusal",
   "blocker.moved",
   "blocker.assigned",
   "scope.act-held",
@@ -74,7 +75,7 @@ export function isNewsEvent(event: Pick<TavernEvent, "type" | "actor" | "data">,
  * Events that wake a Keeper through the gated tick outside the sweep: a report filed, a party formed (hires dispatched),
  * or an ask answered. Narrower than NEWS so event-driven wakes stay purposeful and do not fight brief delivery.
  */
-export const WAKE_NEWS = new Set(["handback.resolved", "report.filed", "member.hired", "lead.plan-proposed", "lead.plan-approved", "lead.plan-refused", "ask.answered", "ask.defaulted", "scope.violation", "blocker.moved", "blocker.assigned"]);
+export const WAKE_NEWS = new Set(["handback.resolved", "report.filed", "member.hired", "lead.plan-proposed", "lead.plan-approved", "lead.plan-refused", "ask.answered", "ask.defaulted", "scope.violation", "scope.repeated-refusal", "blocker.moved", "blocker.assigned"]);
 
 /** Whether one event should wake this Keeper now (a hire it made itself does not need to wake it). */
 export function isWakeEvent(event: Pick<TavernEvent, "type" | "actor" | "data">, keeperId: string) {

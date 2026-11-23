@@ -38,7 +38,7 @@ it("R5 destructive probe: changed work below an unchanged tip never matches; ord
 it("keeps delegated asks in Keeper restatement/status and the move, never need-you", async () => {
  const f=setup(),q=await seedQuest(f.k,"lead","Quest","Quest"); f.k.plan("lead",planInput(q.id));f.k.answerAsk(f.k.store.openAsks("lead")[0]!.id,"approve",null,"page","user");
  f.k.authority.delegate(q.id,"credential",receipt("delegateQuest")); const ask=f.k.ask("lead",request(q.id));
- expect(f.k.restatement("lead")).toContain(ask.id);expect(f.k.restatement("lead")).toContain("Yours to decide (delegated)");
+ expect(f.k.restatement("lead")).toContain(ask.id);expect(f.k.restatement("lead")).toContain("Keeper lane (not shown to the user)");
  expect(JSON.stringify(readStatus(f.runtime,"lead",{limit:5,offset:0} as never))).toContain(ask.id);
  expect(f.k.summary(q.id).move).toMatchObject({who:"keeper",text:expect.stringMatching(/waiting on/i)});
  expect(f.k.summary(q.id).openAsks).toBe(0);expect(f.k.store.openAsks("lead",q.id,true)).toHaveLength(0);

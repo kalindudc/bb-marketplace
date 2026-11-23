@@ -69,6 +69,21 @@ describe("verbatim user sources at native brief delivery", () => {
     expect(f.k.store.runtime("deferred")).toMatchObject({ initialBriefAt: expect.any(Number), brief: { context: [] }, assignmentText, requestSources: { id: manifest.id } });
     expect(f.k.store.events("lead", 0, 200).filter(event => event.type === "member.told").every(event => event.text === assignmentText)).toBe(true);
   });
+  it("rate-limits repeats of an identical request without blocking the next source page", async () => {
+    const f = await fixture(), child = await f.runtime.hire("lead", "project", f.input);
+    registerTools(f.bb, f.runtime);
+    const { id: manifestId } = f.k.store.runtime(child.threadId).requestSources!;
+    const read = (offset?: number, manifest = manifestId) => f.harness.behavior.invokeAgentTool("tavern_request_sources",
+      { manifestId: manifest, ...(offset === undefined ? {} : { offset }) }, { threadId: child.threadId });
+    await expect(read()).resolves.toContain("SOURCE_ONLY_original");
+    await expect(read(0)).rejects.toThrow(new RegExp(`${manifestId}.*sourceIndex=0.*offset=0.*previous result`));
+    await expect(read(1)).resolves.toContain("OURCE_ONLY_original");
+    await expect(read(0, "unknown-manifest")).rejects.toThrow(/unknown-manifest.*current brief/);
+    await expect(read(0, "unknown-manifest")).rejects.toThrow(/unknown-manifest.*previous result/);
+    f.advance(60_001);
+    await expect(read()).resolves.toContain("SOURCE_ONLY_original");
+  });
+
   it("offers members only the scoped source tool and leaves the status tool Keeper-only", async () => {
     const f = await fixture(), child = await f.runtime.hire("lead", "project", f.input);
     const manifest = f.k.store.runtime(child.threadId).requestSources!;

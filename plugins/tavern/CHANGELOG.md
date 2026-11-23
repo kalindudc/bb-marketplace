@@ -104,6 +104,13 @@ Machine rules put a project's party members on their own new machines through th
 
 - Keepers can stop and replace one stuck party member without using Stop all. The replacement gets the same waypoint and brief, and quest history records the reason and both members. Verified work keeps its credit, and available work is preserved before the slot is freed.
 - Answer a member’s asks from its character badge or banner. Guardrail alerts distinguish confirmed problems from startup and history, and show what to do next.
+- The Keeper’s ledger distinguishes its own asks from the user’s open asks. A plain merge ask can be sent to the user or withdrawn with a recorded reason without approving the merge.
+- Pending status shows the member brief blocking a follow-up, with its ID and a safe way to replace it. It does not resend or expire uncertain deliveries.
+- Keeper notes show working create examples and report the correct input shape on error. Keepers can cite an exact widget answer without answering again or claiming user consent.
+- Mixed-maker Warden slots name the affected waypoints and makers so the Keeper can split the plan.
+- Scope refusals distinguish readonly workspace writes from allowed scratch work. Three refusals of the same class leave one Keeper notice, without another stop or user alert. Repeated reads of the same request-source page are briefly limited.
+- Relative writes use the member’s bound working directory when the provider leaves it blank. If no directory was recorded, the guard explains why it cannot check the path.
+- Keepers can cite the user’s accepted message to a party member as a rule source. A correction can explicitly supersede an older rule in the same scope.
 - A brief that bb cannot confirm now raises a blocker instead of silently holding the member’s slot. Retry checks bb before sending the same brief again, and the Keeper can explicitly replace an unconfirmed brief. The Ledger and `tavern_status` show pending briefs beside current work.
 - The Keeper widget is the same height as bb’s context row. Resume is a plain button like Ledger, and the chips still open in place.
 - Idle characters stay in place in Lively mode and keep their small movements. A Quiet Keeper also stays in place. Walking characters face their travel direction when the composer narrows.

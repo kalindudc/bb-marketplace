@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, expect, it, vi } from "vitest";
 import { registerTools } from "../../src/server/tools";
+import { registerRpc } from "../../src/server/rpc";
 import { Keeper } from "../../src/server/keeper/service";
 import { TavernRuntime } from "../../src/server/runtime";
 import { registerJournal } from "../../src/server/journal";
@@ -90,6 +91,31 @@ it("derives the citation and alternatives from its exact delegated ask", async (
   expect(f.k.store.all("decisions")).toEqual([expect.objectContaining({
     coveredBy: { kind: "answer", id: ask.id }, options: options.map(option => option.label), consequence: f.fields.consequence, unsure: false,
   })]);
+});
+
+it("records a widget answer by its exact quest ask and selected option without answering again", async () => {
+  const f = await fixture();
+  registerRpc(f.bb, f.runtime);
+  const ask = f.k.ask("lead", { boardQuestId: f.q.id, kind: "decision", question: "Which check?", why: "Choose a check",
+    holds: [], meanwhile: "Inspect the setup", options: [
+      { id: "local", label: "Local", detail: "Run locally", recommended: true },
+      { id: "staging", label: "Staging", detail: "Run in staging", recommended: false },
+    ], effect: { type: "decision" } });
+  await f.harness.invokeRpc("answerAsk", { askId: ask.id, via: "banner", optionId: "local", note: null });
+  const answer = f.k.store.get("asks", ask.id)!;
+  expect(answer).toMatchObject({ state: "answered", answer: { by: "user", optionId: "local" } });
+
+  const exact = { source: "ask", askId: ask.id, optionId: "local", coveredBy: undefined, options: undefined };
+  await expect(f.decide({ ...exact, optionId: "staging" })).rejects.toThrow(new RegExp(`${ask.id}.*local`));
+  const wrong = await seedQuest(f.k, "lead", "Unrelated work", "Other");
+  await expect(f.decide({ ...exact, boardQuestId: wrong.id })).rejects.toThrow(new RegExp(`${ask.id}.*${f.q.id}`));
+  await expect(f.decide({ source: "user", coveredBy: { kind: "answer", id: ask.id } })).rejects.toThrow(/cannot assert user consent/);
+  await f.decide(exact);
+  expect(f.k.store.all("decisions")).toEqual([expect.objectContaining({
+    source: "ask", sourceRef: ask.id, askId: ask.id, optionId: "local", coveredBy: { kind: "answer", id: ask.id }, options: ["Local", "Staging"],
+  })]);
+  expect(f.k.store.get("asks", ask.id)).toEqual(answer);
+  expect(f.k.store.events("lead", 0, 100).filter(e => e.type === "ask.answered" && e.data.askId === ask.id)).toHaveLength(1);
 });
 
 it("cannot decide an undelegated merge without the user's approval", async () => {

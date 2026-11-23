@@ -225,6 +225,7 @@ export interface Runtime {
   registryFailureAskId?: string | null;
   builtinKeeperFallback?: boolean;
   scopeKeeperFallback?: boolean;
+  scopeRefusalCounts?: Record<string, number>;
   scopeAssignedBranch?: { environmentId: string; branch: string };
   projectClassRevision?: string;
   classExecutionChoice?: { providerId?: string; recordedAt?: number; model: string | null; reasoningLevel: string | null; modelSource: string | null; reasoningSource: string | null };
@@ -765,6 +766,14 @@ export class KeeperStore {
     const row = this.db.prepare("SELECT thread_id, text, at, accepted FROM tavern_messages WHERE id=?").get(id) as { thread_id: string; text: string; at: number; accepted: number } | undefined;
     return row && (!settled || row.accepted === 2 && row.text.trim()) && this.keeperEventOwners(keeperId).includes(row.thread_id) ? row : undefined;
   }
+  partyMessageReceipt(keeperId: string, receiptId: string) {
+    return this.db.prepare(`SELECT m.thread_id, m.text, m.at, m.accepted, e.board_quest_id
+      FROM tavern_messages m JOIN tavern_events e ON json_extract(e.data,'$.receiptId')=m.id
+      WHERE m.id=? AND e.type='user.told-member' AND json_extract(e.actor,'$.kind')='user'
+        AND e.keeper_thread_id IN (SELECT value FROM json_each(?)) LIMIT 1`)
+      .get(receiptId, JSON.stringify(this.keeperEventOwners(keeperId))) as
+      { thread_id: string; text: string; at: number; accepted: number; board_quest_id: string | null } | undefined;
+  }
   messageText(receiptId: string) {
     return (
       this.db
@@ -783,7 +792,10 @@ export class KeeperStore {
       const existing = this.db
         .prepare("SELECT id FROM tavern_messages WHERE row_id=?")
         .get(rowId) as { id: string } | undefined;
-      if (existing) return { id: existing.id, fresh: false };
+      if (existing) {
+        if (accepted) this.db.prepare("UPDATE tavern_messages SET accepted=1 WHERE id=? AND thread_id=? AND accepted=0").run(existing.id, threadId);
+        return { id: existing.id, fresh: false };
+      }
       const inline = this.db
         .prepare(
           "SELECT id FROM tavern_messages WHERE thread_id=? AND text=? AND row_id IS NULL AND accepted<2 AND (accepted=0 OR at BETWEEN ? AND ?) ORDER BY accepted, at, rowid LIMIT 1",

@@ -18,14 +18,20 @@ export function makerForWaypoint(plan: Pick<Plan, "waypoints">, members: Member[
 }
 
 export function validateCheckerMakers(plan: Pick<Plan, "party" | "waypoints">, members: Member[] = []) {
-  for (const slot of plan.party.filter(slot => slot.classId === "warden")) {
-    const makers = new Set(slot.waypointIds.flatMap(id => { const maker = makerForWaypoint(plan, members, id); return maker ? [maker] : []; }));
-    if (makers.size > 1) throw new Error("A Warden slot can check waypoints from one maker only. A waypoint by a different maker needs its own Warden.");
-  }
-  for (const assignment of checkerAssignments(plan, members)) {
-    const pinned = members.find(member => member.threadId === assignment.memberThreadId)?.checkerMakerThreadId;
-    const makers = plan.party[assignment.slot]!.waypointIds.map(id => makerForWaypoint(plan, members, id)).filter(Boolean);
-    if (pinned && makers.some(maker => maker !== pinned)) throw new Error(`This Warden is pinned to maker ${pinned}; a different maker needs its own Warden.`);
+  const assignments = checkerAssignments(plan, members);
+  for (const [index, slot] of plan.party.entries()) {
+    if (slot.classId !== "warden") continue;
+    const pairs = slot.waypointIds.flatMap(id => {
+      const maker = makerForWaypoint(plan, members, id);
+      return maker ? [{ id, maker }] : [];
+    });
+    const details = () => pairs.map(({ id, maker }) => `${id} (maker ${maker})`).join(", ");
+    if (new Set(pairs.map(pair => pair.maker)).size > 1)
+      throw new Error(`Warden slot ${index + 1} mixes makers: ${details()}. Revise the plan to use one Warden slot per maker.`);
+    const checker = members.find(member => member.threadId === assignments.find(a => a.slot === index)?.memberThreadId);
+    const pinned = checker?.checkerMakerThreadId;
+    if (pinned && pairs.some(pair => pair.maker !== pinned))
+      throw new Error(`Warden ${checker.threadId} is pinned to maker ${pinned}, but slot ${index + 1} has ${details()}. Revise the plan to use one Warden slot per maker.`);
   }
 }
 

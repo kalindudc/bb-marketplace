@@ -582,7 +582,7 @@ export const askSchema = z.object({
   state: z.enum(["open", "answered", "defaulted", "withdrawn"]),
   draftApprovalInvalidated: z.literal(true).optional(),
   withdrawnAt: epochMs.nullable().optional(),
-  withdrawnCause: z.enum(["quest-stopped", "quest-returned", "plan-superseded", "keeper-archived", "turn-recovered", "scope-cleared", "backup-restored", "conclude-stale-at-upgrade", "closing-stale"]).nullable().optional(),
+  withdrawnCause: z.enum(["quest-stopped", "quest-returned", "plan-superseded", "keeper-archived", "turn-recovered", "scope-cleared", "backup-restored", "conclude-stale-at-upgrade", "closing-stale", "merge-moot"]).nullable().optional(),
   answer: z
     .object({
       surface: z.string().optional(),
@@ -648,6 +648,8 @@ export const ruleSchema = z.object({
   scopeId: z.string().nullable(),
   text: z.string().min(1).max(500),
   source: z.enum(["user", "keeper-proposed", "message"]),
+  supersedesRuleId: id.optional(),
+  supersededByRuleId: id.optional(),
   /** Keeper-proposed rules stay inactive until the user confirms them. */
   active: z.boolean(),
   // added by Builder B: explicit user widening keeps the original rule and its audit trail.

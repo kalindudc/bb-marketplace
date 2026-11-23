@@ -169,7 +169,7 @@ describe("durable Keeper memory", () => {
       holds: [],
     });
     expect(ask.proceedAt).toBeNull();
-    expect(f.k.restatement("lead")).toContain("waits for you");
+    expect(f.k.restatement("lead")).toMatch(new RegExp(`Open user asks:[\\s\\S]*${ask.id}.*waits for the user`));
   });
   it("places newest rules first and exposes all omitted rules through status paging", async () => {
     const f = await goal();

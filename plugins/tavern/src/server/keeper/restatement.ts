@@ -317,12 +317,12 @@ export function renderRestatement(
     ...(childUpdates.length ? [section("Child summaries and hand-backs", childUpdates, 1000, "more child updates; see the child quest")] : []),
     ...(summaries.length ? ["Summary reminder: aim for at most 6 summaries per quest per day."] : []),
     ...(todayLines.length ? [section("Summaries today", todayLines, 450, "more quests have at least 4 summaries today")] : []),
-    ...(delegated.length ? [section(delegated.every(a => k.settings(a.boardQuestId).keepers.alwaysAsk.includes(a.kind as never)) ? "Yours to decide (delegated)" : "Yours to decide", delegated.map(a => `${a.id} [${a.kind}]: ${quoted(short(a.question, 160))}; holds ${a.holds.join(",") || "none"}; ${a.effect && needsKeeperReview(a.effect) ? "review, then use tavern_ask heldCommunicationAskId or dismiss:true" : a.effect && keeperRecoveryOptions(a.effect) ? `use tavern_decide askId with optionId ${keeperRecoveryOptions(a.effect)!.join(" or ")}` : "answer with tavern_decide askId and optionId, or tavern_ask unsure:true"}`), priorities ? 1200 : 2400, "more delegated asks; call tavern_status section=asks", delegated.length)] : []),
+    ...(delegated.length ? [section("Keeper lane (not shown to the user)", delegated.map(a => `${a.id} [${a.kind}]: ${quoted(short(a.question, 160))}; holds ${a.holds.join(",") || "none"}; ${a.effect && needsKeeperReview(a.effect) ? "review, then use tavern_ask heldCommunicationAskId or dismiss:true" : a.effect && keeperRecoveryOptions(a.effect) ? `use tavern_decide askId with optionId ${keeperRecoveryOptions(a.effect)!.join(" or ")}` : a.kind === "merge" && a.effect?.type === "decision" ? "use tavern_decide source keeper or tavern_ask mergeAskId with action ask-user or withdraw" : "answer with tavern_decide askId and optionId, or tavern_ask unsure:true"}`), priorities ? 1200 : 2400, "more delegated asks; call tavern_status section=asks", delegated.length)] : []),
     section(
-      "Open asks",
+      "Open user asks",
       asks.map(
         (a) =>
-          `${a.id} [${a.kind}]: ${quoted(priorities ? short(a.question, 100) : a.question)}; recommended ${a.options.find((o) => o.recommended)?.label ?? "none"}; ${a.proceedAt === null ? "waits for you" : `defaults at ${clock(a.proceedAt)}`}; holds ${a.holds.join(",") || "none"}; meanwhile ${quoted(priorities ? short(a.meanwhile, 80) : a.meanwhile)}`,
+          `${a.id} [${a.kind}]: ${quoted(priorities ? short(a.question, 100) : a.question)}; recommended ${a.options.find((o) => o.recommended)?.label ?? "none"}; ${a.proceedAt === null ? "waits for the user" : `defaults at ${clock(a.proceedAt)}`}; holds ${a.holds.join(",") || "none"}; meanwhile ${quoted(priorities ? short(a.meanwhile, 80) : a.meanwhile)}`,
       ),
       priorities ? 1800 : 6000,
       "more asks; call tavern_status section=asks",

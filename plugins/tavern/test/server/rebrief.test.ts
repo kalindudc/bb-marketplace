@@ -226,6 +226,9 @@ describe("member re-brief delivery through the strict host", () => {
     expect(readStatus(f.runtime, "lead", statusInput.parse({}))).toMatchObject({ memberBriefs });
     expect(rpcHandlers(f.runtime).ledger({ threadId: "lead" })).toMatchObject({ memberBriefs });
     expect(rpcHandlers(f.runtime).ledger({ threadId: "another-keeper" })).toMatchObject({ memberBriefs: [] });
+    await expect(f.harness.behavior.invokeAgentTool("tavern_tell", { memberThreadId: "child", text: "Corrected work" }, { threadId: "lead" }))
+      .rejects.toThrow(new RegExp(`Pip.*${id}.*queued.*1s.*supersedeBriefId`));
+    expect(readStatus(f.runtime, "lead", statusInput.parse({ section: "pending", memberThreadId: "child" }))).toMatchObject({ memberBriefs, memberBriefTotal: 1 });
   });
 
   it("retries a failed bb queue row after five receipt checks instead of leaving corrected work blocked", async () => {

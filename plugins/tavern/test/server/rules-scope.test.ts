@@ -6,6 +6,7 @@ import { tags } from "../../src/shared/contract";
 import { registerTools } from "../../src/server/tools";
 import { registerRpc } from "../../src/server/rpc";
 import { setup } from "./runtime-fixture";
+import { makeQueueEntry } from "@get-bb/plugin-sdk/testing";
 
 function party() {
   const f = setup();
@@ -23,6 +24,38 @@ async function stated(f: ReturnType<typeof party>, text: string, scope?: Rule["s
 }
 
 describe("Keeper-local standing rules and explicit widening", () => {
+  it("cites a user's accepted party message and explicitly supersedes the old rule", async () => {
+    const f = party();
+    const { rule: old } = await stated(f, "Wait for one review before doing checks.");
+    const brief = { outcome: "Check work", doneWhen: "Checks passed", mode: "make-it-work" as const, outOfScope: "", context: [], questions: [], timeboxMinutes: null };
+    for (const [threadId, keeperThreadId] of [["child", "lead"], ["foreign", "other"]]) {
+      f.k.bind(threadId!, "smith", "juno", "project", { keeperThreadId: keeperThreadId!, boardQuestId: null, waypointId: null, title: "Check", errand: true, brief });
+    }
+    const text = "Wait for two reviews before doing checks.";
+    const entry = (threadId: string, id: string) => makeQueueEntry({ threadId, id, initiator: "user", originPluginId: null, senderThreadId: null, content: [{ type: "text", text, mentions: [] }], createdAt: f.time() });
+    f.runtime.dispatched(entry("foreign", "foreign-message"));
+    f.runtime.dispatched({ ...entry("child", "agent-message"), initiator: "agent", senderThreadId: "foreign" });
+    expect(f.k.store.messageId("agent-message")).toBeNull();
+    f.runtime.queued(entry("child", "cancelled-message"));
+    f.runtime.cancelled(entry("child", "cancelled-message"));
+    f.runtime.queued(entry("child", "correction"));
+    const sourceMessageId = f.k.store.messageId("correction")!;
+    const add = (override: Record<string, unknown> = {}) => f.harness.behavior.invokeAgentTool("tavern_rule",
+      { source: "message", sourceMessageId, supersedesRuleId: old.id, text, ...override }, { threadId: "lead" });
+    await expect(add({ sourceMessageId: f.k.store.messageId("foreign-message") })).rejects.toThrow(/party/);
+    await expect(add({ sourceMessageId: f.k.store.messageId("cancelled-message") })).rejects.toThrow(/accepted/);
+    await expect(add()).rejects.toThrow(/accepted/);
+    f.runtime.dispatched(entry("child", "correction"));
+    await expect(add({ text: "Wait for three reviews." })).rejects.toThrow(/verbatim/);
+    await expect(add({ source: "keeper-proposed" })).rejects.toThrow(/supersed.*user/i);
+    const rule = JSON.parse(await add() as string);
+    expect(f.k.rules("lead")).toEqual([expect.objectContaining({ id: rule.id, active: true, text })]);
+    expect(f.k.store.get("rules", old.id)).toMatchObject({ active: false, supersededByRuleId: rule.id });
+    expect(() => f.k.confirmRule(old.id, true)).toThrow(new RegExp(rule.id));
+    expect(f.k.store.events("lead").find(e => e.type === "rule.added" && e.data.ruleId === rule.id)?.data)
+      .toMatchObject({ sourceMessageId, sourceThreadId: "child", supersedesRuleId: old.id });
+  });
+
   it("defaults a stated rule to this Keeper and shows its scope on the route", async () => {
     const f = party();
     const { route, rule } = await stated(f, "Keep Ranger time boxes under eight minutes.");

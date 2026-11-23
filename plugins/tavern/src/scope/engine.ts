@@ -141,6 +141,9 @@ export function authorityDecision(scope: Scope, call: ScopeCall): Decision | und
     }
   }
 }
+export const isWriteCall = (call: ScopeCall) =>
+  call.kind === "write" || ["write", "edit", "apply_patch", "multiedit"].includes(call.toolName.toLowerCase());
+
 export function evaluate(scope: Scope, call: ScopeCall, legacyWanderer = false): Decision {
   return evaluateShell(scope, call, legacyWanderer, false);
 }
@@ -153,15 +156,17 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
   if (contained) scope = readerFallback(scope);
   if ([...scope.writes.allow, ...scope.writes.deny].some(path => path.includes("${")) && !["tavern_report", "journal", "quest", "tavern_ready"].includes(call.toolName)) return blocked(call.toolName, "worktree-unresolved", "the worktree root must be bound from the provisioned environment");
   if (!toolAllowed(scope, call.toolName, call.input)) return blocked(`tool ${call.toolName}`, "tool", "the thread's scope does not allow this tool");
-  const name = call.toolName.toLowerCase();
+  const writeScope = scope.preset === "readonly"
+    ? "; this readonly member cannot write to the workspace through shell writes or write-path tools. Allowed scratch and thread storage still work"
+    : "";
   const canWrite = (path: string, cwd: string) => {
     const full = normalizeToolPath(path, cwd);
     return isSink(full) || (!writeDenied(scope, full, cwd) && writeAllowed(scope, call.resolvedPaths?.[full] ?? full, cwd));
   };
-  if (call.kind === "write" || ["write", "edit", "apply_patch", "multiedit"].includes(name)) {
+  if (isWriteCall(call)) {
     const path = call.input.path ?? call.input.file_path;
     if (typeof path !== "string" || !path.trim() || path.includes("\0")) return blocked(call.toolName, "write-target-missing", "could not read the write target from the call; a valid path is required");
-    if (!canWrite(path, call.cwd)) return blocked(`write to ${path}`, "write-path", "the write target is outside allowed roots, protected or cannot be checked");
+    if (!canWrite(path, call.cwd)) return blocked(`write to ${path}`, "write-path", "the write target is outside allowed roots, protected or cannot be checked" + writeScope);
   }
   const source = call.input.command ?? call.input.cmd;
   if (typeof source !== "string") return call.kind === "bash" ? blocked("shell call", "shell-input", "the command cannot be checked") : allowed;
@@ -246,7 +251,7 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
       if (!gitRead(argv) && sub !== "push" && !(contained && sub === "fetch" && call.fetchWriteRoots?.length)) paths.push(command.cwd);
       if (sub === "config" && argv.some(arg => ["--global", "--system"].includes(arg)) && !gitRead(argv)) return blocked(command.text, "git-global-config", "global git configuration is outside the member worktree");
     }
-    for (const path of paths) if (!(contained && (/[$`]/.test(path) || command.uncertain || command.cwdAlternative)) && !isSink(normalizeToolPath(path, command.cwd)) && (scope.preset !== "open" && (/[\$`]/.test(path) || path.startsWith("~") || command.uncertain) || !canWrite(path, command.cwd))) return blocked(`shell write to ${path}`, "shell-write", "the write target is protected, outside allowed roots or cannot be proven");
+    for (const path of paths) if (!(contained && (/[$`]/.test(path) || command.uncertain || command.cwdAlternative)) && !isSink(normalizeToolPath(path, command.cwd)) && (scope.preset !== "open" && (/[\$`]/.test(path) || path.startsWith("~") || command.uncertain) || !canWrite(path, command.cwd))) return blocked(`shell write to ${path}`, "shell-write", "the write target is protected, outside allowed roots or cannot be proven" + writeScope);
     if (scope.preset === "open") continue;
     if (!contained && command.fedInput && command.scriptInput === "opaque") return blocked(command.text, "shell-input", "shell input from a pipe or redirect cannot be inspected");
     if (!contained && scope.preset === "worktree" && command.cwdAlternative && !readonlyProgram(command) && !canWrite(command.cwd, command.cwd)) return blocked(command.text, "shell-location", "one possible working directory is outside allowed roots");

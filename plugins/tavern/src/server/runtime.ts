@@ -6,7 +6,7 @@ import { approvedDrafts, invalidateDrafts } from "./communication";
 import { hasLiveName, isKeeperIdentity, isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
 import { assertChainHire, assertLeadPathOpen, currentLead, holdsLeadSeat, leadAuthorization, recordLeadOutcome, reserveLead } from "./keeper/leads";
 import { assertLeadRetirementReady, confirmLeadRetirement, finishLeadRetirement, recordForcedLeadPullRequestOwners, requestForcedLeadStop, requestLeadRetirement } from "./keeper/lead-retirement";
-import { archiveDisposition, assertMemberMachineForBrief, isMemberMachineGone, MACHINE_RELEASED, memberDetails, memberHost, openBriefBlocker, outstandingArchivedPlacement, patchMemberDetails, transitionMember, withdrawBriefBlocker, type EngagementReceipt, type MemberOperation } from "./member-engagement";
+import { archiveDisposition, assertMemberMachineForBrief, briefProgress, isMemberMachineGone, MACHINE_RELEASED, memberDetails, memberHost, openBriefBlocker, outstandingArchivedPlacement, patchMemberDetails, transitionMember, withdrawBriefBlocker, type EngagementReceipt, type MemberOperation } from "./member-engagement";
 import { wasReleased } from "../shared/member-engagement";
 import { AwayRuntime } from "./away/runtime";
 import { isDeepStrictEqual } from "node:util";
@@ -465,7 +465,11 @@ export class TavernRuntime {
         delivery = this.queueRebrief(member, text, { old: delivery, receipt: receipt?.state ?? "not-attempted", removedQueueIds });
       } finally { this.replacingBriefs.delete(threadId); }
     } else if (delivery && (delivery.assignmentText ?? delivery.text) !== text) {
-      throw new Error("A different brief is already pending; do not overwrite an uncertain delivery.");
+      const brief = briefProgress(this.keeper.store, delivery, this.keeper.now());
+      const next = this.initialBriefs.has(threadId)
+        ? "Wait for this delivery attempt to settle, then read tavern_status section=pending."
+        : `To replace it, call tavern_tell for ${threadId} with supersedeBriefId: "${brief.id}".`;
+      throw new Error(`A different brief is already pending for ${this.keeper.name(member)}: ${brief.id} (${brief.state}, ${Math.floor(brief.ageMs / 1000)}s old). ${next}`);
     }
     return this.sendInitialBrief(threadId, (delivery ?? this.queueRebrief(member, text)).text);
   }
