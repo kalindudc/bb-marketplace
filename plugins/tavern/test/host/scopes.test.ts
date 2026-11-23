@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { gitFixtureTemplate } from "../git-fixture-template";
 import { hostContract, type Authority, type HostInput } from "../../src/host-contract";
 import * as context from "../../src/host/context";
 import * as nativeProcess from "../../src/host/process";
@@ -20,13 +21,20 @@ import guard, { type PiGuardApi } from "../../adapters/pi/extension";
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const digest = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
+const gitAt = (repo: string, ...args: string[]) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+const seedRepo = gitFixtureTemplate((root, format: "sha1" | "sha256") => {
+  const repo = join(root, "repo"); mkdirSync(repo);
+  gitAt(repo, "init", "-q", "-b", "tavern/member", "--object-format=" + format);
+  gitAt(repo, "config", "user.name", "Fixture"); gitAt(repo, "config", "user.email", "fixture@example.invalid");
+  writeFileSync(join(repo, "tracked"), "initial"); gitAt(repo, "add", "tracked"); gitAt(repo, "commit", "-qm", "initial");
+  return gitAt(repo, "rev-parse", "HEAD^{tree}");
+});
 async function fixture(role = "smith", format: "sha1" | "sha256" = "sha1") {
   const root = realpathSync(mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "native-scopes-"))); roots.push(root);
   const repo = join(root, "repo"), home = join(root, "home"), scratch = join(root, "scratch"), data = join(root, "data"), storage = join(root, "thread-storage"), agent = join(home, "custom-pi");
-  for (const path of [repo, home, scratch, data, storage, join(agent, "extensions")]) mkdirSync(path, { recursive: true });
-  const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-  git("init", "-q", "-b", "tavern/member", "--object-format=" + format); git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid");
-  writeFileSync(join(repo, "tracked"), "initial"); git("add", "tracked"); git("commit", "-qm", "initial");
+  const expectedTree = seedRepo(root, format);
+  for (const path of [home, scratch, data, storage, join(agent, "extensions")]) mkdirSync(path, { recursive: true });
+  const git = (...args: string[]) => gitAt(repo, ...args);
   const registry = new HostRegistry(data), authority: Authority = { placementId: "placement", generation: 1, endpointId: "member-workspace", operationId: "scope" };
   registry.registerEndpoint({ placementId: authority.placementId, generation: authority.generation, endpointId: authority.endpointId, endpoint: { hostId: "guest", environmentId: "guest-env", root: repo }, ownerThreadId: "member", access: "member-write", git: "full", workspaceKind: "dedicated-machine", objectFormat: format, allowedRefs: ["refs/heads/tavern/member"] });
   await inspectHost(registry, authority);
@@ -35,7 +43,7 @@ async function fixture(role = "smith", format: "sha1" | "sha256" = "sha1") {
   template.env.variables = { HOME: "/controller/home", TMPDIR: "/controller/tmp", BB_THREAD_STORAGE: "/controller/storage", FEATURE_FLAG: "kept" };
   template.shell.allow.push({ id: "approved-grant", argv: ["git", "push"], remote: "github.com/owner/repo", why: "Approved by user" });
   template.tools.deny.push("private_tool");
-  const delivery: ScopeDeliveryFile = { ...template, bindingTemplate: structuredClone(template), workspaceBinding: { kind: "dedicated-machine", hostId: "guest", environmentId: "guest-env", root: repo, placementId: authority.placementId, generation: 1, snapshotId: "snapshot", expectedTree: git("rev-parse", "HEAD^{tree}") } };
+  const delivery: ScopeDeliveryFile = { ...template, bindingTemplate: structuredClone(template), workspaceBinding: { kind: "dedicated-machine", hostId: "guest", environmentId: "guest-env", root: repo, placementId: authority.placementId, generation: 1, snapshotId: "snapshot", expectedTree } };
   const input = (value = delivery, revision = 1, suffix = ""): HostInput<"bindScope"> => { const scopeFileJson = JSON.stringify(value) + suffix; return { ...authority, revision, scopeDigest: digest(scopeFileJson), scopeFileJson }; };
   const registerStorage = (ownerThreadId = "member", hostId = "guest") => registry.registerEndpoint({ placementId: authority.placementId, generation: 1, endpointId: "storage", endpoint: { hostId, environmentId: null, root: storage }, ownerThreadId, access: "artifact-read", git: "full", workspaceKind: null, objectFormat: null, allowedRefs: [] });
   return { root, repo, home, scratch, data, storage, agent, git, registry, authority, service, template, delivery, input, registerStorage };

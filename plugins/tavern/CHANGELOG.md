@@ -10,6 +10,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Changed
 
+- Tavern’s tests reuse starting Git repositories while keeping each test’s checkout and assertions independent. Transport tests prepare only the endpoints they use, and tests without a browser no longer load the browser test library.
 - Journal updates in unrelated agent threads no longer trigger three Tavern refreshes. The badge loads just its count, the deleted-quests count refreshes only when it can change, and the common room reuses database reads across views.
 - In light mode, faint pixel sunrays stay fixed at the strip’s upper-left corner, a warm patch follows the character’s feet, and a small highlight shimmers on the character’s outline. Their short shadow stretches as they walk and draws away as they hop. The daylight stays steady with Motion Off or reduced motion. Daytime tools and nighttime lights are unchanged.
 

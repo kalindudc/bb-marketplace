@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { gitFixtureTemplate } from "../git-fixture-template";
 import guard, { type PiGuardApi } from "../../adapters/pi/extension";
 import { bindPaths } from "../../src/scope/paths";
 import { scopeForClass } from "../../src/scope/presets";
@@ -22,10 +23,9 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function fixture(role = "keeper", native = false, providerId = "pi", arm = true) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "tavern-merge-gate-")));
-  cleanups.push(() => rmSync(root, { recursive: true, force: true }));
-  const git = (...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+const gitAt = (root: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+const seedRepos = gitFixtureTemplate(root => {
+  const git = (...args: string[]) => gitAt(root, ...args);
   git("init", "-b", "main");
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Fixture");
   git("branch", "topic");
@@ -33,7 +33,7 @@ async function fixture(role = "keeper", native = false, providerId = "pi", arm =
   const remote = join(root, "remote.git"), other = join(root, "other.git");
   for (const [path, branch] of [[remote, "main"], [other, "trunk"]] as const) {
     git("init", "--bare", "-b", branch, path);
-    git(`--git-dir=${path}`, "fetch", root, `${branch}:refs/heads/${branch}`);
+    git(`--git-dir=${path}`, "fetch", ".", `${branch}:refs/heads/${branch}`);
   }
   git("remote", "add", "origin", remote);
   git("remote", "add", "upstream", remote);
@@ -44,7 +44,17 @@ async function fixture(role = "keeper", native = false, providerId = "pi", arm =
   git("update-ref", "refs/remotes/other/trunk", "HEAD");
   git("symbolic-ref", "refs/remotes/other/HEAD", "refs/remotes/other/trunk");
   git("branch", "--set-upstream-to=origin/main", "main");
-  const revision = git("rev-parse", "HEAD");
+  return git("rev-parse", "HEAD");
+});
+
+async function fixture(role = "keeper", native = false, providerId = "pi", arm = true) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "tavern-merge-gate-")));
+  cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+  const revision = seedRepos(root), remote = join(root, "remote.git"), other = join(root, "other.git");
+  const git = (...args: string[]) => gitAt(root, ...args);
+  git("remote", "set-url", "origin", remote);
+  git("remote", "set-url", "upstream", remote);
+  git("remote", "set-url", "other", other);
   if (native) git("remote", "add", "local", remote);
   const f = setup({ environments: { get: async () => ({ path: root, hostId: "host" }) } });
   cleanups.push(() => { f.k.store.db.close(); });

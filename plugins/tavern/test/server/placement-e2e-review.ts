@@ -4,6 +4,7 @@ import { createFakePluginHost, makeHostResponse, makeThreadResponse, makeMessage
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { execFileSync } from "node:child_process";
 import { realGit } from "../host/emulated-git";
+import { gitFixtureTemplate } from "../git-fixture-template";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,14 +28,19 @@ import { worktreeProvider } from "./environment-fixture";
 
 export const reviewGit = (root: string, ...args: string[]) => execFileSync(realGit, ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 type Environment = Awaited<ReturnType<BbPluginApi["sdk"]["environments"]["get"]>>;
-export async function reviewFixture(checkerCount = 1) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "placement-review-"))), home = join(root, "source"), upstream = join(root, "upstream");
-  mkdirSync(home);
+const seedRepos = gitFixtureTemplate(root => {
+  const home = join(root, "source"), upstream = join(root, "upstream"); mkdirSync(home);
   reviewGit(home, "init", "-qb", "main"); reviewGit(home, "config", "user.name", "Fixture"); reviewGit(home, "config", "user.email", "fixture@example.invalid");
   writeFileSync(join(home, "tracked"), "base\n"); writeFileSync(join(home, ".gitignore"), "ignored\n"); reviewGit(home, "add", "-A"); reviewGit(home, "commit", "-qm", "base");
   const base = reviewGit(home, "rev-parse", "HEAD"); reviewGit(home, "clone", "-q", "--bare", home, upstream);
   reviewGit(home, "remote", "add", "origin", upstream); reviewGit(home, "update-ref", "refs/remotes/origin/main", base); reviewGit(home, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"); reviewGit(home, "branch", "--set-upstream-to=origin/main");
   writeFileSync(join(home, "tracked"), "initial unpushed\n"); reviewGit(home, "commit", "-qam", "initial unpushed");
+  return base;
+});
+export async function reviewFixture(checkerCount = 1) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "placement-review-"))), home = join(root, "source"), upstream = join(root, "upstream");
+  const base = seedRepos(root);
+  reviewGit(home, "remote", "set-url", "origin", upstream);
   const environments = new Map<string, Environment>(), threads = new Map<string, ReturnType<typeof makeThreadResponse>>();
   const natives = new Map<string, ReturnType<typeof experimental_createHostEntryHarness>>(), dataDirs = new Map<string, string>(), storage = new Map<string, string>(), trace: string[] = [];
   const artifactPath = join(root, "host.mjs"); writeFileSync(artifactPath, "export function tavernGuard() {}\n");

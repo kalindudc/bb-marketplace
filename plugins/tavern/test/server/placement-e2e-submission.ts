@@ -3,6 +3,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { execFileSync } from "node:child_process";
 import { realGit } from "../host/emulated-git";
+import { gitFixtureTemplate } from "../git-fixture-template";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,14 +26,21 @@ import { journalEntrySchema, memberSchema } from "../../src/shared/schema";
 import { placementRecord } from "./placement-fixture";
 
 export const submissionGit = (root: string, ...args: string[]) => execFileSync(realGit, ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-export async function submissionFixture(format: "sha1" | "sha256" = "sha1") {
-  const git = submissionGit, root = realpathSync(mkdtempSync(join(tmpdir(), "submission-")));
-  const home = join(root, "home"), maker = join(root, "maker"), storage = join(root, "storage"); mkdirSync(home); mkdirSync(storage);
+const seedRepos = gitFixtureTemplate((root, format: "sha1" | "sha256") => {
+  const git = submissionGit, home = join(root, "home"), maker = join(root, "maker"); mkdirSync(home);
   git(home, "init", "-qb", "main", "--object-format=" + format); git(home, "config", "user.name", "Fixture"); git(home, "config", "user.email", "fixture@example.invalid");
   writeFileSync(join(home, "tracked"), "base\n"); writeFileSync(join(home, ".gitignore"), "ignored\n");
   git(home, "add", "-A"); git(home, "commit", "-qm", "base"); const base = git(home, "rev-parse", "HEAD");
   git(home, "clone", "-q", "--no-hardlinks", home, maker);
   writeFileSync(join(maker, "tracked"), "submitted\n"); writeFileSync(join(maker, "untracked"), "submitted new file\n"); writeFileSync(join(maker, "ignored"), "not declared\n");
+  return { base, tree: git(home, "rev-parse", "HEAD^{tree}") };
+});
+export async function submissionFixture(format: "sha1" | "sha256" = "sha1") {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "submission-")));
+  const home = join(root, "home"), maker = join(root, "maker"), storage = join(root, "storage");
+  const { base, tree } = seedRepos(root, format);
+  submissionGit(maker, "remote", "set-url", "origin", home);
+  mkdirSync(storage);
   type Environment = Awaited<ReturnType<BbPluginApi["sdk"]["environments"]["get"]>>;
   const endpoint = (side: "home" | "maker") => ({ hostId: side, environmentId: side + "-env", root: side === "home" ? home : maker });
   const environments = new Map<string, Environment>();
@@ -86,7 +94,7 @@ export async function submissionFixture(format: "sha1" | "sha256" = "sha1") {
     finishContentHold: vi.fn((token: Parameters<AwayHolds["findContent"]>[0]) => ({ state: rows.finishContent(token) ? "finished" as const : "stale" as const })),
   };
   const original = placements.captureSnapshot({ purpose: "initial", keeperThreadId: "keeper", projectId: "project", sourceThreadId: "keeper", makerThreadId: null, makerSubmissionId: null, journalTarget: null,
-    objectFormat: format, base, sourceHead: base, tree: git(home, "rev-parse", "HEAD^{tree}"),
+    objectFormat: format, base, sourceHead: base, tree,
     fetch: { via: "upstream", remoteName: "origin", remoteUrl: home, trackingRef: "refs/remotes/origin/main", fetchRef: "refs/heads/main" }, source: endpoint("home"), home: endpoint("home") });
   const draft = placementRecord({ sourceSnapshotId: original.id, memberThreadId: "maker", ownsNewMachine: true, workspaceKind: "dedicated-machine", posture: { ...placementRecord().posture, aggregate: "remote-detection-only" } });
   placements.reserve(draft, { maxMakers: 2, maxCheckers: 2 });

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { emulatedGit, realGit } from "./emulated-git";
+import { gitFixtureTemplate } from "../git-fixture-template";
 import { parseTreeEntries, treeObjectBytes } from "../../src/host/porcelain";
 import * as processModule from "../../src/host/process";
 import { BLOB_MAX_BYTES, CHUNK_BYTES, type Authority, type EndpointRegistration, type HostOutput, type TransferAuthority, type TransferRegistration } from "../../src/host-contract";
@@ -22,19 +23,26 @@ function expectNoAutoMaintenance({ env }: processModule.ProcessOptions) {
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const key of Object.keys(carryFaults)) delete carryFaults[key as keyof typeof carryFaults]; for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const git = (root: string, ...args: string[]) => execFileSync(realGit, ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-describe.each([false, true])("member emulation: %s", emulate => {
-afterEach(() => vi.unstubAllEnvs());
-async function fixture(format: "sha1" | "sha256" = "sha1", full = false) {
-  const root = mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "transport-")); roots.push(root);
-  if (emulate) vi.stubEnv("PATH", emulatedGit(root) + ":" + process.env.PATH);
-  const home = join(root, "home"), maker = join(root, "maker"), checker = join(root, "checker"); mkdirSync(home);
+const seedRepos = gitFixtureTemplate((root, format: "sha1" | "sha256") => {
+  const home = join(root, "home"); mkdirSync(home);
   git(home, "init", "-q", "-b", "main", "--object-format=" + format); git(home, "config", "user.name", "Fixture"); git(home, "config", "user.email", "fixture@example.invalid");
   writeFileSync(join(home, "tracked"), "base\n"); writeFileSync(join(home, "gone"), "remove me\n"); writeFileSync(join(home, ".gitignore"), "ignored/\n");
   git(home, "add", "-A"); git(home, "commit", "-qm", "baseline"); const base = git(home, "rev-parse", "HEAD");
-  for (const [path, branch] of [[maker, "maker"], [checker, "checker"]]) {
-    git(home, "clone", "-q", "--no-hardlinks", home, path!); git(path!, "checkout", "-qb", branch!);
-    git(path!, "config", "user.name", "Fixture"); git(path!, "config", "user.email", "fixture@example.invalid");
+  for (const branch of ["maker", "checker"]) {
+    const path = join(root, branch);
+    git(home, "clone", "-q", "--no-hardlinks", home, path); git(path, "checkout", "-qb", branch);
+    git(path, "config", "user.name", "Fixture"); git(path, "config", "user.email", "fixture@example.invalid");
   }
+  return base;
+});
+describe.each([false, true])("member emulation: %s", emulate => {
+afterEach(() => vi.unstubAllEnvs());
+async function fixture<K extends "source" | "target" | "checked">(endpoints: readonly K[], format: "sha1" | "sha256" = "sha1", full = false) {
+  const root = mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "transport-")); roots.push(root);
+  const base = seedRepos(root, format);
+  const home = join(root, "home"), maker = join(root, "maker"), checker = join(root, "checker");
+  for (const path of [maker, checker]) git(path, "remote", "set-url", "origin", home);
+  if (emulate) vi.stubEnv("PATH", emulatedGit(root) + ":" + process.env.PATH);
   const endpoint = async (id: string, path: string, access: EndpointRegistration["access"], placementId: string, refs: string[]) => {
     const data = join(root, id + "-data"); mkdirSync(data);
     const registry = new HostRegistry(data), port = createTransport(registry);
@@ -43,21 +51,27 @@ async function fixture(format: "sha1" | "sha256" = "sha1", full = false) {
     registry.registerEndpoint(registration); await inspectHost(registry, authority);
     return { registry, port, authority, data, path };
   };
-  const source = await endpoint("maker", maker, "member-write", "placement-a", ["refs/heads/maker"]);
-  const target = await endpoint("home", home, "home-import", "placement-a", ["refs/tavern/keeper/snapshot-a"]);
-  const checked = await endpoint("checker", checker, "member-write", "placement-c", ["refs/heads/checker"]);
-  const bind = (side: typeof source, values: Partial<TransferRegistration> = {}): TransferAuthority => {
-    const registration: TransferRegistration = { ...side.authority, transferId: "transfer-a", snapshotId: "snapshot-a", direction: "bring-home", objectFormat: format, base, head: git(maker, "rev-parse", "HEAD"), tree: git(maker, "rev-parse", "HEAD^{tree}"), fromEndpointId: "maker", toEndpointId: "home", allowedRefs: [], uploads: [], artifacts: [], ...values };
+  type Endpoint = Awaited<ReturnType<typeof endpoint>>;
+  const bindEndpoints = {
+    source: () => endpoint("maker", maker, "member-write", "placement-a", ["refs/heads/maker"]),
+    target: () => endpoint("home", home, "home-import", "placement-a", ["refs/tavern/keeper/snapshot-a"]),
+    checked: () => endpoint("checker", checker, "member-write", "placement-c", ["refs/heads/checker"]),
+  };
+  const bound = {} as Record<K, Endpoint>;
+  for (const name of endpoints) bound[name] = await bindEndpoints[name]();
+  const bind = (side: Endpoint, values: Partial<TransferRegistration> = {}): TransferAuthority => {
+    const { head = git(maker, "rev-parse", "HEAD"), tree = git(maker, "rev-parse", "HEAD^{tree}"), ...overrides } = values;
+    const registration: TransferRegistration = { ...side.authority, transferId: "transfer-a", snapshotId: "snapshot-a", direction: "bring-home", objectFormat: format, base, head, tree, fromEndpointId: "maker", toEndpointId: "home", allowedRefs: [], uploads: [], artifacts: [], ...overrides };
     side.registry.registerTransfer(registration);
     return { ...side.authority, transferId: registration.transferId };
   };
-  return { root, home, maker, checker, base, format, source, target, checked, endpoint, bind };
+  return { root, home, maker, checker, base, format, endpoint, bind, ...bound };
 }
-async function exported(f: Awaited<ReturnType<typeof fixture>>) {
+async function exported(f: Pick<Awaited<ReturnType<typeof fixture>>, "source" | "bind">) {
   const authority = f.bind(f.source);
   return { authority, value: await f.source.port.exportChanges(authority) };
 }
-async function upload(f: Awaited<ReturnType<typeof fixture>>, value: HostOutput<"exportChanges">) {
+async function upload(f: Pick<Awaited<ReturnType<typeof fixture>>, "source" | "target" | "bind">, value: HostOutput<"exportChanges">) {
   const files = value.changes.filter(change => change.status !== "D"), uploads = files.map((_, at) => "upload-" + at);
   const authority = f.bind(f.target, { uploads, head: value.head, tree: value.tree, allowedRefs: ["refs/tavern/keeper/snapshot-a"] });
   for (const [at, file] of files.entries()) {
@@ -71,11 +85,12 @@ async function upload(f: Awaited<ReturnType<typeof fixture>>, value: HostOutput<
   return { authority, entries };
 }
 it.each(["sha1", "sha256"] as const)("brings a %s maker home without touching the user's checkout/index and carries its exact tree to an independent checker", async format => {
-  const f = await fixture(format), bytes = Buffer.alloc(CHUNK_BYTES + 19, 0xa7);
+  const f = await fixture(["source", "target", "checked"], format), bytes = Buffer.alloc(CHUNK_BYTES + 19, 0xa7);
   writeFileSync(join(f.maker, "tracked"), "maker\n"); unlinkSync(join(f.maker, "gone")); writeFileSync(join(f.maker, "binary"), bytes); symlinkSync("tracked", join(f.maker, "link"));
   git(f.maker, "add", "-A"); git(f.maker, "commit", "-qm", "maker snapshot");
   writeFileSync(join(f.home, "tracked"), "user's staged work\n"); git(f.home, "add", "tracked");
-  const index = readFileSync(join(f.home, ".git/index")), status = git(f.home, "status", "--porcelain");
+  // Git status can refresh the copied index before the import begins.
+  const status = git(f.home, "status", "--porcelain"), index = readFileSync(join(f.home, ".git/index"));
   const { value } = await exported(f), sent = await upload(f, value);
   const input = { ...sent.authority, remote: "origin", baseBranch: "main", author: value.author, message: value.message, entries: sent.entries, refs: ["refs/tavern/keeper/snapshot-a"], networkTimeoutMs: 1000 };
   const made = await f.target.port.importCommit(input);
@@ -104,7 +119,7 @@ it.each(["sha1", "sha256"] as const)("brings a %s maker home without touching th
   expect(await f.checked.port.worktreeState({ ...f.checked.authority, base: f.base, baseTree: value.tree, trackedOnly: true })).toMatchObject({ dirty: false, changed: [] });
 }, 60_000);
 it.each(["sha1", "sha256"] as const)("rebuilds a read-only %s uncommitted snapshot at home with canonical names and modes", async format => {
-  const f = await fixture(format);
+  const f = await fixture(["source", "target"], format);
   for (const dir of ["a", "nested/deeper", "empty"]) mkdirSync(join(f.maker, dir), { recursive: true });
   writeFileSync(join(f.maker, "a/file"), "old nested file"); git(f.maker, "add", "a/file"); git(f.maker, "commit", "-qm", "nested baseline");
   for (const path of ["a.b", "a/file", "nested/deeper/-name", ".dot", "é", "tracked"]) writeFileSync(join(f.maker, path), "bytes: " + path);
@@ -126,7 +141,7 @@ it.each(["sha1", "sha256"] as const)("rebuilds a read-only %s uncommitted snapsh
   git(f.maker, "add", "-A"); expect(git(f.maker, "write-tree")).toBe(captured.tree);
 }, 60_000);
 it.each(["file-to-directory", "directory-to-file"] as const)("snapshots an uncommitted %s replacement like real Git", async kind => {
-  const f = await fixture();
+  const f = await fixture(["source"]);
   if (kind === "directory-to-file") {
     mkdirSync(join(f.maker, "swap")); writeFileSync(join(f.maker, "swap/child"), "before");
     git(f.maker, "add", "-A"); git(f.maker, "commit", "-qm", "directory baseline");
@@ -142,13 +157,13 @@ it("preserves non-UTF8 names in unchanged entries of a rewritten tree", () => {
   expect(treeObjectBytes(parseTreeEntries(raw, 20))).toEqual(raw);
 });
 it.each([true, false])("matches Git's owner execute bit and core.fileMode=%s", async fileMode => {
-  const f = await fixture(); git(f.maker, "config", "core.fileMode", String(fileMode));
+  const f = await fixture(["source"]); git(f.maker, "config", "core.fileMode", String(fileMode));
   writeFileSync(join(f.maker, "tracked"), "changed"); chmodSync(join(f.maker, "tracked"), fileMode ? 0o645 : 0o755);
   const captured = await snapshotWorktree(f.source.registry, { ...f.source.authority, base: f.base });
   git(f.maker, "add", "-A"); expect(captured.tree).toBe(git(f.maker, "write-tree"));
 });
 it("starts a 20000-path carry without exceeding argv limits", async () => {
-  const f = await fixture(); writeFileSync(join(f.maker, "tracked"), "target"); git(f.maker, "commit", "-qam", "target");
+  const f = await fixture(["checked"]); writeFileSync(join(f.maker, "tracked"), "target"); git(f.maker, "commit", "-qam", "target");
   const paths = Array.from({ length: 20_000 }, (_, at) => `directory/long-monorepo-component-name-${at.toString().padStart(6, "0")}/target.txt`);
   const authority = f.bind(f.checked, { direction: "carry-out", fromEndpointId: "home", toEndpointId: "checker", allowedRefs: ["refs/heads/checker"] });
   const calls = vi.spyOn(processModule, "runProcess");
@@ -157,7 +172,7 @@ it("starts a 20000-path carry without exceeding argv limits", async () => {
   expect(queries).toHaveLength(40); for (const [, args] of queries) expect(args.length - args.indexOf("--") - 1).toBeLessThanOrEqual(500);
 }, 120_000);
 it("exports 20000 paths using bounded tree queries and full object IDs", async () => {
-  const f = await fixture(); mkdirSync(join(f.maker, "many"));
+  const f = await fixture(["source"]); mkdirSync(join(f.maker, "many"));
   for (let at = 0; at < 20_000; at++) writeFileSync(join(f.maker, "many", `file-${at.toString().padStart(6, "0")}`), "same blob\n");
   git(f.maker, "add", "-A"); git(f.maker, "commit", "-qm", "many files");
   const calls = vi.spyOn(processModule, "runProcess"), { value } = await exported(f);
@@ -169,7 +184,7 @@ it("exports 20000 paths using bounded tree queries and full object IDs", async (
   for (const [, args] of queries) expect(args.length - args.indexOf("--") - 1).toBeLessThanOrEqual(500);
 }, 120_000);
 it.each([false, true])("reads deletion state once and stops before journal writes when cancelled (%s)", async cancel => {
-  const f = await fixture(); writeFileSync(join(f.maker, "tracked"), "target"); git(f.maker, "commit", "-qam", "target");
+  const f = await fixture(["checked"]); writeFileSync(join(f.maker, "tracked"), "target"); git(f.maker, "commit", "-qam", "target");
   const paths = Array.from({ length: 2000 }, (_, at) => `removed-${at}`);
   const authority = f.bind(f.checked, { direction: "carry-out", fromEndpointId: "home", toEndpointId: "checker", allowedRefs: ["refs/heads/checker"] });
   await f.checked.port.carryStart({ ...authority, remote: "origin", baseBranch: "main", paths, networkTimeoutMs: 1000 });
@@ -187,7 +202,7 @@ it.each([false, true])("reads deletion state once and stops before journal write
   expect(calls.mock.calls.filter(([, name]) => name === "carry-initial.json")).toHaveLength(1);
 });
 it("rejects foreign blobs, upload handles, invalid base64, bad offsets and oversize chunks before writes", async () => {
-  const f = await fixture(); writeFileSync(join(f.maker, "tracked"), "changed\n"); git(f.maker, "commit", "-qam", "change");
+  const f = await fixture(["source", "target"]); writeFileSync(join(f.maker, "tracked"), "changed\n"); git(f.maker, "commit", "-qam", "change");
   const { authority, value } = await exported(f), to = f.bind(f.target, { uploads: ["mine"] });
   await expect(f.source.port.readBlob({ ...authority, sha: f.base, offset: 0, length: 1 })).rejects.toThrow(/blob-not-exported/);
   await expect(f.target.port.importChunk({ ...to, upload: "foreign", offset: 0, data: "YQ==" })).rejects.toThrow(/upload-not-granted/);
@@ -199,7 +214,7 @@ it("rejects foreign blobs, upload handles, invalid base64, bad offsets and overs
   await expect(f.source.port.readBlob({ ...authority, sha: value.changes[0]!.blob!, offset: 0, length: CHUNK_BYTES + 1 })).rejects.toThrow();
 });
 it("refuses submodule transport and controller commits in a source-read checkout", async () => {
-  const f = await fixture(); git(f.maker, "update-index", "--add", "--cacheinfo", "160000," + f.base + ",module"); git(f.maker, "commit", "-qm", "submodule");
+  const f = await fixture(["source"]); git(f.maker, "update-index", "--add", "--cacheinfo", "160000," + f.base + ",module"); git(f.maker, "commit", "-qm", "submodule");
   await expect(exported(f)).rejects.toThrow(/submodule/);
   const initial = await f.endpoint("initial", f.home, "source-read", "initial-placement", []);
   writeFileSync(join(f.home, "tracked"), "user dirty source\n");
@@ -207,7 +222,7 @@ it("refuses submodule transport and controller commits in a source-read checkout
   expect(git(f.home, "rev-parse", "HEAD")).toBe(f.base);
 });
 async function startedCarry(path = "tracked", contents = "carried\n", full = false) {
-  const f = await fixture("sha1", full);
+  const f = await fixture(["source", "checked"], "sha1", full);
   mkdirSync(dirname(join(f.maker, path)), { recursive: true }); writeFileSync(join(f.maker, path), contents);
   git(f.maker, "add", "-A"); git(f.maker, "commit", "-qm", "carry source");
   const { value } = await exported(f);
@@ -231,7 +246,7 @@ it.each(["beforeRename", "afterRename", "beforeCommit", "afterCommit"] as const)
   expect(git(f.checker, "status", "--porcelain")).toBe("");
 }, 60_000);
 it("resumes a staged executable carry with core.fileMode=false", async () => {
-  const f = await fixture();
+  const f = await fixture(["checked"]);
   chmodSync(join(f.checker, "tracked"), 0o755); git(f.checker, "add", "tracked"); git(f.checker, "commit", "-qm", "executable baseline");
   const base = git(f.checker, "rev-parse", "HEAD"); git(f.checker, "config", "core.fileMode", "false");
   writeFileSync(join(f.maker, "tracked"), "executable update"); chmodSync(join(f.maker, "tracked"), 0o755); git(f.maker, "add", "tracked"); git(f.maker, "commit", "-qm", "target");
@@ -246,7 +261,7 @@ it("resumes a staged executable carry with core.fileMode=false", async () => {
   expect(await f.checked.port.carryFinish(finish)).toMatchObject({ outcome: "ok", tree: git(f.maker, "rev-parse", "HEAD^{tree}") });
 });
 it("refuses a dirty carry before writing files or changing the index", async () => {
-  const f = await fixture();
+  const f = await fixture(["checked"]);
   writeFileSync(join(f.maker, "tracked"), "incoming"); git(f.maker, "commit", "-qam", "incoming");
   writeFileSync(join(f.checker, "tracked"), "worker's edit");
   const index = readFileSync(join(f.checker, ".git/index")), to = f.bind(f.checked, { direction: "carry-out", fromEndpointId: "maker", toEndpointId: "checker" });
@@ -254,7 +269,7 @@ it("refuses a dirty carry before writing files or changing the index", async () 
   expect(readFileSync(join(f.checker, "tracked"), "utf8")).toBe("worker's edit"); expect(readFileSync(join(f.checker, ".git/index"))).toEqual(index);
 }, 60_000);
 it.each(["file-to-directory", "directory-to-file"] as const)("carries %s without staging a directory's foreign files", async kind => {
-  const f = await fixture(), before = kind === "file-to-directory" ? "node" : "node/file", after = kind === "file-to-directory" ? "node/file" : "node";
+  const f = await fixture(["source", "checked"]), before = kind === "file-to-directory" ? "node" : "node/file", after = kind === "file-to-directory" ? "node/file" : "node";
   for (const repo of [f.maker, f.checker]) { mkdirSync(dirname(join(repo, before)), { recursive: true }); writeFileSync(join(repo, before), "old"); git(repo, "add", "-A"); git(repo, "commit", "-qm", "structural base"); }
   git(f.checker, "fetch", "-q", f.maker, "HEAD"); git(f.checker, "reset", "--hard", "FETCH_HEAD");
   const base = git(f.checker, "rev-parse", "HEAD");
@@ -328,13 +343,13 @@ it("pins the initial carry paths across duplicate starts", async () => {
   await expect(f.checked.port.carryWrite({ ...f.authority, path: "gone", mode: "100644", offset: 0, data: "YQ==" })).rejects.toThrow(/path-not-granted/);
 }, 60_000);
 it("fences a cancelled transfer before accepting a late chunk", async () => {
-  const f = await fixture(), authority = f.bind(f.target, { uploads: ["mine"] });
+  const f = await fixture(["target"]), authority = f.bind(f.target, { uploads: ["mine"] });
   f.target.registry.revokePlacement({ placementId: "placement-a", generation: 1, reason: "cancel" });
   await expect(f.target.port.importChunk({ ...authority, upload: "mine", offset: 0, data: "YQ==" })).rejects.toThrow(/placement-revoked/);
 });
 
 it.each(["removed", "replaced", "file-to-module", "unchanged"])("checks both gitlink modes when exporting %s", async kind => {
-  const f = await fixture();
+  const f = await fixture(["source"]);
   if (kind === "file-to-module") { writeFileSync(join(f.maker, "module"), "plain"); git(f.maker, "add", "module"); }
   else git(f.maker, "update-index", "--add", "--cacheinfo", "160000," + f.base + ",module");
   git(f.maker, "commit", "-qm", "new base"); const base = git(f.maker, "rev-parse", "HEAD");
@@ -347,7 +362,7 @@ it.each(["removed", "replaced", "file-to-module", "unchanged"])("checks both git
   else await expect(f.source.port.exportChanges(authority)).rejects.toMatchObject({ code: "submodule-unsupported" });
 });
 it.skipIf(emulate).each([false, true])("finishes outside-cone carry writes and deletions with porcelain staging (expect outside files: %s)", async expectOutside => {
-  const f = await fixture();
+  const f = await fixture(["source", "checked"]);
   for (const repo of [f.maker, f.checker]) {
     mkdirSync(join(repo, "outside")); writeFileSync(join(repo, "outside/gone"), "base"); writeFileSync(join(repo, "outside/edit"), "base");
     git(repo, "add", "-A"); git(repo, "commit", "-qm", "outside base");
@@ -377,7 +392,7 @@ it.skipIf(emulate).each([false, true])("finishes outside-cone carry writes and d
   expectNoAutoMaintenance(spy.mock.calls.find(([,args]) => args.includes("commit"))![2]);
 }, 60_000);
 it.skipIf(emulate)("commits new files outside a sparse cone without auto-maintenance", async () => {
-  const f = await fixture(); git(f.maker, "sparse-checkout", "set", "--cone", "inside");
+  const f = await fixture(["source"]); git(f.maker, "sparse-checkout", "set", "--cone", "inside");
   mkdirSync(join(f.maker, "outside")); writeFileSync(join(f.maker, "outside/new"), "new");
   await inspectHost(f.source.registry, f.source.authority);
   const spy = vi.spyOn(processModule, "runProcess");
@@ -386,7 +401,7 @@ it.skipIf(emulate)("commits new files outside a sparse cone without auto-mainten
   expectNoAutoMaintenance(spy.mock.calls.find(([,args]) => args.includes("commit"))![2]);
 });
 it("names oversized untracked listings in worktreeState", async () => {
-  const f = await fixture(), original = processModule.runProcess;
+  const f = await fixture(["source"]), original = processModule.runProcess;
   vi.spyOn(processModule, "runProcess").mockImplementation((program,args,options) => args.includes("--untracked-files=all") ? Promise.reject(new Error("git: maxBuffer length exceeded")) : original(program,args,options));
   await expect(f.source.port.worktreeState({ ...f.source.authority, base: f.base })).rejects.toMatchObject({ code: "too-many-paths", message: expect.stringMatching(/untracked.*listing/i) });
 });
@@ -402,7 +417,7 @@ it("disables auto-maintenance on both member commits", async () => {
   for (const [, , options] of commits) expectNoAutoMaintenance(options);
 }, 60_000);
 it("refuses an unexpected committed HEAD without resetting the branch", async () => {
-  const f = await fixture();
+  const f = await fixture(["checked"]);
   writeFileSync(join(f.checker, "tracked"), "new head"); git(f.checker, "commit", "-qam", "head to replace");
   const replaces = git(f.checker, "rev-parse", "HEAD^{tree}");
   const authority = f.bind(f.checked, { direction: "carry-out", fromEndpointId: "maker", toEndpointId: "checker" });
@@ -414,7 +429,7 @@ it("refuses an unexpected committed HEAD without resetting the branch", async ()
 }, 60_000);
 
 it.skipIf(emulate)("deletes absent sparse carry files without reading the index", async () => {
-  const f = await fixture();
+  const f = await fixture(["checked"]);
   for (const repo of [f.maker, f.checker]) { mkdirSync(join(repo,"outside")); for (const name of ["a","b","c"]) writeFileSync(join(repo,"outside",name),"base"); git(repo,"add","-A"); git(repo,"commit","-qm","outside"); }
   const base = git(f.checker,"rev-parse","HEAD"); rmSync(join(f.maker,"outside"),{recursive:true}); git(f.maker,"add","-A"); git(f.maker,"commit","-qm","delete");
   git(f.checker,"sparse-checkout","set","--cone","inside");
