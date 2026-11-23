@@ -1,12 +1,22 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, waitFor, within } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { fixtureDecor, fixtureJournal, fixtureRegistry } from "../../../src/ui/thread/fixtures";
 import { JournalTab } from "../../../src/ui/thread/tabs";
 import { journalSchema, type JournalEntry } from "../../../src/shared/schema";
 
-afterEach(() => { cleanup(); localStorage.clear(); vi.useRealTimers(); });
+let unmount: (() => void) | undefined;
+afterEach(async () => {
+  try {
+    unmount?.();
+    if (vi.isFakeTimers()) await vi.runOnlyPendingTimersAsync();
+  } finally {
+    unmount = undefined;
+    localStorage.clear();
+    vi.useRealTimers();
+  }
+});
 const NOW = Date.now();
 const min = 60_000;
 const base = fixtureJournal.entries[0]!;
@@ -21,8 +31,11 @@ const delegatedEntries = [
 ];
 const progressOf = (entries: JournalEntry[]) => ({ done: entries.filter(e => e.status === "done").length, total: entries.length, blocked: entries.filter(e => e.status === "blocked").length, current: null });
 const make = (entries: JournalEntry[]) => journalSchema.parse({ ...fixtureJournal, threadId: "k", entries, changes: [], progress: progressOf(entries) });
-const open = (data: ReturnType<typeof make>, journalEdit = vi.fn(() => ({ ok: true, message: "Recorded" }))) =>
-  ({ slot: renderSlot({ component: JournalTab }, { threadId: "k", environment: null, params: null }, { rpc: { journal: () => data, journalEdit, decor: () => fixtureDecor, registry: () => fixtureRegistry, identities: () => ({ identities: [["thr_g", "Gaetano"], ["thr_s", "Steve"]].map(([threadId, name]) => ({ threadId, name, relation: "other", role: "thread", classId: null, className: null, characterId: null, keeper: null, life: "live", canOpen: true })) }) } }), journalEdit });
+const open = (data: ReturnType<typeof make>, journalEdit = vi.fn(() => ({ ok: true, message: "Recorded" }))) => {
+  const slot = renderSlot({ component: JournalTab }, { threadId: "k", environment: null, params: null }, { rpc: { journal: () => data, journalEdit, decor: () => fixtureDecor, registry: () => fixtureRegistry, identities: () => ({ identities: [["thr_g", "Gaetano"], ["thr_s", "Steve"]].map(([threadId, name]) => ({ threadId, name, relation: "other", role: "thread", classId: null, className: null, characterId: null, keeper: null, life: "live", canOpen: true })) }) } });
+  unmount = slot.lifecycle.unmount;
+  return { slot, journalEdit };
+};
 
 const cursor = (root: HTMLElement) => waitFor(() => { const el = root.querySelector(".journal-cur"); if (!el) throw new Error("no currency"); return el; });
 describe("the journal's currency", () => {
@@ -82,8 +95,11 @@ describe("a delegate's report on a row", () => {
     expect(rep.querySelector(".why")!.textContent).toBe("SOURCE SETTLED for the hook");
     const wait = within(rep).getByRole("button", { name: "Still waiting" });
     expect(wait.className).toBe("btn sm");
-    fireEvent.click(wait);
-    await waitFor(() => expect(journalEdit).toHaveBeenCalled());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await act(async () => { fireEvent.click(wait); });
+    await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+    expect(slot.getByRole("status").textContent).toBe("Recorded");
+    expect(journalEdit).toHaveBeenCalledTimes(1);
     expect((journalEdit.mock.calls[0] as unknown as [{ edit: unknown }])[0].edit).toEqual({ op: "wait", entryIds: ["02"] });
   });
 });
@@ -97,7 +113,6 @@ describe("a narrow panel", () => {
       const { slot } = open(make(delegatedEntries));
       await slot.findByRole("button", { name: /^Delegated 3/ });
       expect(slot.getByRole("button", { name: /^Stuck 1/ })).toBeTruthy();
-      const { act } = await import("@testing-library/react");
       act(() => observers.forEach(cb => cb([{ contentRect: { width: 360 } } as ResizeObserverEntry], {} as ResizeObserver)));
       expect(slot.queryByRole("button", { name: /^Stuck/ })).toBeNull();
       fireEvent.click(slot.getByText("More"));

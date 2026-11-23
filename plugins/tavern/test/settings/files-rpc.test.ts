@@ -1,5 +1,5 @@
 import Sqlite from "better-sqlite3";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -60,6 +60,17 @@ describe("settings files and RPC", () => {
     expect(files.status().error).toMatch(/TOML|parse|table|Invalid/i);
     expect(files.load(true, 1, files.status().hash!).code).toBe("invalid");
     expect(store.read().attention.reviewBudget).toBe(5);
+  });
+  it("reports an unusable Git program and clears the diagnostic once it is executable", async () => {
+    const { handlers, file } = fixture(), path = file + "-git";
+    const saved = await handlers.settingsUpdate({ revision: 0, patch: { tavern: { gitProgram: path } }, why: "Choose Git" }, client);
+    expect(saved).toMatchObject({ code: "ok", settings: { gitProgramProblem: expect.stringContaining(path) } });
+    const view = async () => settingsContract.settings.output.parse(await handlers.settings(null, client));
+    expect((await view()).gitProgramProblem).toContain("missing or not executable");
+    writeFileSync(path, "#!/bin/sh\n", { mode: 0o644 });
+    expect((await view()).gitProgramProblem).toContain("missing or not executable");
+    chmodSync(path, 0o755);
+    expect((await view()).gitProgramProblem).toBeUndefined();
   });
   it("round-trips every RPC result as JSON and parses its public output schema", async () => {
     const { handlers } = fixture();

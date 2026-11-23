@@ -2,6 +2,7 @@ import { KNOB_FIELDS } from "../../shared/settings";
 import { knobLabel } from "./insights";
 
 const LABELS: Record<string, string> = {
+  "tavern.gitProgram": "Git program",
   "tavern.ambientMotion": "Ambient motion", "tavern.repeatSeconds": "Repeat every", "tavern.agentsMayChangeSettings": "Agents may change settings", "tavern.paused": "Pause every Keeper", "tavern.defaultClass": "New threads start as", "tavern.voice": "Speech bubbles", "tavern.widgetRow": "Widget row", "tavern.batchWakeEvents": "Batch wake events", "tavern.levels": "Levels and crest notches", "tavern.characters": "Show characters", "tavern.hearthFlicker": "Hearth flicker while work runs",
   "tavern.lanternLight": "Lantern light", "tavern.lanternStrength": "Strength", "tavern.lanternLightBb": "Light bb's surfaces",
   "tavern.characterQuietUntil": "Character quiet", "tavern.voiceBeforeOff": "Previous speech level",

@@ -35,6 +35,8 @@ import { SetupService } from "./src/server/settings/setup";
 import { insightsContract } from "./src/shared/insights";
 import { memoryContract } from "./src/shared/memory";
 import { memoryHandlers } from "./src/server/memory-rpc";
+import { installHostGitProgram } from "./src/host/client";
+import { installServerGitProgram } from "./src/shared/git-safety";
 export const rpcContract = { ...coreContract, ...settingsContract, ...setupContract, ...insightsContract, ...backupContract, ...memoryContract };
 
 export function pause(ms: number, signal: AbortSignal): Promise<void> {
@@ -49,6 +51,7 @@ export function pause(ms: number, signal: AbortSignal): Promise<void> {
     }
   });
 }
+
 export default async function tavern(bb: BbPluginApi) {
   const pluginRoot = new URL(existsSync(new URL("./classes", import.meta.url)) ? "./" : "../", import.meta.url);
   const keeperCards = loadKeeperCards(pluginRoot);
@@ -63,6 +66,9 @@ export default async function tavern(bb: BbPluginApi) {
     applySettings();
     bb.rpc.experimental_invalidate(["tavern:settings", "tavern:insights"]);
   }, message => bb.log.warn(message));
+  let gitProgram = settings.read().tavern.gitProgram;
+  bb.onDispose(installServerGitProgram(() => gitProgram));
+  bb.onDispose(installHostGitProgram(bb, () => gitProgram));
   let keeper: Keeper;
   let runtime: TavernRuntime | undefined;
   const register: RegisterJournal = registerJournal;
@@ -116,7 +122,10 @@ export default async function tavern(bb: BbPluginApi) {
   const burn = new BurnCosts(bb);
   const insights = new InsightsReader(db, settings, Date.now, (data, from, to) => burn.read(data, from, to), () => ({ characters: runtime.snapshot().characters.map(character => ({ id: character.id, classIds: character.classes })), serviceRecords: runtime.serviceRecords.read() }));
   runtime.enableSettings(settings, insights);
-  applySettings = () => runtime.settingsChanged();
+  applySettings = () => {
+    gitProgram = settings.read().tavern.gitProgram;
+    runtime.settingsChanged();
+  };
   await registerScopeSettings(bb, runtime);
   runtime.spend.ledger.directory = join(dirname(db.name), "scopes");
   runtime.taleRenderer = new TaleCompanions(bb, keeper);
