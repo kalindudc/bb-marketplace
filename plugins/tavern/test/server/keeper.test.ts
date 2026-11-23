@@ -237,7 +237,7 @@ describe("ticks and lifecycle", () => {
     now += 20 * 60_000;
     k.stale();
     expect(k.member("child")?.strikes).toBe(2);
-    expect(k.store.events("lead").at(-1)?.text).toContain("re-plan or replace");
+    expect(k.store.events("lead").at(-1)?.text).toContain("call tavern_release for child, with replace:true");
     now += 2 * 20 * 60_000;
     k.stale();
     expect(k.store.events("lead").filter(e => e.type === "member.stale")).toHaveLength(2);

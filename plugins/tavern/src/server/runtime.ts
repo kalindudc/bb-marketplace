@@ -6,7 +6,7 @@ import { approvedDrafts, invalidateDrafts } from "./communication";
 import { hasLiveName, isKeeperIdentity, isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
 import { assertChainHire, assertLeadPathOpen, currentLead, holdsLeadSeat, leadAuthorization, recordLeadOutcome, reserveLead } from "./keeper/leads";
 import { assertLeadRetirementReady, confirmLeadRetirement, finishLeadRetirement, recordForcedLeadPullRequestOwners, requestForcedLeadStop, requestLeadRetirement } from "./keeper/lead-retirement";
-import { archiveDisposition, assertMemberMachineForBrief, MACHINE_RELEASED, memberDetails, memberHost, openBriefBlocker, outstandingArchivedPlacement, patchMemberDetails, transitionMember, withdrawBriefBlocker, type EngagementReceipt, type MemberOperation } from "./member-engagement";
+import { archiveDisposition, assertMemberMachineForBrief, isMemberMachineGone, MACHINE_RELEASED, memberDetails, memberHost, openBriefBlocker, outstandingArchivedPlacement, patchMemberDetails, transitionMember, withdrawBriefBlocker, type EngagementReceipt, type MemberOperation } from "./member-engagement";
 import { wasReleased } from "../shared/member-engagement";
 import { AwayRuntime } from "./away/runtime";
 import { isDeepStrictEqual } from "node:util";
@@ -154,7 +154,7 @@ export class TavernRuntime {
   readonly spend: SpendBudget;
   readonly toolNames = [...KEEPER_TOOLS, "tavern_memory", "tavern_report", "tavern_request_sources", "tavern_ready", "tavern_draft_pr", "tavern_act_verdict"];
   private readonly loop = new TickLoop(this);
-  private readonly releaseLocks = new Map<string, Promise<boolean>>();
+  private readonly releaseLocks = new Map<string, Promise<unknown>>();
   private sourceInspection: SourceDiscovery | null = null;
   readonly alerts: AlertRoute;
   private awayState: AwayRuntime | null = null;
@@ -672,6 +672,7 @@ export class TavernRuntime {
       }
       return pendingResult;
     } catch (error) {
+      if (attempt.state === "delivering" && !unchanged()) return pendingResult;
       this.requireBriefableMember(threadId);
       if (!unchanged()) return pendingResult;
       attempt.state = "unconfirmed";
@@ -1731,7 +1732,7 @@ export class TavernRuntime {
     const names = members.filter(member => member.state === "failed").map(member => this.keeper.name(member));
     return names.length ? `These members failed: ${names.join(", ")}. Release them or retry their work before hiring a replacement.` : "";
   }
-  async hire(threadId: string, projectId: string, input: Hire) {
+  async hire(threadId: string, projectId: string, input: Hire, replacesThreadId?: string) {
     this.stopAll.assertRunning();
     const keeperProjectId = projectId;
     this.keeper.require(threadId, "keeper");
@@ -2032,6 +2033,7 @@ export class TavernRuntime {
       owner,
       createdAt: this.keeper.now(),
       limitDecisionIds,
+      replacesThreadId,
     };
     if (placementRoute !== null) {
       if (placementRoute.source !== null) await this.placementSources().revalidate(placementRoute.source);
@@ -2056,6 +2058,7 @@ export class TavernRuntime {
           role.id,
           staffingCapacity,
           token,
+          replacesThreadId,
         );
       }
       if (questId) this.keeper.assertQuestNotHeld(questId);
@@ -2395,12 +2398,12 @@ export class TavernRuntime {
       });
     }
   }
-  private async withReleaseLock(keeperId: string, run: () => Promise<boolean>) {
-    const previous = this.releaseLocks.get(keeperId);
+  private async withReleaseLock<T>(memberId: string, run: () => Promise<T>): Promise<T> {
+    const previous = this.releaseLocks.get(memberId);
     const work = (previous ? previous.then(() => {}, () => {}) : Promise.resolve()).then(run);
-    this.releaseLocks.set(keeperId, work);
+    this.releaseLocks.set(memberId, work);
     try { return await work; }
-    finally { if (this.releaseLocks.get(keeperId) === work) this.releaseLocks.delete(keeperId); }
+    finally { if (this.releaseLocks.get(memberId) === work) this.releaseLocks.delete(memberId); }
   }
   requestLeadRetirement(threadId: string, member: Member, reason: string) {
     this.stopAll.assertRunning();
@@ -2418,7 +2421,41 @@ export class TavernRuntime {
       const link = this.keeper.store.atomic(() => requestForcedLeadStop(this.keeper, lead, authority.id, reason.slice(0, 500)));
       return this.retryLeadCleanup(link, true);
     }
-    return this.withReleaseLock(threadId, () => this.releaseMember(threadId, memberThreadId, reason, authority));
+    const id = this.keeper.resolvePartyMember(threadId, memberThreadId).threadId;
+    return this.withReleaseLock(id, () => this.releaseMember(threadId, id, reason, authority));
+  }
+  async replaceMember(threadId: string, projectId: string, memberId: string, reason: string) {
+    return this.withReleaseLock(memberId, async () => {
+      this.stopAll.assertRunning();
+      const k = this.keeper;
+      k.require(threadId, "keeper");
+      const member = k.resolvePartyMember(threadId, memberId);
+      if (member.threadId !== memberId || member.leadLinkId) throw new Error("Replace only a working member of your own party by thread id.");
+      const state = k.store.runtime(memberId);
+      const details = memberDetails(k.store, memberId);
+      if (details.replacement?.threadId) return { state: "replaced", threadId: details.replacement.threadId } as const;
+      if (k.store.all("hires").some(intent => intent.replacesThreadId === memberId))
+        return { state: "hiring" } as const;
+      if (!state.brief) throw new Error("No recorded brief to replace this member with. Release it and hire with a fresh brief.");
+      const pending = state.initialBriefAt === undefined ? null : details.delivery?.assignmentText ?? details.delivery?.text;
+      const replacement = details.replacement ?? {
+        reason,
+        brief: pending ? { ...state.brief, context: [...state.brief.context, `Pending follow-up: ${pending}`] } : state.brief,
+      };
+      if (!await this.releaseMember(threadId, memberId, replacement.reason, undefined, replacement)) return { state: "releasing" } as const;
+      try {
+        const hired = await this.hire(threadId, projectId, {
+          classId: member.classId, boardQuestId: member.boardQuestId, waypointId: member.waypointId,
+          errand: member.errand, title: member.title ?? replacement.brief.outcome, brief: replacement.brief,
+          characterId: member.characterId, repo: member.repo ?? state.projectId ?? undefined,
+        }, memberId);
+        return { state: "replaced", threadId: hired.threadId, briefPending: hired.briefPending } as const;
+      } catch (error) {
+        const linked = memberDetails(k.store, memberId).replacement?.threadId;
+        return linked ? { state: "replaced", threadId: linked, briefPending: true } as const
+          : { state: "blocked", message: error instanceof Error ? error.message : String(error) } as const;
+      }
+    });
   }
   private operation(member: Member, reason: string, receipt: EngagementReceipt): MemberOperation {
     return { id: this.keeper.store.id("member-act"), reason, receipt,
@@ -2447,7 +2484,7 @@ export class TavernRuntime {
     if (result.state !== "released" && result.state !== "lost") throw new Error("The member placement changed during preservation");
     return true;
   }
-  private async releaseMember(threadId: string, memberThreadId: string, reason: string, authority?: EngagementReceipt) {
+  private async releaseMember(threadId: string, memberThreadId: string, reason: string, authority?: EngagementReceipt, replacement?: NonNullable<ReturnType<typeof memberDetails>["replacement"]>) {
     const automatic = authority?.kind === "host-failure";
     if (!automatic) this.stopAll.assertRunning();
     const k = this.keeper;
@@ -2456,20 +2493,29 @@ export class TavernRuntime {
     if (member.role !== "member" || member.keeperThreadId !== threadId) throw new Error("Only release a member of your own party");
     if (member.leadLinkId) throw new Error("A lead needs a recorded retirement before release.");
     if (!reason.trim()) throw new Error("Release needs a reason");
-    if (wasReleased(member)) return true;
-    if (member.engagement !== "releasing") {
-      if (!automatic) {
-        if (member.boardQuestId) {
-          k.liveQuest(threadId, member.boardQuestId);
-          k.assertQuestNotHeld(member.boardQuestId);
-        }
-        this.away.assertWork(member.boardQuestId, member.threadId);
-        if (member.boardQuestId) k.guard(threadId, member.boardQuestId);
+    if (!automatic && (replacement || !wasReleased(member) && member.engagement !== "releasing")) {
+      if (member.boardQuestId) {
+        k.liveQuest(threadId, member.boardQuestId);
+        k.assertQuestNotHeld(member.boardQuestId);
       }
+      this.away.assertWork(member.boardQuestId, member.threadId);
+      if (member.boardQuestId) k.guard(threadId, member.boardQuestId);
+    }
+    const stageReplacement = () => {
+      if (!replacement || memberDetails(k.store, memberThreadId).replacement) return;
+      patchMemberDetails(k.store, memberThreadId, { replacement });
+      k.store.event(k.now(), threadId, member.boardQuestId, "member.replacement-requested", reason,
+        { memberThreadId, waypointId: member.waypointId, reason }, { kind: "agent", threadId });
+    };
+    if (wasReleased(member)) { k.store.atomic(stageReplacement); return true; }
+    if (member.engagement !== "releasing") {
       member = k.store.atomic(() => {
-        const cause = authority?.kind === "ask-answer" ? "release-answered" : authority?.kind === "undo" ? "greenlight-undone" : authority?.kind === "host-failure" ? "model-failure" : "release-requested";
-        const actor: Actor = cause === "release-requested" ? { kind: "agent", threadId } : cause === "model-failure" ? { kind: "tavern" } : { kind: "user" };
-        if (!["active", "briefing", "resting"].includes(member.engagement ?? "")) throw new Error("This member is not engaged in work that can be released.");
+        const archivedPlacement = !authority && outstandingArchivedPlacement(new PlacementStore(k.store.db), member);
+        const lostArchive = archivedPlacement && isMemberMachineGone(archivedPlacement);
+        const cause = authority?.kind === "ask-answer" ? "release-answered" : authority?.kind === "undo" ? "greenlight-undone" : authority?.kind === "host-failure" ? "model-failure" : lostArchive ? "lost-release-requested" : "release-requested";
+        const actor: Actor = cause === "release-requested" || cause === "lost-release-requested"
+          ? { kind: "agent", threadId } : cause === "model-failure" ? { kind: "tavern" } : { kind: "user" };
+        if (!lostArchive && !["active", "briefing", "resting"].includes(member.engagement ?? "")) throw new Error("This member is not engaged in work that can be released.");
         if (!authority) {
           const decision = k.decide(threadId, {
             boardQuestId: member.boardQuestId, text: `Release ${k.name(member)}: ${reason}`,
@@ -2481,15 +2527,16 @@ export class TavernRuntime {
         }
         const operation = this.operation(member, reason, authority);
         if (cause === "model-failure") operation.modelFailure = true;
+        stageReplacement();
         return transitionMember(k.store, member, "releasing", cause, actor, authority, k.now(), { details: { operation }, text: reason });
       });
-    }
-    return this.finishReleaseLocked(member);
+    } else k.store.atomic(stageReplacement);
+    return this.finishReleaseLocked(member, !authority);
   }
   private finishRelease(member: Member) {
-    return this.withReleaseLock(member.keeperThreadId!, () => this.finishReleaseLocked(member));
+    return this.withReleaseLock(member.threadId, () => this.finishReleaseLocked(member));
   }
-  private async finishReleaseLocked(input: Member) {
+  private async finishReleaseLocked(input: Member, retryNow = false) {
     const k = this.keeper, member = k.member(input.threadId);
     if (!member || member.engagement !== "releasing") return wasReleased(member);
     const id = member.threadId, details = memberDetails(k.store, id), operation = details.operation!;
@@ -2501,20 +2548,22 @@ export class TavernRuntime {
       let thread: Thread | null = null;
       if (!placement || !hasLostOwner(placement) && placement.phase !== "released") {
         try {
-          thread = await this.bb.sdk.threads.get({ threadId: id });
+          const read = () => loopCall(this.bb.sdk.threads.get({ threadId: id }), `release status for ${id}`);
+          thread = await read();
           if (held() || memberDetails(k.store, id).operation?.id !== operation.id) return false;
-          const quiescent = placement ? isQuiescentThread(thread) : ["idle", "error"].includes(thread.status);
           if (thread.archivedAt === null && thread.deletedAt === null &&
-            ((!operation.attempts && !operation.modelFailure && !operation.skipStopIfQuiet) || !quiescent && k.now() >= (operation.nextAttemptAt ?? 0))) {
-            this.updateOperation(id, operation, { attempts: (operation.attempts ?? 0) + 1, nextAttemptAt: k.now() + 5000 });
-            await this.bb.sdk.threads.stop({ threadId: id });
-            thread = await this.bb.sdk.threads.get({ threadId: id });
+            ((!operation.attempts && !operation.modelFailure && !operation.skipStopIfQuiet) ||
+              !isQuiescentThread(thread) && (retryNow || k.now() >= (operation.nextAttemptAt ?? 0)))) {
+            this.updateOperation(id, operation, { attempts: (operation.attempts ?? 0) + 1, nextAttemptAt: k.now() + 5000, error: null });
+            await loopCall(this.bb.sdk.threads.stop({ threadId: id }), `release stop for ${id}`);
+            thread = await read();
           }
           this.updateThread(thread);
         } catch (error) { if (!isNotFound(error)) throw error; thread = null; this.threadGone(id); }
       }
-      if (held() || this.initialBriefs.has(id) || memberDetails(k.store, id).operation?.id !== operation.id) return false;
-      if (!placement && thread && thread.archivedAt === null && thread.deletedAt === null && !["idle", "error"].includes(thread.status)) return false;
+      // Release cancels the stamped brief before stopping. Dispatch cannot admit a late copy.
+      if (held() || memberDetails(k.store, id).operation?.id !== operation.id) return false;
+      if (!placement && thread && thread.archivedAt === null && thread.deletedAt === null && !isQuiescentThread(thread)) return false;
       if (!await this.preserveEngagement(member, operation) || held() || memberDetails(k.store, id).operation?.id !== operation.id) return false;
       const release = { reason: operation.reason, decisionId: operation.receipt.kind === "decision" ? operation.receipt.id : undefined, at: k.now() };
       transitionMember(k.store, member, "released", "release-confirmed", { kind: "tavern" }, { kind: "host-stop", id: operation.id, evidence: { request: operation.receipt } }, k.now(),

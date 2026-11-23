@@ -23,6 +23,7 @@ export function reserveStaffing(
   classId: string,
   capacity: number,
   token: string,
+  replacesThreadId?: string,
 ): StaffingReservation {
   const id = `${quest.id}:${quest.planVersion}:${classId}`;
   let allocation = k.store.get("staffing", id);
@@ -49,12 +50,9 @@ export function reserveStaffing(
   while (slots.length < capacity)
     slots.push({ memberThreadId: null, uses: 0 });
   const replacements = k.settings(quest.id).keepers.replacementsPerSlot;
-  const slot = slots
-    .slice(0, capacity)
-    .findIndex(
-      (candidate) =>
-        candidate.uses < 1 + replacements && !occupied(k, candidate.memberThreadId),
-    );
+  const originalSlot = replacesThreadId ? slots.findIndex(slot => slot.memberThreadId === replacesThreadId) : -1;
+  const slot = slots.slice(0, capacity).findIndex((candidate, index) =>
+    (originalSlot < 0 || index === originalSlot) && candidate.uses < 1 + replacements && !occupied(k, candidate.memberThreadId));
   if (
     slot < 0 &&
     slots

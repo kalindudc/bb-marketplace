@@ -30,6 +30,7 @@ export function makeThreadResponse(patch: Partial<Thread> = {}): Thread {
     createdAt: 1_000_000,
     environmentId: null,
     queuedMessageCount: 0,
+    activeBackgroundAgentCount: 0,
     title: null,
     providerId: "pi",
     runtime: { displayStatus: "idle" },

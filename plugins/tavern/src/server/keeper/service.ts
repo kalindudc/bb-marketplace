@@ -17,7 +17,7 @@ import { hasLiveName, isKeeperIdentity, isLiveKeeper, isLiveMember, isOpenQuest 
 import { assertChainPlan, assertLeadPathOpen, bindLead, currentLead, holdsLeadSeat, leadAncestors, leadDescendants, saveLead } from "./leads";
 import { answerLeadPlan, decideLeadPlan, proposeLeadPlan, undoLeadPlan } from "./lead-plans";
 import { leadChainView } from "./lead-chain-view";
-import { memberDetails, memberHost, outstandingArchivedPlacement, transitionMember } from "../member-engagement";
+import { memberDetails, memberHost, outstandingArchivedPlacement, patchMemberDetails, transitionMember } from "../member-engagement";
 import { PlacementStore } from "../placement/store";
 import { wasReleased } from "../../shared/member-engagement";
 import type { JournalPort } from "../ports";
@@ -231,6 +231,8 @@ export class Keeper {
     if (existing) {
       if (hire?.leadLinkId && (existing.leadLinkId !== hire.leadLinkId || hire.memberThreadId !== threadId))
         throw new Error("The lead hire is already bound or the thread has another identity.");
+      if (hire?.replacesThreadId && hire.memberThreadId !== threadId)
+        throw new Error("The replacement reservation does not own this thread.");
       return existing;
     }
     const state = "idle";
@@ -269,6 +271,20 @@ export class Keeper {
       if (hire?.leadLinkId) {
         bindLead(this, bindingId!, hire.leadLinkId, m);
         this.store.put("hires", bindingId!, { ...hire, memberThreadId: threadId });
+      }
+      if (hire?.replacesThreadId) {
+        const previous = this.member(hire.replacesThreadId);
+        const replacement = memberDetails(this.store, hire.replacesThreadId).replacement;
+        if (!previous || !wasReleased(previous) || !replacement || replacement.threadId ||
+            previous.keeperThreadId !== m.keeperThreadId || previous.boardQuestId !== m.boardQuestId ||
+            previous.waypointId !== m.waypointId || previous.classId !== m.classId)
+          throw new Error("The replacement no longer matches its released member.");
+        this.store.put("hires", bindingId!, { ...hire, memberThreadId: threadId });
+        patchMemberDetails(this.store, previous.threadId, { replacement: { ...replacement, threadId } });
+        this.store.event(this.now(), m.keeperThreadId, m.boardQuestId, "member.replaced",
+          `Replaced ${this.name(previous)} with ${this.name(m)}: ${replacement.reason}`,
+          { memberThreadId: previous.threadId, replacementThreadId: threadId, waypointId: m.waypointId, reason: replacement.reason },
+          { kind: "agent", threadId: hire.owner.keeperThreadId });
       }
       this.store.patch(threadId, { projectId, brief: owner?.brief ?? null, reviewTarget: owner?.reviewTarget ?? null, requestSources: owner?.requestSources ?? null, assignmentText: owner?.assignmentText ?? null, ...(owner ? { clusterSessionPending: true } : {}) });
     });
@@ -2419,7 +2435,7 @@ export class Keeper {
         this.store.patch(m.threadId, { lastStrikeAt: now });
         if (strikes <= 2 || strikes === releaseAt)
           this.store.event(now, m.keeperThreadId, m.boardQuestId, "member.stale",
-            `${this.name(m)}: stale strike ${strikes}${strikes >= releaseAt ? `; releasable: call tavern_release for ${m.threadId}, then re-plan or replace` : ""}`,
+            `${this.name(m)}: stale strike ${strikes}${strikes >= releaseAt ? `; releasable: call tavern_release for ${m.threadId}, with replace:true to reuse the slot` : ""}`,
             { memberThreadId: m.threadId, strikes });
       });
       this.changed(m.threadId, m.boardQuestId);

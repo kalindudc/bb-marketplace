@@ -12,6 +12,8 @@ import { registerRpc } from "../../src/server/rpc";
 import { TavernRuntime } from "../../src/server/runtime";
 import { Keeper } from "../../src/server/keeper/service";
 import { journalEntrySchema } from "../../src/shared/schema";
+import { gitSha, placementRecord, sourceSnapshot } from "./placement-fixture";
+import { patchMemberDetails } from "../../src/server/member-engagement";
 
 const brief = {
   outcome: "Build",
@@ -211,7 +213,208 @@ function linked(threadId: string, boardQuestId: string, status: string) {
   });
 }
 
+async function stuckMember(stuck: string) {
+  const f = await approved();
+  registerTools(f.bb, f.runtime);
+  const member = await f.runtime.hire("lead", "project", f.input);
+  let status: "active" | "stopping" | "error" | "idle" = "idle";
+  let archivedAt: number | null = null;
+  const read = () => makeThreadResponse({ id: member.threadId, status, archivedAt });
+  const get = f.bb.sdk.threads.get;
+  f.bb.sdk.threads.get = async input => input.threadId === member.threadId ? read() : get(input);
+  const stop = f.bb.sdk.threads.stop = vi.fn(async () => { status = "idle"; return { ok: true as const }; });
+  if (stuck === "running turn") status = "active";
+  if (stuck === "stuck releasing") {
+    status = "stopping";
+    stop.mockImplementationOnce(async () => ({ ok: true }));
+    expect(await f.runtime.release("lead", member.threadId, "Previous stop request")).toBe(false);
+  }
+  let correction: string | null = null;
+  if (stuck.startsWith("brief")) {
+    correction = "Use the corrected fixture";
+    patchMemberDetails(f.k.store, member.threadId, { delivery: {
+      id: "brief-correction", text: correction, assignmentText: correction, attempts: 1,
+      nextAttemptAt: 0, attemptedAt: 0, hostAfterSeq: 0, error: null,
+      state: stuck === "brief queued" ? "queued" : "unconfirmed",
+    } });
+  }
+  if (stuck.startsWith("placement") || stuck === "failed provider") {
+    const services = f.runtime.placements();
+    vi.spyOn(services, "host", "get").mockReturnValue({ call: vi.fn(), onWorkerExit: () => () => {} });
+    services.store.reserve(placementRecord({ memberThreadId: member.threadId, keeperThreadId: "lead", questId: f.q.id }), { maxMakers: 2, maxCheckers: 2 });
+    if (stuck === "placement waiting") {
+      vi.spyOn(services.preserve, "beforeRelease")
+        .mockResolvedValueOnce({ state: "waiting", message: "Waiting for its turn so its work can be saved." })
+        .mockImplementation(async () => {
+          expect(status).toBe("idle");
+          const store = services.store;
+          const snapshot = store.saveSnapshot(sourceSnapshot({ purpose: "wip", sourceThreadId: member.threadId, makerThreadId: member.threadId }));
+          store.pinSnapshot(snapshot.id, gitSha, gitSha, "sha1");
+          const record = store.byMember(member.threadId)!;
+          const cancelled = store.cancel(record.id, record.generation);
+          store.update(cancelled.id, cancelled.generation, row => ({ ...row, phase: "releasing", preservation: {
+            ...row.preservation, source: "saved", snapshotId: snapshot.id, liveOwnerThreadId: null, stopConfirmed: true,
+          } }), "released");
+          store.finishRelease(cancelled.id, cancelled.generation, true);
+          archivedAt = 1;
+          return { state: "released" };
+        });
+    }
+    if (stuck === "placement lost") {
+      archivedAt = 1;
+      f.runtime.updateThread(read());
+    }
+    if (stuck === "failed provider") {
+      f.bb.sdk.threads.archive = vi.fn(async ({ threadId }) => { archivedAt = 1; return { ok: true as const, archivedThreadIds: [threadId] }; });
+      status = "active";
+      stop.mockImplementationOnce(async () => ({ ok: true }));
+      f.k.store.patch(member.threadId, {
+        placementExecution: { target: { kind: "provider", environmentProviderId: "test-workspace", inputs: {}, machine: { type: "new", machineProviderId: "test-machine", inputs: {} }, workspace: "dedicated-machine" }, providerId: "pi", model: "missing-model" },
+      });
+      await f.runtime.failed(member.threadId, "Failed to resolve Pi model missing-model", "first-turn");
+      expect(f.k.member(member.threadId)?.engagement).toBe("releasing");
+    }
+  }
+  const reason = "Replace one stuck member";
+  const release = (replace = false) => f.harness.behavior.invokeAgentTool("tavern_release",
+    { memberThreadId: member.threadId, reason, ...(replace ? { replace: true } : {}) }, { threadId: "lead" });
+  return { ...f, member, stop, release, reason, correction };
+}
+
+const stuckCases = ["running turn", "brief queued", "brief unconfirmed", "placement waiting", "placement lost", "stuck releasing", "failed provider"];
+
 describe("round 2 release, ask and scout policies", () => {
+  it.each(stuckCases.filter(stuck => stuck !== "placement lost"))("supports a separate bounded hire after a plain release (%s)", async stuck => {
+    const f = await stuckMember(stuck);
+    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow(stuck.startsWith("brief")
+      ? "This party slot already has a live member with a pending re-brief. Retry or release that member before hiring a replacement."
+      : "The greenlit party");
+    const reply = await f.release();
+    if (stuck === "placement waiting") {
+      expect(reply).toContain("Waiting for its turn so its work can be saved.");
+      await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("The greenlit party");
+      expect(await f.release()).toContain("Released");
+    } else expect(reply).toContain("Released");
+    await expect(f.runtime.hire("lead", "project", f.input)).resolves.toMatchObject({ waypointId: "w1" });
+  });
+  it("cleans up a lost placement even after its archive was observed", async () => {
+    const f = await stuckMember("placement lost");
+    expect(await f.release()).toContain("its work was not saved");
+    expect(f.runtime.placements().store.byMember(f.member.threadId)?.phase).toBe("released");
+    await expect(f.runtime.hire("lead", "project", f.input)).resolves.toMatchObject({ waypointId: "w1" });
+  });
+  it("releases while a cancelled brief send still awaits a host reply", async () => {
+    const f = await stuckMember("running turn");
+    let sent!: (input: string) => void;
+    let refuse!: (error: Error) => void;
+    const entered = new Promise<string>(resolve => { sent = resolve; });
+    const reply = new Promise<never>((_, reject) => { refuse = reject; });
+    f.bb.sdk.threads.send = async ({ input }) => {
+      sent(input![0]!.type === "text" ? input![0]!.text : "");
+      return reply;
+    };
+    const tell = f.runtime.tell("lead", f.member.threadId, "Correct the fixture");
+    const oldInput = await entered;
+    try {
+      expect(await f.release()).toContain("Released");
+      await expect(f.runtime.hire("lead", "project", f.input)).resolves.toMatchObject({ waypointId: "w1" });
+      expect(await f.runtime.dispatch(dispatch049({ threadId: f.member.threadId, pluginId: "tavern", text: oldInput }))).not.toMatchObject({ action: "proceed" });
+    } finally {
+      refuse(new Error("The cancelled send never reached the member"));
+      await expect(tell).resolves.toMatchObject({ status: "cancelled" });
+    }
+    expect(f.k.member(f.member.threadId)?.engagement).toBe("released");
+  });
+  it("retains the allocation when the host never acknowledges the individual stop", async () => {
+    const f = await stuckMember("running turn");
+    const stopped = f.stop.getMockImplementation()!;
+    let requested!: () => void;
+    const requestedStop = new Promise<void>(resolve => { requested = resolve; });
+    f.stop.mockImplementationOnce(() => {
+      requested();
+      return new Promise(() => {});
+    });
+    vi.useFakeTimers();
+    try {
+      const pending = f.release(true);
+      await requestedStop;
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await pending).toContain("release stop for child-1000000 timed out");
+      expect(f.k.store.allocated(f.q.id, "smith")).toBe(1);
+    } finally { vi.useRealTimers(); }
+    f.stop.mockImplementation(stopped);
+    expect(await f.release(true)).toContain("Replaced");
+  });
+  it("reconciles an uncertain replacement spawn without hiring another child", async () => {
+    const f = await stuckMember("running turn");
+    const spawn = f.bb.sdk.threads.spawn = vi.fn().mockRejectedValue(new Error("Connection lost after spawn"));
+    expect(await f.release(true)).toContain("Connection lost after spawn");
+    const pending = f.k.store.all("hires")[0]!;
+    expect(pending.replacesThreadId).toBe(f.member.threadId);
+    expect(await f.release(true)).toContain("The replacement hire is pending");
+    const replacement = makeThreadResponse({ id: "recovered", createdAt: pending.createdAt + 1, parentThreadId: "lead", originPluginId: "tavern" });
+    const token = f.k.store.db.prepare("SELECT id FROM tavern_records WHERE kind='hires'").get() as { id: string };
+    f.bb.sdk.threads.list = vi.fn().mockResolvedValue([replacement]);
+    f.bb.sdk.threads.getPluginMetadata = async () => ({ hireToken: token.id });
+    f.advance(300_000);
+    const restarted = new TavernRuntime(f.bb, f.k, f.runtime.registry);
+    await restarted.reconcile();
+    expect(await restarted.replaceMember("lead", "project", f.member.threadId, f.reason)).toMatchObject({ state: "replaced", threadId: replacement.id });
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(f.k.store.events("lead", 0, 200).filter(event => event.type === "member.replaced")).toHaveLength(1);
+  });
+  it("does not request a replacement while Stop all holds the party", async () => {
+    const f = await stuckMember("running turn");
+    f.k.store.put("stopAll", "tavern", { state: "stopped", since: f.time(), by: { kind: "user" }, receipt: null });
+    await expect(f.release(true)).rejects.toThrow(/Tavern is stopped by you/);
+    expect(f.stop).not.toHaveBeenCalled();
+    expect(f.k.store.activeStaffing("lead").map(member => member.threadId)).toEqual([f.member.threadId]);
+  });
+  it("does not turn a replacement into an exception to the original slot budget", async () => {
+    const f = await stuckMember("running turn");
+    const key = `${f.q.id}:1:smith`;
+    const allocation = f.k.store.get("staffing", key)!;
+    f.k.store.put("staffing", key, { ...allocation, slots: [{ memberThreadId: f.member.threadId, uses: 3 }] });
+    expect(await f.release(true)).toContain("Only two replacements are allowed per party slot");
+    expect(f.k.member(f.member.threadId)?.engagement).toBe("released");
+    expect(f.k.store.activeStaffing("lead")).toEqual([]);
+  });
+  it.each(stuckCases)("stops and replaces a member with %s without losing its waypoint", async stuck => {
+    const f = await stuckMember(stuck);
+    if (stuck === "placement waiting") {
+      expect(await f.release(true)).toContain("Waiting for its turn so its work can be saved.");
+      expect(f.k.store.allocated(f.q.id, "smith")).toBe(1);
+      expect(f.k.store.events("lead", 0, 200).some(e => e.type === "member.replaced")).toBe(false);
+    }
+    const proof = linked(f.member.threadId, f.q.id, "verified");
+    f.port.linkedEntries = () => [proof];
+    const reply = await f.release(true);
+    expect(f.k.summary(f.q.id).waypoints[0]).toMatchObject({ state: "verified", evidenceCount: 1, verifiedBy: "checker" });
+    if (stuck === "placement waiting") {
+      const store = f.runtime.placements().store;
+      expect(store.byMember(f.member.threadId)?.preservation).toMatchObject({ source: "saved", snapshotId: "snapshot" });
+      expect(store.snapshot("snapshot")?.homeCommit).toBe(gitSha);
+    }
+    expect(reply).toContain("Replaced");
+    if (stuck === "placement lost") {
+      expect(reply).toContain("its work was not saved");
+      expect(f.stop).not.toHaveBeenCalled();
+    } else expect(f.stop).toHaveBeenCalledWith({ threadId: f.member.threadId });
+    const [replacement] = f.k.store.activeStaffing("lead");
+    expect(replacement).toMatchObject({ waypointId: "w1", classId: "smith", boardQuestId: f.q.id });
+    expect(replacement!.threadId).not.toBe(f.member.threadId);
+    const { context, ...brief } = f.k.store.runtime(replacement!.threadId).brief!;
+    expect({ ...brief, context: [] }).toEqual(f.input.brief);
+    if (f.correction) expect(context.join("\n")).toContain(f.correction);
+    else expect(context).toEqual([]);
+    expect(f.k.store.get("staffing", `${f.q.id}:1:smith`)?.slots[0]).toEqual({ memberThreadId: replacement!.threadId, uses: 2 });
+    const replaced = () => f.k.store.events("lead", 0, 200).filter(e => e.type === "member.replaced");
+    expect(replaced()).toEqual([expect.objectContaining({ boardQuestId: f.q.id, data: expect.objectContaining({
+      memberThreadId: f.member.threadId, replacementThreadId: replacement!.threadId, waypointId: "w1", reason: f.reason,
+    }) })]);
+    expect(await f.release(true)).toContain(replacement!.threadId);
+    expect(replaced()).toHaveLength(1);
+  });
   it.each(["todo", "doing", "blocked", "rejected", "done"])(
     "M-2 excludes released %s work and its owner without deleting its history",
     async (status) => {

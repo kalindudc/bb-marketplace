@@ -255,30 +255,40 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_release",
     "Released a party member",
-    "Stop a member of your own party, using its name or thread id and a reason. A reversible release appears under Decided for you. Slot budgets still apply. Verified work keeps credit. For a lead this requests retirement; the lead calls confirmRetirement:true after releasing its party and resolving pull request ownership, then ends its turn.",
-    z.union([z.object({ memberThreadId: id, reason: z.string().trim().min(1).max(500) }).strict(), z.object({ confirmRetirement: z.literal(true) }).strict()]),
-    async (input, threadId) => {
+    "Stop one stuck member of your own party by name or id, with a reason. replace:true rehires for the same waypoint. A reversible release is Decided for you. Limits and verified credit stay. Leads call confirmRetirement:true after releasing their party and handing off PRs, then end the turn.",
+    z.union([z.object({ memberThreadId: id, reason: z.string().trim().min(1).max(500), replace: z.boolean().optional() }).strict(), z.object({ confirmRetirement: z.literal(true) }).strict()]),
+    async (input, threadId, projectId) => {
       if ("confirmRetirement" in input) {
         runtime.confirmLeadRetirement(threadId);
         return "Retirement confirmed. End your turn; Tavern will free the seat after cleanup.";
       }
       const member = k.resolvePartyMember(threadId, input.memberThreadId);
       if (member.leadLinkId) {
+        if (input.replace) throw new Error("A lead must retire before its seat can be filled. Request retirement without replace:true.");
         const state = runtime.requestLeadRetirement(threadId, member, input.reason);
         return state === "retired" ? "This lead has retired." : "Retirement requested. Tavern waits for the lead's own confirmation.";
       }
-      if (await runtime.release(threadId, member.threadId, input.reason)) {
-        const placement = runtime.placements().store.byMember(member.threadId);
-        if (placement && ["lost", "unknown", "unpreserved"].includes(placement.preservation.source))
-          return `Released ${k.name(member)}; its work was not saved: ${placement.preservation.reason}`;
-        if (placement?.preservation.source === "saved" && placement.preservation.artifacts === "unknown")
-          return `Released ${k.name(member)}; its source was saved; declared artifacts are unknown: ${placement.preservation.reason?.replace(/^Declared artifacts are unknown\. /, "")}`;
-        return `Released ${input.memberThreadId}; its allocation is free.${placement?.preservation.artifacts === "unpreserved" ? ` ${placement.preservation.reason}` : ""}`;
+      const replacement = input.replace ? await runtime.replaceMember(threadId, projectId, member.threadId, input.reason) : null;
+      const released = replacement ? replacement.state !== "releasing" : await runtime.release(threadId, member.threadId, input.reason);
+      if (released) {
+        const { preservation } = runtime.placements().store.byMember(member.threadId) ?? {};
+        const loss = preservation && ["lost", "unknown", "unpreserved"].includes(preservation.source)
+          ? `its work was not saved: ${preservation.reason}`
+          : preservation?.source === "saved" && preservation.artifacts === "unknown"
+            ? `its source was saved; declared artifacts are unknown: ${preservation.reason?.replace(/^Declared artifacts are unknown\. /, "")}`
+            : null;
+        const work = loss ? `; ${loss}` : preservation?.artifacts === "unpreserved" ? `. ${preservation.reason}` : ".";
+        if (replacement?.state === "replaced")
+          return `Replaced ${k.name(member)} with ${replacement.threadId}${work}${replacement.briefPending ? " Check tavern_status for brief delivery." : ""}`;
+        if (replacement?.state === "hiring") return `Released ${member.threadId}${work} The replacement hire is pending. Do not hire another for this slot.`;
+        if (replacement?.state === "blocked") return `Released ${member.threadId}${work} Replacement not confirmed: ${replacement.message} Read tavern_status before retrying with replace:true and the same thread id.`;
+        return loss ? `Released ${k.name(member)}${work}` : `Released ${input.memberThreadId}; its allocation is free${work}`;
       }
       const blocker = memberDetails(k.store, member.threadId).operation?.error;
-      return blocker
+      const pending = blocker
         ? `Release pending for ${input.memberThreadId}: ${blocker} The thread and its allocation stay held. Retry release after resolving the blocker.`
         : `Stop requested for ${input.memberThreadId}; its allocation stays held until the stop is confirmed. Tavern will retry confirmation.`;
+      return replacement ? `${pending} Retry with replace:true and thread id ${member.threadId}; no replacement was hired yet.` : pending;
     },
     (input, threadId) => { if ("memberThreadId" in input) k.require(threadId, "keeper"); },
   );

@@ -26,6 +26,19 @@ it("can grow a cached class allocation without changing the prior row", async ()
   } finally { k.store.db.close(); }
 });
 
+it("charges a named replacement to its original slot, not an earlier free slot", async () => {
+  const { k } = setup();
+  try {
+    const quest = await seedQuest(k, "lead", "Build", "Build");
+    const id = `${quest.id}:${quest.planVersion}:smith`;
+    const slots = [{ memberThreadId: null, uses: 0 }, { memberThreadId: "previous", uses: 1 }];
+    k.store.put("staffing", id, { boardQuestId: quest.id, version: quest.planVersion, classId: "smith", slots });
+    const reservation = k.store.atomic(() => reserveStaffing(k, quest, "smith", 2, "fresh", "previous"));
+    expect(reservation).toMatchObject({ slot: 1, replacement: 1 });
+    expect(k.store.get("staffing", id)?.slots).toEqual([slots[0], { memberThreadId: "fresh", uses: 2 }]);
+  } finally { k.store.db.close(); }
+});
+
 it("keeps Keeper reads current across stores, transactions and a bulk import", () => {
   const db = new Database(":memory:");
   try {

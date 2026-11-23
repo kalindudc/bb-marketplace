@@ -1,6 +1,7 @@
 import type { Actor, Member } from "../shared/schema";
 import { ENGAGEMENTS, type Disposition, type Engagement } from "../shared/member-engagement";
 import type { KeeperStore, PendingBrief } from "./keeper/store";
+import type { Brief } from "../shared/schema";
 import { PlacementStore } from "./placement/store";
 
 export type EngagementReceipt = { kind: string; id: string; evidence?: Record<string, unknown> };
@@ -16,6 +17,7 @@ export type MemberEngagementData = {
   rest?: { since: number; reminded?: boolean; keep?: { until: number; why: string; decisionId: string } | null } | null;
   operation?: MemberOperation | null;
   release?: { reason: string; decisionId?: string; at?: number } | null;
+  replacement?: { reason: string; brief: Brief; threadId?: string };
   archive?: Archive | null;
   archiveAfter?: { receipt: EngagementReceipt; reason: string; archive: Archive } | null;
   host?: { archivedAt: number | null; deletedAt: number | null } | null;
@@ -36,6 +38,7 @@ export const MEMBER_TRANSITIONS = [
   ...rows(["briefing"], ["resting"], "rebrief-cancelled", ["tavern"], "brief-cancelled", "member.brief-cancelled"),
   ...rows(["active"], ["resting", "briefing"], "done-report", ["agent"], "report", "report.filed"),
   ...rows(available, ["releasing"], "release-requested", ["agent"], "decision", "member.release-requested"),
+  ...rows(["archived"], ["releasing"], "lost-release-requested", ["agent"], "decision", "member.release-requested"),
   ...rows(available, ["releasing"], "release-answered", ["user"], "ask-answer", "member.release-requested"),
   ...rows(available, ["releasing"], "greenlight-undone", ["user"], "undo", "member.release-requested"),
   ...rows(available, ["releasing"], "model-failure", ["tavern"], "host-failure", "member.release-requested"),
@@ -157,7 +160,7 @@ export function transitionMember(store: KeeperStore, member: Member, to: Engagem
     const row = MEMBER_TRANSITIONS.find(r => r.from === from && r.to === to && r.cause === cause && r.by.includes(actor.kind) && r.receipt === receipt.kind);
     const refuse = (why: string): never => { throw new Error(`Member engagement refuses ${from ?? "none"} to ${to} for ${cause}: ${why}`); };
     if (!row || bound.role === "keeper" || !receipt.id.trim()) refuse("authority or receipt does not match");
-    if (actor.kind === "agent" && ["bind-hire", "rebrief", "release-requested"].includes(cause) && actor.threadId !== bound.keeperThreadId) refuse("not the owning Keeper");
+    if (actor.kind === "agent" && ["bind-hire", "rebrief", "release-requested", "lost-release-requested"].includes(cause) && actor.threadId !== bound.keeperThreadId) refuse("not the owning Keeper");
     if (cause === "bind-hire") {
       const hire = store.get("hires", receipt.id);
       if (!hire || hire.owner.keeperThreadId !== bound.keeperThreadId || hire.owner.boardQuestId !== bound.boardQuestId || hire.classId !== bound.classId || hire.memberThreadId && hire.memberThreadId !== bound.threadId) refuse("hire binding does not match");
@@ -175,9 +178,13 @@ export function transitionMember(store: KeeperStore, member: Member, to: Engagem
     }
     const previous = memberDetails(store, bound.threadId);
     const details = { ...previous, ...options.details };
-    if (cause === "release-requested") {
+    if (cause === "release-requested" || cause === "lost-release-requested") {
       const decision = store.get("decisions", receipt.id);
       if (!decision || decision.keeperThreadId !== bound.keeperThreadId || decision.undone || !decision.reversible) refuse("release decision does not match");
+      if (cause === "lost-release-requested") {
+        const placement = outstandingArchivedPlacement(new PlacementStore(store.db), bound);
+        if (!placement || !isMemberMachineGone(placement)) refuse("archived member has no outstanding lost placement");
+      }
     }
     if (cause === "quest-stop" &&
         (!bound.boardQuestId || String(store.latestQuestEvent(bound.boardQuestId, "quest.stopping")?.id) !== receipt.id))

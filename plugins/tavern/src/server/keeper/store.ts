@@ -144,6 +144,7 @@ export interface HireIntent {
   limitDecisionIds?: string[];
   guardApprovalAskId?: string;
   staffing?: StaffingReservation;
+  replacesThreadId?: string;
   classId: string;
   characterId: string | null;
   projectId: string;
