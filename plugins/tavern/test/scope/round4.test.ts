@@ -31,7 +31,8 @@ function fixture() {
 it.each(["ranger", "keeper"])("allows assignments and shell state builtins for %s", role => {
   for (const command of ['X=1; echo "$X"', 'sha=$(git rev-parse HEAD) && git show --stat "$sha"', 'branch=$(git branch --show-current); echo "$branch"', "set -euo pipefail; git status", "set -e\ngit status", "local x=1", "declare x=1", "typeset x=1"]) expect(fixture().check(command, role).decision.allow, command).toBe(true);
 });
-it.each(["ranger", "keeper"])("still checks assignment substitutions for %s", role => expect(fixture().check("x=$(gh pr merge 1)", role).decision.allow).toBe(false));
+it.each(["ranger", "warden"])("still checks assignment substitutions for %s", role => expect(fixture().check("x=$(gh pr merge 1)", role).decision.allow).toBe(false));
+it("checks Keeper cluster writes in assignment substitutions", () => expect(fixture().check("x=$(terraform apply)", "keeper").decision).toMatchObject({ allow: false, ruleId: "cluster-write" }));
 it.each(["ranger", "smith", "keeper"])("rejects mutations before expansion across the whole call for %s", role => {
   for (const command of ['for x in 1 2; do echo x > "$TMPDIR/loop"; TMPDIR=OUTSIDE; done', 'while true; do echo x > "$TMPDIR/loop"; TMPDIR=OUTSIDE; done', 'f() { echo x > "$TMPDIR/function"; }; TMPDIR=OUTSIDE; f', 'printf -v TMPDIR %s OUTSIDE; echo x > "$TMPDIR/printf"', 'declare -n R=TMPDIR; R=OUTSIDE; echo x > "$TMPDIR/alias"', '((TMPDIR=1)); echo x > "$TMPDIR/arith"', 'echo $((TMPDIR=1)); echo x > "$TMPDIR/arith"', 'TMPDIR=OUTSIDE mktemp', 'export TMPDIR=OUTSIDE; mktemp', 'IFS=/; cp /etc/hosts $BB_THREAD_STORAGE']) expect(fixture().check(command, role).decision.allow, command).toBe(false);
 });

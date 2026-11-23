@@ -3,7 +3,8 @@ import { mkdtempSync, mkdirSync, symlinkSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
-import { evaluate, type ScopeCall } from "../../src/scope/engine";
+import { evaluate, readonlyProgram, type ScopeCall } from "../../src/scope/engine";
+import { shellCommands } from "../../src/scope/shell";
 import { bindPaths, realPath } from "../../src/scope/paths";
 import { scopeForClass } from "../../src/scope/presets";
 import { shouldScope } from "../../src/scope";
@@ -22,7 +23,7 @@ const rangerReads = ["git reflog -5", "git ls-remote origin", "git show-ref --he
 it.each(rangerReads)("allows everyday Ranger inspection: %s", command => expect(shell("ranger", command).allow).toBe(true));
 it.each(["git apply patch.diff", "git apply --check patch.diff", "git am patch.mbox", "git submodule update --init", "git lfs pull", "git format-patch -1 HEAD", "git bisect start", 'cd "$(git rev-parse --show-toplevel)" && npm test', "pushd packages/a && npm test && popd && npm run lint", "ln -sf ../x y && npm test", "gh run watch 123"])("allows everyday Smith work: %s", command => expect(shell("smith", command).allow).toBe(true));
 it.each(["git reflog expire --all", "git reflog delete HEAD@{0}", "find . -exec sh -c 'git push origin main' \\;", "gh api graphql -f query='mutation { dangerous }'"])("retains Ranger Git and PR blocks: %s", command => expect(shell("ranger", command).allow).toBe(false));
-it.each(["awk '{print > \"/outside/file\"}' f", "awk '{print | \"sh\"}' f", "awk 'BEGIN {system(\"bad\")}'", "sed 's/a/b/w /outside/file' f", "sed 's/a/b/e' f", "env bash script.sh"])("retains Warden command inspection blocks: %s", command => expect(shell("warden", command).allow).toBe(false));
+it.each(["awk '{print > \"/outside/file\"}' f", "awk '{print | \"sh\"}' f", "awk 'BEGIN {system(\"bad\")}'", "sed 's/a/b/w /outside/file' f", "sed 's/a/b/e' f", "env bash script.sh"])("does not classify script variants as pure reads: %s", command => expect(shellCommands(command, cwd).every(readonlyProgram)).toBe(false));
 it.each(["git -C src status; touch ../outside", "env -C src true; touch ../outside"])("does not change parent shell cwd for a child process: %s", command => expect(shell("smith", command).allow).toBe(false));
 it.each(["gs ss", "gs bs", "gs rs", "gs us", "gs uss", "gs bss", "gs stack submit", "gs branch submit", "gs repo sync", "gs upstack submit", "gs branch submit --draft", "npm publish", "yarn publish", "pnpm publish"])("blocks Smith publication: %s", command => expect(shell("smith", command).allow).toBe(false));
 it("leaves direct Wanderers/untyped threads unscoped, but scopes hired Wanderers", () => {

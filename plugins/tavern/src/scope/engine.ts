@@ -13,7 +13,8 @@ import { normalizeRemote, pushSpec } from "./remote";
 import { awkRead, fileRead, findRead, sedRead, xxdRead } from "./reads";
 import { draftEditKey, githubApiRead } from "./github";
 import { prCommandDigest, pullRequestOwned } from "./pr-policy";
-import { commandWritePaths, knownWritePaths, ruleMatches, shellCommands, type ShellCommand } from "./shell";
+import { commandWritePaths, ruleMatches, shellCommands, type ShellCommand } from "./shell";
+import { ShellSyntaxError } from "./parser";
 import { memoryCommandRule, runsMemoryCommand } from "./memory-policy";
 
 export interface ScopeCall { draftApproved?: boolean; clusterWriteApproved?: boolean; clusterObservation?: string; containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; shellGrants?: readonly ShellGrantProjection[]; prGrantAvailable?(id: string): boolean }
@@ -174,7 +175,7 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
   const memoryRule = memoryCommandRule(scope);
   const memoryPaths = memoryRule?.argv?.[0];
   let commands;
-  try { commands = shellCommands(source, call.cwd, { temporaryRoot: temporaryRoot(scope), isRead: contained ? containmentRead : readonlyProgram, gitRoots: call.gitRoots, directories: call.directories, env: scope.env.variables, containment: contained ? "sandbox" : undefined }); } catch {
+  try { commands = shellCommands(source, call.cwd, { temporaryRoot: temporaryRoot(scope), isRead: contained ? containmentRead : readonlyProgram, gitRoots: call.gitRoots, directories: call.directories, env: scope.env.variables, containment: contained ? "sandbox" : undefined }); } catch (error) {
     const route = fallbackPullRequestRoute(source);
     const acts = route ? [route, ...fallbackActs(source)] : fallbackActs(source);
     const refused = (route && (route.kind !== "send" || scope.pullRequestPolicy?.alwaysAsk !== false) ? route : undefined) ?? acts.find(act => closingAct(scope, act, source) || (!olderOpenBaseline && scope.role !== "keeper") || act.kind === "tavern-control");
@@ -185,7 +186,9 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
     if (remote || scope.preset === "open") return acts.length ? { allow: true, acts } : allowed;
     for (const rule of scope.shell.deny) if (rule.regex && new RegExp(rule.regex).test(source)) return blocked("shell command", rule.id, rule.why);
     if (contained) return allowed;
-    return blocked("shell command", "shell-parse", "unsupported shell syntax cannot be checked safely");
+    return blocked("shell command", "shell-parse", error instanceof ShellSyntaxError
+      ? `${error.message} near ${JSON.stringify(source.slice(0, 200))}`
+      : "unsupported shell syntax cannot be checked safely");
   }
   let checking = false, prGrant: string | undefined, shellGrant: string | undefined;
   const grantTarget = call.shellGrants?.length && commands.length === 1 ? shellGrantTarget(call, commands[0]) : null;
@@ -260,10 +263,6 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
     if (!contained && scope.preset === "worktree" && command.cwdAlternative && !readonlyProgram(command) && !canWrite(command.cwd, command.cwd)) return blocked(command.text, "shell-location", "one possible working directory is outside allowed roots");
     if (!contained && command.uncertain && !readonlyProgram(command)) return blocked(command.text, "shell-location", "the command's working directory or symlinks cannot be proven");
     if (contained && scope.writes.mode === "none" && !shellGrant && readerNeedsDecision(command)) return blocked(command.text, "legacy-act", "this consequential command requires a scope decision");
-    if (scope.preset !== "readonly" && scope.writes.mode === "none" && !contained) {
-      const knownWriter = ["tee", "mkdir", "cp", "mv", "touch", "rm", "rmdir"].includes(program) && knownWritePaths(argv).length > 0;
-      if (!read && !check && !knownWriter && !shellGrant && !approvedClusterWrite) return blocked(command.text, "readonly-shell", "this scope permits inspected read programs, not arbitrary programs or opaque shell input");
-    }
   }
   return { allow: true, ...(checking ? { check: true } : {}), ...(observed.length ? { acts: observed } : {}), ...(prGrant ? { prGrant } : {}), ...(shellGrant ? { shellGrant } : {}) };
 }
