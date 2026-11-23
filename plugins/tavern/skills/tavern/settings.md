@@ -55,7 +55,7 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `keepers.brief_retry_attempts` | Caps attempts to deliver a brief. | `5` | User; Granted |
 | `keepers.replacements_per_slot` | Caps replacements in the same party slot. | `2` | User; Granted |
 | `keepers.ranger_max` | Sets the soft Ranger concurrency default when the class file does not say. | `3` | User; Granted |
-| `keepers.keep_max_hours` | Caps the time a Keeper can actively keep a resting member. | `24` | User; Granted |
+| `keepers.keep_max_hours` | Caps the time a Keeper can actively keep a resting member. | `168` | User; Granted |
 | `keepers.registry_wait_seconds` | Sets how long a Keeper waits for class files. | `30` | User; Granted |
 | `keepers.succession_recovery_seconds` | Sets how long Tavern checks an uncertain refresh before returning control to the current Keeper. | `600` | User; Granted |
 | `keepers.registry_blocker_minutes` | Sets when a class-file problem becomes an ask. | `5` | User; Granted |

@@ -25,7 +25,7 @@ export const KNOB_FIELDS = {
     briefRetryAttempts: { default: 5, min: 1, max: 10, unit: "tries", label: "Brief delivery tries" },
     replacementsPerSlot: { default: 2, min: 0, max: 5, unit: "replacements", label: "Replacements per party slot" },
     rangerMax: { default: 3, min: 1, max: 20, unit: "Rangers", label: "Rangers at once when the class file is silent" },
-    keepMaxHours: { default: 24, min: 1, max: 168, unit: "hours", label: "Longest keep for a resting member" },
+    keepMaxHours: { default: 168, min: 1, max: 168, unit: "hours", label: "Longest keep for a resting member" },
     registryWaitSeconds: { default: 30, min: 5, max: 120, unit: "seconds", label: "Wait for class files" },
     clusterGrantMinutes: { default: 15, min: 1, max: 30, unit: "minutes", label: "Confirmed cluster command expires after" },
     successionRecoverySeconds: { default: 600, min: 30, max: 3600, unit: "seconds", label: "Wait for a fresh Keeper" },

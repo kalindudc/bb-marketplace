@@ -36,7 +36,7 @@ Every phase transition records its cause, actor, and receipt. Review (`check`) a
 Each waypoint declares how it is checked: Warden verification, Keeper check, outside gate, or report-only. Only a Warden verdict counts as **verified**; Keeper-accepted and optional-skipped waypoints are distinguished on the quest page, Ledger, and tale.
 
 - **Rejected work:** The Keeper re-briefs the maker with the Warden’s evidence. The Warden can check a corrected submission without a plan revision.
-- **Resting members:** Tavern reminds the Keeper once per settled rest after `keepers.rest_minutes` (default 30) and never releases a member on a timer. Keepers can hold a resting member for follow-up work with `tavern_keep` (up to `keepers.keep_max_hours`, default 24).
+- **Resting members:** Tavern reminds the Keeper once per settled rest after `keepers.rest_minutes` (default 30) and never releases a member on a timer. Keepers can hold a resting member for follow-up work with `tavern_keep` (up to `keepers.keep_max_hours`, default 168 hours).
 
 ## Spend and review budgets
 

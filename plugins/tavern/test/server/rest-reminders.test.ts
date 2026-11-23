@@ -156,10 +156,10 @@ it.each(["done", "held", "stopped"] as const)("refuses a keep on a %s quest", as
   putQuestFixture(f.k.store, f.q.id, { ...f.q, phase, ...(phase === "held" ? { held: { since: f.time(), from: "scout" } } : { endedAt: f.time() }) } as never);
   expect(() => f.runtime.keep("lead", f.m.threadId, f.time() + 60_000, "Wait")).toThrow();
 });
-it("caps a keep at 24 hours and records Keeper authority", async () => {
+it("caps a keep at 168 hours by default and records Keeper authority", async () => {
   const f = await fixture();
-  expect(() => f.runtime.keep("lead", f.m.threadId, f.time() + 24 * 60 * 60_000 + 1, "Wait")).toThrow(/24 hours/);
-  f.runtime.keep("lead", f.m.threadId, f.time() + 24 * 60 * 60_000, "Wait");
+  expect(() => f.runtime.keep("lead", f.m.threadId, f.time() + 168 * 60 * 60_000 + 1, "Wait")).toThrow(/168 hours/);
+  f.runtime.keep("lead", f.m.threadId, f.time() + 168 * 60 * 60_000, "Wait");
   expect(AUTHORITY).toHaveProperty("keepMember.level", "keeper");
 });
 it("ends a keep when the quest ends", async () => {
