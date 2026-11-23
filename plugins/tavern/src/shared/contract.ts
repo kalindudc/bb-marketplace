@@ -141,6 +141,9 @@ export const memberScopeSchema = z.object({
   guardPosture: memberSchema.shape.guardPosture,
   shellGrants: z.array(shellGrantSchema.extend({ usable: z.boolean() })).optional(),
   restartNeeded: z.string().nullable().optional(),
+  guardCheckFailed: z.boolean().optional(),
+  live: z.boolean().optional(),
+  repairAskId: id.optional(),
   clusterGuard: z.enum(["armed", "ready", "restart", "not-prevented"]).optional(),
   sendGuard: z.enum(["armed", "restart", "not-prevented"]).optional(),
   // added by Builder B: expose the configured mode and rejected class/project policy changes.
@@ -191,6 +194,7 @@ export const threadDecorSchema = z.object({
   // added by Builder B: show the live guardrail and any pending widening alongside member details.
   scope: memberScopeSchema.nullable().optional(),
   openScopeAsk: z.boolean().optional(),
+  memberAsks: z.array(askSchema).optional(),
   violations: z.array(scopeViolationSchema).optional(),
   member: memberSchema.nullable(),
   /** The Keeper of a member thread, so its header can say who it reports to. */
@@ -291,6 +295,7 @@ export const memberBriefRowSchema = z.object({
 export type MemberBriefRow = z.infer<typeof memberBriefRowSchema>;
 
 export const ledgerSchema = z.object({
+  keeperBlocks: z.array(askSchema.pick({ id: true, question: true, why: true })).optional(),
   memberBriefs: z.array(memberBriefRowSchema).optional(),
   succession: successionViewSchema.nullable().optional(),
   asksNextCursor: z.string().nullable().optional(),

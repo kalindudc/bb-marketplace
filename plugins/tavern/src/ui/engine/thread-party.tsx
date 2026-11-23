@@ -10,7 +10,7 @@ import type { ChangeCharacterSetting } from "./character-menu";
 import { useCharacterQuiet } from "./character-quiet";
 import { REPORT_READING, reportReading } from "./report-reading";
 import { BUBBLE_MS, planSpeech, reportSpeechHeld, speechDecision, speechSlot } from "./speech";
-import { PartyStrip, type StripSpeech } from "./strip";
+import { PartyStrip, type StripSpeech, type AskDisclosure } from "./strip";
 
 function useWidgetMood(data: ThreadDecor) {
   const [now, setNow] = useState(Date.now);
@@ -65,9 +65,10 @@ type Props = {
   held: boolean;
   pageSince: number;
   change: ChangeCharacterSetting;
+  askDisclosure?: AskDisclosure;
 };
 
-export function ThreadPartyStrip({ data, character, classLabel, voice, held, pageSince, change }: Props) {
+export function ThreadPartyStrip({ data, character, classLabel, voice, held, pageSince, change, askDisclosure }: Props) {
   const navigate = useBbNavigate();
   const quiet = useCharacterQuiet(data.characterQuietUntil);
   const speechMode = quiet ? "off" : voice;
@@ -142,7 +143,7 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
   if (mood === "released") return null;
   return <PartyStrip
     character={character} classId={member.classId} classLabel={classLabel} mood={mood} memberId={member.threadId}
-    keeper={!!data.keeperView} surface={surface} region="widget" mode={motionMode} held={held} quiet={quiet}
+    askDisclosure={askDisclosure} keeper={!!data.keeperView} surface={surface} region="widget" mode={motionMode} held={held} quiet={quiet}
     actorMenu={{ mode: motionMode, voice, voiceBeforeOff: data.voiceBeforeOff, quietUntil: quiet ? data.characterQuietUntil : undefined, change, openSheet: () => navigate.toPluginPanel("tavern", { subPath: `character/${character.id}` }) }}
     speech={visible?.line ?? null} canClickSpeak={speechMode !== "off" && speechSlot(mood) && !!character.says?.[mood]?.length}
     onActorClick={() => live.current(true)} onMoodCueEnd={() => {

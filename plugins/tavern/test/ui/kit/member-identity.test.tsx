@@ -26,7 +26,7 @@ it.each([["keeper","Keeper","open","anywhere"],["wanderer","Wanderer","open","an
 });
 it("does not claim enforcement for missing, unarmed, watch, off or detection-only guards",()=>{
  const f=fixture("smith","Smith");
- for(const [scope,word] of [[undefined,"not armed yet"],[{...f.scope,armed:false},"not armed yet"],[{...f.scope,mode:"watch"},"watch only"],[{...f.scope,mode:"off"},"off"],[{...f.scope,guardPosture:{providerId:"pi",mode:"detection-only",label:"watched",approvalAskId:null}},"watch only"]] as const){
+ for(const [scope,word] of [[undefined,"arm receipt not recorded"],[{...f.scope,armed:false},"arm receipt not recorded"],[{...f.scope,armed:false,guardCheckFailed:true},"not armed yet"],[{...f.scope,mode:"watch"},"watch only"],[{...f.scope,mode:"off"},"off"],[{...f.scope,guardPosture:{providerId:"pi",mode:"detection-only",label:"watched",approvalAskId:null}},"watch only"]] as const){
  const v=render(<MemberIdentity {...f} scope={scope} />); expect(v.container.textContent).toContain(word); v.unmount();
  }
 });
@@ -61,7 +61,7 @@ it("keeps narrowed permissions and guard errors truthful",()=>{
  expect(v.container.textContent).toContain("writes: listed paths");
  expect(v.container.textContent).not.toContain("temp and its own storage");
  expect(v.container.textContent).toContain("network: none · GitHub: none");
- expect(v.container.textContent).toContain("not armed yet");
+ expect(v.container.textContent).toContain("guard unavailable");
  expect(v.container.textContent).toContain("1 scope alert: Scope delivery failed");
 });
 it("uses historical words in compact finished records, never not armed yet",()=>{

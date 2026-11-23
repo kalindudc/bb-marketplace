@@ -140,7 +140,7 @@ function MapPicture({ layout, registry, setFocus }: { layout: Layout; registry: 
       const body = <>{mark}<span className="tv-mn-t"><b>{label}</b><span>{sub}</span></span>{clickable && n.kind !== "quest" && <OpensMark />}</>;
       const style = { left: x, top: y, width: w, height: h };
       return clickable
-        ? <button type="button" key={n.id} data-node={n.id} className={`tv-mn act k-${n.kind} ${focused ? "focus" : ""} ${mark ? "" : "nomark"} ${tall ? "tall" : ""} ${n.quiet ? "quiet" : ""}`} style={style} title={title} aria-pressed={n.kind === "quest" ? focused : undefined} onClick={() => open(n)}>{body}</button>
+        ? <button type="button" key={n.id} data-node={n.id} className={`tv-mn act k-${n.kind} ${focused ? "focus" : ""} ${mark ? "" : "nomark"} ${tall ? "tall" : ""} ${n.quiet ? "quiet" : ""}`} style={style} title={n.kind === "blocked" || n.kind === "you" ? `${title} · ${n.questId ? "Open the quest" : "Open the common room"}` : title} aria-pressed={n.kind === "quest" ? focused : undefined} onClick={() => open(n)}>{body}</button>
         : <div key={n.id} data-node={n.id} className={`tv-mn k-${n.kind} nomark ${tall ? "tall" : ""}`} style={style} title={title}>{body}</div>;
     })}
   </div>;

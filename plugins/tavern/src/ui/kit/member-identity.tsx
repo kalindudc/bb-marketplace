@@ -7,6 +7,7 @@ import { memberIdentity, type Registry } from "./registry";
 import type { BriefSteer } from "../../shared/contract";
 import { BriefSteerLine } from "./brief-steer";
 import { PlacementFacts } from "./placement";
+import { scopeAlerts } from "./guard-alerts";
 import "./member-identity.css";
 
 type MemberScope = ThreadDecor["scope"];
@@ -34,7 +35,9 @@ function guardWords(member: Member, scope: MemberScope, finished: boolean) {
   }
   if (mode === "off") return "off";
   if (mode === "watch" || posture?.mode === "detection-only") return "watch only";
-  if (!scope?.armed || !scope.scope || scope.error || scope.guard?.stale || scope.guard?.installed === false) return "not armed yet";
+  if (scope?.guardCheckFailed) return "not armed yet";
+  if (scope?.error || scope?.guard?.stale || scope?.guard?.installed === false) return "guard unavailable";
+  if (!scope?.armed || !scope.scope) return "arm receipt not recorded";
   return scope.scope.preset === "open" ? "only protected files guarded" : "enforced";
 }
 
@@ -63,7 +66,7 @@ export function MemberIdentity({ member, registry, briefSteer, scope, compact = 
   const name = memberIdentityLabel(member, registry);
   const sc = scope?.scope;
   const guard = guardWords(member, scope, finished);
-  const alerts = (scope?.problems?.length ?? 0) + violations.filter(v => v.mode !== "watch").length + (scope?.error ? 1 : 0) + (variant === "chips" && scope?.pendingAskId ? 1 : 0);
+  const alerts = scopeAlerts({ scope: finished ? null : scope, violations });
   const chips = variant === "chips";
   return <div className={`member-identity ${compact ? "compact" : ""}${chips ? " chips" : ""}`} role={chips ? "group" : undefined} data-part="MemberIdentity" aria-label={`${name}, member identity`}>
     {!compact && identity && <Crest {...identity} size={32} />}

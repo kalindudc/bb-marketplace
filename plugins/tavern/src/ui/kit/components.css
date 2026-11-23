@@ -84,7 +84,6 @@
 .tavern .member-identity.compact p { margin-top: 2px; }
 .tavern .member-identity .mi-alert { color: var(--foreground); }
 .tavern .tw-waypoints { display: flex; flex-wrap: wrap; gap: 2px 12px; margin: 0; padding: 0 16px 6px; font-size: 12px; line-height: 18px; color: var(--tavern-muted); overflow-wrap: anywhere; }
-@media (pointer: coarse), (max-width: 560px) { .tavern .tw-member-id, .tavern.twidget.v-member .tw-row button { min-width: 44px; min-height: 44px; } }
 .tavern .tw-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tavern-muted); }
 .tavern .tw-sp { flex: 1 1 0; min-width: 0; }
 .tavern .tw-hide { margin-left: auto; }
@@ -124,6 +123,10 @@
 .tavern .tw-kn { font-weight: 600; }
 .tavern .tw-panel { border-top: 1px solid var(--tavern-line); padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; max-height: min(58vh, 560px); overflow: auto; }
 .tavern .tw-asks-p { gap: 0; padding: 0; }
+.tavern .tv-guard-alert { display: grid; gap: 4px; margin: 4px 0; min-width: 0; overflow-wrap: anywhere; }
+.tavern .tv-alert-msg { font-weight: 600; }
+.tavern .tv-alert-action { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; overflow-wrap: anywhere; }
+.tavern .tv-alert-action .lnk-btn { min-height: 24px; }
 .tavern .tw-ask + .tw-ask { border-top: 1px solid var(--tavern-line); }
 .tavern .tw-ask-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center; width: 100%; min-height: 32px; padding: 0 10px; border: 0; background: transparent; text-align: left; font-size: 12px; cursor: pointer; }
 .tavern .tw-ask-row:hover { background: var(--tavern-hover); }
@@ -158,16 +161,6 @@
 @container tavern-widget (max-width: 420px) { .tavern .tw-row:has(.tw-asks) .tw-dec { display: none; } }
 /* On a narrow row the events bubble yields to the asks; the Ledger keeps the count readable. */
 @container tavern-widget (max-width: 420px) { .tavern .tw-row:has(.tw-asks) .tw-events { display: none; } }
-@container tavern-widget (max-width: 500px) {
-  .tavern.twidget.v-member .tw-row:has(.tw-member-id) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(44px, 32%) 44px; gap: 0 6px; }
-  .tavern.v-member .tw-member-id { grid-area: 1 / 1; justify-self: start; max-width: 100%; }
-  .tavern.v-member .tw-row > :is(.tw-where, .tw-fact) { grid-area: 1 / 2 / auto / 4; justify-self: end; max-width: 100%; }
-  .tavern.v-member .tw-keeper { grid-area: 2 / 1; justify-self: start; }
-  .tavern.v-member .tw-row > .tw-chip:not(.tw-where, .tw-keeper) { grid-area: 2 / 2; justify-self: end; }
-  .tavern.v-member .tw-hide { grid-area: 2 / 3; }
-  .tavern.v-member .tw-row .tw-keeper .tw-kn { display: inline; }
-  .tavern.v-member .tw-row > .tw-sp { display: none; }
-}
 @media (pointer: coarse), (max-width: 560px) { .tavern .tw-chip, .tavern .tw-asks, .tavern .tw-quest { height: 44px; } .tavern .tw-ledger { min-width: 44px; justify-content: center; } .tavern .tw-ask-row { min-height: 44px; } .tavern .lnk-btn { min-height: 44px; } .tavern.readas .ra-fix { height: 44px; } }
 
 /* ---- The crest toggle in bb's composer actions: same 32 px box as bb's own icon buttons ---- */
@@ -367,12 +360,19 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .sendbox.grant code.wrap { display: block; }
 .tavern .sendbox.grant dd .who { margin: 0; }
 /* bb's context row is 35px, including its two borders. */
+.tavern.twidget.v-member .tw-row,
 .tavern.twidget.v-keeper .tw-row { flex-wrap: nowrap; min-height: 33px; }
 .tavern.v-keeper .tw-id { flex: none; max-width: min(33%, 20ch); }
+.tavern.v-member .tw-id .tw-name,
 .tavern.v-keeper .tw-id .tw-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tavern.twidget.v-member .tw-row > button,
 .tavern.twidget.v-keeper .tw-row > button { min-width: 24px; height: 24px; justify-content: center; }
+.tavern.twidget.v-member .tw-row > .tw-id { justify-content: start; }
+.tavern.twidget.v-member .tw-row > .tw-sp { display: none; }
 @media (max-width: 767px) and (pointer: coarse) {
+  .tavern.twidget.v-member .tw-row,
   .tavern.twidget.v-keeper .tw-row { min-height: 36px; }
+  .tavern.twidget.v-member .tw-row > button,
   .tavern.twidget.v-keeper .tw-row > button { height: 28px; }
 }
 .tavern.twidget.v-keeper .tw-row > .tw-quest { flex: 0 1 auto; min-width: calc(4ch + 48px); }
@@ -390,6 +390,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .tw-section-actions { flex: none; justify-content: flex-end; }
 .tavern .tw-section-actions .btn { min-height: 44px; }
 .tavern .tw-panel-ledger { display: none; margin-inline-end: auto; }
+.tavern .tw-ask-keeper { margin-inline-end: auto; min-height: 24px; }
 .tavern .tw-section-actions :is(.tw-show-characters, .tw-guard) { display: none; }
 .tavern .tw-guard[data-warning] { color: var(--tavern-blocked); }
 .tavern .lg-keeper-state { margin: 0 12px 8px; }
@@ -655,7 +656,13 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 /* Narrow rows drop the words rather than cut them: the glyph, the button's label and the row's tooltip carry it. */
 @container tavern-widget (max-width: 420px) { .tavern .tw-armed { gap: 6px; } .tavern .tw-armed .tw-text { visibility: hidden; } }
 @media (pointer: coarse), (max-width: 560px) { .tavern .tw-armed .btn, .tavern .tw-armed .lnk-btn { min-height: 44px; } }
-@container tavern-widget (max-width: 340px) { .tavern.twidget.v-member .tw-keeper { display: none; } }
+@container tavern-widget (max-width: 420px) {
+  .tavern.twidget.v-member .tw-row { gap: 4px; padding-inline: 6px; }
+  .tavern.twidget.v-member .tw-row > .tw-member-id { min-width: 9ch; gap: 3px; }
+  .tavern.twidget.v-member .tw-row > :is(.tw-hide, .tw-show-characters) { width: 28px; }
+  .tavern.twidget.v-member .tw-where { max-width: 24%; }
+  .tavern.twidget.v-member .tw-row:has(.tw-asks) .tw-al { display: none; }
+}
 /* Decided for you: "OK ✓" marks a row seen (it leaves, nothing is undone); the receipt replaces it in place. */
 .tavern .decided .di-ok, .tavern .decided .di-all { gap: 4px; color: var(--tavern-muted); }
 .tavern .decided .di-ok:hover:not(:disabled), .tavern .decided .di-all:hover:not(:disabled) { color: var(--foreground); }

@@ -5,6 +5,7 @@ import { rpcContract, type BoardQuestDetail, type BoardQuestSummary, type Room }
 
 import { attentionView, attentionNotes } from "../../shared/attention";
 import { resolutionWords, settled, verifiedWaypoint } from "../../shared/waypoint";
+import { AlertAction } from "../kit/alert-action";
 import { QuestAuthority, AskCard, verifiedOf, verifiedWords, questNames, readable, heldQuests, stoppingWords as kitStoppingWords, CELLAR, CheckIndependence, ExpandsMark, GateRows, GuardPosture, KeeperNoteRows, KeptInMind, OpensMark, QuestMap, QuietNotice, Vocabulary, clockTime, useNow, glowVars, vocab } from "../kit";
 import { DecidedForYou, KIND, heldTitles } from "./asks";
 import { ArchiveReceiptLine, ArchivedList, FinishedRow, finishedQuests, useArchive } from "./archive";
@@ -117,7 +118,7 @@ function CellarQuest({ quest }: { quest: BoardQuestDetail["quest"] }) {
 }
 
 /** A quest's page: the live page while it is in play, the record once it has returned or stopped. */
-export function QuestPage({ detail, registry, room, summaryId }: { detail: BoardQuestDetail; registry: Registry; room?: Room; summaryId?: string }) {
+export function QuestPage({ detail, registry, room, summaryId, recheck }: { detail: BoardQuestDetail; registry: Registry; room?: Room; summaryId?: string; recheck?: () => unknown }) {
   const navigate = useBbNavigate();
   const quest = detail.quest;
   const now = useNow();
@@ -210,6 +211,8 @@ export function QuestPage({ detail, registry, room, summaryId }: { detail: Board
               <span className="tv-item-t" data-content title={`${owner}: ${w.title}`}>{owner}: {w.title}</span>
               <span className="m small num">{w.leadTime ?? "lead time unknown"}</span>
               <span className="tv-item-s">{w.ownerMember && <><CheckIndependence member={w.ownerMember} /><GuardPosture member={w.ownerMember} /></>}<span>{w.doneWhen ? `done when ${w.doneWhen}` : "no done-when"}</span>{w.evidenceCount > 0 && <span>{w.evidenceCount} evidence</span>}{verifiedWaypoint(w) ? <span>verified by the Warden</span> : <span>{resolutionWords(w)}</span>}{w.rejectedReason && <span className="tv-st-bad">rejected: {w.rejectedReason}</span>}<MemberEstimate confidence={report?.confidence ?? null} /></span>
+              {group === "Blocked" && <AlertAction action={{ kind: "tell", keeperThreadId: quest.keeperThreadId,
+                text: `Review the blocked waypoint “${w.title}” in “${quest.title}” and tell me what needs to change before it can continue.` }} />}
               {w.ownerMember && <PlacementFacts placement={w.ownerMember.placement} memberName={owner} variant="status" />}
             </li>;
           })}</ul></div>; })}
@@ -241,8 +244,8 @@ export function QuestPage({ detail, registry, room, summaryId }: { detail: Board
         <RecordFold id="quest.kept" title="Kept in mind" count={plural(keptNotes.filter(n => n.state === "open").length, "note")} open={false}>
           <KeptInMind headless notes={keptNotes} newestFirst folds={{ promises: [promisesMore, setPromisesMore], facts: [factsMore, setFactsMore] }} />
         </RecordFold>
-        <RecordFold id="quest.guards" title="Guardrails" count={plural(detail.violations?.length ?? 0, "violation")} open={!finished} preview={!finished ? <Guardrails detail={detail} registry={registry} members={members} bare compact /> : undefined}>
-          <Guardrails detail={detail} registry={registry} members={members} bare compact={!finished} />
+        <RecordFold id="quest.guards" title="Guardrails" count={plural(detail.violations?.length ?? 0, "violation")} open={!finished} preview={!finished ? <Guardrails detail={detail} registry={registry} members={members} recheck={recheck} bare compact /> : undefined}>
+          <Guardrails detail={detail} registry={registry} members={members} recheck={recheck} bare compact={!finished} />
         </RecordFold>
         <QuestAuthority questId={quest.id} />
         <RecordFold id="quest.decisions" title="Decided for you" count={plural(detail.decisionsTotal ?? detail.decisions.length, "decision")} open>

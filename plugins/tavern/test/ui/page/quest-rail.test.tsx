@@ -61,24 +61,34 @@ it("caps each note kind at the newest three and remembers Show all", async () =>
 it("summarises healthy guards and remembers Show each member", async () => {
   const slot = await mount();
   const guards = slot.getByRole("region", { name: /Guardrails/ });
-  expect(guards.textContent).toContain("4 members · all enforced · 0 violations");
+  expect(guards.textContent).toContain("4 members · no current alerts · 0 violations");
   expect(guards.querySelectorAll(".tv-guard")).toHaveLength(0);
   fireEvent.click(within(guards).getByRole("button", { name: "Show each member" }));
   expect(guards.querySelectorAll(".tv-guard")).toHaveLength(4);
   slot.lifecycle.unmount(); slots.splice(slots.indexOf(slot), 1);
   expect((await mount()).container.querySelectorAll(".tv-guard")).toHaveLength(4);
 });
-it.each(["unarmed", "watch", "off", "error", "violation", "pending"])("always lists a guard with %s even while folded", async kind => {
+it.each(["confirmed missing guard", "error", "pending"])("always lists a current guard alert for %s even while folded", async kind => {
   const detail = structuredClone(railDetail);
   const sc = detail.scopes![0]!;
-  if (kind === "unarmed") sc.armed = false;
-  if (kind === "watch" || kind === "off") sc.mode = kind;
+  if (kind === "confirmed missing guard") { sc.armed = false; sc.guardCheckFailed = true; }
   if (kind === "error") sc.error = "Scope delivery failed";
   if (kind === "pending") sc.pendingAskId = "widen-1";
-  if (kind === "violation") detail.violations = [{ threadId: sc.threadId, providerId: "pi", at: scenes.min(1), eventId: "v1", seq: 1, ruleId: "git.push", reason: "push is blocked", stopped: true, latencyMs: 1, mode: "enforce" }];
+
   const guards = (await mount(detail)).getByRole("region", { name: /Guardrails/ });
   expect(guards.querySelectorAll(".tv-guard")).toHaveLength(1);
   expect(guards.querySelector(".tv-guard")!.textContent).toContain("Juno");
+});
+it.each(["startup", "watch", "off", "violation"])("does not count %s as a current guard alert", async kind => {
+  const detail = structuredClone(railDetail);
+  const sc = detail.scopes![0]!;
+  if (kind === "startup") sc.armed = false;
+  if (kind === "watch" || kind === "off") sc.mode = kind;
+  if (kind === "violation") detail.violations = [{ threadId: sc.threadId, providerId: "pi", at: scenes.min(1), eventId: "v1", seq: 1, ruleId: "git.push", reason: "push is blocked", stopped: true, latencyMs: 1, mode: "enforce" }];
+  const guards = (await mount(detail)).getByRole("region", { name: /Guardrails/ });
+  expect(guards.querySelectorAll(".tv-guard")).toHaveLength(0);
+  expect(guards.textContent).not.toContain("need attention");
+  if (kind === "violation") expect(guards.textContent).toContain("push is blocked");
 });
 it.each(["build", "done", "stopped"] as const)("keeps the same section order for %s, with phase-specific work and defaults", async phase => {
   const detail: BoardQuestDetail = { ...railDetail, quest: { ...railDetail.quest, phase, endedAt: phase === "build" ? null : scenes.min(1) } };

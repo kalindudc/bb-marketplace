@@ -12,6 +12,7 @@ import { usePanelState } from "./panel-state";
 import { reportsTitle, useOpenReports } from "./reports";
 import { MemberEstimate } from "../kit/member-estimate";
 import { FoldLoad } from "./skeletons";
+import { GuardAlerts, guardAlerts } from "../kit/guard-alerts";
 
 /* Pieces of a quest's record that the live quest page and the finished record page both draw. */
 
@@ -113,19 +114,29 @@ export function ReportItem({ report, registry, detail }: { report: Report; regis
 
 const MODE_WORDS = { enforce: "enforce", watch: "watch: recorded only", off: "off" } as const;
 /** Each member's scope (mode, preset, problems) and the rules it tripped; watch mode records without stopping. */
-export function Guardrails({ detail, registry, members, bare = false, compact = false }: { detail: BoardQuestDetail; registry: Registry; members: Map<string, Member>; bare?: boolean; compact?: boolean }) {
-  const scopes = detail.scopes ?? [];
-  const violations = [...(detail.violations ?? [])].sort((a, b) => b.at - a.at);
+export function Guardrails({ detail, registry, members, bare = false, compact = false, recheck }: { detail: BoardQuestDetail; registry: Registry; members: Map<string, Member>; bare?: boolean; compact?: boolean; recheck?: () => unknown }) {
+  return <ScopeRecords scopes={detail.scopes} observations={detail.violations} keeperThreadId={detail.quest.keeperThreadId} registry={registry}
+    members={members} ended={isFinished(detail.quest.phase)} bare={bare} compact={compact} recheck={recheck} />;
+}
+
+export function ScopeRecords({ scopes: input = [], observations = [], keeperThreadId, registry, members, ended = false, bare = false, compact = false, recheck }: {
+  scopes?: BoardQuestDetail["scopes"]; observations?: BoardQuestDetail["violations"]; keeperThreadId: string;
+  registry: Registry; members: Map<string, Member>; ended?: boolean; bare?: boolean; compact?: boolean; recheck?: () => unknown;
+}) {
+  const scopes = [...new Map(input.map(scope => [scope.threadId, scope])).values()].filter(scope => {
+    if (ended) return true;
+    const member = members.get(scope.threadId);
+    return scope.live !== false && member?.engagement !== "released" && member?.engagement !== "archived" && member?.engagement !== "stopped";
+  });
+  const violations = [...observations].sort((a, b) => b.at - a.at);
   const day = useToday();
   const [showEach, setShowEach] = usePanelState("quest.guards.members", false);
   if (!scopes.length && !violations.length) return null;
   const name = (id: string) => { const m = members.get(id); return m ? characterName(registry, m) : "A member"; };
-  // On a finished record the mode is only what was asked for; the row says what the run recorded and the state now instead.
-  const ended = isFinished(detail.quest.phase);
-  const alert = (sc: (typeof scopes)[number]) => !sc.armed || !sc.scope || (sc.mode ?? sc.scope?.mode ?? "enforce") !== "enforce" || !!sc.error || !!sc.problems?.length || !!sc.pendingAskId || violations.some(v => v.threadId === sc.threadId);
-  const shown = compact && !showEach ? scopes.filter(alert) : scopes;
+  const alerts = ended ? [] : scopes.filter(scope => guardAlerts(scope).length > 0);
+  const shown = compact && !showEach ? alerts : scopes;
   const body = <>
-    {compact && <p className="tv-guard-summary">{plural(scopes.length, "member")} · {scopes.every(sc => !alert(sc)) ? "all enforced" : `${scopes.filter(alert).length} need attention`} · {plural(violations.length, "violation")}</p>}
+    {compact && <p className="tv-guard-summary">{plural(scopes.length, "member")} · {alerts.length ? `${alerts.length} need attention` : "no current alerts"} · {plural(violations.length, "violation")}</p>}
     {shown.length > 0 && <ul className="tv-card tv-rows tv-guardrows">{shown.map((sc) => {
       const m = members.get(sc.threadId);
       const mode = sc.mode ?? sc.scope?.mode ?? "enforce";
@@ -135,12 +146,7 @@ export function Guardrails({ detail, registry, members, bare = false, compact = 
         <span className="tv-guard-t"><b>{name(sc.threadId)}{m && <> <CheckIndependence member={m} /> <GuardPosture member={m} finished={ended} /></>}</b><span className="m">{record ? record.declared : sc.scope ? `${sc.scope.preset} · writes ${sc.scope.writes.mode} · network ${sc.scope.network} · GitHub ${sc.scope.github}` : "no scope recorded"}</span>
           {record && <span className="tv-guard-ev"><StateMark tone={record.evidence.tone} title={record.evidence.title}>{record.evidence.text}</StateMark>{record.now && <span className="m">{record.now}</span>}</span>}</span>
         {!record && <span className={`tag tv-mode m-${mode}`} title={mode === "watch" ? "Violations are recorded, not stopped" : mode === "off" ? "No guardrail for this member" : "Violations stop the turn"}>{MODE_WORDS[mode]}</span>}
-        {(sc.error || sc.problems?.length || sc.pendingAskId || (!record && !sc.armed && mode === "enforce")) && <span className="tv-guard-p">
-          {!record && !sc.armed && mode === "enforce" && <StateMark tone="warn">not armed yet</StateMark>}
-          {sc.error && <StateMark tone="bad">{sc.error}</StateMark>}
-          {sc.problems?.map((pr, i) => <StateMark key={i} tone="warn">{pr}</StateMark>)}
-          {sc.pendingAskId && <StateMark tone="you">a widening waits on your answer</StateMark>}
-        </span>}
+        {!record && guardAlerts(sc).length > 0 && <span className="tv-guard-p"><GuardAlerts scope={sc} name={name(sc.threadId)} keeperThreadId={keeperThreadId} recheck={recheck} /></span>}
       </li>;
     })}</ul>}
     {compact && scopes.length > 0 && <button type="button" className="tv-fold act" aria-expanded={showEach} onClick={() => setShowEach(!showEach)}><ExpandsMark open={showEach} />{showEach ? "Show summary" : "Show each member"}</button>}

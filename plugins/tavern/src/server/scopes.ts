@@ -34,7 +34,7 @@ import { settleShellGrant } from "./shell-grants";
 import { isLiveKeeper, isLiveMember } from "./liveness";
 import { commitUserAct, type UserActReceipt } from "./authority";
 import { DEFAULT_SETTINGS } from "../shared/settings";
-import { SCOPE_DENIAL_TEXT } from "../shared/text";
+import { SCOPE_DENIAL_TEXT, WORKTREE_UNBOUND } from "../shared/text";
 import type { ScopeRequest } from "./keeper/store";
 import { readUndoLanes } from "./undo-record";
 import { acknowledgeCommunicationHolds, readCommunicationHolds, revokeCommunicationReceipt } from "../scope/communication-holds";
@@ -426,33 +426,39 @@ export class BackendScopes {
       )
     )
       return;
-    const scope = this.api
-      .status()
-      .threads.find((row) => row.threadId === threadId)?.scope;
-    if (
-      !scope ||
-      scope.expectedWorktree ||
-      (!needsWorktree(scope) && scope.writes.mode !== "worktree")
-    )
+    const row = this.api.status().threads.find(row => row.threadId === threadId);
+    const scope = row?.scope;
+    if (row?.binding) return;
+    if (!scope || (!needsWorktree(scope) && scope.writes.mode !== "worktree" && !scope.expectedWorktree)) return;
+    if (scope.expectedWorktree) {
+      if (this.clearWorktreeProblem(threadId)) this.runtime.keeper.changed(threadId, member?.boardQuestId);
       return;
+    }
     const paths = await this.paths(threadId);
     if (!paths.worktree) {
-      if (!this.runtime.keeper.store.runtime(threadId).scopeProblems?.includes("The Smith runs as a Ranger until its worktree is bound.")) {
-        this.recordProblems(threadId, [...this.runtime.keeper.store.runtime(threadId).scopeProblems ?? [], "The Smith runs as a Ranger until its worktree is bound."]);
+      if (!this.runtime.keeper.store.runtime(threadId).scopeProblems?.includes(WORKTREE_UNBOUND)) {
+        this.recordProblems(threadId, [...this.runtime.keeper.store.runtime(threadId).scopeProblems ?? [], WORKTREE_UNBOUND]);
         this.runtime.keeper.store.event(this.runtime.keeper.now(), member?.keeperThreadId ?? threadId, member?.boardQuestId ?? null,
-          "scope.reader", "The Smith runs as a Ranger until its worktree is bound.", { memberThreadId: threadId }, { kind: "tavern" });
+          "scope.reader", WORKTREE_UNBOUND, { memberThreadId: threadId }, { kind: "tavern" });
         this.runtime.keeper.changed(threadId, member?.boardQuestId);
       }
       return;
     }
-    await this.api.rebindScope(threadId);
-    const problems = this.runtime.keeper.store.runtime(threadId).scopeProblems ?? [];
-    if (problems.includes("The Smith runs as a Ranger until its worktree is bound.")) {
-      this.recordProblems(threadId, problems.filter(problem => problem !== "The Smith runs as a Ranger until its worktree is bound."));
+    const bound = await this.api.rebindScope(threadId);
+    if (!bound.expectedWorktree) return;
+    if (this.clearWorktreeProblem(threadId)) {
       this.runtime.keeper.store.event(this.runtime.keeper.now(), member?.keeperThreadId ?? threadId, member?.boardQuestId ?? null,
         "scope.bound", "The Smith’s worktree is bound; its worktree scope is active.", { memberThreadId: threadId }, { kind: "tavern" });
     }
     this.runtime.keeper.changed(threadId, member?.boardQuestId);
+  }
+
+  private clearWorktreeProblem(threadId: string) {
+    const store = this.runtime.keeper.store;
+    const problems = store.runtime(threadId).scopeProblems ?? [];
+    if (!problems.includes(WORKTREE_UNBOUND)) return false;
+    store.patch(threadId, { scopeProblems: problems.filter(problem => problem !== WORKTREE_UNBOUND) });
+    return true;
   }
   private recordProblems(threadId: string, problems: string[]) {
     const bounded = problems.slice(0, 30);
@@ -998,10 +1004,18 @@ export class BackendScopes {
     const pending = store.runtime(threadId).scopePending;
     const pendingAsk = pending ? store.get("asks", pending) : null;
     const guardPosture = member?.guardPosture;
+    const host = member ? memberHost(store, member) : null;
+    const live = !!member && host?.archivedAt == null && host?.deletedAt == null &&
+      (member.role === "keeper" ? isLiveKeeper(store, member, "present") : isLiveMember(store, member, "brief"));
     if (row.scope && (isLiveMember(store, member, "brief") || isLiveKeeper(store, member, "present")) &&
         !store.runtime(threadId).builtinKeeperFallback && !store.get("scopeInputs", threadId))
       problems.push("This older scope was kept as saved. Tavern cannot refresh it without its original inputs.");
     const local = this.api.localScopeRecord(threadId);
+    const lastBlock = live && !row.armed && local?.scope.mode === "enforce" && status.mode === "enforce"
+      ? store.scopeViolations([threadId]).reverse().find(event => event.mode !== "watch" && !event.prevented) : undefined;
+    // An unstarted session has no arm receipt. The watcher records an actual failure on the first guarded call.
+    const guardCheckFailed = lastBlock?.ruleId === "guard-not-loaded" && lastBlock.providerId === "pi";
+    const repairAskId = guardCheckFailed ? store.openAsks(member?.keeperThreadId ?? threadId).find(ask => ask.effect?.type === "repair-guard" && ask.effect.memberThreadId === threadId)?.id : undefined;
     const messagePolicyProblem = this.api.messagePolicyProblem(threadId);
     if (messagePolicyProblem) problems.unshift(messagePolicyProblem);
     const latestGrants = store.query("shellGrants", "memberThreadId", threadId, 100);
@@ -1025,8 +1039,11 @@ export class BackendScopes {
           threadId,
           mode: status.mode,
           guard: status.guard,
-          problems: [...new Set(problems)].slice(0, 30),
+          problems: [...new Set(problems)].filter(problem => problem !== WORKTREE_UNBOUND || (!row.scope?.expectedWorktree && !row.binding)).slice(0, 30),
           scope: row.scope,
+          live,
+          guardCheckFailed,
+          ...(repairAskId ? { repairAskId } : {}),
           restartNeeded: local ? scopeRestartReason(local.file, local.scope) : null,
           shellGrants: grants.map(grant => ({
             ...grant, usable: grant.state === "issued" && (available?.has(grant.id) ?? false),
@@ -1041,7 +1058,7 @@ export class BackendScopes {
       : null;
   }
   views(threadIds: string[]) {
-    return threadIds.flatMap((threadId) => {
+    return [...new Set(threadIds)].flatMap((threadId) => {
       const row = this.view(threadId);
       return row ? [row] : [];
     });

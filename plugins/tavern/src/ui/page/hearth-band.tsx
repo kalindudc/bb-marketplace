@@ -15,6 +15,7 @@ import { settingsHref } from "./insights";
 import { activeQuests, returnedQuests, roomAway } from "./model";
 import { jumpTo } from "./rail";
 import { ATMOSPHERE_ANCHOR } from "./settings";
+import { AlertAction } from "../kit/alert-action";
 
 function Waited({ at }: { at: number }) {
   const now = useNow();
@@ -84,7 +85,7 @@ export function HearthBand({ room, registry }: { room: Room; registry?: Registry
         <span><b>{rest.length}</b> resting</span>
         <span><b>{stale}</b> quiet</span>
         {room.review.waiting > 0 && <Jump to="rm-review" title="Scroll to the review queue">{review}</Jump>}
-        {failed > 0 && <span data-stuck className="tv-bad"><b>{failed}</b> failed</span>}
+        {failed > 0 && <span data-stuck className="tv-bad"><b>{failed}</b> failed <AlertAction action={{ kind: "run", label: "Review failed members", run: () => jumpTo("rm-board-h") }} /></span>}
       </div>
     </div>
     <div className="tv-hearth-links rm-sl2">

@@ -8,7 +8,7 @@ import { KeeperSuccessionStore } from "./succession-store";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { KeeperCallKind } from "../../shared/undo-lane";
-import { applyAskEffect, hasUserAskOutcome, isNoticeEffect, keeperOwnsBlock, keeperRecoveryOptions, needsKeeperReview, scopeAskMember, type EffectHandlers, type AskEffect } from "../ask-effects";
+import { applyAskEffect, hasUserAskOutcome, isNoticeEffect, keeperOwnsBlock, keeperRecoveryOptions, needsKeeperReview, askMemberTarget, scopeAskMember, type EffectHandlers, type AskEffect } from "../ask-effects";
 import { issueShellGrant, settleShellGrant } from "../shell-grants";
 import type { RequestSources } from "../../shared/request-source";
 import { briefSteers } from "../request-sources";
@@ -1187,8 +1187,8 @@ export class Keeper {
       if (!closing) this.store.event(at, ask.keeperThreadId, ask.boardQuestId, "ask.withdrawn", text ?? ask.question, { ...data, askId: id, cause }, actor);
       return this.store.put("asks", id, { ...ask, state: "withdrawn", withdrawnAt: at, withdrawnCause: cause });
     });
-    const scopeMember = scopeAskMember(ask.effect);
-    if (scopeMember) this.invalidate([tags.thread(scopeMember)]);
+    const target = askMemberTarget(ask);
+    if (target) this.invalidate([tags.thread(target)]);
     return withdrawn;
   }
   pendingStopHires(id: string) {
@@ -1403,6 +1403,8 @@ export class Keeper {
     const standing = this.authority.match(ask);
     if (standing && ask.effect?.type === "greenlight") this.answerAsk(ask.id, standing.optionId, null, "timer", "preapproval");
     this.changed(threadId, questId);
+    const target = askMemberTarget(ask);
+    if (target && !questId) this.invalidate([tags.thread(target)]);
     void Promise.resolve()
       .then(() => {
         const current = this.store.get("asks", ask.id);
@@ -1620,9 +1622,9 @@ export class Keeper {
     if (by === "user") this.userAction(ask.keeperThreadId);
     if (effect.type === "grant-shell-act" && by !== "keeper") this.syncShellGrants(effect.memberThreadId);
     if (heldCommunication?.act === "draft" && optionId === "approve" && by !== "keeper") this.syncCommunication(heldCommunication.threadId, askId);
-    const scopeMember = scopeAskMember(effect);
+    const target = askMemberTarget({ ...ask, effect });
     const stale = this.changedTags(ask.keeperThreadId, ask.boardQuestId);
-    if (scopeMember && !stale.includes(tags.thread(scopeMember))) stale.push(tags.thread(scopeMember));
+    if (target && !stale.includes(tags.thread(target))) stale.push(tags.thread(target));
     this.invalidate(stale);
   }
   postSummary(threadId: string, draft: SummaryDraft) {

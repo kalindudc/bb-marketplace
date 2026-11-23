@@ -12,6 +12,7 @@ import { fakeEngineClock } from "./fake-clock";
 import { motion } from "../../../src/ui/kit/motion";
 
 const character = { id: "wren", avatar: "a-new-roll", name: "Wren", hue: "teal", charge: "chevron", look: { hat: "pointy" } } as const;
+const askDisclosure = { panelId: "ask-panel", expanded: false, open: vi.fn() };
 const wanderer = { character, classLabel: "Wanderer", classId: "wanderer", mood: "idle", keeper: false, surface: "thread:wren", region: "widget" } as const;
 
 beforeEach(() => { document.documentElement.classList.add("dark"); });
@@ -33,7 +34,7 @@ it("swaps the carried source on a theme change without moving a held ask marker"
   const listener = vi.fn();
   const stop = subscribeStripLantern(listener);
   try {
-    render(<div><PartyStrip {...wanderer} classId="warden" classLabel="Warden" held mood="waiting" /><span data-ask>Review the route</span></div>);
+    render(<div><PartyStrip {...wanderer} classId="warden" classLabel="Warden" held mood="waiting" askDisclosure={askDisclosure} /><span data-ask>Review the route</span></div>);
     strip!.draw(false);
     expect(listener.mock.lastCall?.[1]).toMatchObject({ kind: "crystal" });
     const mark = screen.getByText("!"), ask = screen.getByText("Review the route");
@@ -132,7 +133,7 @@ it("reacts to clicks beside a held ask without moving the exclamation mark or as
   const play = vi.spyOn(Actor.prototype, "playCue");
   const speak = vi.fn();
   motion.setHeld("thread:wren", true);
-  render(<PartyStrip {...{ character, classLabel: "Wanderer", classId: "wanderer", mood: "waiting", keeper: false, surface: "thread:wren", region: "widget", held: true, canClickSpeak: true, onActorClick: speak }} />);
+  render(<PartyStrip {...{ character, classLabel: "Wanderer", classId: "wanderer", mood: "waiting", keeper: false, surface: "thread:wren", region: "widget", held: true, canClickSpeak: true, onActorClick: speak, askDisclosure }} />);
   const button = screen.getByRole("button", { name: /Wren, Wanderer/ });
   Object.defineProperty(button, "animate", { value: () => ({ finished: new Promise(() => {}), playState: "running", finish() {}, cancel() {} }) });
   const mark = screen.getByText("!");
@@ -157,6 +158,9 @@ it("reacts to clicks beside a held ask without moving the exclamation mark or as
   expect(new Set(cues).size).toBe(3);
   expect(cues.every((cue, i) => i === 0 || cue !== cues[i - 1])).toBe(true);
   expect(speak).not.toHaveBeenCalled();
+  expect(askDisclosure.open).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Open asks for Wren" }));
+  expect(askDisclosure.open).toHaveBeenCalledOnce();
 });
 
 it("tracks the emitted pixel while standing and walking but keeps brightness steady while typing, reduced, Off or Quiet", () => {

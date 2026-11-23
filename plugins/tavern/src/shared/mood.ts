@@ -71,7 +71,7 @@ export function widgetMoodFacts(data: ThreadDecor, now: number): MoodFacts {
     engagement: member?.engagement,
     released: moodSignals?.released === true,
     archived: moodSignals?.archived === true || keeperView?.archived === true || goneQuest(boardQuest),
-    openAsk: !!scope?.pendingAskId || !!keeperView?.openAsks.some(a => a.state === "open"),
+    openAsk: !!data.memberAsks?.length || !!scope?.pendingAskId || !!keeperView?.openAsks.some(a => a.state === "open"),
     handBack: moodSignals?.handBack === true || !!keeperView?.boardQuests.some(holds),
     report: moodSignals?.report ?? null,
     verdict: moodSignals?.verdict ?? null,

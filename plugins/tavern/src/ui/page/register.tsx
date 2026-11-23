@@ -15,7 +15,7 @@ import { boardQuestState, decodePageRoute, isFinished, needYouCount, questsIn, r
 import { QuestAwayNotes } from "./away";
 import { MapSkeleton, PageLoad, QuestSkeleton, RoomSkeleton, RouteSkeleton, SKEL, SideNavSkeleton, StartCardsSkeleton, TaleSkeleton, FoldLoad, useRememberSideNav, useRememberShape } from "./skeletons";
 import { PanelStateProvider, panelStorageKey, readPanel, rememberPath, useRestoreScroll } from "./panel-state";
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { InsightsPage, settingsHref } from "./insights";
 import { SETTINGS_SECTIONS, settingsSection } from "./settings";
 import { QuestPage, ReturnedList } from "./quest";
@@ -150,9 +150,12 @@ export function TavernHeader({ subPath }: PluginNavPanelProps) {
 
 function QuestRoute({ id, summaryId, tale, registry, room }: { id: string; summaryId?: string; tale: boolean; registry: Registry; room: Room | undefined }) {
   const query = experimental_useRpcQuery({ contract: rpcContract, method: "boardQuest", input: { id, ...(tale ? {} : { refreshPullRequests: true }) } });
+  const refetch = useRef(query.refetch);
+  refetch.current = query.refetch;
+  const recheck = useCallback(() => refetch.current(), []);
   const ended = query.data ? isFinished(query.data.quest.phase) : undefined;
   useEffect(() => { if (ended !== undefined) rememberCount(SKEL.finished(id), ended ? 1 : 0); }, [id, ended]);
-  return query.data ? <>{query.error && <div className="tv-problem" role="alert" data-stuck>Refresh failed: {query.error.message}. Showing the last loaded quest.<button type="button" className="btn sm" onClick={() => void query.refetch()}>Retry</button></div>}{!tale && room && <QuestAwayNotes room={room} registry={registry} questId={id} />}{tale ? <Surface.TalePage detail={query.data} registry={registry} room={room} /> : <Surface.QuestPage detail={query.data} registry={registry} room={room} summaryId={summaryId} />}</> : <PageLoad error={query.error} retry={query.refetch} skeleton={questSkeleton(id, tale, room)} label={tale ? "the tale" : "the quest"} />;
+  return query.data ? <>{query.error && <div className="tv-problem" role="alert" data-stuck>Refresh failed: {query.error.message}. Showing the last loaded quest.<button type="button" className="btn sm" onClick={() => void query.refetch()}>Retry</button></div>}{!tale && room && <QuestAwayNotes room={room} registry={registry} questId={id} />}{tale ? <Surface.TalePage detail={query.data} registry={registry} room={room} /> : <Surface.QuestPage detail={query.data} registry={registry} room={room} summaryId={summaryId} recheck={recheck} />}</> : <PageLoad error={query.error} retry={query.refetch} skeleton={questSkeleton(id, tale, room)} label={tale ? "the tale" : "the quest"} />;
 }
 /** A quest route's skeleton: the tale's, or the record's when the room already says the quest has ended, else the live page's. */
 function questSkeleton(id: string, tale: boolean, room: Room | undefined) {
@@ -243,7 +246,7 @@ export function TavernPage({ subPath }: PluginNavPanelProps) {
   if (restoring) body = <p className="tv-empty" role="status">Opening where you left off…</p>;
   return <PanelStateProvider value={key}><main ref={scroller} className="tavern tv-page tv-page-root"><div className="tv-pagebody">
     <nav className="tv-mobile-nav" aria-label="Tavern pages"><label>Page<select aria-label="Tavern page" value={subPath || "room"} onChange={(event) => navigate.toPluginPanel("tavern", { subPath: event.target.value })}><optgroup label="Pages">{pages().map(([path, label]) => <option value={path} key={path}>{label}</option>)}</optgroup><optgroup label="Observability"><option value="insights">Insights (all data)</option></optgroup>{room.data && <MobileQuestOptions room={room.data} />}{subPath !== "" && !destinations.some(([path]) => path === subPath) && subPath !== "insights" && !(room.data && mobileQuestPaths(room.data).includes(subPath)) && <option value={subPath}>{route.kind === "quest" ? "Quest (goal)" : route.kind === "tale" ? "The tale (credits)" : currentPageName(route, registry.data) ?? "This page"}</option>}</select></label></nav>
-    {registry.error && registry.data && <div className="tv-problem" role="alert" data-stuck>Registry refresh failed: {registry.error.message}. Showing the last loaded definitions.</div>}
+    {registry.error && registry.data && <div className="tv-problem" role="alert" data-stuck>Registry refresh failed: {registry.error.message}. Showing the last loaded definitions.<button type="button" className="btn sm" onClick={() => void registry.refetch()}>Retry</button></div>}
     {room.error && room.data && <div className="tv-problem" role="alert" data-stuck>Room refresh failed: {room.error.message}. Showing the last loaded board.<button type="button" className="btn sm" onClick={() => void room.refetch()}>Retry</button></div>}
     {registry.data?.problems.filter((p) => !isPresentationProblem(p)).map((p, i) => <p className="tv-problem" role="alert" key={`${p.path}:${i}`}>{p.path}: {p.message}</p>)}
     {body}

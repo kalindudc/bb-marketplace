@@ -265,6 +265,16 @@ it("keeps the new word with Motion Off and never replays its stroke later", asyn
   slot.lifecycle.unmount(); slot = await panel();
   expect(slot.getByText("new", {exact:true})).toBeTruthy(); expect(fx.all).toHaveLength(0);
 });
+it("counts confirmed repairs and worktree warnings in the open scope fold", async () => {
+  const scope = { ...memberPanelDecor.scope!, guardCheckFailed: true, problems: ["The Smith runs as a Ranger until its worktree is bound."] };
+  const slot = await panel({ ...memberPanelDecor, scope, keeper: fixtureDecor.member });
+  expect(slot.getByRole("button", { name: /2 scope alerts.*Open scope details/ })).toBeTruthy();
+  const fold = slot.getByRole("button", { name: /^Scope and guardrails/ });
+  expect(fold.textContent).toContain("2");
+  fireEvent.click(fold);
+  expect(slot.getByRole("button", { name: "Done" })).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Tell the Keeper" })).toBeTruthy();
+});
 it("keeps an actionable alert chip visible and opens the scope fold without motion", async () => {
   const slot = await panel({ ...memberPanelDecor, scope: { ...memberPanelDecor.scope!, error: "The scope was refused." } });
   fireEvent.click(slot.getByRole("button", { name: /1 scope alert.*Open scope details/ }));

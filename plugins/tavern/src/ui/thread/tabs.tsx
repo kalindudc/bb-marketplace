@@ -11,6 +11,8 @@ import { NewSummaries } from "./new-summaries";
 import { keeperGuards, keeperState, useKeeperStop } from "./keeper-state";
 import { KeeperSuccessionRecord } from "../kit/succession";
 import { LeadChainRows } from "./lead-chain-rows";
+import { AlertAction } from "../kit/alert-action";
+import { ScopeRecords } from "../page/record";
 import "./skeletons.css";
 export { JournalTab } from "./journal";
 
@@ -125,6 +127,9 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
       {data && <section className="lg-card" aria-label="Guardrails" data-attention-group="guard">
         <h3><Glyph name="shield" /><span>Guardrails</span></h3>
         {guard.words.length ? <ul className="lg-rows">{guard.words.map(word => <li key={word}>{word}</li>)}</ul> : <p className="m small">No guard status is recorded for this Keeper.</p>}
+        {registry.data && <ScopeRecords scopes={data.scopes} observations={data.violations} keeperThreadId={threadId} registry={registry.data}
+          members={new Map([...(decor.data?.member ? [decor.data.member] : []), ...(decor.data?.keeperView?.errands ?? []), ...data.boardQuests.flatMap(quest => quest.members)].map(member => [member.threadId, member]))}
+          compact bare recheck={query.refetch} />}
       </section>}
       {data && (() => {
         const live = data.boardQuests.filter(q => q.archivedAt === null && q.phase !== "done" && q.phase !== "stopped");
@@ -159,8 +164,14 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
             <h3><Glyph name="ask" size={13} /><span>Needs you</span><span className="num">{needsYou} need you</span></h3>
             {openAsks.length > 0 && <ul className="lg-rows">{openAsks.map(a => <li key={a.id}><button type="button" className="lg-row act" title={`${a.question} · answer in the Tavern row above the composer`} onClick={() => revealAsk(threadId, a.id)}><span className="t">{a.question}</span>{short(a.boardQuestId) && <span className="lg-q">{short(a.boardQuestId)}</span>}<TimeAgo at={a.createdAt} /><span className="lg-go">Answer<ExpandsMark open={false} /></span></button></li>)}</ul>}
             {held.length > 0 && <ul className="lg-rows">{held.map(q => { const hold = activeHold(q)!; return <li key={hold.id} data-ask><button type="button" className="lg-row act" title={`Checker handoff on hold: ${hold.reason} · release it in the Tavern row above the composer`} onClick={() => revealAsk(threadId, `hold:${hold.id}`)}><span className="t">Checker handoff on hold: {hold.reason}</span><span className="lg-q">{q.short}</span><TimeAgo at={hold.createdAt} /><span className="lg-go">Review<ExpandsMark open={false} /></span></button></li>; })}</ul>}
+            {list.items.filter(item => item.kind === "hold" && item.id.startsWith("spend:") && item.questId).map(item => <p key={item.id}>{item.title} <AlertAction action={{ kind: "run", label: "Review quest spend",
+              run: () => navigate.toPluginPanel("tavern", { subPath: `quest/${item.questId}` }) }} /></p>)}
             {waiting.length > 0 && <><p className="lbl">Waiting on you <span className="anc">the Keeper handed back</span></p><KeeperNoteRows notes={waiting} short={short} label="Waiting on you" /></>}
             {proposed.length > 0 && <ul className="lg-rows lg-rules">{proposed.map(r => <RuleRow key={r.id} rule={r} variant="proposed" lead="Proposed · " quest={questTitle(r)} actions={<><button type="button" className="btn sm pri" disabled={confirm.isPending} aria-label={`Confirm the rule: ${r.text}`} onClick={() => setRule(r.id, true)}>Confirm</button><button type="button" className="btn sm" disabled={confirm.isPending} aria-label={`Dismiss the proposed rule: ${r.text}`} onClick={() => { setRule(r.id, false); setDismissed(d => [...d, r.id]); }}>Dismiss</button></>} />)}</ul>}
+          </section>}
+          {!!data.keeperBlocks?.length && <section className="lg-card" aria-label="The Keeper is handling"><h3>The Keeper is handling</h3>
+            <ul className="lg-rows">{data.keeperBlocks.map(block => <li key={block.id}><b>{block.question}</b> <span>{block.why}</span>
+              <AlertAction action={{ kind: "tell", keeperThreadId: threadId, text: `Review the blocker “${block.question}” and tell me the next safe step.` }} /></li>)}</ul>
           </section>}
           {!!data.memberBriefs?.length && <section className="lg-card" aria-label="Pending member briefs">
             <h3>Pending member briefs</h3>
@@ -168,6 +179,8 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
               <p><b>{name}</b> · {{ queued: "Queued", delivering: "Delivering", unconfirmed: "Unconfirmed", blocked: "Blocked" }[brief.state]} · {plural(brief.attempts, "attempt")} · <TimeAgo at={brief.createdAt} /></p>
               <p>Current work: {doing || "None recorded"}</p>
               <p>Pending: {brief.firstLine || "No first line"} <span className="m">· {brief.id}</span></p>
+              {(brief.state === "blocked" || brief.state === "unconfirmed") && <AlertAction action={{ kind: "tell", keeperThreadId: threadId,
+                text: `Check whether ${name} received the pending brief. Reconcile its delivery before sending it again.` }} />}
             </li>)}</ul>
           </section>}
           {live.map((q, i) => (

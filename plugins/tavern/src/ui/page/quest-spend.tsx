@@ -3,6 +3,7 @@ import { useId, useState } from "react";
 import { rpcContract } from "../../shared/contract";
 import { NANOS_PER_CENT, budgetCentsSchema, spendCoverage, usd } from "../../shared/spend";
 import { FoldSummary } from "../kit";
+import { AlertAction } from "../kit/alert-action";
 import { Section } from "./common";
 
 const readTime = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -14,7 +15,7 @@ export function QuestSpend({ id, editable }: { id: string; editable: boolean }) 
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const view = query.data;
-  if (!view) return query.error ? <Section title="Quest spend" className="tv-card"><p role="status">Spend could not be read. The existing budget has not changed.</p></Section> : null;
+  if (!view) return query.error ? <Section title="Quest spend" className="tv-card"><div role="status">Spend could not be read. The existing budget has not changed.<AlertAction action={{ kind: "run", label: "Retry", run: query.refetch }} /></div></Section> : null;
   const held = view.reachedAt !== null;
   const save = async (budgetCents: number | null) => {
     setError(null);

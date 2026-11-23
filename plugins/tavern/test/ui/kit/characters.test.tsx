@@ -17,6 +17,7 @@ import { ThreadWidget } from "../../../src/ui/thread/composer";
 import { fixtureDecor, fixtureRegistry } from "../../../src/ui/thread/fixtures";
 import { clearThreadState } from "../../../src/ui/thread/state";
 import { installAnimations, installMatchMedia } from "./motion-fakes";
+import { withAttention } from "../attention-fixture";
 
 const SHIPPED = ["ada", "bram", "fern", "juno", "lark", "moss", "otto", "pip", "rook", "tam", "vex", "wren"];
 const wren = { id: "wren", name: "Wren", hue: "teal", charge: "chevron" } as const;
@@ -413,10 +414,11 @@ describe("TavernCharacter", () => {
   });
 
   it("draws one canvas on its own strip, with a focusable actor and a separate class crest", async () => {
-    const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { registry: () => fixtureRegistry, decor: () => fixtureDecor } });
+    const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { registry: () => fixtureRegistry, decor: () => withAttention(fixtureDecor) } });
     await waitFor(() => expect(slot.container.querySelector("[data-part=TavernWalk] button[data-actor]")).not.toBeNull());
     const who = slot.container.querySelector("[data-part=TavernWalk] button[data-actor]")!;
     expect(who.getAttribute("aria-label")).toContain("needs you");
+    expect(slot.getByRole("button", { name: "Open asks for Wren" })).toBeTruthy();
     expect(slot.container.querySelector("[data-part=TavernWalk]")!.getAttribute("aria-label")).toMatch(/walking$/);
     expect(slot.container.querySelectorAll("[data-part=TavernWalk] canvas")).toHaveLength(1);
     // The row keeps the class crest where the sprite used to stand, and its busy dot.

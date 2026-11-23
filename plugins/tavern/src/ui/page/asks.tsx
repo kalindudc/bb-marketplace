@@ -1,5 +1,6 @@
 import { attentionView, fromStoppedKeeper, type AttentionItem } from "../../shared/attention";
-import { experimental_useRpcMutation } from "@get-bb/plugin-sdk/app";
+import { AlertAction } from "../kit/alert-action";
+import { experimental_useRpcMutation, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { rpcContract, type BoardQuestSummary, type Room } from "../../shared/contract";
 import type { Ask, Decision } from "../../shared/schema";
@@ -54,6 +55,7 @@ function AskForm({ ask, first }: { ask: Ask; first: boolean }) {
 }
 
 export function NeedsYouQueue({ room, registry }: { room: Room; registry: Registry }) {
+  const navigate = useBbNavigate();
   const heading = useId();
   const list = attentionView(room.attention);
   if (!list.needYou && !list.heldByYou) return null;
@@ -70,6 +72,8 @@ export function NeedsYouQueue({ room, registry }: { room: Room; registry: Regist
       {ask && <AskForm ask={ask} first={index === 0} />}
       {item.kind === "hold" && quest?.checkerHandoffHold?.id === item.id && <CheckerHold quest={quest} asks={room.asks} queue card />}
       {item.kind === "held" && <HeldByYou id={item.id} />}
+      {item.kind === "hold" && item.id.startsWith("spend:") && item.questId && <AlertAction action={{ kind: "run", label: "Review quest spend",
+        run: () => navigate.toPluginPanel("tavern", { subPath: `quest/${item.questId}` }) }} />}
     </NeedCard>;
   };
   const groups = GROUPS.flatMap(([kind, label]) => {

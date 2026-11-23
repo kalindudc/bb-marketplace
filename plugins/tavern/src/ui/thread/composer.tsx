@@ -14,7 +14,7 @@ import { PHASE_STEPS, phaseIndex, phaseWord } from "../kit/phase";
 import { LEDGER_TAB } from "./tabs";
 import { pathProgress, summaryCountWords } from "../kit/rows";
 import { NewSummaries } from "./new-summaries";
-import { useWidgetPanel, threadDecorCache, type WidgetPanel } from "./state";
+import { revealAsk, useWidgetPanel, threadDecorCache, type WidgetPanel } from "./state";
 import { useChangeCue, useTavernMotion } from "../kit/motion";
 import { ThreadPartyStrip } from "../engine/thread-party";
 import { takeArmedClass } from "../kit/remember";
@@ -25,6 +25,8 @@ import { HUE_CSS } from "../../shared/heraldry";
 import { PlacementFacts } from "../kit/placement";
 import { memberIdentityLabel } from "../../shared/identity";
 import { watchActWords } from "../../scope/act-routing";
+import { useKeeperAlertDraft } from "../kit/alert-action";
+import { GuardAlerts, scopeAlerts } from "../kit/guard-alerts";
 
 export const CLASS_PROVIDER = "classes";
 
@@ -219,10 +221,12 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const opener = useRef<{ threadId: string; kind: KeeperSection; button: HTMLButtonElement } | null>(null);
   const [error, setError] = useState<unknown>(null);
   useHandBackReply(threadId, composer, setError);
+  useKeeperAlertDraft(threadId, composer);
   const lastTyping = useRef(0);
   const [pageSince] = useState(Date.now);
   const data = decor.data;
   const keeper = data?.keeperView;
+  const memberAsks = data?.memberAsks ?? [];
   const stopped = useKeeperStop(!!keeper);
   const retired = data?.succession?.state === "done" && data.succession.current !== threadId;
   useEffect(() => {
@@ -241,7 +245,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   // Motion: the row holds still while an ask is in it, and for 2 s after the user types (the coordinator's hold; a restored draft doesn't
   // count); the busy dot pulses twice when its Keeper turns busy or the row comes into view busy, then holds solid.
   const need = needsOf(keeper);
-  const held = !!stopped || need.asks + need.holds > 0 || (!keeper && Boolean(data?.openScopeAsk || data?.scope?.pendingAskId || data?.scope?.error));
+  const held = !!stopped || need.asks + need.holds + memberAsks.length > 0 || (!keeper && Boolean(data?.openScopeAsk || data?.scope?.pendingAskId || data?.scope?.error));
   const { cue, settle } = useTavernMotion(`thread:${threadId}`, { held });
   const dot = useRef<HTMLElement>(null);
   const pulsing = !stopped && !!keeper && keeper.quietSince == null && keeper.status === "busy" && !!data?.member && !!registry.data;
@@ -291,9 +295,12 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const name = memberIdentityLabel(data.member, names);
   const identity = registry.data ? memberIdentity(registry.data, data.member) : null;
   const toggle = (kind: "brief") => setWidgetPanel(open === kind ? null : { kind });
-  const keeperSection = keeper && open !== "brief" ? open : null;
+  const memberSection = data.member.role === "member" && open === "asks";
+  const section = keeper && open !== "brief" ? open : memberSection ? "asks" : null;
+  const openAsks = keeper?.openAsks ?? memberAsks;
+  const memberAsk = memberSection && widgetPanel?.kind === "asks" ? memberAsks.find(ask => ask.id === widgetPanel.askId) : undefined;
   const attention = attentionView(keeper?.attention);
-  const holds = keeper && keeperSection === "asks" ? heldQuests(keeper.boardQuests, keeper.openAsks) : [];
+  const holds = keeper && section === "asks" ? heldQuests(keeper.boardQuests, keeper.openAsks) : [];
   const activity = keeper ? keeperState(keeper, stopped) : null;
   const activityLabel = activity ? `${activity.word}${activity.since == null ? "" : ` since ${new Date(activity.since).toLocaleString()}`}: ${activity.detail}` : "";
   const guard = keeperGuards(data.scope);
@@ -302,19 +309,23 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
     const button = from ?? (opener.current?.kind === open && opener.current.threadId === threadId ? opener.current.button : stack.current?.querySelector<HTMLButtonElement>(trigger));
     setWidgetPanel(null);
     opener.current = null;
-    const fallback = stack.current?.querySelector<HTMLButtonElement>(".tw-expand");
+    const fallback = stack.current?.querySelector<HTMLButtonElement>(keeper ? ".tw-expand" : ".tw-member-id");
     (button?.isConnected && !button.hasAttribute("data-empty") ? button : fallback)?.focus({ preventScroll: true });
   };
-  const toggleSection = (kind: KeeperSection, button: HTMLButtonElement) => {
-    if (open === kind) { closePanel(button); return; }
+  const toggleSection = (kind: KeeperSection, button: HTMLButtonElement, reveal = false) => {
+    if (open === kind && !reveal) { closePanel(button); return; }
     opener.current = { threadId, kind, button };
     if (kind !== "asks") { setWidgetPanel({ kind }); return; }
-    const ask = keeper?.openAsks[0];
+    const ask = openAsks[0];
     const holdQuest = !ask && keeper ? heldQuests(keeper.boardQuests, keeper.openAsks)[0] : undefined;
     const hold = holdQuest && activeHold(holdQuest);
     setWidgetPanel({ kind, askId: ask?.id ?? (hold ? holdKey(hold) : null) });
   };
   const onLedger = () => panel.openTab({ tab: LEDGER_TAB });
+  const openInKeeper = (ask: Ask) => void hide.mutate({ threadId: ask.keeperThreadId, hidden: false }).then(() => {
+    revealAsk(ask.keeperThreadId, ask.id);
+    navigate.toThread(ask.keeperThreadId);
+  }).catch(setError);
   const onQuest = (id: string) => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` });
   const guardButton = guard.words.length > 0 && <button type="button" className="ibtn tw-guard act" data-warning={guard.warning || undefined}
     aria-label={`Open guardrails in the Ledger: ${guard.words.join(" · ")}`} title={`Open guardrails in the Ledger: ${guard.words.join(" · ")}`}
@@ -350,7 +361,12 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const walker = data.characters !== false && identity && !identity.character.plain
     ? <ThreadPartyStrip key={`${threadId}:${identity.character.id}`} data={data} character={identity.character}
         classLabel={identity.cls.label} voice={data.voice ?? registry.data?.voice ?? "full"} pageSince={pageSince} change={changeCharacter}
-        held={held} />
+        held={held} askDisclosure={(keeper ? need.asks > 0 : memberAsks.length > 0) ? {
+          panelId: sectionId(threadId, "asks"), expanded: open === "asks", open: button => {
+            toggleSection("asks", button, true);
+            stack.current?.querySelector<HTMLButtonElement>(".tw-asks")?.focus({ preventScroll: true });
+          },
+        } : undefined} />
     : null;
 
   return (
@@ -380,11 +396,12 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
         </button>}
         {keeper && <>
           <QuietNotice threadId={threadId} since={stopped ? null : keeper.quietSince} compact onError={setError} />
-          <KeeperParts data={data} open={keeperSection} onToggle={toggleSection} />
+          <KeeperParts data={data} open={section} onToggle={toggleSection} />
           {guardButton}
           <button type="button" className="tw-chip tw-ledger act" aria-label={LEDGER_LABEL} title={LEDGER_LABEL} onClick={onLedger}><Glyph name="book" size={13} /><span>Ledger</span><OpensMark /></button>
         </>}
         {variant === "member" && <MemberParts data={data} registry={registry.data ?? null} open={open} toggle={toggle} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} onThread={id => navigate.toThread(id)} />}
+        {variant === "member" && memberAsks.length > 0 && <NeedYouChip threadId={threadId} count={memberAsks.length} open={memberSection} onToggle={toggleSection} />}
         {showCharacters}{hideBtn}
       </div>
       {variant === "member" && data.boardQuest && <WidgetWaypoints member={data.member} reported={data.lastReportedWaypointId} />}
@@ -392,23 +409,24 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
       <ClassNoticeLine threadId={threadId} notice={notice} />
       {armedLine}
       <QueryState error={error} />
-      {keeper && keeperSection && <div id={sectionId(threadId, keeperSection)} className={`tw-panel ${keeperSection === "asks" ? "tw-asks-p" : keeperSection === "decided" ? "tw-new-panel" : "tw-quest-popover"}`} role="region" aria-label={SECTION_LABEL[keeperSection]}>
+      {section && <div id={sectionId(threadId, section)} className={`tw-panel ${section === "asks" ? "tw-asks-p" : section === "decided" ? "tw-new-panel" : "tw-quest-popover"}`} role="region" aria-label={SECTION_LABEL[section]}>
         <div className="tw-section-body">
-          {widgetPanel?.kind === "asks" && <AsksPanel key={threadId} asks={keeper.openAsks} holds={holds} quests={keeper.boardQuests} attention={attention} expanded={widgetPanel.askId} onSelect={askId => setWidgetPanel({ kind: "asks", askId })} onClose={closePanel} onQuest={onQuest} onLedger={() => panel.openTab({ tab: LEDGER_TAB, params: { attentionGroup: "need" } })} />}
-          {keeperSection === "decided" && <>
+          {widgetPanel?.kind === "asks" && <AsksPanel key={threadId} asks={openAsks} holds={holds} quests={keeper?.boardQuests ?? []} attention={attention} expanded={widgetPanel.askId} onSelect={askId => setWidgetPanel({ kind: "asks", askId })} onClose={closePanel} onQuest={onQuest} onLedger={() => panel.openTab({ tab: LEDGER_TAB, params: { attentionGroup: "need" } })} />}
+          {section === "decided" && <>
             <NewSummaries attention={attention} />
             <DecidedPanel threadId={threadId} data={data} />
           </>}
-          {keeperSection === "quests" && <QuestBriefs quests={keeper.boardQuests} onQuest={onQuest} />}
+          {section === "quests" && keeper && <QuestBriefs quests={keeper.boardQuests} onQuest={onQuest} />}
         </div>
         <div className="tw-pf tw-section-actions">
-          <button type="button" className="btn sm tw-panel-ledger" onClick={onLedger}>Open the Ledger</button>
+          {keeper && <><button type="button" className="btn sm tw-panel-ledger" onClick={onLedger}>Open the Ledger</button>
           {guardButton}
-          {showCharacters}
+          {showCharacters}</>}
+          {memberAsk && <button type="button" className="lnk-btn act tw-ask-keeper" onClick={() => openInKeeper(memberAsk)}>Open in Keeper<OpensMark /></button>}
           <button type="button" className="btn sm" onClick={() => closePanel()}>Close</button>
         </div>
       </div>}
-      {open === "brief" && !keeper && <div className="tw-panel tw-brief" id={`tw-brief-${threadId}`} role="region" aria-label="Member"><MemberPanel key={threadId} data={data} cue={data.ambientMotion === "off" ? undefined : cue} registry={registry.data ?? null} scopeDetails={<ScopePanel data={data} />} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} /></div>}
+      {open === "brief" && !keeper && <div className="tw-panel tw-brief" id={`tw-brief-${threadId}`} role="region" aria-label="Member"><MemberPanel key={threadId} data={data} cue={data.ambientMotion === "off" ? undefined : cue} registry={registry.data ?? null} scopeDetails={<ScopePanel data={data} name={name} recheck={decor.refetch} />} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} /></div>}
     </section>
     </div>
   );
@@ -478,6 +496,12 @@ function ArmedLine({ onCancel, onError }: { onCancel: () => void; onError: (e: u
   );
 }
 
+function NeedYouChip({ threadId, count, open, title, onToggle }: { threadId: string; count: number; open: boolean; title?: string; onToggle: (kind: "asks", button: HTMLButtonElement) => void }) {
+  const label = `${count} need you`;
+  return <button type="button" className="tw-asks act has" data-ask data-empty={count === 0 || undefined} title={title ? `${label} · ${title}` : label} aria-label={label}
+    aria-expanded={open} aria-controls={sectionId(threadId, "asks")} onClick={event => onToggle("asks", event.currentTarget)}><Glyph name="ask" size={13} /><span className="num">{count}</span><span className="tw-w">need you</span></button>;
+}
+
 function KeeperParts({ data, open, onToggle }: { data: ThreadDecor; open: KeeperSection | null; onToggle: (kind: KeeperSection, button: HTMLButtonElement) => void }) {
   const keeper = data.keeperView!;
   const list = attentionView(keeper.attention);
@@ -500,7 +524,7 @@ function KeeperParts({ data, open, onToggle }: { data: ThreadDecor; open: Keeper
       {others > 0 && <span className="num" aria-hidden="true">+${others}</span>}
       {unread > 0 && <span className="tw-unread m" aria-hidden="true">{unread} new</span>}
     </button>}
-    {(list.needYou > 0 || open === "asks") && <button type="button" className="tw-asks act has" data-ask data-empty={list.needYou === 0 || undefined} title={[`${list.needYou} need you`, attentionTitle(list, "need")].filter(Boolean).join(" · ")} aria-label={`${list.needYou} need you`} {...disclosure("asks")}><Glyph name="ask" size={13} /><span className="num">{list.needYou}</span><span className="tw-w">need you</span></button>}
+    {(list.needYou > 0 || open === "asks") && <NeedYouChip threadId={data.threadId} count={list.needYou} open={open === "asks"} title={attentionTitle(list, "need") || undefined} onToggle={onToggle} />}
     {(list.new > 0 || open === "decided") && <button type="button" className="tw-chip tw-new act" data-empty={list.new === 0 || undefined} title={[`${list.new} new`, attentionTitle(list, "new")].filter(Boolean).join(" · ")} aria-label={`${list.new} new`} {...disclosure("decided")}><Glyph name="bell" size={13} /><span className="num">{list.new}</span><span className="tw-w">new</span></button>}
   </>;
 }
@@ -526,10 +550,8 @@ function Phase({ phase }: { phase: QuestPhase }) {
   return <span className="tw-ph" aria-hidden="true">{phases.map((p, i) => <i key={p} className={i < at ? "d" : i === at ? "c" : ""} />)}<span className="tw-pw">{phase === "closing" ? phaseWord(phase) : phase}</span></span>;
 }
 
-const scopeAlerts = (data: ThreadDecor) => (data.scope?.problems?.length ?? 0) + (data.violations?.filter(v => v.mode !== "watch").length ?? 0) + (data.scope?.error ? 1 : 0) + (data.scope?.pendingAskId ? 1 : 0);
-
 /** A member's guardrails in plain words: the mode, what it may touch, policy problems, and each rule break with whether it was stopped. */
-function ScopePanel({ data }: { data: ThreadDecor }) {
+function ScopePanel({ data, name, recheck }: { data: ThreadDecor; name: string; recheck: () => unknown }) {
   const revoke = experimental_useRpcMutation({ contract: rpcContract, method: "revokeShellGrant" });
   const [grantError, setGrantError] = useState<unknown>(null);
   const ms = data.scope; if (!ms) return <p className="m">No scope details are recorded for this member.</p>;
@@ -540,10 +562,9 @@ function ScopePanel({ data }: { data: ThreadDecor }) {
   return <section className="tw-scope" aria-label="Scope (guardrails)">
     <h4>Scope details</h4>
     <p className="m small">The act catalogue checks shell commands, not non-shell tool actions or commands inside an interpreter.</p>
-    {ms.error && <p className="problem" role="alert">The scope could not be applied: {ms.error}</p>}
+    <div className="tv-guard-p"><GuardAlerts scope={ms} name={name} keeperThreadId={data.keeper?.threadId ?? null} recheck={recheck} local={!!data.keeper} /></div>
     {sc && mode !== "off" && <ul className="tw-sfacts">{sc.writes.allow.length > 0 && <li>Allowed write paths: {sc.writes.allow.join(", ")}</li>}{sc.shell.deny.length > 0 && <li>{plural(sc.shell.deny.length, "blocked command rule")}</li>}</ul>}
-    {ms.pendingAskId && <p className="m small">A wider scope is waiting for your answer in the Keeper’s thread.</p>}
-    {(ms.problems ?? []).length > 0 && <ul className="tw-sprob" aria-label="Policy problems">{ms.problems!.map((pr, i) => <li key={i}><b>Policy problem</b> <span>{pr}</span></li>)}</ul>}
+
     {ms.shellGrants?.length ? <div className="tw-shell-grants">
       <h4>Shell grants</h4>
       <ul aria-label="Shell grants">{ms.shellGrants.map(grant => <li key={grant.id}>
@@ -703,7 +724,7 @@ function ThreadToggle({ threadId }: { threadId: string }) {
   // With the Widget row setting off, a thread can't show the row, so there's no toggle to offer.
   if (!data?.member || data.widgetRow === false) return null;
   const identity = data.member && registry.data ? memberIdentity(registry.data, data.member) : null;
-  const { asks: openAsks, holds } = needsOf(data.keeperView), asks = openAsks + holds;
+  const { asks: openAsks, holds } = needsOf(data.keeperView), asks = openAsks + holds + (data.memberAsks?.length ?? 0);
   const counted = `${asks} need you`;
   return (
     <span className="tavern">

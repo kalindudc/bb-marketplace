@@ -638,15 +638,18 @@ describe("backend scope integration", () => {
     registerRpc(f.bb, f.runtime);
     registerTools(f.bb, f.runtime);
     const scopes = f.runtime.scopes!;
+    expect(scopes.view("child")?.guardCheckFailed).toBe(false);
     const violation = { threadId: "child", providerId: "pi", at: f.time(), eventId: "missing-guard", seq: 3,
       ruleId: "guard-not-loaded", reason: "Guard not loaded", mode: "enforce" as const, stopped: true, latencyMs: 1 };
     await scopes.violation(violation);
     expect(new AttentionSnapshot(f.k.store).asks).toEqual([]);
+    expect(scopes.view("child")?.guardCheckFailed).toBe(true);
     expect(() => scopes.requestGuardRepair("child", "child")).toThrow();
     const result = await f.harness.behavior.invokeAgentTool("tavern_scope", { memberThreadId: "child", repairGuard: true }, { threadId: "lead" });
     const ask = f.k.store.openAsks("lead").find(a => a.effect?.type === "repair-guard")!;
     expect(result).toContain(`::tavern-ask{id="${ask.id}"}`);
     expect(scopes.requestGuardRepair("lead", "child").id).toBe(ask.id);
+    expect(scopes.view("child")?.repairAskId).toBe(ask.id);
     expect(new AttentionSnapshot(f.k.store).asks).toEqual([expect.objectContaining({
       id: ask.id, question: expect.stringMatching(/Restart .*Pi session/), options: [expect.objectContaining({ id: "done", label: "Done" })],
     })]);
@@ -655,6 +658,7 @@ describe("backend scope integration", () => {
     expect(f.k.store.get("asks", ask.id)?.state).toBe("open");
     const local = scopes.api.localScopeRecord("child")!;
     armScope(local.file, local.scope);
+    expect(scopes.view("child")?.guardCheckFailed).toBe(false);
     await done();
     expect(f.k.store.get("asks", ask.id)).toMatchObject({ state: "answered", answer: { optionId: "done", by: "user" } });
     expect(new AttentionSnapshot(f.k.store).asks).toEqual([]);
@@ -847,12 +851,21 @@ describe("backend scope integration", () => {
         environmentId: threadId === "child" && !provisioned ? null : "env",
       });
     await f.runtime.hire("lead", "project", f.input);
-    expect(f.runtime.scopes!.view("child")?.scope?.expectedWorktree).toBeUndefined();
+    const scopes = f.runtime.scopes!;
+    const problem = "The Smith runs as a Ranger until its worktree is bound.";
+    expect(scopes.view("child")?.scope?.expectedWorktree).toBeUndefined();
+    await scopes.pinWorktree("child");
+    expect(scopes.view("child")?.problems).toContain(problem);
     provisioned = true;
     await f.runtime.threadStarted(
       makeThreadResponse({ id: "child", environmentId: "env", status: "active" }),
     );
-    expect(f.runtime.scopes!.view("child")?.scope?.expectedWorktree).toBe(realpathSync(f.work));
+    expect(scopes.view("child")?.scope?.expectedWorktree).toBe(realpathSync(f.work));
+    expect(scopes.view("child")?.problems).not.toContain(problem);
+    f.k.store.patch("child", { scopeProblems: [problem] });
+    expect(scopes.view("child")?.problems).not.toContain(problem);
+    await scopes.pinWorktree("child");
+    expect(f.k.store.runtime("child").scopeProblems).not.toContain(problem);
   });
   it("surfaces ignored class and project policy widening in member RPCs and hire notes", async () => {
     const f = await fixture();

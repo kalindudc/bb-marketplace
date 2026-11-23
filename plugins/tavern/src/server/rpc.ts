@@ -3,9 +3,9 @@ import { memberHost } from "./member-engagement";
 import { memberBriefRows } from "./status";
 import { wasReleased } from "../shared/member-engagement";
 import { askHistory } from "./ask-history";
-import { scopeAskMember } from "./ask-effects";
+import { askMemberTarget, scopeAskMember } from "./ask-effects";
 import { refreshQuestPullRequests } from "./conclude-pull-requests";
-import { attention, AttentionSnapshot } from "./attention";
+import { askNeedsUser, attention, AttentionSnapshot } from "./attention";
 import { LimitPolicy } from "./limit-policy";
 import { userActHandlers, requireUserAct, type OptionalRpcContext, commitUserAct, type UserActReceipt } from "./authority";
 import { readUndoLanes, undoAskProjection } from "./undo-record";
@@ -21,7 +21,7 @@ import {
 } from "../shared/contract";
 import { currentMoodReport, waypointMoodVerdict } from "../shared/mood";
 import type { Brief, Decision } from "../shared/schema";
-import { isLiveKeeper, isLiveMember } from "./liveness";
+import { isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
 import { isNotFound } from "./host-errors";
 import { DecisionViews } from "./decisions";
 import { markSummariesSeen, markVisitSummariesSeen, summariesForQuest, summaryCounts, summaryView } from "./summaries";
@@ -196,6 +196,14 @@ export function rpcHandlers(
       const titleOf = (id: string | null) => plan?.waypoints.find(w => w.id === id)?.title ?? null;
       const lastReport = m ? k.store.query("reports", "memberThreadId", threadId, 1)[0] : undefined;
       const snapshot = m?.role === "keeper" ? new AttentionSnapshot(k.store, { keeperThreadId: threadId }) : null;
+      const host = m ? memberHost(k.store, m) : null;
+      const memberAsks = m?.role === "member" && m.keeperThreadId && isLiveMember(k.store, m, "brief") && host?.archivedAt == null && host?.deletedAt == null
+        ? k.store.openAsks(m.keeperThreadId, undefined, true).filter(ask => {
+            const target = askMemberTarget(ask);
+            const waypoint = m.checkerWaypointId ?? m.waypointId;
+            return (target ? target === threadId : waypoint && ask.boardQuestId === m.boardQuestId && ask.holds.includes(waypoint)) && askNeedsUser(k.store, ask);
+          })
+        : [];
       return {
         threadId,
         widgetRow: runtime.config().tavern.widgetRow,
@@ -218,7 +226,8 @@ export function rpcHandlers(
         } } : {}),
         classNotice: thread.classNotice ?? null,
         scope: runtime.scopes?.view(threadId) ?? null,
-        openScopeAsk: !!m?.keeperThreadId && k.store.openAsks(m.keeperThreadId).some(ask => scopeAskMember(ask.effect) === threadId),
+        openScopeAsk: memberAsks.some(ask => scopeAskMember(ask.effect) === threadId),
+        memberAsks,
         violations: runtime.scopes?.violations([threadId]) ?? [],
         member: m ? projectMember(m) : null,
         keeper: m?.keeperThreadId ? k.member(m.keeperThreadId) : null,
@@ -299,6 +308,12 @@ export function rpcHandlers(
       const snapshot = new AttentionSnapshot(k.store, { keeperThreadId: threadId });
       const history = decisions.history({ keeperThreadId: threadId }, null, 50);
       const askPage = askHistory(k.store, threadId);
+      const memberBriefs = memberBriefRows(k, threadId);
+      const briefIds = new Set(memberBriefs.map(row => row.pendingBrief.id));
+      const keeperBlocks = k.store.openAsks(threadId).filter(ask => ask.kind === "blocker" && !askNeedsUser(k.store, ask) &&
+        (!ask.boardQuestId || isOpenQuest(k.store.get("quests", ask.boardQuestId))) &&
+        !(ask.effect?.type === "retry-brief" && briefIds.has(ask.effect.briefId)))
+        .slice(0, 50).map(({ id, question, why }) => ({ id, question, why }));
       return {
         attention: snapshot.view({ keeperThreadId: threadId }),
         notes: k.memory.notes(threadId, 200).filter(note => note.kind !== "waiting-on-user"),
@@ -307,7 +322,8 @@ export function rpcHandlers(
         scopes: runtime.scopes?.views(partyIds(threadId)) ?? [],
         violations: runtime.scopes?.violations(partyIds(threadId)) ?? [],
         keeperThreadId: threadId,
-        memberBriefs: memberBriefRows(k, threadId),
+        memberBriefs,
+        keeperBlocks,
         succession: runtime.succession.view(threadId),
         undoLanes: readUndoLanes(k.store, threadId),
         quietSince: k.store.runtime(threadId).manualStopAt ?? null,

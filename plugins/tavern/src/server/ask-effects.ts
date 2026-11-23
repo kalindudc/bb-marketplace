@@ -24,6 +24,12 @@ export function scopeAskMember(effect: Ask["effect"]): string | undefined {
   if (effect?.type === "scope-blocker" || effect?.type === "grant-scope" || effect?.type === "repair-guard") return effect.memberThreadId;
 }
 
+export function askMemberTarget(ask: Pick<Ask, "effect" | "scopeChange" | "runThreadId">): string | undefined {
+  const effect = ask.effect;
+  return scopeAskMember(effect) ?? (effect?.type === "grant-shell-act" ? effect.memberThreadId :
+    effect?.type === "communication-hold" ? effect.hold.threadId : undefined) ?? ask.scopeChange?.memberThreadId ?? ask.runThreadId;
+}
+
 export type EffectHandlers = { [K in AskEffect["type"]]: (effect: AskEffect) => void };
 export const ASK_EFFECTS: Record<AskEffect["type"], { act: Act; handler: keyof EffectHandlers; answerOnly?: true; noticeOnly?: true; keeperRecovery?: readonly string[] }> = {
   greenlight: { act: "greenlight", handler: "greenlight" },

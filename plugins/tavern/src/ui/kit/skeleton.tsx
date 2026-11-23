@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { AlertAction } from "./alert-action";
 import { readRemembered, writeRemembered } from "./remember";
 import "./skeleton.css";
 
@@ -35,7 +36,7 @@ export function rememberCount(key: string, n: number) { writeRemembered(key, Mat
  */
 export function QueryState({ error, loading, retry, skeleton, label }: { error: unknown; loading?: boolean; retry?: () => void; skeleton?: ReactNode; label?: string }) {
   const late = useSkeletonDelay(!!loading && !error && skeleton != null);
-  if (error) return <div className="problem" role="alert"><span>{error instanceof Error ? error.message : String(error)}</span>{retry && <button type="button" className="btn sm" onClick={retry}>Retry</button>}</div>;
+  if (error) return <div className="problem" role="alert"><span>{error instanceof Error ? error.message : String(error)}</span>{retry && <AlertAction action={{ kind: "run", label: "Retry", run: retry }} />}</div>;
   if (!loading) return null;
   if (skeleton == null) return <p className="loading m" role="status">Loading Tavern…</p>;
   return <Skeleton label={label} shown={late}>{skeleton}</Skeleton>;

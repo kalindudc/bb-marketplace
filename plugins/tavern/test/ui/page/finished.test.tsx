@@ -194,10 +194,11 @@ describe("truth on the record (Tony's review)", () => {
     expect(evidence.textContent).toContain("No guard evidence recorded");
     expect(evidence.title).toMatch(/not proof/);
   });
-  it("a live quest's guardrails keep today's words", async () => {
-    const working = boardQuestDetailSchema.parse({ ...formatDuration, quest: { ...formatDuration.quest, phase: "build", endedAt: null } });
+  it("a live quest distinguishes a confirmed missing arm receipt from an unstarted session", async () => {
+    const working = boardQuestDetailSchema.parse({ ...formatDuration, scopes: formatDuration.scopes.map((scope, i) => ({ ...scope, guardCheckFailed: i === 0 })),
+      quest: { ...formatDuration.quest, phase: "build", endedAt: null, members: formatDuration.quest.members.map(member => ({ ...member, engagement: "active" })) } });
     const slot = await open(`quest/${live.quest.id}`, { ...room, keepers: room.keepers.map((k) => k === keeper ? { ...k, archived: false, boardQuests: [working.quest] } : k) }, working);
-    const rows = await waitFor(() => { const r = [...slot.container.querySelectorAll<HTMLElement>(".tv-guard")]; expect(r.length).toBe(3); return r; }, LOADED);
+    const rows = await waitFor(() => { const r = [...slot.container.querySelectorAll<HTMLElement>(".tv-guard")]; expect(r.length).toBe(1); return r; }, LOADED);
     expect(rows[0]!.textContent).toContain("not armed yet");
     expect(rows[0]!.querySelector(".tv-mode")).toBeTruthy();
     expect(rows[0]!.textContent).not.toContain("Scope asked for");
