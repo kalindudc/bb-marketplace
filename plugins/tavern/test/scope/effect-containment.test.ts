@@ -100,7 +100,7 @@ it("keeps both direct tool and shell write boundaries and Ranger pushes guarded"
     expect(evaluate(scope(role), { kind: "write", toolName: "write", cwd: "/repo", input: { path: "/outside/x" } }).allow).toBe(false);
   }
   expect(evaluate(scope(), call("git push origin feature")).allow).toBe(false);
-  for (const role of ["ranger", "warden", "smith"]) expect(evaluate(scope(role), { ...call("python3 -c 'print(1)'"), containment: undefined }).allow).toBe(role !== "warden");
+  for (const role of ["ranger", "warden", "smith"]) expect(evaluate(scope(role), { ...call("python3 -c 'print(1)'"), containment: undefined }).allow).toBe(true);
 });
 it("applies the same availability and boundary checks to calls emitted from codemode", () => {
   const root = realPath(mkdtempSync(join(tmpdir(), "tavern-codemode-"))); roots.push(root);

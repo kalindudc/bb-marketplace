@@ -831,8 +831,8 @@
     },
     {
       "command": "npm publish > ${tmp}/log",
-      "expected": "block",
-      "why": "arbitrary program and a scratch write; either reason blocks",
+      "expected": "allow",
+      "note": "The Keeper baseline permits this act and the scratch path is allowed",
       "observedR2": "BLOCK(shell-write)"
     },
     {

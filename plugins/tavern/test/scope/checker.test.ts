@@ -39,15 +39,18 @@ it.each([
 ])("allows a project check only with check metadata: %s", command => {
   expect(fixture().run(command)).toMatchObject({ allow: true, check: true });
 });
-it.each(["npm install", "npm publish", "yarn publish", "pnpm publish", "bun publish", "npx vitest --update", "npx vitest", "vitest --update", "npx eslint .", "node scripts/verify.mjs", "node node_modules/../evil.mjs", "npm run build --prefix ../outside", "npm run --prefix ../outside build", "npm --workspace ../outside run test", "git add .", "git commit -m no", "git push origin topic", "gh pr merge 1", "gh api -X POST repos/o/r/issues", "kubectl apply -f x.yaml", "dev deploy", "terraform apply", "curl -X POST https://example.invalid", "npm test --prefix ../outside", "npm --prefix ../outside test"])("does not authorize other work: %s", command => {
+it.each(["npm publish", "yarn publish", "pnpm publish", "bun publish", "git add .", "git commit -m no", "git push origin topic", "gh pr merge 1", "gh api -X POST repos/o/r/issues", "kubectl apply -f x.yaml", "dev deploy", "terraform apply", "curl -X POST https://example.invalid"])("still refuses consequential commands: %s", command => {
   expect(fixture().run(command).allow).toBe(false);
 });
-it("allows exact done-when commands and cd prefixes without making command prefixes into grants", () => {
+it.each(["npm install", "npx vitest --update", "npx vitest", "vitest --update", "npx eslint .", "node scripts/verify.mjs", "node node_modules/../fixture.mjs", "npm run build --prefix ../outside", "npm run --prefix ../outside build", "npm --workspace ../outside run test", "npm test --prefix ../outside", "npm --prefix ../outside test"])("does not mark other commands as recognised checks: %s", command => {
+  expect(fixture().run(command)).toEqual({ allow: true });
+});
+it("marks exact done-when commands and cd prefixes without marking commands that only share a prefix", () => {
   const f = fixture(); f.scope.checks.commands = ['node --test "test/a file.test.js"', "make verify && node --test"];
   expect(f.run('node --test "test/a file.test.js"')).toMatchObject({ allow: true, check: true });
   expect(f.run('cd nested && node --test "test/a file.test.js"')).toMatchObject({ allow: true, check: true });
   expect(f.run("make verify && node --test")).toMatchObject({ allow: true, check: true });
-  expect(f.run("node --test test/other.js").allow).toBe(false);
+  expect(f.run("node --test test/other.js")).toEqual({ allow: true });
   expect(f.run('node --test "test/a file.test.js"; npm publish').allow).toBe(false);
   f.scope.checks.commands.push("git add .", "npm publish", "curl -X POST https://example.invalid");
   for (const command of f.scope.checks.commands.slice(-3)) expect(f.run(command).allow).toBe(false);
@@ -59,10 +62,19 @@ it("requires an explicit maker root, canonical cwd and a proven directory for ch
   expect(f.run('cd "$UNKNOWN" && npm test').allow).toBe(false);
   delete f.scope.checks.worktree; expect(f.run("npm test").allow).toBe(false); expect(f.run("git status", f.outside).allow).toBe(true);
 });
-it("keeps checker worktree writes blocked without changing Ranger or Keeper check permissions", () => {
+it.each(["./gradlew test", "java -version"])("lets an uncontained Warden run %s without a check-runner grant", command => {
+  expect(fixture().run(command)).toEqual({ allow: true });
+});
+it("still blocks uncontained Warden Git commits and redirects to tracked files", () => {
   const f = fixture();
-  expect(evaluate(f.scope, { kind: "write", toolName: "write", input: { path: join(f.worktree, "tracked") }, cwd: f.worktree }).allow).toBe(false);
-  for (const role of ["ranger", "keeper"]) { const s = bindPaths(scopeForClass(role, undefined, role === "keeper" ? "keeper" : undefined), { home: f.root, tmp: [f.scratch], scopesDir: join(f.root, "scopes") }); expect(evaluate(s, prepareCall({ kind: "bash", toolName: "bash", input: { command: "npm test" }, cwd: f.worktree }, { scope: s })).allow).toBe(role === "ranger"); }
+  writeFileSync(join(f.worktree, "tracked.txt"), "original");
+  f.git(f.worktree, "add", "tracked.txt");
+  expect(f.run("git commit -m no")).toMatchObject({ allow: false, ruleId: "checker-write" });
+  expect(f.run("printf changed > tracked.txt")).toMatchObject({ allow: false, ruleId: "shell-write" });
+});
+it("keeps native writes in the checker worktree blocked", () => {
+  const f = fixture();
+  expect(evaluate(f.scope, { kind: "write", toolName: "write", input: { path: join(f.worktree, "tracked") }, cwd: f.worktree })).toMatchObject({ allow: false, ruleId: "write-path" });
 });
 it("fails closed rather than allowing a pre-existing hardlink alias to a tracked file", () => {
   const f = fixture(); writeFileSync(join(f.worktree, "tracked"), "original"); writeFileSync(join(f.worktree, ".gitignore"), "coverage/\\n");

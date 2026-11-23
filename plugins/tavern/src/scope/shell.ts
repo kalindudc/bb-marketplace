@@ -338,7 +338,7 @@ export function commandWritePaths(command: ShellCommand): string[] {
     throw new Error("Cannot resolve cyclic shell symlinks");
   });
 }
-export function knownWritePaths(argv: string[]): string[] {
+function knownWritePaths(argv: string[]): string[] {
   const name = argv[0];
   const args = argv.slice(1).filter(value => !value.startsWith("-"));
   if (name === "mktemp") {
