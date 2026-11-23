@@ -958,6 +958,7 @@ export class Keeper {
     };
     for (const id of ids) visit(id);
     const previous = q.planVersion > 0 ? this.store.get("plans", `${q.id}:${q.planVersion}`) : null;
+    const diff = previous && planDiff(previous, plan);
     const approved =
       q.greenlitVersion === null
         ? null
@@ -985,6 +986,7 @@ export class Keeper {
       !plan.waypoints.some((w) => w.actor !== "agent") &&
       !this.store.openAsks(threadId).length;
     this.store.atomic(() => {
+      if (previous && diff) this.carryWaypointAcceptances(q, plan, diff);
       this.store.put("plans", `${q.id}:${plan.version}`, plan);
       const updated = { ...q, planVersion: plan.version, ...(spendProposal || q.spendProposal ? { spendProposal: spendProposal ?? null } : {}), ...(leadPath.length ? { greenlitVersion: null, checkPlanVersion: undefined } : !needsGreenlight ? { checkPlanVersion: plan.version } : {}), updatedAt: this.now() };
       const data = { version: plan.version, routeId: r?.id ?? null };
@@ -999,7 +1001,7 @@ export class Keeper {
         this.store.event(this.now(), threadId, q.id, "plan.proposed", `Plan v${plan.version}`, data, { kind: "agent", threadId });
       }
       if (previous) this.store.event(this.now(), threadId, q.id, "plan.revised", `Revised plan v${previous.version} to v${plan.version}`, {
-        fromVersion: previous.version, toVersion: plan.version, reason: plan.changeNote, diff: planDiff(previous, plan),
+        fromVersion: previous.version, toVersion: plan.version, reason: plan.changeNote, diff,
       }, { kind: "agent", threadId });
       for (const ask of this.asks(threadId).filter(
         (a) =>
@@ -1038,6 +1040,16 @@ export class Keeper {
     });
     this.changed(threadId, q.id);
     return plan;
+  }
+  private carryWaypointAcceptances(q: BoardQuest, plan: Plan, diff: ReturnType<typeof planDiff>) {
+    const calls = this.waypointCalls(q.id, q.planVersion);
+    if (![...calls.values()].some(call => call.waypointCall?.as === "accepted")) return;
+    const changed = new Set([...diff.waypoints.changed, ...diff.waypoints.removed].map(w => w.id));
+    const acceptances = this.summary(q.id).waypoints.flatMap(w => w.state === "accepted" && !changed.has(w.id)
+      ? [{ waypointId: w.id, decisionId: calls.get(w.id)!.id }] : []);
+    if (acceptances.length) this.store.event(this.now(), q.keeperThreadId, q.id, "waypoint.acceptance-carried",
+      `Carried acceptance for ${acceptances.map(a => a.waypointId).join(", ")} from v${q.planVersion} to v${plan.version}`,
+      { fromVersion: q.planVersion, toVersion: plan.version, acceptances }, { kind: "tavern" });
   }
   closingSteer(q: BoardQuest, routeId: string) {
     const route = this.applicableRoutes(q.keeperThreadId).find(r => r.id === routeId && r.kind === "steer" && routeQuestIds(r).includes(q.id));
@@ -1864,6 +1876,8 @@ export class Keeper {
     const q = (approval || d.waypointCall || d.checkChange) && d.boardQuestId ? this.quest(d.boardQuestId) : null;
     if ((approval || d.checkChange) && q?.phase === "held") throw new Error("This quest is held; resume it first");
     if ((d.waypointCall || d.checkChange) && q && !isOpenQuest(q)) throw new Error("This quest has ended; its waypoint record is fixed");
+    const affectsCurrentWaypoint = q && d.waypointCall && (d.waypointCall.planVersion === q.planVersion ||
+      this.waypointCalls(q.id, q.planVersion).get(d.waypointCall.waypointId)?.id === id);
     this.store.atomic(() => {
       this.store.put("decisions", id, { ...d, undone: true });
       let phaseChanged = undoLeadPlan(this, d);
@@ -1873,7 +1887,7 @@ export class Keeper {
         const ask = this.store.get("asks", d.askId);
         if (ask?.answer?.by === "keeper" && ask.answer.optionId === d.optionId && (!ask.boardQuestId || isOpenQuest(this.quest(ask.boardQuestId)))) this.store.put("asks", ask.id, { ...ask, state: "open", answer: null, unsure: true, lane: "user" });
       }
-      if (q && d.waypointCall?.planVersion === q.planVersion) this.withdrawClosingForWaypointChange(q);
+      if (q && affectsCurrentWaypoint) this.withdrawClosingForWaypointChange(q);
       if (d.checkChange && q && (q.greenlitVersion ?? 0) < d.checkChange.planVersion) {
         const previous = this.store.get("plans", `${q.id}:${d.checkChange.previousVersion}`);
         const current = this.store.get("plans", `${q.id}:${q.planVersion}`);
@@ -2315,6 +2329,23 @@ export class Keeper {
     return checkerAssignments(plan, members).find(assignment => assignment.memberThreadId === threadId)
       ?.waypointIds.filter(id => !waitingLeads.has(id)) ?? [];
   }
+  private waypointCalls(questId: string, version: number) {
+    const rows = this.store.db.prepare(`SELECT d.data, 0 AS priority, d.rowid AS sequence
+      FROM tavern_events e, json_each(e.data,'$.acceptances') a
+      JOIN tavern_records d ON d.kind='decisions' AND d.id=json_extract(a.value,'$.decisionId')
+      WHERE e.board_quest_id=@questId AND e.type='waypoint.acceptance-carried' AND json_extract(e.data,'$.toVersion')=@version
+        AND json_extract(d.data,'$.undone')=0
+      UNION ALL
+      SELECT data, 1 AS priority, rowid AS sequence FROM tavern_records WHERE kind='decisions'
+        AND json_extract(data,'$.boardQuestId')=@questId AND json_extract(data,'$.waypointCall.planVersion')=@version
+        AND json_extract(data,'$.undone')=0 ORDER BY priority, sequence`).all({ questId, version }) as { data: string }[];
+    const calls = new Map<string, Decision>();
+    for (const row of rows) {
+      const decision = JSON.parse(row.data) as Decision;
+      calls.set(decision.waypointCall!.waypointId, decision);
+    }
+    return calls;
+  }
   summary(id: string, planVersion?: number): BoardQuestSummary {
     const current = this.quest(id);
     const q = planVersion === undefined ? current : { ...current, planVersion };
@@ -2342,14 +2373,7 @@ export class Keeper {
         ]),
       ].filter((threadId) => wasReleased(memberOf(threadId))),
     );
-    const calls = new Map<string, Decision>();
-    const rows = this.store.db.prepare(`SELECT data FROM tavern_records WHERE kind='decisions'
-      AND json_extract(data,'$.boardQuestId')=? AND json_extract(data,'$.waypointCall.planVersion')=?
-      AND json_extract(data,'$.undone')=0 ORDER BY rowid`).all(id, q.planVersion) as { data: string }[];
-    for (const row of rows) {
-      const decision = JSON.parse(row.data) as Decision;
-      calls.set(decision.waypointCall!.waypointId, decision);
-    }
+    const calls = this.waypointCalls(id, q.planVersion);
     const leadSeats = this.store.leadLinksBy("parentQuestId", q.id);
     const waypoints: BoardQuestSummary["waypoints"] = (
       plan?.waypoints ?? []

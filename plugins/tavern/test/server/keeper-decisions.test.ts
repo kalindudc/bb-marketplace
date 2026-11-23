@@ -139,6 +139,51 @@ it("computes the version diff even when the Keeper repeats its reason", async ()
   expect(f.k.store.openAsks("lead", f.q.id)).toHaveLength(0);
 });
 
+async function acceptedWaypoints() {
+  const f = setup(); databases.push(f.k.store.db);
+  const q = await seedQuest(f.k, "lead", "Build and accept", "Acceptance");
+  const base = planInput(q.id);
+  const one = { ...base.waypoints[0]!, check: "keeper" as const };
+  const two = { ...one, id: "w2", title: "Document" };
+  const plan = { ...base, waypoints: [one, two] };
+  f.k.plan("lead", plan);
+  f.k.answerAsk(f.k.store.openAsks("lead", q.id).find(a => a.kind === "greenlight")!.id, "approve", null, "page", "user");
+  f.port.linkedEntries = () => [waypointEntry("smith", q.id, "w1"), waypointEntry("smith", q.id, "w2", "a2")];
+  const accept = (waypointId: string, reason: string) => f.k.settle("lead", { boardQuestId: q.id, waypointId, as: "accepted", reason });
+  const original = accept("w1", "Tests cover the work");
+  accept("w2", "Documentation checked");
+  const waypoints = (version?: number) => f.k.summary(q.id, version).waypoints;
+  return { ...f, q, plan, one, two, original, waypoints };
+}
+
+it("carries the original acceptance through unchanged versions and records it in history", async () => {
+  const f = await acceptedWaypoints();
+  for (const [i, goal] of ["First revision", "Next revision"].entries()) {
+    f.k.plan("lead", { ...f.plan, goal, waypoints: [f.one, { ...f.two, doneWhen: "Include examples" }] });
+    expect(f.waypoints()).toMatchObject([{ state: "accepted", resolutionReason: "Tests cover the work" }, { state: "reported" }]);
+    expect(f.k.store.events("lead", 0, 100).filter(e => e.type === "waypoint.acceptance-carried").at(-1)?.data)
+      .toEqual({ fromVersion: i + 1, toVersion: i + 2, acceptances: [{ waypointId: "w1", decisionId: f.original.id }] });
+  }
+  f.k.undoDecision(f.original.id);
+  expect(f.waypoints().map(w => w.state)).toEqual(["reported", "reported"]);
+});
+
+it("does not revive acceptance after changing and restoring a waypoint definition", async () => {
+  const f = await acceptedWaypoints();
+  f.k.plan("lead", { ...f.plan, waypoints: [{ ...f.one, doneWhen: "Include the edge cases" }, f.two] });
+  f.k.plan("lead", f.plan);
+  expect(f.waypoints().map(w => w.state)).toEqual(["reported", "accepted"]);
+  expect(f.waypoints(1).map(w => w.state)).toEqual(["accepted", "accepted"]);
+});
+
+it("reopening a carried acceptance prevents another carry", async () => {
+  const f = await acceptedWaypoints();
+  f.k.plan("lead", f.plan);
+  f.k.settle("lead", { boardQuestId: f.q.id, waypointId: "w1", as: "open", reason: "Review again" });
+  f.k.plan("lead", f.plan);
+  expect(f.waypoints().map(w => w.state)).toEqual(["reported", "accepted"]);
+});
+
 it("Undo says a command that already ran cannot be reversed", async () => {
   const f = await fixture();
   const d = f.k.decide("lead", { ...f.fields, source: "keeper" }, undefined, { pullRequestGrant: { digest: "a".repeat(64) } });
@@ -197,6 +242,9 @@ it("counts a first review once when two Wardens verify three separate entries", 
   await f.verdict("warden", "verify", [c]);
   expect(f.journal.get("maker").entries.filter(e => f.ids.includes(e.id)).map(e => e.status)).toEqual(["verified", "verified", "verified"]);
   expect(f.rounds()).toEqual([expect.objectContaining({ data: expect.objectContaining({ reportId: report.id, planVersion: 1 }) })]);
+  f.k.plan("lead", { ...f.plan, changeNote: "Keep the checked waypoint" });
+  expect(f.k.summary(f.q.id).waypoints[0]?.state).toBe("verified");
+  expect(f.k.store.events("lead", 0, 100).filter(e => e.type === "waypoint.acceptance-carried")).toEqual([]);
 });
 
 it("stores the third report, tells the maker and Keeper, and holds the review until a new plan", async () => {
