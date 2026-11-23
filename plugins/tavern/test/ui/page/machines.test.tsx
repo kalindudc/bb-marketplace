@@ -12,6 +12,7 @@ import { machinesContract } from "../../../src/ui/page/machines-contract";
 import * as MM from "../../../src/ui/page/machines-model";
 import { validatePlacementInputs } from "../../../src/server/placement/inputs";
 import { registerPageSurfaces } from "../../../src/ui/page/register";
+import { settingsGroups } from "../../../src/ui/page/settings";
 
 // The page ships behind PLACEMENT_RPC_LIVE until the server serves its two reads; these tests run it as if they were live, except where they say not.
 const live = vi.hoisted(() => ({ value: true }));
@@ -472,7 +473,7 @@ describe("Where work runs page", () => {
     const picker = slot.getByRole("combobox", { name: "Tavern page" }) as HTMLSelectElement;
     expect([...picker.options].map((o) => o.value)).toContain("machines");
     const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
-    expect(plugin.settingsSections.some((s) => s.id === "machines")).toBe(true);
+    expect(settingsGroups.some(s => s.id === "machines")).toBe(true);
     const side = renderSlot({ component: plugin.navPanels[0]!.experimental_sidebar! }, { subPath: "machines" }, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { room: () => machinesRoom, registry: () => registry } as Partial<Handlers> as Handlers });
     slots.push(side);
     const link = await within(side.container).findByRole("button", { name: /Where work runs/ });
@@ -494,8 +495,7 @@ describe("Where work runs page", () => {
 
 describe("Where work runs in settings", () => {
   it("summarises the rules and links to the page", async () => {
-    const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
-    const section = plugin.settingsSections.find((s) => s.id === "machines");
+    const section = settingsGroups.find(s => s.id === "machines");
     expect(section).toBeTruthy();
     const slot = renderSlot(section!, {}, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { settings: () => viewWith(machineVolumes.many), placementCatalog: () => machinesCatalog } as Partial<Handlers> as Handlers });
     slots.push(slot);

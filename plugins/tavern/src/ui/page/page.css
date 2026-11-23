@@ -965,6 +965,20 @@
 .tavern.tv-page.tv-set-introwrap { display: block; min-width: 0; }
 .tavern.tv-page.tv-set-introwrap > .tv-set-intro { margin: 0 0 10px; }
 .tavern.tv-page.tv-set-introwrap[id], .tavern.tv-page.tv-set-introwrap > .tv-set-intro[id] { scroll-margin-block-start: 2rem; }
+.tv-settings-page { display: grid; gap: 24px; min-width: 0; }
+.tv-settings-results { display: grid; gap: 24px; min-width: 0; }
+.tv-settings-results :is(.tv-settings-group, .tv-settings-card, details, [data-setting-keys], [data-settings-row])[hidden] { display: none !important; }
+.tv-settings-group-title { margin: 0 0 12px; color: var(--foreground); font-size: 13px; font-weight: 600; }
+.tavern.tv-page.tv-settings-search { display: grid; gap: 6px; font-size: 13px; }
+.tv-settings-search > label { font-weight: 600; }
+.tv-settings-search-controls { display: flex; align-items: center; gap: 8px; }
+.tavern.tv-page .tv-settings-search-controls .tv-text { flex: 1; min-width: 0; min-height: 32px; }
+.tv-settings-search > [role="status"] { margin: 0; color: var(--tv-text-2); }
+.tv-settings-search > [role="status"]:empty { position: absolute; }
+@media (max-width: 560px), (pointer: coarse) {
+  .tavern.tv-page .tv-settings-search-controls :is(.tv-text, .btn) { min-height: 44px; }
+  .tavern.tv-page .tv-settings-search-controls .tv-text { font-size: 16px; }
+}
 /* A file skipped inside a backup is a warning: only the mark takes the colour. */
 .tavern.tv-page .tv-bk-prob { display: flex; align-items: flex-start; gap: 5px; font-size: 12px; min-width: 0; }
 .tavern.tv-page .tv-bk-prob > .tv-g { flex: none; margin-top: 2px; color: var(--tavern-blocked); }

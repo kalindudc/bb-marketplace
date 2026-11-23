@@ -6,18 +6,97 @@ import { DEFAULT_SETTINGS, settingsContract } from "../../../src/shared/settings
 import { rpcContract } from "../../../src/shared/contract";
 import { backupContract } from "../../../src/shared/backup";
 import { memoryContract } from "../../../src/shared/memory";
+import { setupContract } from "../../../src/shared/setup";
 import { settingsView } from "../../../src/ui/page/fixtures-insights";
 import { registry } from "../../../src/ui/page/fixtures";
 import { registerPageSurfaces } from "../../../src/ui/page/register";
+import { settingsGroups } from "../../../src/ui/page/settings";
 import { richRoom } from "./scenes";
 const slots: RenderedSlot[]=[];
 beforeEach(()=>window.localStorage.clear());
 afterEach(()=>{for(const s of slots.splice(0))s.lifecycle.unmount();});
 async function section(id:string,view=structuredClone(settingsView),rpc:Record<string,(input: unknown)=>unknown>={}){
- const app=await loadPluginApp(async()=>({default:definePluginApp(registerPageSurfaces)}));
- const slot=renderSlot(app.settingsSections.find(s=>s.id===id)!,{}, {pluginId:"tavern",experimental_rpcContract:{...rpcContract,...settingsContract,...backupContract,...memoryContract},rpc:{memorySettings:()=>({revision:0,config:{active:"builtin",profiles:[]}}),settings:()=>view,registry:()=>registry,backupList:()=>({dir:"/fixture/backups",keep:14,backups:[],error:null,dataBytes:0,exportLimitBytes:8388608}),...rpc},providers:{status:"ready",providers:[{id:"codex",displayName:"Codex",available:true}] as never}});
+ const slot=renderSlot(settingsGroups.find(s=>s.id===id)!,{}, {pluginId:"tavern",experimental_rpcContract:{...rpcContract,...settingsContract,...backupContract,...memoryContract},rpc:{memorySettings:()=>({revision:0,config:{active:"builtin",profiles:[]}}),settings:()=>view,registry:()=>registry,backupList:()=>({dir:"/fixture/backups",keep:14,backups:[],error:null,dataBytes:0,exportLimitBytes:8388608}),...rpc},providers:{status:"ready",providers:[{id:"codex",displayName:"Codex",available:true}] as never}});
  slots.push(slot);return slot;
 }
+async function settingsPage(settings: () => typeof settingsView | Promise<typeof settingsView> = () => settingsView) {
+ const app = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
+ const slot = renderSlot(app.settingsSections[0]!, {}, {
+  pluginId: "tavern", experimental_rpcContract: { ...rpcContract, ...settingsContract, ...backupContract, ...memoryContract, ...setupContract },
+  rpc: { settings, registry: () => registry, setupPending: () => [], setupProjects: () => [],
+   memorySettings: () => ({ revision: 1, config: { active: "builtin", profiles: [{ id: "test-notes", name: "Test notes", save: "/bin/save", find: "/bin/find", curate: "/bin/curate", timeoutSeconds: 15 }] } }),
+   backupList: () => ({ dir: "/fixture/backups", keep: 14, backups: [], error: null, dataBytes: 0, exportLimitBytes: 8388608 }),
+  },
+ });
+ slots.push(slot);
+ return slot;
+}
+it("filters across sections by label, help and setting key without saving a search", async () => {
+ const s = await settingsPage();
+ const search = s.getByRole("searchbox", { name: "Search settings" }) as HTMLInputElement;
+ await s.findByLabelText("Pause every Keeper");
+ await s.findByLabelText("Repeat every");
+ const results = s.container.querySelector(".tv-settings-results")!;
+ const visible = () => [...results.querySelectorAll("[data-setting-keys], [data-settings-row]")]
+  .filter(el => !el.closest("[hidden]")).map(el => el.getAttribute("data-setting-keys"));
+ const storage = { ...localStorage };
+ const filter = (value: string) => fireEvent.change(search, { target: { value } });
+ filter("  PAUSE EVERY keeper  ");
+ expect(s.getByText("1 match")).toBeTruthy();
+ expect(visible()).toEqual(["tavern.paused"]);
+ expect(results.querySelector("#tavern-settings-title-atmosphere")?.closest("[hidden]")).toBeTruthy();
+ filter("party takes steps");
+ expect(visible()).toEqual(["tavern.repeatSeconds"]);
+ expect(s.getByText("The party", { selector: "h3" }).closest("[hidden]")).toBeTruthy();
+ filter("TAVERN.HEARTHFLICKER");
+ expect(visible()).toEqual(["tavern.ambientMotion tavern.hearthFlicker"]);
+ filter("tavern.lantern");
+ expect(s.getByText("3 matches")).toBeTruthy();
+ filter("contextual speech");
+ expect(s.getByText("1 match")).toBeTruthy();
+ expect(s.getByLabelText("Contextual speech").closest("[hidden]")).toBeNull();
+ filter("no-such-setting");
+ expect(s.getByText("No settings match")).toBeTruthy();
+ expect(results.querySelectorAll(".tv-settings-group:not([hidden])")).toHaveLength(0);
+ fireEvent.click(within(search.closest('[role="search"]') as HTMLElement).getByRole("button", { name: "Clear search" }));
+ expect(search.value).toBe("");
+ expect(document.activeElement).toBe(search);
+ expect(results.querySelector("#tavern-settings-title-atmosphere")?.closest("[hidden]")).toBeNull();
+ expect({ ...localStorage }).toEqual(storage);
+});
+it("updates matches when the settings finish loading", async () => {
+ let finish!: (view: typeof settingsView) => void;
+ const pending = new Promise<typeof settingsView>(resolve => { finish = resolve; });
+ const s = await settingsPage(() => pending);
+ fireEvent.change(s.getByRole("searchbox", { name: "Search settings" }), { target: { value: "tavern.paused" } });
+ expect(s.queryByRole("heading", { name: "Tavern" })).toBeNull();
+ finish(settingsView);
+ await s.findByText("1 match");
+ expect(s.getByRole("switch", { name: "Pause every Keeper" })).toBeTruthy();
+});
+it("opens only matching folds, including profile fields, then restores open and closed folds on Escape", async () => {
+ const s = await settingsPage();
+ const search = s.getByRole("searchbox", { name: "Search settings" }) as HTMLInputElement;
+ const details = (await s.findByText("Keeper pacing and memory")).closest("details")!;
+ const tuner = (await s.findByText("Ledger and tuner limits")).closest("details")!;
+ const profile = (await s.findByText("Test notes", { selector: "summary > span" })).closest("details")!;
+ tuner.open = true;
+ expect(details.open).toBe(false);
+ expect(profile.open).toBe(false);
+ fireEvent.change(search, { target: { value: "keepers.keepMaxHours" } });
+ expect(details.open).toBe(true);
+ expect(s.getByRole("spinbutton", { name: "Longest keep for a resting member" })).toBeTruthy();
+ expect(s.queryByRole("heading", { name: /^Tuning$/ })).toBeNull();
+ fireEvent.change(search, { target: { value: "find executable" } });
+ expect(profile.open).toBe(true);
+ expect(s.getByRole("textbox", { name: "Find executable" })).toBeTruthy();
+ expect(s.queryByRole("textbox", { name: "Curate executable" })).toBeNull();
+ fireEvent.keyDown(search, { key: "Escape" });
+ expect(search.value).toBe("");
+ expect(details.open).toBe(false);
+ expect(profile.open).toBe(false);
+ expect(tuner.open).toBe(true);
+});
 it("lets people add a named tool rule without widening the default scope", async () => {
  const update=vi.fn(()=>({code:"ok",revision:settingsView.revision+1,settings:settingsView,problems:[]}));
  const s=await section("scopes",structuredClone(settingsView),{settingsUpdate:update});
@@ -48,13 +127,13 @@ it.runIf(!!process.env.TAVERN_SEND_SETTINGS_MARKUP)("renders named rules for bro
  process.stdout.write("SEND_SETTINGS_MARKUP=" + JSON.stringify(s.container.innerHTML) + "\n");
 });
 it("registers Setup first, kit descriptions for each section, and history last",async()=>{
- const app=await loadPluginApp(async()=>({default:definePluginApp(registerPageSurfaces)}));
- expect(app.settingsSections.map(s=>s.id)).toEqual(["setup","tavern","attention","keepers","classes","scopes","machines","memory-profiles","atmosphere","away","journal","tuning","data","settings-history"]);
- expect(app.settingsSections.filter(s=>s.title==="Atmosphere").map(s=>s.id)).toEqual(["atmosphere"]);
- for(const s of app.settingsSections){
-  expect(s.description??"").toBe("");
-  const slot=renderSlot(s,{}, {pluginId:"tavern",experimental_rpcContract:{...rpcContract,...settingsContract},rpc:{settings:()=>settingsView,registry:()=>registry}});slots.push(slot);
-  expect(slot.container.querySelector(".tv-set-introwrap > .tv-set-intro")?.textContent).toMatch(/\w+.*\./);
+ const s = await settingsPage();
+ expect(s.getAllByRole("heading", { level: 2 }).map(h => h.textContent)).toEqual([
+  "Setup", "Tavern", "Your attention", "Keepers and decisions", "Classes and models", "Scopes", "Where work runs",
+  "Memory profiles", "Atmosphere", "Closing time", "Journal", "Tuning", "Data and backups", "Settings history",
+ ]);
+ for (const group of s.container.querySelectorAll(".tv-settings-group")) {
+  expect(group.querySelector(".tv-set-introwrap > .tv-set-intro")?.textContent).toMatch(/\w+.*\./);
  }
 });
 it.each([
@@ -69,9 +148,8 @@ it("shows the schema's user knobs with defaults and only offers Reset for change
  const expected=Object.entries(DEFAULT_SETTINGS).flatMap(([group,keys])=>Object.keys(keys).map(key=>`${group}.${key}`));
  // Class records, machine rules and forge profiles have dedicated editors.
  const exceptions=new Set(["machines.rules","machines.forges"]);
- const app=await loadPluginApp(async()=>({default:definePluginApp(registerPageSurfaces)}));
  const shown=new Set<string>();
- for(const entry of app.settingsSections){
+ for(const entry of settingsGroups){
   const s=await section(entry.id);
   await waitFor(()=>expect(s.container.querySelector(".tv-loading")).toBeNull());
   if(entry.id==="data") await s.findByLabelText("Keep the newest");
@@ -262,7 +340,6 @@ it("saves Repeat every in seconds on its existing key",async()=>{
  await waitFor(()=>expect(update).toHaveBeenCalledWith(expect.objectContaining({patch:{tavern:{repeatSeconds:27}}})));
 });
 it.runIf(process.env.TAVERN_ATMOSPHERE_HARNESS==="1")("renders Atmosphere for the browser fixture",async()=>{
- const app=await loadPluginApp(async()=>({default:definePluginApp(registerPageSurfaces)}));
  const markup: Record<string,string>={};
  for(const voice of ["full","light","off"] as const){
   const view=structuredClone(settingsView);view.effective.tavern.voice=voice;
@@ -271,7 +348,7 @@ it.runIf(process.env.TAVERN_ATMOSPHERE_HARNESS==="1")("renders Atmosphere for th
   expect(group.getByRole("button",{name:new RegExp(`^${voice}$`,"i"),pressed:true})).toBeTruthy();
   markup[voice]=s.container.innerHTML;
  }
- const sections=app.settingsSections.map(({id,title})=>({id,title}));
+ const sections=settingsGroups.map(({id,title})=>({id,title}));
  process.stdout.write("ATMOSPHERE_HARNESS="+JSON.stringify({sections,markup})+"\n");
 });
 it.runIf(process.env.TAVERN_KNOBS_HARNESS==="1")("renders the knob surfaces for the browser fixture",async()=>{
@@ -281,7 +358,7 @@ it.runIf(process.env.TAVERN_KNOBS_HARNESS==="1")("renders the knob surfaces for 
  view.effective.keepers.tickFactChars=15900;
  view.lastChangers={"keepers.tickFactChars":{by:"user",threadId:null,at:Date.now()-90000}};
  const output:Record<string,{title:string;markup:string}>={};
- for(const entry of app.settingsSections){
+ for(const entry of settingsGroups){
   const s=await section(entry.id,view);
   const marker=["classes","settings-history"].includes(entry.id)?".tv-settings-card":"[data-setting-keys]";
   await waitFor(()=>expect(s.container.querySelector(marker)).not.toBeNull());

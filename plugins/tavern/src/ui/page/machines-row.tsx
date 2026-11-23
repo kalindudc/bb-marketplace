@@ -15,7 +15,7 @@ export function MachinesSettingsRow() {
   const blocked = data.placementPolicy?.state === "invalid";
   const line = blocked ? "Placement is blocked: Tavern can't read the saved rules, so new members wait." : settingsSummary(data.effective.machines, makeNames(catalog.data ?? null, envs.providers, [], undefined));
   return <div className="tavern tv-page tv-set">
-    <div className="tv-set-row"><div className="tv-set-l"><span className="tv-set-lbl">Rules</span><p>{line}</p></div>
+    <div className="tv-set-row" data-settings-row="machines.rules machines.forges"><div className="tv-set-l"><span className="tv-set-lbl" data-settings-copy>Rules</span><p data-settings-copy>{line}</p></div>
       <div className="tv-set-c"><button type="button" className="btn" onClick={() => navigate.toPluginPanel("tavern", { subPath: "machines" })}>Open Where work runs<OpensMark /></button></div></div>
   </div>;
 }

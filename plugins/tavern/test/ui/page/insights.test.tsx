@@ -7,7 +7,7 @@ import { insightsContract } from "../../../src/shared/insights";
 import { settingsContract, type SettingsView } from "../../../src/shared/settings";
 import { detail, registry, room } from "../../../src/ui/page/fixtures";
 import { emptyInsights, insightsView, settingsToml, settingsView } from "../../../src/ui/page/fixtures-insights";
-import { VOICE_HELP } from "../../../src/ui/page/settings";
+import { VOICE_HELP, settingsGroups } from "../../../src/ui/page/settings";
 import { registerPageSurfaces } from "../../../src/ui/page/register";
 import { importSummary } from "../../../src/ui/page/settings";
 
@@ -30,8 +30,7 @@ async function insightsPage(rpc: Partial<Handlers> = {}) {
 }
 const providers: { status: "ready" | "loading"; providers: never } = { status: "ready", providers: [{ id: "codex", name: "Codex", available: true }] as never };
 async function section(id: string, rpc: Partial<Handlers> = {}, options: { providers?: typeof providers } = {}) {
-  const plugin = await app();
-  const registration = plugin.settingsSections.find((s) => s.id === ({tuned:"tuning","import-export":"data"} as Record<string,string>)[id] || s.id === id)!;
+  const registration = settingsGroups.find(s => s.id === (({ tuned: "tuning", "import-export": "data" } as Record<string, string>)[id] ?? id))!;
   const slot = renderSlot(registration, {}, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { ...base, ...rpc } as Handlers, providers: options.providers ?? providers });
   slots.push(slot); return slot;
 }

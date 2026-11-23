@@ -50,7 +50,7 @@ function Profiles({ value, reload }: { value: { revision: number; config: Memory
     <div className="tv-settings-body tv-memory-controls">
       <form onSubmit={event => { event.preventDefault(); if (dirty && !pending) void save(); }}>
         <fieldset disabled={pending} className="tv-memory-fields">
-          <label>Active store<select className="tv-select" value={draft.active} onChange={event => setDraft({ ...draft, active: event.target.value })}>
+          <label data-settings-row="memory.active"><span data-settings-copy>Active store</span><select className="tv-select" value={draft.active} onChange={event => setDraft({ ...draft, active: event.target.value })}>
             <option value="builtin">Built-in</option>
             {draft.profiles.map((profile, index) => <option value={profile.id} disabled={!profile.id} key={index}>{profile.name || profile.id || "Unnamed profile"}</option>)}
           </select></label>
@@ -58,11 +58,11 @@ function Profiles({ value, reload }: { value: { revision: number; config: Memory
             <FoldSummary>{profile.name || "New profile"}{draft.active === profile.id && " · Active"}</FoldSummary>
             <div className="tv-memory-fields">
               <div className="tv-memory-grid">
-                <label>Name<input className="tv-text" value={profile.name} maxLength={160} required onChange={event => update(i, { name: event.target.value })} /></label>
-                <label>Profile ID<input className="tv-text" value={profile.id} pattern="[a-z][a-z0-9-]{0,31}" required onChange={event => update(i, { id: event.target.value })} /></label>
+                <label data-settings-row="memory.profiles.name"><span data-settings-copy>Name</span><input className="tv-text" value={profile.name} maxLength={160} required onChange={event => update(i, { name: event.target.value })} /></label>
+                <label data-settings-row="memory.profiles.id"><span data-settings-copy>Profile ID</span><input className="tv-text" value={profile.id} pattern="[a-z][a-z0-9-]{0,31}" required onChange={event => update(i, { id: event.target.value })} /></label>
               </div>
-              {(["save", "find", "curate"] as const).map(op => <label key={op}>{op[0]!.toUpperCase() + op.slice(1)} executable<input className="tv-text" value={profile[op]} maxLength={1024} required onChange={event => update(i, { [op]: event.target.value })} /></label>)}
-              <label>Timeout (seconds)<input className="tv-text" value={profile.timeoutSeconds || ""} type="number" min={1} max={120} required onChange={event => update(i, { timeoutSeconds: Number(event.target.value) })} /></label>
+              {(["save", "find", "curate"] as const).map(op => <label key={op} data-settings-row={`memory.profiles.${op}`}><span data-settings-copy>{op[0]!.toUpperCase() + op.slice(1)} executable</span><input className="tv-text" value={profile[op]} maxLength={1024} required onChange={event => update(i, { [op]: event.target.value })} /></label>)}
+              <label data-settings-row="memory.profiles.timeoutSeconds"><span data-settings-copy>Timeout (seconds)</span><input className="tv-text" value={profile.timeoutSeconds || ""} type="number" min={1} max={120} required onChange={event => update(i, { timeoutSeconds: Number(event.target.value) })} /></label>
               <div><button type="button" className="btn ghost" onClick={() => remove(i)}>Remove profile</button></div>
             </div>
           </details>)}

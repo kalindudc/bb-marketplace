@@ -8,6 +8,7 @@ import { settingsContract } from "../../../src/shared/settings";
 import { detail, registry, room } from "../../../src/ui/page/fixtures";
 import { settingsView } from "../../../src/ui/page/fixtures-insights";
 import { BackupSection } from "../../../src/ui/page/backup";
+import { settingsGroups } from "../../../src/ui/page/settings";
 import { registerPageSurfaces } from "../../../src/ui/page/register";
 
 const contract = { ...rpcContract, ...settingsContract, ...backupContract };
@@ -25,8 +26,7 @@ afterEach(() => { for (const slot of slots.splice(0)) slot.lifecycle.unmount(); 
 beforeEach(() => window.localStorage.clear());
 async function app() { return loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) })); }
 async function section(rpc: Partial<Handlers> = {}) {
-  const plugin = await app();
-  const slot = renderSlot({ ...plugin.settingsSections.find((s) => s.id === "data")!, component: BackupSection }, {}, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { ...base, ...rpc } as Handlers });
+  const slot = renderSlot({ component: BackupSection }, {}, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { ...base, ...rpc } as Handlers });
   slots.push(slot); return slot;
 }
 /** The Export trigger once the menu is real: while Tavern checks for backup calls, a hidden copy holds its space under the same title. */
@@ -163,8 +163,8 @@ describe("settings section descriptions", () => {
   it("leaves host descriptions empty, with backups under Data", async () => {
     const plugin = await app();
     for (const registration of plugin.settingsSections) expect(registration.description ?? "").toBe("");
-    expect(plugin.settingsSections.find(s => s.id === "data")?.title).toBe("Data and backups");
-    expect(plugin.settingsSections.find(s => s.id === "backup")).toBeUndefined();
+    expect(settingsGroups.find(s => s.id === "data")?.title).toBe("Data and backups");
+    expect(settingsGroups.find(s => s.id === "backup")).toBeUndefined();
   });
 });
 

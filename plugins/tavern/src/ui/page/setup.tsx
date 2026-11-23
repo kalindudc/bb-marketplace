@@ -183,20 +183,20 @@ export function SetupSettings() {
     </div>;
   }) : <p>{pending.data ? "No proposals to review." : "Reading setup proposals…"}</p>;
   return <section className="tavern tv-page tsu-settings">
-    <form className="tsu-form" onSubmit={event => {
+    <form className="tsu-form" data-settings-row="" onSubmit={event => {
       event.preventDefault();
       if (ready) navigate.toCompose({ projectId, initialPrompt: setupPrompt(request), focusPrompt: true });
     }}>
-      <label htmlFor={id + "-project"}>Project</label>
+      <label htmlFor={id + "-project"} data-settings-copy>Project</label>
       <select className="tv-select" id={id + "-project"} value={projectId} onChange={event => setProjectId(event.target.value)}>
         <option value="">{projects.data ? "Choose a project" : "Reading projects…"}</option>
         {projects.data?.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
       </select>
-      <label htmlFor={id + "-request"}>What should Tavern be set up for?</label>
+      <label htmlFor={id + "-request"} data-settings-copy>What should Tavern be set up for?</label>
       <textarea className="tv-text" id={id + "-request"} rows={2} maxLength={8000} value={request} onChange={event => setRequest(event.target.value)}
         placeholder="Open draft pull requests with my scripts in ~/bin; run checks on a separate machine." />
-      <p id={id + "-form-help"}>{ready ? "Review the request in the composer before sending it." : "Choose a project and describe what you want the agent to set up."}</p>
-      <button className="btn pri" type="submit" aria-describedby={id + "-form-help"} disabled={!ready}>Set up with an agent</button>
+      <p id={id + "-form-help"} data-settings-copy>{ready ? "Review the request in the composer before sending it." : "Choose a project and describe what you want the agent to set up."}</p>
+      <button className="btn pri" type="submit" aria-describedby={id + "-form-help"} disabled={!ready} data-settings-copy>Set up with an agent</button>
     </form>
     {projects.error && <ReadState error={projects.error} retry={projects.refetch} />}
     <div className="tsu-list"><h3>Open setup proposals</h3>{list}</div>

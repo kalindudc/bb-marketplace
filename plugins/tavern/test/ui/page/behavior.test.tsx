@@ -91,7 +91,7 @@ describe("Tavern page surfaces", () => {
     expect(plugin.navPanels[0]?.experimental_sidebar).toBeTruthy();
     expect(plugin.navPanels[0]?.experimental_useBadge).toBe(useTavernBadge);
     expect(plugin.homepageSections).toHaveLength(1);
-    expect(plugin.settingsSections.map((s) => s.id)).toEqual(["setup", "tavern", "attention", "keepers", "classes", "scopes", "machines", "memory-profiles", "atmosphere", "away", "journal", "tuning", "data", "settings-history"]);
+    expect(plugin.settingsSections.map(s => s.id)).toEqual(["settings"]);
     const slot = await page();
     await slot.findByRole("heading", { name: /The quest board/ });
     expect(slot.container.querySelector('[data-thread-chat], [data-composer]')).toBeNull();

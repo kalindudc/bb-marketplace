@@ -22,6 +22,7 @@ import { insightsContract } from "../../shared/insights";
 import { WardenQualitySection } from "./warden-quality";
 import { MemorySettings } from "./memory-settings";
 import { gitProgramSettingSchema } from "../../shared/git-program";
+import { SettingsSearch } from "./settings-search";
 
 const WHY = "Changed on the settings page";
 export const ATMOSPHERE_ANCHOR = "tavern-settings-atmosphere";
@@ -98,7 +99,7 @@ export function SettingDefault({ setting, api: provided, managed = false }: { se
 
 function Row({ label, help, children, control, setting, managed = false, coveredBy = [] }: { label: string; help?: ReactNode; children?: ReactNode; control: (id: string) => ReactNode; setting?: SettingKey; managed?: boolean; coveredBy?: SettingKey[] }) {
   const id = useId();
-  return <div className="tv-set-row" data-setting-keys={setting ? [setting, ...coveredBy].join(" ") : undefined}><div className="tv-set-l"><label htmlFor={id}>{label}</label>{help && <p>{help}</p>}{children}{setting && <SettingDefault setting={setting} managed={managed} />}</div><div className="tv-set-c">{control(id)}</div></div>;
+  return <div className="tv-set-row" data-settings-row={setting ? undefined : ""} data-setting-keys={setting ? [setting, ...coveredBy].join(" ") : undefined}><div className="tv-set-l"><label htmlFor={id} data-settings-copy>{label}</label>{help && <p data-settings-copy>{help}</p>}{children}{setting && <SettingDefault setting={setting} managed={managed} />}</div><div className="tv-set-c">{control(id)}</div></div>;
 }
 
 const NUMBER_HELP: Record<{ [G in keyof typeof KNOB_FIELDS]: keyof typeof KNOB_FIELDS[G] }[keyof typeof KNOB_FIELDS], string> = {
@@ -439,9 +440,9 @@ export function KeepersSection() {
     <Row label="Lead chain ceiling" setting="keepers.chainMembers" help="Most seats in the entire linked party, including leads and reserved hires but not the root Keeper. Changes apply to new hires." control={(id) => <NumberField id={id} value={k.chainMembers} min={1} max={1000} unit="members" disabled={api.pending} onSave={(v) => void api.save({ keepers: { chainMembers: v } })} />} />
     <Row label="Ranger check-in interval" setting="knobs.rangerTimeboxMaxMinutes" help="How long a Ranger scouts before it reports to its Keeper, who continues it or accepts the work." control={(id) => <NumberField id={id} value={d.effective.knobs.rangerTimeboxMaxMinutes} min={3} max={30} unit="min" disabled={api.pending} onSave={(v) => void api.save({ knobs: { rangerTimeboxMaxMinutes: v } })} />} />
     <div className="tv-set-row tv-set-ro" data-setting-keys="keepers.alwaysAsk">
-      <fieldset className="tv-grpbox tv-away-stops" disabled={api.pending}><legend>Always ask</legend>
-        <p className="m small">Unchecked kinds go to the Keeper on every quest. It decides and records each one, or asks you when unsure. A merge or production change still needs a Warden’s check of the exact commit or command.</p>
-        <p className="m small">Cluster writes always ask you and cannot be delegated.</p>
+      <fieldset className="tv-grpbox tv-away-stops" disabled={api.pending}><legend data-settings-copy>Always ask</legend>
+        <p className="m small" data-settings-copy>Unchecked kinds go to the Keeper on every quest. It decides and records each one, or asks you when unsure. A merge or production change still needs a Warden’s check of the exact commit or command.</p>
+        <p className="m small" data-settings-copy>Cluster writes always ask you and cannot be delegated.</p>
         {ALWAYS_ASK_KINDS.map(kind => <label key={kind} className="tv-chk"><input type="checkbox" checked={k.alwaysAsk.includes(kind)}
           onChange={e => void api.save({ keepers: { alwaysAsk: ALWAYS_ASK_KINDS.filter(item => item === kind ? e.target.checked : k.alwaysAsk.includes(item)) } })} /><span>{ALWAYS_WORDS[kind]}</span></label>)}
       </fieldset><SettingDefault setting="keepers.alwaysAsk" />
@@ -544,8 +545,8 @@ export function ClassesSection() {
     <div className="tv-set-links"><button type="button" className="tv-ilink act" onClick={() => navigate.toPluginPanel("tavern", { subPath: "classes" })}><span>Classes</span><OpensMark /></button><button type="button" className="tv-ilink act" onClick={() => navigate.toPluginPanel("tavern", { subPath: "characters" })}><span>Character sheets</span><OpensMark /></button></div>
     {!registry.data ? <ReadState error={registry.error} retry={registry.refetch} /> : registry.data.classes.map((c) => {
       const override: ClassOverride = { ...d.effective.classes[c.id] };
-      return <div key={c.id} className="tv-set-row tv-set-class">
-        <div className="tv-set-l"><span className="tv-set-lbl">{c.label} <span className="anc">{c.plain}</span></span></div>
+      return <div key={c.id} className="tv-set-row tv-set-class" data-settings-row={`classes.${c.id}.provider classes.${c.id}.model classes.${c.id}.reasoning`}>
+        <div className="tv-set-l"><span className="tv-set-lbl" data-settings-copy>{c.label} <span className="anc">{c.plain}</span></span></div>
         <div className="tv-set-c"><ClassExecution label={c.label} defaults={{ provider: c.provider, model: c.model, reasoning: c.reasoning }} override={override}
           onSave={async (next) => { const entry: ClassOverride = next ?? {}; await api.save({ classes: { [c.id]: entry } }); }} /></div>
         {c.id === "warden" && <WardenQualitySetting />}
@@ -581,7 +582,7 @@ function SendToolsEditor({ rules, api }: { rules: SendTools; api: Api }) {
       <button type="button" className="btn" aria-label={`Remove tool rule ${index + 1}`} disabled={api.pending} onClick={() => setEdit(draft.filter((_, i) => i !== index))}>Remove</button>
     </fieldset>)}
     {error && <p role="alert" className="tv-problem">{error}</p>}
-    <div className="tv-message-actions"><button type="button" className="btn" disabled={api.pending || draft.length >= 100} onClick={() => setEdit([...draft, { pattern: "", act: "send" }])}>Add tool rule</button><button type="button" className="btn" disabled={api.pending || draft.length >= 100} onClick={() => setEdit([...draft, { shell: "", act: "send" }])}>Add shell rule</button>
+    <div className="tv-message-actions"><button type="button" className="btn" data-settings-copy disabled={api.pending || draft.length >= 100} onClick={() => setEdit([...draft, { pattern: "", act: "send" }])}>Add tool rule</button><button type="button" className="btn" data-settings-copy disabled={api.pending || draft.length >= 100} onClick={() => setEdit([...draft, { shell: "", act: "send" }])}>Add shell rule</button>
       {edit && <><button type="button" className="btn pri" disabled={api.pending} onClick={() => void save()}>Save tool rules</button><button type="button" className="btn" disabled={api.pending} onClick={() => { setEdit(null); setError(undefined); }}>Cancel</button></>}
     </div>
   </div>;
@@ -660,8 +661,8 @@ export function TunedSection() {
       const suggestion = d.suggestions.find((s) => s.key === r.key);
       const c = r.lastChange;
       return <li key={r.key} data-setting-keys={`knobs.${r.key}`} className={`tv-tuned-row ${r.pinned ? "pinned" : ""}`}>
-        <div className="tv-tuned-h"><label htmlFor={`${id}-${r.key}`}><b>{r.label}</b></label><NumberField id={`${id}-${r.key}`} value={r.value} min={r.min} max={r.max} unit={r.unit} disabled={api.pending} onSave={value=>void api.save({knobs:{[r.key]:value}})} />{r.pinned && <span className="tag"><PageGlyph name="pin" size={11} /><span>pinned</span></span>}</div>
-        <p className="tv-tuned-help">{TUNED_HELP[r.key]}{isGuardrailSetting(`knobs.${r.key}`) && " Agents in Tavern threads can't change these; only you can."}</p>
+        <div className="tv-tuned-h"><label htmlFor={`${id}-${r.key}`}><b data-settings-copy>{r.label}</b></label><NumberField id={`${id}-${r.key}`} value={r.value} min={r.min} max={r.max} unit={r.unit} disabled={api.pending} onSave={value=>void api.save({knobs:{[r.key]:value}})} />{r.pinned && <span className="tag"><PageGlyph name="pin" size={11} /><span>pinned</span></span>}</div>
+        <p className="tv-tuned-help" data-settings-copy>{TUNED_HELP[r.key]}{isGuardrailSetting(`knobs.${r.key}`) && " Agents in Tavern threads can't change these; only you can."}</p>
         <div className="tv-tuned-f"><span data-setting-changed={r.value !== r.default || undefined}>{r.value === r.default ? "default " : "Changed from "}<b className="num">{formatValue(r.default, r.unit)}</b></span><span>bounds <b className="num">{formatValue(r.min, r.unit)} to {formatValue(r.max, r.unit)}</b></span><span>{r.source === "default" ? "using the default" : <>set by <b>{r.source === "user" ? "you" : WHO[r.source]}</b>{c && <> <TimeAgo at={c.at} /></>}</>}</span></div>
         {c && <p className="tv-tuned-c"><span><SettingAuthor threadId={d.history.find(h => h.id === c.id)?.threadId} by={c.by} label={names(d.history.find(h => h.id === c.id)?.threadId ?? null, {mid:true})} sentenceStart /> changed it from <b className="num">{c.from === null ? "default" : formatValue(c.from, r.unit)}</b> to <b className="num">{c.to === null ? "default" : formatValue(c.to, r.unit)}</b> <TimeAgo at={c.at} />: {c.reason}</span>{c.evidence && <> <button type="button" className="tv-ilink act" onClick={() => navigate.toPluginPanel("tavern", { subPath: "insights" })}>See it in Insights</button></>}</p>}
         {suggestion && <p className="tv-tuned-s"><PageGlyph name="you" size={12} className="tv-mn-you" /><span>Suggested: <b className="num">{formatValue(suggestion.value, r.unit)}</b>. {suggestion.reason}</span></p>}
@@ -677,8 +678,8 @@ export function TunedSection() {
     <AgentLimits title="Ledger and tuner limits" hint="These limits control ledger refresh and the tuner’s evidence. They are not auto-tuned." groups={["knobs", "tuning"]} />
     <h4>Live quest overrides</h4>
     <p className="tv-set-intro">A Keeper’s override ends with its quest and is not exported to TOML.</p>
-    {d.liveOverrides?.length ? <ul className="tv-settings-keys">{d.liveOverrides.map(o => <li className="tv-set-row" key={`${o.questId}:${o.key}`}>
-      <div><b>{o.questTitle}</b><p>{knobLabel(`knobs.${o.key}`)}: {knobValue(`knobs.${o.key}`, o.value)}. {o.applied ? "Set by" : "Not applying; set by"} <button type="button" className="tv-ilink act" onClick={() => navigate.toThread(o.keeperThreadId)}>{o.keeperName}</button>.</p></div>
+    {d.liveOverrides?.length ? <ul className="tv-settings-keys">{d.liveOverrides.map(o => <li className="tv-set-row" key={`${o.questId}:${o.key}`} data-settings-row={`knobs.${o.key}`}>
+      <div><b>{o.questTitle}</b><p><span data-settings-copy>{knobLabel(`knobs.${o.key}`)}</span>: {knobValue(`knobs.${o.key}`, o.value)}. {o.applied ? "Set by" : "Not applying; set by"} <button type="button" className="tv-ilink act" onClick={() => navigate.toThread(o.keeperThreadId)}>{o.keeperName}</button>.</p></div>
       <button type="button" className="btn sm" aria-label={`End ${knobLabel(`knobs.${o.key}`)} override for ${o.questTitle}`} disabled={end.isPending}
         onClick={() => void run(end.mutate({ revision: d.revision, boardQuestId: o.questId, key: o.key }))}>End now</button>
     </li>)}</ul> : <p className="tv-set-intro">No live quest overrides.</p>}
@@ -728,12 +729,12 @@ export function TransferSection() {
   return <Shell api={api}>{(d) => <>
     {d.file.differs && <div className="tv-filediff" role="status"><PageGlyph name="file" /><div><b>Settings file differs</b><p><code>{d.file.path}</code> differs from the current settings{d.file.changedKeys.length ? `: ${d.file.changedKeys.map(settingLabel).join(", ")}` : ""}. Tavern never applies it on its own.</p></div><div className="tv-filediff-a"><button type="button" className="btn sm" disabled={busy} onClick={() => void loadPreview()}><span>Preview load</span></button><button type="button" className="btn sm" disabled={busy} onClick={() => void saveFile(d)}><span>Overwrite the file</span></button></div></div>}
     {d.file.error && <p className="tv-problem" role="alert">The settings file could not be read: {d.file.error}</p>}
-    <div className="tv-set-acts">
-      <button type="button" className="btn sm" disabled={busy} onClick={() => void copy()}><Glyph name="report" size={13} /><span>Copy as TOML</span></button>
-      <button type="button" className="btn sm" aria-expanded={pasting} onClick={() => { setPasting(!pasting); setPreview(null); }}><PageGlyph name="file" size={13} /><span>Import TOML</span></button>
-      <button type="button" className="btn sm" disabled={busy} onClick={() => void saveFile(d)}><span>Save to file</span></button>
-      <button type="button" className="btn sm" disabled={busy || !d.file.exists} onClick={() => void loadPreview()}><span>Load from file</span></button>
-      <label className="tv-set-check"><input type="checkbox" checked={withTuned} onChange={(e) => setWithTuned(e.target.checked)} /><span>Include tuned values</span></label>
+    <div className="tv-set-acts" data-settings-row="">
+      <button type="button" className="btn sm" disabled={busy} onClick={() => void copy()}><Glyph name="report" size={13} /><span data-settings-copy>Copy as TOML</span></button>
+      <button type="button" className="btn sm" aria-expanded={pasting} onClick={() => { setPasting(!pasting); setPreview(null); }}><PageGlyph name="file" size={13} /><span data-settings-copy>Import TOML</span></button>
+      <button type="button" className="btn sm" disabled={busy} onClick={() => void saveFile(d)}><span data-settings-copy>Save to file</span></button>
+      <button type="button" className="btn sm" disabled={busy || !d.file.exists} onClick={() => void loadPreview()}><span data-settings-copy>Load from file</span></button>
+      <label className="tv-set-check"><input type="checkbox" checked={withTuned} onChange={(e) => setWithTuned(e.target.checked)} /><span data-settings-copy>Include tuned values</span></label>
     </div>
     <p className="m small">File: <code>{d.file.path}</code>{d.file.exists ? "" : " (not created yet)"}</p>
     {pasting && <div className="tv-paste"><label htmlFor="tv-toml">Paste TOML</label><textarea id="tv-toml" className="tv-text tv-toml" rows={8} value={toml} spellCheck={false} onChange={(e) => { setToml(e.target.value); if (preview?.source === "paste") setPreview(null); }} /><div className="tv-set-acts"><button type="button" className="btn sm" disabled={busy || !toml.trim()} onClick={() => void check()}><span>Preview changes</span></button></div></div>}
@@ -789,3 +790,14 @@ export const SETTINGS_SECTIONS = [
   { id: "data", title: "Data and backups", intro: "Manage record retention, settings files and backups.", component: DataCards },
   { id: "settings-history", title: "Settings history", intro: "Read what changed and undo changes you do not want.", component: SettingsHistorySection },
 ] as const;
+
+export const settingsGroups = SETTINGS_SECTIONS.map(settingsSection);
+
+export function SettingsPage() {
+  return <SettingsSearch>{settingsGroups.map(({ id, title, component: Section }) =>
+    <section key={id} className="tv-settings-group" aria-labelledby={`tavern-settings-title-${id}`}>
+      <h2 id={`tavern-settings-title-${id}`} className="tv-settings-group-title">{title}</h2>
+      <Section />
+    </section>,
+  )}</SettingsSearch>;
+}

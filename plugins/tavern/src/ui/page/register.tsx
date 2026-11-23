@@ -17,7 +17,7 @@ import { MapSkeleton, PageLoad, QuestSkeleton, RoomSkeleton, RouteSkeleton, SKEL
 import { PanelStateProvider, panelStorageKey, readPanel, rememberPath, useRestoreScroll } from "./panel-state";
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { InsightsPage, settingsHref } from "./insights";
-import { SETTINGS_SECTIONS, settingsSection } from "./settings";
+import { SettingsPage } from "./settings";
 import { QuestPage, ReturnedList } from "./quest";
 import { TalePage } from "./tale";
 import { CommonRoom } from "./room";
@@ -281,5 +281,5 @@ export function registerPageSurfaces(app: PluginAppBuilder) {
   app.slots.experimental_tab({ ...CLASS_EDIT_TAB, title: "Edit class", icon: "FilePen", layout: "flush", component: ClassEditTab });
   app.slots.experimental_tab({ ...REPORTS_TAB, title: "Reports", icon: "FileText", layout: "flush", component: ReportsTab });
   app.slots.homepageSection({ id: "tavern", title: "Tavern", component: TavernHomepage });
-  for (const section of SETTINGS_SECTIONS) app.slots.settingsSection(settingsSection(section));
+  app.slots.settingsSection({ id: "settings", component: SettingsPage });
 }

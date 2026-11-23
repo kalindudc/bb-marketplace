@@ -122,8 +122,8 @@ export function BackupSection() {
       <label className="tv-set-check"><input type="checkbox" checked={projects} onChange={(e) => setProjects(e.target.checked)} /><span>Each project's .agents/tavern folder</span></label></span>
     </div>
     <div className="tv-set-acts">
-      <button type="button" className="btn sm pri" disabled={busy} onClick={() => void onSave()}><PageGlyph name="archive" size={13} /><span>Save backup now</span></button>
-      <button type="button" className="btn sm" disabled={busy || overLimit} aria-describedby={overLimit ? `${ids}-limit` : undefined} onClick={() => void onExport()}><PageGlyph name="export" size={13} /><span>Download backup (JSON)</span></button>
+      <button type="button" className="btn sm pri" data-settings-row="" disabled={busy} onClick={() => void onSave()}><PageGlyph name="archive" size={13} /><span data-settings-copy>Save backup now</span></button>
+      <button type="button" className="btn sm" data-settings-row="" disabled={busy || overLimit} aria-describedby={overLimit ? `${ids}-limit` : undefined} onClick={() => void onExport()}><PageGlyph name="export" size={13} /><span data-settings-copy>Download backup (JSON)</span></button>
     </div>
     {overLimit && <p id={`${ids}-limit`} className="tv-holdnote" role="status"><PageGlyph name="note" /><span>{tooLarge(d.dataBytes!, d.exportLimitBytes)}</span></p>}
     {receipt && <p className="tv-receipt" role="status"><Glyph name="check" size={14} className="tv-g" /><span>{receipt}</span></p>}
@@ -161,9 +161,9 @@ function KeepField({ fallback }: { fallback: number }) {
   if (!api.data) return <span className="m small">{fallback === 0 ? "keeps every backup" : `keeps the newest ${fallback}`}</span>;
   const keep = api.data.effective.data.backupKeep;
   return <div className="tv-bk-keep" data-setting-keys="data.backupKeep">
-    <label htmlFor={id} className="m small">Keep the newest</label>
+    <label htmlFor={id} className="m small" data-settings-copy>Keep the newest</label>
     <NumberField id={id} value={keep} min={0} max={365} unit={keep === 1 ? "backup" : "backups"} disabled={api.pending} onSave={(v) => void api.save({ data: { backupKeep: v } })} />
-    <span className="m small">0 keeps every backup</span>
+    <span className="m small" data-settings-copy>0 keeps every backup</span>
     <SettingDefault setting="data.backupKeep" api={api} />
     {api.note && <span className="tv-problem" role="alert">{api.note}</span>}
   </div>;

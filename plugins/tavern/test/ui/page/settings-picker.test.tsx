@@ -1,5 +1,4 @@
-import { definePluginApp } from "@get-bb/plugin-sdk/app";
-import { loadPluginApp, renderSlot, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
+import { renderSlot, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
 import { act, fireEvent, waitFor, within } from "@testing-library/react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -8,7 +7,7 @@ import { settingsContract } from "../../../src/shared/settings";
 import { rpcContract } from "../../../src/shared/contract";
 import { settingsView } from "../../../src/ui/page/fixtures-insights";
 import { registry } from "../../../src/ui/page/fixtures";
-import { registerPageSurfaces } from "../../../src/ui/page/register";
+import { ClassesSection } from "../../../src/ui/page/settings";
 
 const picker = vi.hoisted(() => ({ correct: () => {}, mounts: 0 }));
 vi.mock("@get-bb/plugin-sdk/app", async importOriginal => ({
@@ -41,8 +40,7 @@ async function setup(update = vi.fn(async (_input: unknown) => ({ code: "ok", re
   const view = structuredClone(settingsView);
   for (const c of registry.classes) view.effective.classes[c.id] = { provider: "codex", model: "old-model", reasoning: "high" };
   if (fromFile) view.effective.classes.keeper = {};
-  const app = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
-  const slot = renderSlot(app.settingsSections.find(s => s.id === "classes")!, {}, {
+  const slot = renderSlot({ component: ClassesSection }, {}, {
     pluginId: "tavern", experimental_rpcContract: { ...rpcContract, ...settingsContract },
     rpc: { registry: () => registry, settings: () => view, settingsUpdate: update },
     providers: { status: "ready", providers: [{ id: "codex", displayName: "Codex", available: true }] as never },
