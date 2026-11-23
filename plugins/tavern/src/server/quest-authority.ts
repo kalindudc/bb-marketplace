@@ -133,7 +133,7 @@ export class QuestAuthority {
     let optionId: string | null = null;
     if (ask.kind === "greenlight" && ask.effect?.type === "greenlight" && !ask.effect.requiresExplicit && grant.greenlight) {
       const plan = k.store.get("plans", `${q.id}:${ask.effect.planVersion}`), envelope = grant.greenlight;
-      if (plan && !plan.party.some(slot => slot.leadEnvelope) && !k.store.leadLinksBy("childQuestId", q.id).length && plan.version === q.planVersion && plan.reversible && !(plan.alwaysAskKinds?.length ?? 0) && !plan.questions.length && this.routinePlan(plan) && plan.party.length <= envelope.maxMembers && plan.party.every(s => envelope.classes.includes(s.classId))) optionId = "approve";
+      if (plan && !plan.party.some(slot => slot.leadEnvelope || slot.permanent) && !k.store.leadLinksBy("childQuestId", q.id).length && plan.version === q.planVersion && plan.reversible && !(plan.alwaysAskKinds?.length ?? 0) && !plan.questions.length && this.routinePlan(plan) && plan.party.length <= envelope.maxMembers && plan.party.every(s => envelope.classes.includes(s.classId))) optionId = "approve";
     } else if (ask.kind === "blocker" && ask.effect?.type === "placement-blocker" && grant.placement) optionId = grant.retriesUsed === 0 ? "retry" : "stop";
     else if (ask.kind === "conclude" && ask.effect?.type === "conclude" && !ask.effect.draft.lead && grant.conclude && !ask.effect.draft.skipped?.length && !ask.effect.draft.pullRequests?.length && !k.store.openPullRequests(q.id).length) {
       const summary = k.summary(q.id);

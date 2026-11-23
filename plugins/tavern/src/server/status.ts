@@ -2,7 +2,7 @@ import { briefProgress, memberDetails, memberHost, releasedThreadOpen } from "./
 import type { MemberBriefRow } from "../shared/contract";
 import { memberActivityWord, wasReleased } from "../shared/member-engagement";
 import { z } from "zod";
-import { restingParty } from "./resting";
+import { restingParty, showInFreeHands } from "./resting";
 import { agentData } from "./agent-data";
 import type { TavernRuntime } from "./runtime";
 import { readRequestSources } from "./request-sources";
@@ -296,7 +296,7 @@ function statusData(
     memberBriefs: memberBriefRows(k, threadId, input.boardQuestId ?? undefined, input.memberThreadId ?? undefined),
     rangerCheckpoints: rangerCheckpointRows(k, threadId, input.boardQuestId, input.memberThreadId),
     unreviewedMemory: runtime.memory.unreviewedFor(threadId, 0, 3),
-    freeHands: resting.filter(m => m.mayRebriefFor !== null || m.machineLost || m.needsCleanup).map(m => m.machineLost ? { ...m, unavailable: "machine lost: can't take new work; release it" } : m),
+    freeHands: resting.filter(showInFreeHands).map(m => m.machineLost ? { ...m, unavailable: "machine lost: can't take new work; release it" } : m),
     restingMembers: resting.filter(m => m.settled),
     releasedNotArchived, nextReleasedNotArchivedOffset,
     quests: (input.boardQuestId

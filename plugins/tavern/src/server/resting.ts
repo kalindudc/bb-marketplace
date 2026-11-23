@@ -64,8 +64,9 @@ export function restingMember(k: Keeper, member: Member, context = restingContex
   const machineLost = isMemberMachineGone(placement);
   const restedMinutes = Math.max(0, Math.floor((k.now() - engagement.since) / 60_000));
   const waypoints = member.boardQuestId ? context.waypoints(member.boardQuestId) : [];
-  const needsCleanup = restedMinutes >= k.settings(member.boardQuestId).keepers.restMinutes || (waypoints.length > 0 && waypoints.every(settled));
-  return { threadId: member.threadId, name: k.name(member), classId: member.classId, boardQuestId: member.boardQuestId, quest, ...engagement,
+  const permanent = !!member.permanent;
+  const needsCleanup = !permanent && (restedMinutes >= k.settings(member.boardQuestId).keepers.restMinutes || (waypoints.length > 0 && waypoints.every(settled)));
+  return { threadId: member.threadId, name: k.name(member), classId: member.classId, boardQuestId: member.boardQuestId, quest, permanent, ...engagement,
     settled: !engagement.underReview && workSettled, kept, restedMinutes, needsCleanup,
     machineHeld: placement !== null && !machineLost, machineLost, mayRebriefFor: machineLost ? null : reuseRule(member.classId, engagement, quest) };
 }
@@ -75,6 +76,9 @@ export function restingParty(k: Keeper, keeperId: string, context = restingConte
     return row ? [row] : [];
   });
 }
+export function showInFreeHands(row: NonNullable<ReturnType<typeof restingMember>>) {
+  return row.machineLost || !row.permanent && (row.mayRebriefFor !== null || row.needsCleanup);
+}
 export function freeHands(k: Keeper, keeperId: string, context?: ReturnType<typeof restingContext>) {
-  return restingParty(k, keeperId, context).filter(member => member.mayRebriefFor !== null);
+  return restingParty(k, keeperId, context).filter(member => !member.permanent && member.mayRebriefFor !== null);
 }

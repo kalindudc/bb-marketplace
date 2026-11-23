@@ -32,7 +32,7 @@ const s = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 export type ClosePlan = {
   /** `text` is the whole line; `detail` is the same without the quest's name, for a row that shows the name itself. */
-  quests: { id: string; short: string; title: string; choice: EndChoice; text: string; detail: string }[];
+  quests: { id: string; short: string; title: string; choice: EndChoice; text: string; detail: string; exemption: string | null }[];
   /** The whole-tavern watched line, only when the server gives no per-quest counts and some member is watched. */
   watchedTotal: string | null;
   /** Errands that belong to no quest: they always pause, with the server's watched count for them. Null when there are none. */
@@ -54,9 +54,10 @@ export type ClosePlan = {
  * The server's eligibleByQuest and soloCount are the members and solos Close acts on, so they win over counting the room's member states,
  * which can't see a released, archived or deleted member. Without them (an older server) the page counts states, as before.
  */
-export function closePlan(room: Room, control: Pick<AwayControl, "watchedCount" | "watchedByQuest" | "eligibleByQuest" | "soloCount"> | null | undefined, input: { choices: Record<string, EndChoice>; allowWatched: boolean; wakeRules: { blockers: boolean; productionAsksAfterTwoHours: boolean }; defaultEndState?: EndChoice; productionWakeHours?: number }): ClosePlan {
+export function closePlan(room: Room, control: Pick<AwayControl, "watchedCount" | "watchedByQuest" | "eligibleByQuest" | "exemptByQuest" | "soloCount"> | null | undefined, input: { choices: Record<string, EndChoice>; allowWatched: boolean; wakeRules: { blockers: boolean; productionAsksAfterTwoHours: boolean }; defaultEndState?: EndChoice; productionWakeHours?: number }): ClosePlan {
   const byQuest = control?.watchedByQuest;
   const eligible = control?.eligibleByQuest;
+  const exemptions = new Map(control?.exemptByQuest?.map(row => [row.questId, row.members]));
   const watchedIn = (questId: string | null) => (byQuest ? byQuest.find((w) => w.questId === questId)?.watchedCount ?? 0 : null);
   /** The server's count for one quest (null: errands that belong to no quest). A missing row is 0; `errands` is the side-quest subset when the server splits it. */
   const eligibleIn = (questId: string | null) => { const row = eligible?.find((r) => r.questId === questId) as (NonNullable<typeof eligible>[number] & { errands?: number }) | undefined; return { members: row?.members ?? 0, watched: row?.watchedCount ?? 0, errands: row?.errands ?? null }; };
@@ -66,8 +67,13 @@ export function closePlan(room: Room, control: Pick<AwayControl, "watchedCount" 
     const choice = input.choices[q.id] ?? input.defaultEndState ?? "drafts-ready";
     const row = eligible ? eligibleIn(q.id) : null;
     const counts = row ? { members: row.members - (row.errands ?? 0), watched: row.watched } : { members: q.members.filter((m) => m.role === "member" && !m.errand && inPlay(m)).length, watched: watchedIn(q.id) ?? 0 };
-    const detail = questLine(choice, counts, input.allowWatched);
-    return { id: q.id, short: q.short || q.title, title: q.title, choice, detail, text: `${q.short || q.title}: ${detail}` };
+    const exempt = choice === "pause" ? exemptions.get(q.id) ?? 0 : 0;
+    const exemption = exempt ? exemptionWords(exempt) : null;
+    const members = Math.max(0, counts.members - exempt);
+    const detail = exemption
+      ? `${members ? questLine(choice, { ...counts, members }, input.allowWatched) + " " : "Paused. "}${exemption}`
+      : questLine(choice, counts, input.allowWatched);
+    return { id: q.id, short: q.short || q.title, title: q.title, choice, detail, exemption, text: `${q.short || q.title}: ${detail}` };
   });
   const paused = new Set(quests.filter((q) => q.choice !== "drafts-ready").map((q) => q.id));
   const attached = errands.filter((m) => !!m.boardQuestId && paused.has(m.boardQuestId));
@@ -83,13 +89,16 @@ export function closePlan(room: Room, control: Pick<AwayControl, "watchedCount" 
     quests,
     watchedTotal: byQuest || eligible || !control || !control.watchedCount ? null : `${plural(control.watchedCount, "watched member")} ${input.allowWatched ? s(control.watchedCount, "keeps drafting, watched", "keep drafting, watched") : s(control.watchedCount, "holds", "hold")} across all quests.`,
     unattached: looseCount ? `Errands that belong to no quest pause: ${looseCount}${looseWatched ? `, ${looseWatched} of them watched` : ""}.` : null,
-    sideQuests: { text: SIDE_QUESTS_LINE, pausing, shown: pausing === null ? attached.length > 0 : pausing > 0 },
+    sideQuests: { text: quests.some(q => q.exemption) ? "Side quests follow their quest. Only side quests with their own guarded exemption can keep working under Pause." : SIDE_QUESTS_LINE,
+      pausing, shown: pausing === null ? attached.length > 0 : pausing > 0 },
     solos: { text: SOLOS_LINE, running: solos },
     asks: open ? `${plural(open, "ask")} ${s(open, "waits", "wait")} for you. ${wakes}` : null,
     stopping: stopping ? `${plural(stopping, "quest")} ${s(stopping, "is", "are")} still stopping; Tavern keeps retrying while you’re away.` : null,
     nothingRunning: !quests.length && !looseCount && !attached.length && !solos && !open && !stopping,
   };
 }
+
+const exemptionWords = (n: number) => `${plural(n, "exempt member")} ${s(n, "keeps", "keep")} working where the guard holds.`;
 
 /** A quest's line without its name: what its choice does to the members Close acts on (`watched` is their watched subset). */
 function questLine(choice: EndChoice, counts: { members: number; watched: number }, allowWatched: boolean): string {
@@ -286,6 +295,12 @@ export function AwayForm({ room, registry }: { room: Room; registry: Registry })
     <header className="tv-form-h"><PageGlyph name="lantern" size={18} /><h2 id={`${id}-h`}><Vocabulary word="closing" /></h2></header>
     <p><b><ClosedWords away={away} /></b>{control.data?.window?.note ? <> · <span data-content>“{control.data.window.note}”</span></> : null}</p>
     {control.data?.window && <p>{windowStopWords(control.data.window)}</p>}
+    {!!control.data?.exemptByQuest?.length && <ul aria-label="Paused quests with exemptions">
+      {control.data.exemptByQuest.map(({ questId, members }) => {
+        const quest = live.find(q => q.id === questId);
+        return quest && <li key={questId}><b>{quest.short || quest.title}:</b> {exemptionWords(members)}</li>;
+      })}
+    </ul>}
     <AwayNotes room={room} registry={registry} control={control.data} />
     <p className="m small">{REOPEN_LINE}</p>
     <footer className="tv-formf"><ReturnButton room={room} registry={registry} action={ret} /></footer>
@@ -317,8 +332,9 @@ export function AwayForm({ room, registry }: { room: Room; registry: Registry })
       <label className="tv-field wide" htmlFor={`${id}-note`}>Note to the Keepers <span className="m">{note.length} of 500</span><textarea className="tv-inp" id={`${id}-note`} rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} /></label>
     </fieldset>
     {badTime && <p id={`${id}-backerr`} className="tv-problem" role="alert">Back at has to be later than now.</p>}
-    {live.map((q) => <fieldset key={q.id} className="opts tv-grpbox" disabled={close.isPending}><legend title={q.title}>{q.short || q.title}</legend>
-      {CHOICES.map((c) => <label className="opt" key={c.id}><input type="radio" name={`${id}-end-${q.id}`} checked={(choices[q.id] ?? defaults.defaultEndState) === c.id} onChange={() => setChoices((prev) => ({ ...prev, [q.id]: c.id }))} /><span className="ol"><b>{c.label}</b><span className="m"> · {c.hint}</span></span></label>)}
+    {plan.quests.map(q => <fieldset key={q.id} className="opts tv-grpbox" disabled={close.isPending}><legend title={q.title}>{q.short}</legend>
+      {CHOICES.map(c => <label className="opt" key={c.id}><input type="radio" name={`${id}-end-${q.id}`} checked={q.choice === c.id} onChange={() => setChoices(prev => ({ ...prev, [q.id]: c.id }))} /><span className="ol"><b>{c.label}</b><span className="m"> · {c.id === "pause" && q.exemption ? "other members stop and wait" : c.hint}</span></span></label>)}
+      {q.exemption && <p className="m small">{q.exemption}</p>}
     </fieldset>)}
     {!live.length && <p className="tv-empty" data-empty>No live quests: nothing would keep going while you are away.</p>}
     <fieldset className="tv-grpbox" disabled={close.isPending}><legend>Watched members</legend>

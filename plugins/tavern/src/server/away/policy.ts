@@ -22,11 +22,14 @@ export function awayReturnFromDispatch(window: AwayWindow | null, ctx: MessageDi
 
 export type AwayExecutionPolicy = { mode: "open" | "guarded" | "watched"; reason: null }
   | { mode: "held"; reason: "paused" | "not-pinned" | "not-prevented" };
-export function awayExecutionPolicy(window: AwayWindow | null, questId: string | null, prevention: boolean): AwayExecutionPolicy {
+export function awayExecutionPolicy(window: AwayWindow | null, questId: string | null, prevention: boolean, pauseExempt = false): AwayExecutionPolicy {
   if (window === null || window.returnedAt !== null) return { mode: "open", reason: null };
   const quest = window.quests.find(item => item.questId === questId);
   if (quest === undefined) return { mode: "held", reason: "not-pinned" };
-  if (quest.endState === "pause") return { mode: "held", reason: "paused" };
+  if (quest.endState === "pause") {
+    if (!pauseExempt) return { mode: "held", reason: "paused" };
+    return prevention ? { mode: "guarded", reason: null } : { mode: "held", reason: "not-prevented" };
+  }
   if (prevention || window.stopList.length === 0) return { mode: "guarded", reason: null };
   return window.allowWatched ? { mode: "watched", reason: null } : { mode: "held", reason: "not-prevented" };
 }

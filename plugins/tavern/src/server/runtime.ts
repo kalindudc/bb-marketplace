@@ -64,7 +64,7 @@ import { captureRequestSources, requestSourcePacket } from "./request-sources";
 import { isHireCancelled, recoverHires, rejectedSpawn, releaseHire, settleCancelledHire } from "./hires";
 import { BackendScopes, type BackendScopeOptions } from "./scopes";
 import type { ProjectContext, ScopeOverride } from "../scope";
-import type { Ask } from "../shared/schema";
+import type { Ask, BoardQuest } from "../shared/schema";
 import { DEFAULT_SETTINGS, type TavernSettings, type SparseTunables } from "../shared/settings";
 import type { SettingsStore } from "./settings/store";
 import type { InsightsReader } from "./insights/index";
@@ -384,7 +384,11 @@ export class TavernRuntime {
   async undoDecision(id: string, receipt?: UserActReceipt) {
     const approval = this.keeper.store.get("autoGreenlights", id), decision = this.keeper.store.get("decisions", id);
     if (decision?.pullRequestReady) return undoPullRequestReady(this, decision, receipt);
-    if (!approval || !decision) { commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => this.keeper.undoDecision(id)); return; }
+    if (!approval || !decision) {
+      commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => this.keeper.undoDecision(id));
+      if (decision?.permanentChange && !decision.undone && this.away.cleanupHeld()) await this.away.sweep();
+      return;
+    }
     const release = commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => {
       const before = this.keeper.quest(approval.boardQuestId);
       this.keeper.undoDecision(id);
@@ -2052,7 +2056,20 @@ export class TavernRuntime {
     const hirePlan = q ? this.keeper.summary(q.id).plan : null;
     if (hirePlan) { validatePartyCharacters(hirePlan, snapshot); validateCheckerMakers(hirePlan, this.keeper.store.all("members").filter(member => member.boardQuestId === q?.id), threadId); }
     const occupied = [...party.filter(member => member.boardQuestId === questId), ...reserved.filter(intent => intent.owner.boardQuestId === questId).map(intent => ({ classId: intent.classId, characterId: intent.characterId, waypointId: intent.owner.waypointId }))];
+    const greenlitParty = (quest: BoardQuest) => quest.greenlitVersion === null
+      ? undefined : this.keeper.store.get("plans", `${quest.id}:${quest.greenlitVersion}`)?.party;
+    const greenlitPermanent = new Set(q ? greenlitParty(this.keeper.quest(q.id))?.flatMap(slot => slot.permanent?.decisionId ?? []) : []);
+    const occupiedPermanent = (pending: HireIntent[]) => new Set([
+      ...pending.map(intent => intent.permanent?.decisionId),
+      ...(hirePlan?.party.some(slot => slot.permanent) && questId
+        ? this.keeper.store.query("members", "boardQuestId", questId, -1)
+          .filter(member => isLiveMember(this.keeper.store, member, "brief"))
+          .map(member => member.permanent?.decisionId)
+        : []),
+    ]);
+    const permanentSeats = occupiedPermanent(reserved);
     const slot = hirePlan?.party.find(slot => slot.classId === role!.id &&
+      (!slot.permanent?.decisionId || !greenlitPermanent.has(slot.permanent.decisionId) || !permanentSeats.has(slot.permanent.decisionId)) &&
       (!input.waypointId || slot.waypointIds.includes(input.waypointId) || role.id === "warden" && slot.waypointIds.length === 0) &&
       !occupied.some(member => member.classId === slot.classId && (slot.characterId ? member.characterId === slot.characterId : !!member.waypointId && slot.waypointIds.includes(member.waypointId))));
     const reviewMaker = reviewTarget?.makerThreadId;
@@ -2125,7 +2142,11 @@ export class TavernRuntime {
       brief += `\nTrusted journal review target:\n${JSON.stringify(reviewTarget, null, 2)}\n${recordsSubject ? "Check the exact subject recorded by the Keeper. Verify or reject these entries in the Keeper's journal, not your own." : "Verify or reject these entry ids in the maker's thread, not in your own journal."} Keep the waypoint and target thread identifiers with your evidence.`;
     owner.assignmentText = brief;
     brief += `\n\n${requestSourcePacket(this.keeper, requestSources)}`;
+    const mark = slot?.permanent;
+    const plannedPermanent = !errand && mark?.decisionId && greenlitPermanent.has(mark.decisionId)
+      ? { why: mark.why, decisionId: mark.decisionId } : undefined;
     const intent: HireIntent = {
+      ...(plannedPermanent ? { permanent: plannedPermanent } : {}),
       initialInput: brief,
       scopeResolution,
       scopeOverride: input.scope,
@@ -2151,7 +2172,14 @@ export class TavernRuntime {
     if (questId) await this.spend.assert(questId);
     const displayName = this.keeper.store.atomic(() => {
       if (this.spend.held(questId)) throw new Error("The quest reached its spend budget. Only you can raise or remove it on the quest page.");
-      limitDecisionIds.push(...checkStaffing().permits);
+      const staffing = checkStaffing();
+      if (plannedPermanent && q) {
+        const current = this.keeper.quest(q.id);
+        if (current.planVersion !== hirePlan?.version || !greenlitParty(current)?.some(slot => slot.permanent?.decisionId === plannedPermanent.decisionId) ||
+            occupiedPermanent(staffing.reserved).has(plannedPermanent.decisionId))
+          throw new Error("The permanent slot changed before this hire was reserved; retry.");
+      }
+      limitDecisionIds.push(...staffing.permits);
       if (reviewAllowance && questId) limits.claimReview(questId, token);
       for (const id of limitDecisionIds) limits.claimSoft(id, token);
       if (q && staffingCapacity !== null) {
@@ -2454,18 +2482,43 @@ export class TavernRuntime {
       throw new Error(memberDetails(this.keeper.store, threadId).operation?.error ?? "Cancelled hire preservation remains pending");
     }
   }
-  keep(threadId: string, reference: string, until: number, why: string) {
+  keep(threadId: string, reference: string, until: number | undefined, why: string, permanent = false, closingExempt = false) {
     this.stopAll.assertRunning();
     this.keeper.require(threadId, "keeper");
     const member = this.keeper.resolvePartyMember(threadId, reference);
     if (!member.boardQuestId) throw new Error("Keep needs an active quest");
     this.keeper.liveQuest(threadId, member.boardQuestId);
     this.keeper.assertQuestNotHeld(member.boardQuestId);
+    why = why.trim();
+    if (!why) throw new Error("Keep needs a reason");
+    this.keeper.guard(threadId, member.boardQuestId);
+    if (permanent) {
+      if (until !== undefined) throw new Error("A permanent keep does not take a deadline");
+      if (!isLiveMember(this.keeper.store, member, "brief")) throw new Error("Only a live party member can be made permanent");
+      const currentMark = member.permanent;
+      if (closingExempt && !currentMark) throw new Error("Make this member permanent first, then record the Closing time exemption");
+      if (closingExempt ? currentMark?.closingExemption : currentMark)
+        throw new Error(closingExempt ? "This member already has a Closing time exemption" : "This member is already permanent");
+      return this.keeper.store.atomic(() => {
+        const decision = this.keeper.decide(threadId, {
+          boardQuestId: member.boardQuestId,
+          text: closingExempt ? `Exempt ${this.keeper.name(member)} from the Closing time pause (guard still required)` : `Keep ${this.keeper.name(member)} as a permanent member`,
+          why, reversible: true, source: "keeper",
+        }, undefined, { permanentChange: { memberThreadId: member.threadId, ...(closingExempt ? { closing: true as const } : {}) } });
+        authorize("keepMember", { level: "keeper", receipt: decision.id });
+        const mark = { why: decision.why, decisionId: decision.id };
+        this.keeper.store.put("members", member.threadId, {
+          ...member,
+          permanent: closingExempt && currentMark ? { ...currentMark, closingExemption: mark } : mark,
+        });
+        this.keeper.changed(member.threadId, member.boardQuestId);
+        return decision;
+      });
+    }
+    if (closingExempt) throw new Error("Only a permanent member can be exempt from the Closing time pause");
     if (!restingEngagement(this.keeper, member)) throw new Error("Only a resting member can be kept");
     const maxHours = this.config().keepers.keepMaxHours;
-    if (!Number.isSafeInteger(until) || until <= this.keeper.now() || until > this.keeper.now() + maxHours * 60 * 60_000) throw new Error(`Keep needs a future time within ${maxHours} hours`);
-    if (!why.trim()) throw new Error("Keep needs a reason");
-    this.keeper.guard(threadId, member.boardQuestId);
+    if (until === undefined || !Number.isSafeInteger(until) || until <= this.keeper.now() || until > this.keeper.now() + maxHours * 60 * 60_000) throw new Error(`Keep needs a future time within ${maxHours} hours`);
     return this.keeper.store.atomic(() => {
       const decision = this.keeper.decide(threadId, { boardQuestId: member.boardQuestId, text: `Keep ${this.keeper.name(member)} until ${localClock(until)}`, why, reversible: true, source: "keeper" });
       authorize("keepMember", { level: "keeper", receipt: decision.id });

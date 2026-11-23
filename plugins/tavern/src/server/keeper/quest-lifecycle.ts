@@ -43,10 +43,12 @@ export function partyCounts(plan: Plan): Map<string, number> {
 export function partyFits(plan: Plan, approved: Plan) {
   const capacity = partyCounts(approved);
   return [...partyCounts(plan)].every(([classId, count]) => count <= (capacity.get(classId) ?? 0)) &&
-    plan.party.every(({ leadEnvelope, classId, waypointIds }) => !leadEnvelope || approved.party.some(previous =>
-      previous.classId === classId && previous.waypointIds[0] === waypointIds[0] &&
-      previous.leadEnvelope && previous.leadEnvelope.members >= leadEnvelope.members &&
-      previous.leadEnvelope.rangers >= leadEnvelope.rangers && previous.leadEnvelope.depth >= leadEnvelope.depth));
+    plan.party.every(({ permanent, leadEnvelope, classId, waypointIds }) =>
+      (!permanent || !!permanent.decisionId && approved.party.some(slot => slot.permanent?.decisionId === permanent.decisionId)) &&
+      (!leadEnvelope || approved.party.some(previous =>
+        previous.classId === classId && previous.waypointIds[0] === waypointIds[0] &&
+        previous.leadEnvelope && previous.leadEnvelope.members >= leadEnvelope.members &&
+        previous.leadEnvelope.rangers >= leadEnvelope.rangers && previous.leadEnvelope.depth >= leadEnvelope.depth)));
 }
 export function checksFit(plan: Plan, approved: Plan, earlier: Plan | null = null, isSettled: (waypointId: string) => boolean = () => false) {
   const strength = { none: 0, keeper: 1, you: 2, warden: 3 };

@@ -133,6 +133,7 @@ export interface ReviewTarget {
   waypointFingerprint?: string;
 }
 export interface HireIntent {
+  permanent?: Member["permanent"];
   placementExecution?: { target: import("../../shared/placement-settings").PlacementRule["target"]; providerId: string; model?: string };
   classDefinition?: import("../../shared/schema").ClassDef;
   leadLinkId?: string;

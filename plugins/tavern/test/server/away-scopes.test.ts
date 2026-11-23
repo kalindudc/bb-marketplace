@@ -34,6 +34,106 @@ async function fixture() {
   return { ...f, root, work, q, input, close, stop };
 }
 describe("Closing time local scope integration", () => {
+  it("keeps an exempt permanent member working and receiving briefs without relaxing any closing acts", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    f.runtime.keep("lead", "child", undefined, "Ongoing watch", true);
+    const exemption = f.runtime.keep("lead", "child", undefined, "Watch overnight", true, true);
+    expect(f.runtime.away.snapshot().exemptByQuest).toEqual([{ questId: f.q.id, members: 1 }]);
+    const result = await f.runtime.away.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: f.q.id, endState: "pause" }] });
+    expect(result.state).toMatchObject({ heldCount: 0, eligibleByQuest: [{ questId: f.q.id, members: 0, watchedCount: 0 }],
+      exemptByQuest: [{ questId: f.q.id, members: 1 }] });
+    expect(f.stop).not.toHaveBeenCalled();
+    expect(f.runtime.away.blocked("child")).toBe(false);
+    await expect(f.runtime.away.dispatch(dispatch049({ threadId: "child", status: "idle", pluginId: "tavern" }))).resolves.toBeNull();
+    await expect(f.runtime.tell("lead", "child", "Keep watching")).resolves.toMatchObject({ status: "delivered" });
+    const scope = f.runtime.scopes!.view("child")!.scope!;
+    expect(hasAwayDenials(scope, result.state.window!)).toBe(true);
+    for (const [command, ruleId] of [["gh pr merge 1", /^closing-act$/], ["mail recipient@example.test", /^send-guard$/], ["fly deploy", /^away:.*:deploy$/]] as const)
+      expect(evaluate(scope, { kind: "bash", toolName: "bash", input: { command }, cwd: f.work })).toMatchObject({ allow: false, ruleId: expect.stringMatching(ruleId) });
+    await f.runtime.undoDecision(exemption.id);
+    expect(f.k.member("child")?.permanent?.closingExemption).toBeUndefined();
+    expect(f.k.member("child")?.permanent).toBeDefined();
+    expect(f.runtime.away.blocked("child")).toBe(true);
+    expect(f.stop).toHaveBeenCalledExactlyOnceWith({ threadId: "child" });
+  });
+
+  it("holds a left-out quest even if its permanent member is exempt, guarded and watched work is allowed", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    f.runtime.keep("lead", "child", undefined, "Ongoing watch", true);
+    f.runtime.keep("lead", "child", undefined, "Watch overnight", true, true);
+    const other = await seedQuest(f.k, "lead", "Other quest", "Other");
+    const result = await f.runtime.away.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: other.id, endState: "pause" }], allowWatched: true });
+    expect(f.runtime.away.blocked("child")).toBe(true);
+    expect(f.stop).toHaveBeenCalledExactlyOnceWith({ threadId: "child" });
+    expect(result.state).toMatchObject({ heldCount: 1, eligibleByQuest: [{ questId: f.q.id, members: 1, watchedCount: 0 }], exemptByQuest: [] });
+  });
+
+  it.each(["non-exempt", "no-guard"] as const)("still pauses a %s permanent member", async mode => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    f.runtime.keep("lead", "child", undefined, "Ongoing watch", true);
+    if (mode === "no-guard") f.runtime.keep("lead", "child", undefined, "Watch overnight", true, true);
+    if (mode === "no-guard") rmSync(f.runtime.scopes!.api.status().guard.file);
+    await f.runtime.away.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: f.q.id, endState: "pause" }] });
+    expect(f.runtime.away.blocked("child")).toBe(true);
+    expect(f.stop).toHaveBeenCalledExactlyOnceWith({ threadId: "child" });
+  });
+
+  it("keeps the Ranger-only greenlight shortcut for ordinary slots, not permanent ones", async () => {
+    const f = await fixture();
+    const q = await seedQuest(f.k, "lead", "Watch the signal", "Watch");
+    const input = planInput(q.id);
+    const slot = { classId: "ranger", characterId: null, model: null, purpose: "Watch", waypointIds: ["w1"] };
+    f.k.plan("lead", { ...input, party: [slot] });
+    expect(f.k.quest(q.id).phase).toBe("build");
+    f.k.plan("lead", { ...input, party: [{ ...slot, permanent: { why: "Ongoing watch" } }] });
+    expect(f.k.quest(q.id).phase).toBe("greenlight");
+    expect(f.k.store.openAsks("lead", q.id)).toContainEqual(expect.objectContaining({ kind: "greenlight" }));
+  });
+
+  it("hires into an already approved seat without inheriting an unapproved permanent mark", async () => {
+    const f = await fixture();
+    const initial = f.k.summary(f.q.id).plan!;
+    f.k.plan("lead", { ...initial, fromSteer: null, party: [{ ...initial.party[0]!, permanent: { why: "Daily checks" } }] });
+    expect(f.k.quest(f.q.id)).toMatchObject({ phase: "greenlight", greenlitVersion: initial.version });
+    await f.runtime.hire("lead", "project", f.input);
+    expect(f.k.member("child")?.permanent).toBeUndefined();
+  });
+
+  it("rechecks the permanent mark inside the reservation after a concurrent Undo", async () => {
+    const f = await fixture();
+    const initial = f.k.summary(f.q.id).plan!;
+    const proposed = f.k.plan("lead", { ...initial, fromSteer: null, party: [{ ...initial.party[0]!, permanent: { why: "Daily checks" } }] });
+    f.k.answerAsk(f.k.store.openAsks("lead", f.q.id)[0]!.id, "approve", null, "page", "user");
+    const decisionId = proposed.party[0]!.permanent!.decisionId!;
+    const assert = f.runtime.spend.assert.bind(f.runtime.spend);
+    vi.spyOn(f.runtime.spend, "assert").mockImplementationOnce(assert).mockImplementationOnce(async id => {
+      await assert(id);
+      await f.runtime.undoDecision(decisionId);
+    });
+    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow(/permanent slot changed/);
+    expect(f.k.member("child")?.permanent).toBeUndefined();
+    expect(f.k.store.all("hires").every(intent => !intent.permanent)).toBe(true);
+  });
+
+  it("requires greenlight for a new permanent slot, inherits it on hire and clears it from both on Undo", async () => {
+    const f = await fixture();
+    const initial = f.k.summary(f.q.id).plan!;
+    const permanent = { why: "Daily checks" };
+    f.k.plan("lead", { ...initial, fromSteer: null, party: [{ ...initial.party[0]!, permanent }] });
+    expect(f.k.quest(f.q.id).phase).toBe("greenlight");
+    f.k.answerAsk(f.k.store.openAsks("lead", f.q.id)[0]!.id, "approve", null, "page", "user");
+    const planned = f.k.summary(f.q.id).plan!.party[0]!.permanent!;
+    expect(planned).toMatchObject(permanent);
+    await f.runtime.hire("lead", "project", f.input);
+    expect(f.k.member("child")?.permanent).toEqual(planned);
+    await f.runtime.undoDecision(planned.decisionId!);
+    expect(f.k.summary(f.q.id).plan!.party[0]!.permanent).toBeUndefined();
+    expect(f.k.member("child")?.permanent).toBeUndefined();
+  });
+
   it("rebinds existing guarded local drafts on close and restores base/grants on return", async () => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);

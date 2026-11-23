@@ -6,6 +6,8 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Added
 
+- Keepers can mark a planned slot or a current member as permanent for ongoing work. Permanent members skip rest reminders and stale alarms but can still be released, stopped or archived when the quest closes. A Keeper can exempt one from an explicit Closing time Pause if its guard can still enforce closing rules. The Closing time sheet and confirmation show how many exempt members keep working. A quest left out still holds. See the reasons and undo the decisions in the Ledger.
+
 - Search Tavern Settings by label, help text or setting key. Matches open their sections without changing your folds, and Escape clears the search.
 
 - The character strip uses one pixel-art prop to show planning, reading, making or verification. Its ask button has a separate touch target.

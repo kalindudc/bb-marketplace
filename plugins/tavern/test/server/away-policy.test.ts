@@ -72,6 +72,13 @@ describe("Closing time work policy", () => {
     expect(awayExecutionPolicy({ ...window, allowWatched: true }, "draft", false)).toEqual({ mode: "watched", reason: null });
     expect(awayExecutionPolicy({ ...window, allowWatched: true }, "pause", false)).toEqual({ mode: "held", reason: "paused" });
   });
+  it("exempts only an explicit Pause and only with prevention", () => {
+    const watched = { ...window, allowWatched: true };
+    expect(awayExecutionPolicy(watched, "pause", true, true)).toEqual({ mode: "guarded", reason: null });
+    expect(awayExecutionPolicy(watched, "pause", false, true)).toEqual({ mode: "held", reason: "not-prevented" });
+    expect(awayExecutionPolicy(watched, "new-quest", true, true)).toEqual({ mode: "held", reason: "not-pinned" });
+    expect(awayExecutionPolicy(watched, "draft", false, true)).toEqual({ mode: "watched", reason: null });
+  });
   it("keeps the holds after the expected return time", () => {
     expect(awayExecutionPolicy({ ...window, until: window.closedAt + 1 }, "pause", true)).toEqual({ mode: "held", reason: "paused" });
   });

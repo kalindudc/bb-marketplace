@@ -218,7 +218,12 @@ export const MEMBER_STATES = ["working", "idle", "waiting", "failed"] as const;
 export const guardPostureSchema = z.object({
   providerId: z.string(), mode: z.enum(["pre-exec", "detection-only"]), label: z.string(), approvalAskId: id.nullable(),
 });
+const permanentReason = z.string().trim().min(1).max(500);
+const plannedPermanent = z.object({ why: permanentReason }).strict();
+const recordedPermanent = plannedPermanent.extend({ decisionId: id });
+
 export const memberSchema = z.object({
+  permanent: recordedPermanent.extend({ closingExemption: recordedPermanent.optional() }).optional(),
   repo: z.string().min(1).optional(),
   draftPush: z.object({ branch: z.string(), remote: z.string(), memberHead: z.string(), homeHead: z.string(), profile: z.string() }).optional(),
   engagement: engagementSchema.optional(),
@@ -385,6 +390,7 @@ export const partySlotSchema = z.object({
   purpose: z.string().max(300),
   waypointIds: z.array(z.string()),
   leadEnvelope: leadEnvelopeSchema.optional(),
+  permanent: plannedPermanent.extend({ decisionId: id.optional() }).optional(),
 });
 
 import { budgetCentsSchema, spendBudgetSchema, spendProposalSchema } from "./spend";
@@ -414,6 +420,7 @@ export type Plan = z.infer<typeof planSchema>;
 
 export const planInputSchema = planSchema.omit({ version: true, createdAt: true, fromSteer: true }).extend({
   fromSteer: id.nullish(),
+  party: z.array(partySlotSchema.extend({ permanent: plannedPermanent.optional() })).max(8),
   waypoints: z.array(waypointSchema.extend({ check: waypointCheckSchema }).refine(w =>
     w.actor === "user" ? w.check === "you" : w.actor === "outside" ? w.check === "keeper" : w.check !== "you",
   { path: ["check"], message: "Use warden, keeper, or none for an agent; you for the user; keeper for an outside owner." })).min(1).max(24),
@@ -620,6 +627,7 @@ export const decisionSchema = z.object({
   undoUnavailable: z.literal(true).optional(),
   answerReceipt: id.optional(),
   pullRequestReady: id.optional(),
+  permanentChange: z.union([z.literal("slot"), z.object({ memberThreadId: threadId, closing: z.literal(true).optional() })]).optional(),
   leadPlan: leadPlanDecisionSchema.optional(),
   pullRequestGrant: z.object({ digest: z.string().regex(/^[a-f0-9]{64}$/) }).optional(),
   askId: id.optional(), optionId: z.string().optional(), kind: delegationKindSchema.optional(),

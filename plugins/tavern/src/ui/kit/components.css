@@ -265,6 +265,8 @@ html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--atten
 .tavern .qm-party ul { display: flex; flex-direction: column; gap: 3px; }
 .tavern .qm-party li { display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; }
 .tavern .qm-party .pn { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tavern .qm-party .pn:has(.qm-permanent) { white-space: normal; }
+.tavern .qm-party .qm-permanent { display: block; overflow-wrap: anywhere; }
 .tavern .qm-party .pw { font-size: 11px; white-space: nowrap; }
 .tavern .qm-party .pw::before { content: "waypoint "; }
 /* The two moments play once, under the class the coordinator adds (moment.ts), and end within --tavern-dur-moment at five members. */

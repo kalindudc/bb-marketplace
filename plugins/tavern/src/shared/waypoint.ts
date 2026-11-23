@@ -5,7 +5,7 @@ export function waypointCheck(waypoint: Pick<Waypoint, "actor" | "check">) {
 }
 
 export function rangerOnlyPlan(plan: Pick<Plan, "party" | "waypoints">) {
-  return plan.party.length > 0 && plan.party.every(slot => slot.classId === "ranger") && plan.waypoints.every(w => w.actor === "agent");
+  return plan.party.length > 0 && plan.party.every(slot => slot.classId === "ranger" && !slot.permanent) && plan.waypoints.every(w => w.actor === "agent");
 }
 
 export const KEEPER_SUBJECT_OWNER = "this-keeper";

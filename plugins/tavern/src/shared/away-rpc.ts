@@ -9,6 +9,8 @@ export const awayControlSchema = awaySnapshotSchema.safeExtend({
   watchedCount: count, heldCount: count,
   watchedByQuest: z.array(z.object({ questId: id.nullable(), watchedCount: count })).optional(),
   eligibleByQuest: z.array(z.object({ questId: id.nullable(), members: count, watchedCount: count })).optional(),
+  // While open, exemptions are candidates for Pause and still included in eligibleByQuest.
+  exemptByQuest: z.array(z.object({ questId: id, members: count })).optional(),
   // Solos are counted for display, never as party interruption targets.
   soloCount: count.optional(),
   pendingStops: z.array(z.object({ threadId: id, error: z.string().nullable() })),

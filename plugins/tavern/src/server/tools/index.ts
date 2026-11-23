@@ -268,9 +268,13 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_keep",
     "Kept a resting member",
-    "Keep a resting quest member by name or id. until is Unix milliseconds, within the Keep limit in Settings.",
-    memberInput({ until: z.number().int().nonnegative(), why: z.string().trim().min(1).max(500) }),
-    (input, threadId) => { runtime.keep(threadId, input.member, input.until, input.why); return `Kept ${input.member} until ${localClock(input.until)}: ${input.why}`; },
+    "Keep a resting member by name or id until Unix milliseconds, or use permanent:true with why and no deadline; Use closingExempt:true only on a permanent member; the Pause exemption requires a working guard.",
+    memberInput({ until: z.number().int().nonnegative().optional(), why: z.string().trim().min(1).max(500), permanent: z.literal(true).optional(), closingExempt: z.literal(true).optional() })
+      .refine(input => input.permanent ? input.until === undefined : input.until !== undefined && !input.closingExempt, "Use either until, or permanent:true with optional closingExempt:true"),
+    (input, threadId) => {
+      const decision = runtime.keep(threadId, input.member, input.until, input.why, input.permanent, input.closingExempt);
+      return input.permanent ? `${decision.text}: ${decision.why}` : `Kept ${input.member} until ${localClock(input.until!)}: ${input.why}`;
+    },
   );
   register(
     "tavern_release",
@@ -381,7 +385,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_plan",
     "Wrote the quest map",
-    "Map owners, done-when, dependencies, lead times, review load, party and at most three questions. Set reversible:true only for fully reversible work. List acts for pre-approval: read/workspace-write need relative paths; check needs a recognised command. Check: warden, keeper or none (agent), you (user mark), keeper (outside, tavern_gate). Warden slots name one maker's waypoints or your subjects (owner: your thread ID). Follow Tavern's explicit greenlight, Ranger exception or by-size approval for one party slot. For a reversible check change, fromSteer cites the user's routed steer. Limit waypoint titles to 200 and changeNote to 500 characters. Emit the returned quest-map directive verbatim.",
+    "Map owners, done-when, dependencies, lead times, review load, party and at most three questions. Set reversible:true only for fully reversible work. List acts for pre-approval: read/workspace-write need relative paths; check needs a recognised command. Check: warden, keeper or none (agent), you (user mark), keeper (outside, tavern_gate). Warden slots name one maker's waypoints or your subjects (owner: your thread ID). Follow Tavern's explicit greenlight, Ranger exception or by-size approval for one party slot. Permanent slots need explicit greenlight. For a reversible check change, fromSteer cites the user's routed steer. Limit waypoint titles to 200 and changeNote to 500 characters. Emit the returned quest-map directive verbatim.",
     planInputSchema,
     async (input, threadId) => {
       const plan = await runtime.plan(threadId, input);

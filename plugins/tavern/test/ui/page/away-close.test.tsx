@@ -111,6 +111,21 @@ describe("what closing would do (the confirm's lines)", () => {
   });
 });
 
+it("shows guarded exempt counts on the Closing time sheet and confirmation, only for paused quests", async () => {
+  const slot = await tab({ away: () => control({
+    eligibleByQuest: [{ questId: "vault", members: 3, watchedCount: 0 }],
+    exemptByQuest: [{ questId: "vault", members: 2 }],
+  }) });
+  const group = await slot.findByRole("group", { name: vault.short });
+  fireEvent.click(within(group).getByRole("radio", { name: /^Pause/ }));
+  expect(within(group).getByText(/2 exempt members keep working/)).toBeTruthy();
+  const confirm = await review(slot);
+  expect(confirm.querySelector('[data-quest="vault"]')?.textContent).toMatch(/1 member stops its turn and waits.*2 exempt members keep working/);
+  fireEvent.click(within(group).getByRole("radio", { name: /^Hold/ }));
+  expect(within(group).queryByText(/exempt members keep working/)).toBeNull();
+  expect(confirm.querySelector('[data-quest="vault"]')?.textContent).toMatch(/left out.*3 members stop their turn and wait/);
+});
+
 async function tab(rpc: Partial<Handlers>, room: Room = open) {
   const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
   const t = plugin.tabs.find((x) => x.id === "closing-time")!;

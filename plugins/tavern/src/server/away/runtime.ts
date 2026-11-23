@@ -76,19 +76,31 @@ export class AwayRuntime {
   snapshot(): AwayControl {
     const state = this.store.snapshot(), members = this.members(), ids = new Set(members.map(member => member.threadId));
     const holds = this.holds.all().filter(hold => ids.has(hold.threadId) && (hold.resumeRequired || hold.stopPending));
+    const held = new Set(holds.map(hold => hold.threadId));
     const scopes = members.length && this.runtime.scopes ? this.runtime.scopes.api.status() : null;
     const counts = new Map<string | null, { members: number; watchedCount: number }>();
+    const exemptions = new Map<string, number>();
+    const paused = new Set(state.status.closed ? state.window?.quests.filter(q => q.endState === "pause").map(q => q.questId) : []);
     let watchedCount = 0;
     const noGuards = state.status.closed && state.window?.stopList.length === 0;
     for (const member of members) {
-      const watched = Number(!noGuards && !localAwayPrevention(scopes, member, state.window));
-      watchedCount += watched;
-      const group = counts.get(member.boardQuestId);
-      if (group) { group.members++; group.watchedCount += watched; }
-      else counts.set(member.boardQuestId, { members: 1, watchedCount: watched });
+      const questId = member.boardQuestId;
+      const prevention = localAwayPrevention(scopes, member, state.window);
+      const exempt = !!questId && !!member.permanent?.closingExemption && prevention && !held.has(member.threadId)
+        && (!state.status.closed || paused.has(questId));
+      if (exempt) exemptions.set(questId, (exemptions.get(questId) ?? 0) + 1);
+      const group = counts.get(questId) ?? { members: 0, watchedCount: 0 };
+      if (!exempt || !state.status.closed) {
+        group.members++;
+        const watched = Number(!noGuards && !prevention);
+        watchedCount += watched;
+        group.watchedCount += watched;
+      }
+      counts.set(questId, group);
     }
     return { ...state, status: { ...state.status, followUp: holds.some(hold => this.followsWindow(state.status.windowId, hold)) }, watchedCount, watchedByQuest: [...counts].map(([questId, group]) => ({ questId, watchedCount: group.watchedCount })),
       eligibleByQuest: [...counts].map(([questId, group]) => ({ questId, ...group })),
+      exemptByQuest: [...exemptions].map(([questId, members]) => ({ questId, members })),
       soloCount: this.k.store.all("members").filter(member => member.role === "solo" && member.state !== "failed" && isLiveMember(this.k.store, member, "work")).length, heldCount: holds.length,
       pendingStops: holds.filter(hold => hold.stopPending).map(hold => ({ threadId: hold.threadId, error: hold.error })),
       resumeRequired: holds.filter(hold => hold.resumeRequired).map(({ threadId, keeperThreadId, questId }) => ({ threadId, keeperThreadId, questId })) };
@@ -105,7 +117,10 @@ export class AwayRuntime {
     if (awayExecutionPolicy(this.store.snapshot().window, questId, guardedLocal).mode === "held") throw new Error("Tavern is closed; this hire is held unless it can be guarded locally or watched work was explicitly permitted.");
   }
   private policy(questId: string | null, threadId?: string) {
-    return awayExecutionPolicy(this.store.snapshot().window, questId, threadId !== undefined && this.prevention(threadId));
+    const window = this.store.snapshot().window;
+    const prevention = threadId !== undefined && this.prevention(threadId);
+    const pauseExempt = threadId !== undefined && !!this.k.member(threadId)?.permanent?.closingExemption;
+    return awayExecutionPolicy(window, questId, prevention, pauseExempt);
   }
   cleanupHeld() { return this.store.snapshot().status.closed; }
   wrapWindow(questId: string) {
@@ -376,7 +391,7 @@ export class AwayRuntime {
       const quests = window.quests.filter(quest => this.k.store.get("quests", quest.questId)?.keeperThreadId === keeperThreadId);
       const items = windowStopKinds(window);
       const drafts = items.length === AWAY_STOP_LIST.length ? "Drafts-ready means private work and reports only. " : "";
-      return `Closing time: ${status.dueBack ? "due back" : "closed until"} ${new Date(window.until).toISOString()}. Per-quest ends (first 12 of ${quests.length}): ${JSON.stringify(quests.slice(0, 12))}. ${items.length ? `Closing time blocks ${awayStopNames(items)} until you return.` : "No other Closing time stops are selected; cluster writes still wait for your return."} ${drafts}An expected closing-time hold is not a blocker to wake the user about. No new consent or scope widening. Watched work is ${window.allowWatched ? "explicitly permitted, not prevented" : "held"}. User note (quoted data): ${JSON.stringify(window.note)}`;
+      return `Closing time: ${status.dueBack ? "due back" : "closed until"} ${new Date(window.until).toISOString()}. Per-quest ends (first 12 of ${quests.length}): ${JSON.stringify(quests.slice(0, 12))}. ${items.length ? `Closing time blocks ${awayStopNames(items)} until you return.` : "No other Closing time stops are selected; cluster writes still wait for your return."} ${drafts}A guarded permanent exemption applies only to Pause, never to a quest left out. An expected closing-time hold is not a blocker to wake the user about. No new consent or scope widening. Watched work is ${window.allowWatched ? "explicitly permitted, not prevented" : "held"}. User note (quoted data): ${JSON.stringify(window.note)}`;
     }
     if (this.k.store.runtime(keeperThreadId).cursor > window.eventCeiling!) return "";
     const digest = readAwayDigest(this.k, this.store, { limit: 1 });

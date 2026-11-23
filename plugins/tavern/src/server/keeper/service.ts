@@ -255,7 +255,10 @@ export class Keeper {
       return existing;
     }
     const state = "idle";
+    const permanent = hire?.permanent;
+    const permanentDecision = permanent && this.store.get("decisions", permanent.decisionId);
     const m: Member = {
+      ...(permanentDecision && !permanentDecision.undone ? { permanent } : {}),
       threadId,
       classId,
       characterId,
@@ -958,7 +961,14 @@ export class Keeper {
     };
     for (const id of ids) visit(id);
     const previous = q.planVersion > 0 ? this.store.get("plans", `${q.id}:${q.planVersion}`) : null;
-    const diff = previous && planDiff(previous, plan);
+    const priorSlots = new Set(previous?.party.filter(slot => slot.permanent?.decisionId));
+    for (const slot of plan.party) {
+      if (!slot.permanent) continue;
+      const prior = [...priorSlots].find(candidate => candidate.classId === slot.classId && candidate.characterId === slot.characterId &&
+        candidate.permanent!.why === slot.permanent!.why && isDeepStrictEqual([...candidate.waypointIds].sort(), [...slot.waypointIds].sort()));
+      slot.permanent = { why: slot.permanent.why, decisionId: prior?.permanent?.decisionId };
+      if (prior) priorSlots.delete(prior);
+    }
     const approved =
       q.greenlitVersion === null
         ? null
@@ -979,7 +989,7 @@ export class Keeper {
     const rangers = rangerOnlyPlan(plan);
     const needsGreenlight = leadPath.length > 0 || !rangers && (approved === null || !partyFits(plan, approved)) || weakensChecks && !steer || proposesBudget;
     const automatic =
-      needsGreenlight && !weakensChecks && !leadPath.length && !plan.party.some(slot => slot.leadEnvelope) &&
+      needsGreenlight && !weakensChecks && !leadPath.length && !plan.party.some(slot => slot.leadEnvelope || slot.permanent) &&
       this.settings().keepers.greenlight === "by-size" &&
       plan.reversible &&
       plan.party.length === 1 &&
@@ -987,6 +997,15 @@ export class Keeper {
       !plan.waypoints.some((w) => w.actor !== "agent") &&
       !this.store.openAsks(threadId).length;
     this.store.atomic(() => {
+      for (const [index, slot] of plan.party.entries()) {
+        if (!slot.permanent || slot.permanent.decisionId) continue;
+        const decision = this.decide(threadId, {
+          boardQuestId: q.id, text: `Proposed permanent party slot ${index + 1} (${slot.characterId ?? slot.classId}) in plan v${plan.version}`.slice(0, 400),
+          why: slot.permanent.why, reversible: true, source: "keeper",
+        }, undefined, { permanentChange: "slot" });
+        slot.permanent.decisionId = decision.id;
+      }
+      const diff = previous && planDiff(previous, plan);
       if (previous && diff) this.carryWaypointAcceptances(q, plan, diff);
       this.store.put("plans", `${q.id}:${plan.version}`, plan);
       const updated = { ...q, planVersion: plan.version, ...(spendProposal || q.spendProposal ? { spendProposal: spendProposal ?? null } : {}), ...(leadPath.length ? { greenlitVersion: null, checkPlanVersion: undefined } : !needsGreenlight ? { checkPlanVersion: plan.version } : {}), updatedAt: this.now() };
@@ -1076,7 +1095,7 @@ export class Keeper {
       boardQuestId: q.id,
       kind: "greenlight",
       question: requiresExplicit ? `Approve the updated checks for ${q.title}, plan v${plan.version}?` : `Form the party for ${q.title}, plan v${plan.version}?`,
-      why,
+      why: plan.party.some(slot => slot.permanent) ? `${why} The quest map lists permanent slots and their reasons.` : why,
       options: [
         { id: "approve", label: requiresExplicit ? "Approve the updated plan" : "Form the party", recommended: true, detail: "Approve this plan version" },
         { id: "revise", label: "Revise the plan", recommended: false, detail: "Keep scouting; do not staff" },
@@ -1770,7 +1789,7 @@ export class Keeper {
       sourceRef?: string | null;
     },
     autoApproval?: { questId: string; planVersion: number },
-    effect?: Pick<Decision, "waypointCall" | "checkChange" | "answerReceipt" | "pullRequestReady" | "pullRequestGrant" | "leadPlan">,
+    effect?: Pick<Decision, "waypointCall" | "checkChange" | "answerReceipt" | "pullRequestReady" | "pullRequestGrant" | "leadPlan" | "permanentChange">,
   ) {
     this.require(threadId, "keeper");
     const questId = input.boardQuestId ?? null;
@@ -1881,8 +1900,29 @@ export class Keeper {
     if ((d.waypointCall || d.checkChange) && q && !isOpenQuest(q)) throw new Error("This quest has ended; its waypoint record is fixed");
     const affectsCurrentWaypoint = q && d.waypointCall && (d.waypointCall.planVersion === q.planVersion ||
       this.waypointCalls(q.id, q.planVersion).get(d.waypointCall.waypointId)?.id === id);
+    const affectedMembers: string[] = [];
     this.store.atomic(() => {
       this.store.put("decisions", id, { ...d, undone: true });
+      if (d.permanentChange === "slot" && d.boardQuestId) {
+        for (const plan of this.store.query("plans", "boardQuestId", d.boardQuestId, -1)) {
+          if (plan.party.some(slot => slot.permanent?.decisionId === id))
+            this.store.put("plans", `${plan.boardQuestId}:${plan.version}`, { ...plan, party: plan.party.map(slot => slot.permanent?.decisionId === id ? { ...slot, permanent: undefined } : slot) });
+        }
+        for (const member of this.store.query("members", "boardQuestId", d.boardQuestId, -1)) {
+          if (member.permanent?.decisionId !== id) continue;
+          this.store.put("members", member.threadId, { ...member, permanent: undefined });
+          affectedMembers.push(member.threadId);
+        }
+      } else if (d.permanentChange && d.permanentChange !== "slot") {
+        const member = this.member(d.permanentChange.memberThreadId);
+        if (member?.permanent?.decisionId === id) {
+          this.store.put("members", member.threadId, { ...member, permanent: undefined });
+          affectedMembers.push(member.threadId);
+        } else if (member?.permanent?.closingExemption?.decisionId === id) {
+          this.store.put("members", member.threadId, { ...member, permanent: { ...member.permanent, closingExemption: undefined } });
+          affectedMembers.push(member.threadId);
+        }
+      }
       let phaseChanged = undoLeadPlan(this, d);
       const grantAtUndo = shellGrant && this.store.get("shellGrants", shellGrant.id);
       if (grantAtUndo?.state === "issued") settleShellGrant(this.store, grantAtUndo.id, "revoked", this.now(), "Undo revoked the Keeper’s shell grant.");
@@ -1958,7 +1998,7 @@ export class Keeper {
     });
     if (shellGrant) this.syncShellGrants(shellGrant.memberThreadId);
     this.userAction(d.keeperThreadId);
-    this.invalidate([...this.changedTags(d.keeperThreadId, d.boardQuestId), tags.undoLanes()]);
+    this.invalidate([...this.changedTags(d.keeperThreadId, d.boardQuestId), ...affectedMembers.map(tags.thread), tags.undoLanes()]);
   }
   private messageRule(threadId: string, text: string, questId: string | null, sourceMessageId?: string) {
     if (sourceMessageId) {
@@ -2535,7 +2575,7 @@ export class Keeper {
     const members = keeperThreadId
       ? this.store.query("members", "keeperThreadId", keeperThreadId)
       : this.store.all("members");
-    for (const m of members.filter((m) => m.role === "member" && !m.rangerCheckpointReportId && isLiveMember(this.store, m, "work") && m.state !== "failed" && isLiveKeeper(this.store, this.member(m.keeperThreadId!)) && !held(m.threadId))) {
+    for (const m of members.filter((m) => m.role === "member" && !m.permanent && !m.rangerCheckpointReportId && isLiveMember(this.store, m, "work") && m.state !== "failed" && isLiveKeeper(this.store, this.member(m.keeperThreadId!)) && !held(m.threadId))) {
       const now = this.now();
       const keep = memberDetails(this.store, m.threadId).rest?.keep;
       if (keep && keep.until > now && this.store.get("decisions", keep.decisionId)?.undone === false) continue;
@@ -2575,7 +2615,7 @@ export class Keeper {
       });
     }
     if (alerts.size && pendingWakeups) return pendingWakeups([...alerts.keys()]).then(pending => {
-      for (const [id, alert] of alerts) if (!pending.has(id) && !held(id)) alert();
+      for (const [id, alert] of alerts) if (!pending.has(id) && !held(id) && !this.member(id)?.permanent) alert();
     });
     for (const alert of alerts.values()) alert();
   }

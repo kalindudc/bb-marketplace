@@ -37,7 +37,7 @@ function RuleRow({ rule, quest, variant = "on", lead = "", actions, onWiden }: {
 
 const SOURCE_WORD: Record<Decision["source"], string> = { steer: "your steer", ask: "your answer", user: "you", keeper: "Keeper" };
 function DecisionRow({ d, undo }: { d: Decision; undo: { pending: boolean; run(id: string): void } }) {
-  return <li className={d.undone ? "undone" : ""}><span className="src">{SOURCE_WORD[d.source]}</span><Clamp lines={1} text={d.text} more={d.why} /><TimeAgo at={d.createdAt} />{d.answerReceipt && d.reversible && !d.undone && !d.undoUnavailable && <button type="button" className="btn sm" disabled={undo.pending} onClick={() => undo.run(d.id)} aria-label={`Undo: ${d.text}`}>Undo</button>}</li>;
+  return <li className={d.undone ? "undone" : ""}><span className="src">{SOURCE_WORD[d.source]}</span><Clamp lines={1} text={d.text} more={d.why} /><TimeAgo at={d.createdAt} />{(d.answerReceipt || d.permanentChange) && d.reversible && !d.undone && !d.undoUnavailable && <button type="button" className="btn sm" disabled={undo.pending} onClick={() => undo.run(d.id)} aria-label={`Undo: ${d.text}`}>Undo</button>}</li>;
 }
 /** Older history, one bounded page per "Show more"; each page asks for the next only when the user does. */
 type DecisionHistoryProps = { keeperThreadId: string; cursor: string; shown: number; total: number; undo: Parameters<typeof DecisionRow>[0]["undo"] };
@@ -211,6 +211,7 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
                 const member = q.members.find(m => m.threadId === steer.memberThreadId);
                 return member ? <BriefSteerLine key={member.threadId} name={registry.data ? characterName(registry.data, member) : member.displayName ?? member.classId} steer={steer} /> : null;
               })}
+              {q.members.map(m => m.permanent && <p className="m small" data-content key={`permanent-${m.threadId}`}><b>{registry.data ? characterName(registry.data, m) : m.displayName ?? m.classId}</b> · Permanent: {m.permanent.why}{m.permanent.closingExemption && <> · Closing time pause exempt (guard required): {m.permanent.closingExemption.why}</>}</p>)}
               {q.members.filter(m => m.restNote).map(m => <p className="m small" key={`rest-${m.threadId}`}><b>{registry.data ? characterName(registry.data, m) : m.displayName ?? m.classId}</b> {m.restNote}</p>)}
               {q.members.filter(m => m.checkIndependence === "same-family" || m.checkIndependence === "not-established" || m.guardPosture?.mode === "detection-only").map(m => <p className="lg-indep" key={m.threadId}><b>{registry.data ? characterName(registry.data, m) : m.displayName ?? m.classId}</b><CheckIndependence member={m} /><GuardPosture member={m} /></p>)}
               <button type="button" className="fold" aria-expanded={mapOpen === q.id} onClick={() => setMapOpen(mapOpen === q.id ? null : q.id)}><Glyph name="chevron" size={12} className={mapOpen === q.id ? "down" : ""} /><span><Vocabulary word="map" /> · {q.waypoints.length} waypoints</span></button>
