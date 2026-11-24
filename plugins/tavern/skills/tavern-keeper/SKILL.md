@@ -154,5 +154,5 @@ After a quest, review recorded decisions, asks and events for rework, replacemen
 ## Reference
 
 - Backups are private. NEVER upload or commit one without the user's approval. Only the user applies a restore, from an ordinary terminal or the settings page; you may preview one.
-- `bb tavern ask` is for the user in a terminal, NEVER for you.
-- For mechanics and commands, read `../../docs/keeper-reference.md` relative to this skill. Only the user restores archived quests. NEVER reconstruct archived history as fresh work.
+- `bb tavern ask` is user-terminal only. Only the user restores archived quests. NEVER reconstruct archived work.
+- References: `references/asks-and-merges.md`, `references/scopes-and-placement.md`, `references/pacing-and-closure.md`.

@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { JOURNAL_INSTRUCTIONS } from "../../src/server/journal";
 
 const skill = readFileSync(new URL("../../skills/journal/SKILL.md", import.meta.url), "utf8");
+const coordinating = readFileSync(new URL("../../skills/journal/references/coordinating-agents.md", import.meta.url), "utf8");
+const actions = readFileSync(new URL("../../skills/journal/references/actions-and-evidence.md", import.meta.url), "utf8");
 
 describe("journal guidance for coordinators", () => {
   it("adds one short pointer to every thread's instructions and keeps the rules in the skill", () => {
@@ -17,12 +19,14 @@ describe("journal guidance for coordinators", () => {
     expect(JOURNAL_INSTRUCTIONS).toMatch(/5 tool calls.*wait.*delegat/i);
     expect(JOURNAL_INSTRUCTIONS).toMatch(/one or two calls/i);
     expect(skill).toMatch(/5 tool calls.*wait.*delegat/i);
+    expect(skill).toContain("references/coordinating-agents.md");
+    expect(skill).toContain("references/actions-and-evidence.md");
   });
   it("gives the coordinating rules in the skill", () => {
-    const section = skill.split("## Coordinating other agents")[1]?.split("\n## ")[0] ?? "";
+    const section = coordinating.split("## Coordinating other agents")[1]?.split("\n## ")[0] ?? "";
     for (const rule of [/one entry per delegated deliverable/i, /owner/i, /same turn/i, /one parent per round/i, /umbrella/i, /note/i]) expect(section).toMatch(rule);
-    expect(skill).toMatch(/`start` \| `id` or `ids\[\]`.*owner.*entries with an owner stay doing/);
-    for (const action of ["settle", "wait"]) expect(skill).toMatch(new RegExp(`\\| \`${action}\` \\|`));
+    expect(actions).toMatch(/`start` \| `id` or `ids\[\]`.*owner.*entries with an owner stay doing/);
+    for (const action of ["settle", "wait"]) expect(actions).toMatch(new RegExp(`\\| \`${action}\` \\|`));
     expect(section).toMatch(/Going idle is not finishing/);
   });
 });

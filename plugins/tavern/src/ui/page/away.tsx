@@ -15,7 +15,7 @@ import { closedWords, questsIn, roomAway, stoppingQuests, visibleMembers, workin
 import "./away.css";
 
 /*
- * Closing time on the page, against Tim's contract (docs/closing-time.md): the sheet with its confirm in place, Return, and the
+ * Closing time on the page, against Tim's contract (docs/contributing/contracts.md): the sheet with its confirm in place, Return, and the
  * stops that haven't confirmed. Words never promise prevention for watched or unguarded work.
  */
 

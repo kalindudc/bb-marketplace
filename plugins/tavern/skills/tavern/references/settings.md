@@ -15,7 +15,7 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `tavern.widget_row` | Shows the Tavern widget above the composer. | `true` | User; Granted |
 | `tavern.voice` | Sets full, light or off voice for Tavern's character presentation. | `"full"` | User; Granted |
 | `tavern.contextual_speech` | Run Pi without tools or sessions to write character remarks on clicks, at watched milestones, and when a timed remark is due. | `false` | User; Granted |
-| `tavern.speech_extensions` | Extra trusted Pi extensions for speech, as absolute paths. Normally only these load. When Pi refuses `--no-extensions`, speech uses a separate agent folder so Pi can load extensions it requires. Not changed by imports. | `[]` | User only |
+| `tavern.speech_extensions` | Absolute paths to trusted Pi extensions for speech. Normally only these load. If Pi refuses `--no-extensions`, Tavern uses a separate agent folder so Pi can load required extensions too. Not changed by imports or backup restores. | `[]` | User only |
 | `tavern.speech_instructions` | System instructions for speech, 1–2,000 characters. Not changed by imports. | `"Write only a brief in-character remark. Do not use tools."` | User only |
 | `tavern.pi_program` | Absolute executable path on the machine running Tavern. Empty uses Pi from PATH. | `""` | User only |
 | `tavern.speech_model` | Model for contextual speech. | `"openai/gpt-5-nano"` | User; Granted |
@@ -98,7 +98,7 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 
 Read the machine-rule and forge controls in Settings, Where work runs. A rule has an `id`, a `label`, an `enabled` switch, and a `match` table. Match criteria include project IDs, repository remotes, Keeper path globs, Keeper environment providers, class IDs and quest IDs; omitted criteria do not constrain the match. A `target` uses the current hire path or names an environment provider, input values, machine choice and workspace kind. For a provisioned destination, read the destination provider’s input schema and review the rule’s guard installation, remote detection and Linux check consent with the user.
 
-A rule's `class_models` map defaults to empty. Each class row specifies a model and can override its provider and reasoning. `pull_requests` defaults to the member's machine; the home option requires an enabled profile. A profile has an ID, a name, its enabled state and a kind. A command profile adds an open command, and can add state and close commands. See [the forge command contract](../../docs/forges.md).
+A rule's `class_models` map defaults to empty. Each class row specifies a model and can override its provider and reasoning. `pull_requests` defaults to the member's machine; the home option requires an enabled profile. A profile has an ID, a name, its enabled state and a kind. A command profile adds an open command, and can add state and close commands. See [the forge command contract](forges.md).
 
 `[tuning.pinned]` in TOML contains the user’s fixed values for the five tunable knobs. `[tuned]` is optional machine tuning state, not an ordinary preference. Both default to empty. Use Settings to pin or reset a value and to inspect any live quest override.
 
@@ -129,3 +129,17 @@ consent = { guard_install = false, remote_detection_only = false, linux_uncontai
 pull_requests = { at = "home", profile = "drafts" }
 class_models = { warden = { provider = "agent-provider", model = "review-model" } }
 ```
+
+## Tune settings via CLI
+
+Tavern-managed threads, including archived Keepers and members, may preview guardrails but cannot apply them; change guardrails on Tavern's Settings page or ask from a plain thread.
+
+Change settings ONLY when the user asks. Preview first, show the user the preview, then run `--apply`.
+
+1. Read effective settings with `bb tavern settings get` or `bb tavern settings get classes`.
+2. Preview a patch with `bb tavern settings set classes.smith.model=model-id tavern.ambientMotion=lively tavern.repeatSeconds=20`. Keys use camelCase dotted paths; values are JSON (objects, arrays, numbers, booleans, or null) or unquoted strings.
+3. Add `--apply` to write the patch. Untouched keys stay unchanged, and every agent apply records the calling thread in Settings history with Undo.
+4. For a complete replacement, preview `bb tavern settings import --toml "<TOML>"`, then add `--apply`. Import resets omitted explicit settings and pins to defaults while preserving forge profiles.
+5. Export explicit settings with `bb tavern settings export`. Agent file exports and backup restores with data remain user-only.
+
+Agents may preview and apply allowed global settings while `tavern.agents_may_change_settings` is on (the default). When locked, previews stay available; ask the user to enable it before applying and NEVER try to bypass the lock. Settings changes never grant consent for asks, Return, production work, or other guarded actions.

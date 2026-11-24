@@ -141,10 +141,13 @@ it("teaches deadlines, treats stalls as hints, and describes today's scope reque
   expect(progress).toContain("Treat stalls as hints.");
   expect(sections.get("Decide a member's request")).toContain("A scope block is yours to handle, not an ask to pass on.");
 });
-it("resolves the reference from the skill, never the user's project", () => {
-  expect(sections.get("Reference")).toContain("../../docs/keeper-reference.md");
-  expect(readFileSync(new URL("../../skills/tavern-keeper/../../docs/keeper-reference.md", import.meta.url), "utf8")).toContain("# Keeper mechanics reference");
-  for (const name of ["tavern_scope", "tavern_status"]) expect(tools.get(name)).not.toContain("docs/keeper-reference.md");
+it("resolves the references from the skill, never the user's project", () => {
+  const reference = sections.get("Reference")!;
+  for (const file of ["references/asks-and-merges.md", "references/scopes-and-placement.md", "references/pacing-and-closure.md"]) {
+    expect(reference).toContain(file);
+    expect(readFileSync(new URL(`../../skills/tavern-keeper/${file}`, import.meta.url), "utf8")).toContain("# Keeper reference:");
+  }
+  for (const name of ["tavern_scope", "tavern_status"]) expect(tools.get(name)).not.toMatch(/keeper-reference|references\/[a-z-]+\.md/);
 });
 it("has no shared long sentence between the skill and tool descriptions", () => {
   const toolSentences = new Set([...tools.values()].flatMap(sentences));

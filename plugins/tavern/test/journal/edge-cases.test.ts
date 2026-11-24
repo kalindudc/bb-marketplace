@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeHost } from "./host";
 import { createJournalStore, readJournalSkill } from "../../src/server/journal/store";
@@ -18,9 +19,24 @@ const proof = [{ kind: "command" as const, ref: "npm test", detail: "pass", exit
 const legacy = { log: { version: 1, quests: [{ id: "a1", description: "legacy", done: false, createdAt: 10 }], steps: [], usedIds: ["a1"] } };
 
 describe("journal persistence and race edges", () => {
-  it("reads the same skill from the TypeScript source and generated server bundle layouts", () => {
-    expect(readJournalSkill(new URL("../../dist/server.js", import.meta.url).href)).toBe(readJournalSkill());
-    expect(readJournalSkill()).toContain("## Evidence");
+  it("reads the router and all references in order from source and bundled layouts", () => {
+    const expected = [
+      "SKILL.md",
+      "references/actions-and-evidence.md",
+      "references/coordinating-agents.md",
+      "references/rules-and-audit.md",
+    ].map(path => readFileSync(new URL(`../../skills/journal/${path}`, import.meta.url), "utf8").trimEnd()).join("\n\n");
+    expect(readJournalSkill().trimEnd()).toBe(expected);
+    expect(readJournalSkill(new URL("../../dist/server.js", import.meta.url).href).trimEnd()).toBe(expected);
+  });
+  it.each(["skill", "rules"] as const)("returns the complete guide for %s", async action => {
+    const f = fixture();
+    const result = await f.store.runTool("t", { action });
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain(readJournalSkill());
+    expect(result.text).toContain("## Evidence format and post-rejection rule");
+    expect(result.text).toContain("## Coordinating other agents");
+    expect(result.text).toContain("## Auditing journal habits");
   });
   it("copies fork entries, undo and reserved ids but not pending edits; side chats stay empty", async () => {
     const f = fixture(); await f.store.ready("source");
@@ -177,8 +193,8 @@ describe("journal persistence and race edges", () => {
     expect(f.db.prepare("SELECT agent_changed_at, noted_at FROM questlog_logs WHERE thread_id = ?").get("t")).toEqual({ agent_changed_at: 100, noted_at: 50 });
     const result = await f.store.runTool("t", { action: "rules" });
     expect(result.text).toContain("The user ticked legacy");
-    expect(result.text).toContain("## Evidence");
-    expect((await f.store.runTool("t", { action: "skill" })).text).toContain("## Workflows");
+    expect(result.text).toContain("## When and how to keep it current");
+    expect((await f.store.runTool("t", { action: "skill" })).text).toContain("references/actions-and-evidence.md");
     await f.store.flush("t");
     expect(f.mirrors).not.toEqual([]);
     expect(f.mirrors.every(w => Object.keys((w as { set: object }).set).join() === "progress")).toBe(true);

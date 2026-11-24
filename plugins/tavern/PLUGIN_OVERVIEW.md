@@ -4,7 +4,7 @@ Hand a goal to a lead agent and keep the decisions. Tavern's Keeper scouts with 
 
 The Common room brings together what needs you, live quests, side quests, solos, and a summary of what changed since your last visit. Each quest page shows its map, road through the phases, party, Notebook, standing rules, decisions, spend budget, and event history. Open a member's report in the side panel, answer asks in place, and read the returned tale for verified results, open pull requests, credits, and work left for you.
 
-Five classes separate leading (Keeper), scouting (Ranger), building (Smith), checking (Warden), and bounded side work (Wanderer). Characters appear as animated pixel-art sprites above the composer with seeded avatars you can roll and customize; characters add presentation only, never permissions or expertise. A Warden check is labelled as same-family whenever an independent model family cannot be established.
+Five classes separate leading (Keeper), scouting (Ranger), building (Smith), checking (Warden), and bounded side work (Wanderer); customize classes from the Classes page or Markdown override files. Characters appear as animated pixel-art sprites above the composer with seeded avatars you can roll and customize; characters add presentation only, never permissions or expertise. A Warden check is labelled as same-family whenever an independent model family cannot be established.
 
 Long-running work scales without losing context: refresh a Keeper onto a fresh thread while carrying its charge and open asks, or hire a child Keeper lead for a greenlit waypoint under shared chain depth, seat, and spend limits.
 
@@ -22,4 +22,4 @@ Machine rules in Settings let you place working members on dedicated machines th
 
 ## Current limits
 
-Pre-execution prevention applies to guarded local Pi sessions; other providers and placed remote members run detection-only under Tavern. Machine placement runs only rules requesting a new machine with a dedicated checkout. Quest spend budgets count only spend Tavern can measure, and already-admitted work can exceed the cap. Classes are edited as Markdown files rather than in the UI, and bb currently does not distinguish human clicks from unmarked client calls.
+Pre-execution prevention applies to guarded local Pi sessions; other providers and placed remote members run detection-only under Tavern. Machine placement runs only rules requesting a new machine with a dedicated checkout. Quest spend budgets count only spend Tavern can measure, and already-admitted work can exceed the cap. In addition, bb currently does not distinguish human clicks from unmarked client calls.

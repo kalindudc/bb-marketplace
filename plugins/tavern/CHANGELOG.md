@@ -16,6 +16,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Changed
 
+- Reorganized Tavern's documentation into five human-first guides anchored by an architecture overview and diagram, grouped contributor references under `docs/contributing/`, and split the Tavern, Keeper, and Journal agent skills into lean routers with on-demand reference files. The journal tool still returns the complete guide.
 - Answering the Keeper’s ask finishes your move without a journal tick. Declining or choosing another direction keeps the move open. Existing journal entries still work.
 - A plan with only Rangers no longer needs a staffing greenlight if it has no user or outside waypoint. Proposed budgets and weaker checks still need their usual approval.
 - A Keeper can record an existing branch, pull request or path for a Warden to check without hiring a maker. The tale credits the Warden for the check and says the Keeper recorded the subject.

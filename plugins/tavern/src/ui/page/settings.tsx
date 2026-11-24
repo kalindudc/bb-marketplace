@@ -799,7 +799,7 @@ export function TransferSection() {
   </>}</Shell>;
 }
 
-// Host descriptions miss text contrast; draw the intro inside Tavern instead (docs/host-asks.md, entry 6).
+// Host descriptions miss text contrast; draw the intro inside Tavern instead (docs/contributing/host-asks.md, entry 6).
 export function settingsSection<P extends object>({ intro, component: Body, ...rest }: { id: string; title: string; intro: string; component: ComponentType<P> }) {
   const atmosphere = rest.id === "atmosphere";
   function component(props: P) {

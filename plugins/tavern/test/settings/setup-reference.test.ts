@@ -17,7 +17,7 @@ it("documents each settings schema key exactly once and gives its current defaul
     const defaults = DEFAULT_SETTINGS[group as keyof typeof DEFAULT_SETTINGS] as Record<string, unknown>;
     return Object.keys((section as z.ZodObject).shape).map(key => [`${group}.${snake(key)}`, `\`${JSON.stringify(defaults[key])}\``]);
   });
-  const entries = [...skill("settings.md").matchAll(/^\| `([^`]+)` \| ([^|]+) \| ([^|]+) \| ([^|]+) \|$/gm)]
+  const entries = [...skill("references/settings.md").matchAll(/^\| `([^`]+)` \| ([^|]+) \| ([^|]+) \| ([^|]+) \|$/gm)]
     .map(([, key, description, value, authority]) => ({ key, description: description!.trim(), value: value!.trim(), authority: authority!.trim() }));
   expect(entries.map(entry => [entry.key, entry.value]).sort()).toEqual(expected.sort());
   for (const entry of entries) {
@@ -31,7 +31,7 @@ it("documents each settings schema key exactly once and gives its current defaul
 });
 
 it("shows a valid disabled rule with each consent switch off", () => {
-  const examples = [...skill("settings.md").matchAll(/```toml\n([\s\S]*?)```/g)].map(match => match[1]).join("\n");
+  const examples = [...skill("references/settings.md").matchAll(/```toml\n([\s\S]*?)```/g)].map(match => match[1]).join("\n");
   const settings = placementSettingsSchema.parse(decodeSettingsToml(parse(examples)).machines);
   expect(settings.rules).toMatchObject([{
     enabled: false, consent: { guardInstall: false, remoteDetectionOnly: false, linuxUncontainedChecks: false },
@@ -40,7 +40,7 @@ it("shows a valid disabled rule with each consent switch off", () => {
 });
 
 it("asks the user to test the alert route during setup", () => {
-  const setup = skill("SKILL.md").split("## Setup")[1]!.split("## Stop all")[0]!;
+  const setup = skill("references/setup.md");
   expect(setup).toContain("Send a test alert");
   expect(setup).toContain("It arrived");
   expect(setup).toContain("It did not");

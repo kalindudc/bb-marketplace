@@ -19,7 +19,13 @@ const wordCut = (text: string, limit: number) => text.length <= limit ? text : `
 export function readJournalSkill(moduleUrl = import.meta.url): string {
   // bb bundles this module into dist/server.js without rewriting import.meta.url.
   const fromSource = new URL("./", moduleUrl).pathname.endsWith("/src/server/journal/");
-  return readFileSync(new URL(`${fromSource ? "../../../" : "../"}skills/journal/SKILL.md`, moduleUrl), "utf8");
+  const skillDir = new URL(`${fromSource ? "../../../" : "../"}skills/journal/`, moduleUrl);
+  return [
+    "SKILL.md",
+    "references/actions-and-evidence.md",
+    "references/coordinating-agents.md",
+    "references/rules-and-audit.md",
+  ].map(path => readFileSync(new URL(path, skillDir), "utf8").trimEnd()).join("\n\n");
 }
 export type Times = { agentChangedAt: number | null; notedAt: number | null };
 /** At most one reminder per thread in this time, however many messages arrive. */
