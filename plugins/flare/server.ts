@@ -47,6 +47,10 @@ export default function flare(bb: BbPluginApi): void {
       flares.dismiss(threadId, through);
       return { ok: true as const };
     },
+    look: ({ threadId, through }) => {
+      flares.look(threadId, through);
+      return { ok: true as const };
+    },
   });
   registerTools(bb, flares);
   registerCli(bb, flares);

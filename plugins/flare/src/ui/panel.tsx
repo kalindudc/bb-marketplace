@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ThreadChat, experimental_copyToClipboard, experimental_useRpcQuery, useSettings, type ExperimentalThreadActionTabProps } from "@get-bb/plugin-sdk/app";
+import { ThreadChat, experimental_copyToClipboard, experimental_useRpcQuery, experimental_useTabVisible, useSettings, type ExperimentalThreadActionTabProps } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -7,6 +7,7 @@ import { rpcContract, type FlareDto } from "../contract";
 import { FlareCard } from "./flare-card";
 import { buildMarks, publishMarks, TurnHeader } from "./dividers";
 import { feedMarkdown, groupFlares, sectionTitle, type Section } from "./group";
+import { useLook } from "./segment";
 import { FLARE_ICON } from "./tab";
 import { useNow } from "./use-now";
 
@@ -137,6 +138,15 @@ export function FlaresPanel({ threadId }: { threadId: string }) {
     input: { threadId, children: wanted === "rendered" && renderable ? true : children },
   });
   const companion = data?.companionThreadId ?? null;
+  // An open Flares tab is a look: what it shows stops counting as new in the widget.
+  const visible = experimental_useTabVisible();
+  const look = useLook(threadId);
+  // Only a tab that shows child threads' flares sees everything the widget counts.
+  const showsAll = wanted === "rendered" && renderable ? true : children;
+  const newest = showsAll ? (data?.flares[0]?.createdAt ?? null) : null;
+  useEffect(() => {
+    if (visible && newest !== null) look(newest);
+  }, [visible, newest]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (data !== undefined) setRenderable(data.companionThreadId !== null);
   }, [data]);

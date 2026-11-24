@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-flare",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,7 +9,7 @@
   },
   "bb": {
     "name": "Flare",
-    "description": "Lets agents send up a flare mid-turn: a finding, a decision, progress or a blocker you see at once in a banner above the message box and in the thread's Flares tab, with a push notification for blockers. The flare tool returns at once and never holds the agent's turn.",
+    "description": "Lets agents send up a flare mid-turn: a finding, a decision, progress or a blocker you see at once in a widget above the message box and in the thread's Flares tab, with a push notification for blockers. The flare tool returns at once and never holds the agent's turn.",
     "branding": {
       "icon": "./icons/flare.svg",
       "experimental_icons": {

@@ -492,6 +492,47 @@ describe("turns", () => {
     expect(world.service.banner("thr_a")).toMatchObject({ flare: { title: "Second" }, count: 1 });
   });
 
+  it("counts the turn's flares since the last look", () => {
+    const world = setup();
+    const send = (title: string) => {
+      world.advance(1000);
+      const sent = world.service.send({ threadId: "thr_a", projectId: null, fields: { title }, source: "tool" });
+      if (sent.status !== "sent") throw new Error("expected a flare");
+      return sent.flare;
+    };
+    const first = send("Looked into it");
+    const second = send("Going with Postgres");
+    expect(world.service.banner("thr_a")).toMatchObject({ count: 2, fresh: 2, flares: [{ title: "Going with Postgres" }, { title: "Looked into it" }] });
+    world.service.look("thr_a", second.createdAt);
+    expect(world.service.banner("thr_a")).toMatchObject({ count: 2, fresh: 0, flare: { title: "Going with Postgres" } });
+    // An older look never takes back a newer one.
+    world.service.look("thr_a", first.createdAt);
+    expect(world.service.banner("thr_a").fresh).toBe(0);
+    send("Going with Redis after all");
+    expect(world.service.banner("thr_a").fresh).toBe(1);
+  });
+
+  it("counts what a dismissal hid as seen", () => {
+    const world = setup();
+    const sent = world.service.send({ threadId: "thr_a", projectId: null, fields: { title: "Stuck", kind: "blocker" }, source: "tool" });
+    if (sent.status !== "sent") throw new Error("expected a flare");
+    world.service.dismiss("thr_a", sent.flare.createdAt);
+    expect(world.store.lookedThrough("thr_a")).toBe(sent.flare.createdAt);
+    world.advance(1000);
+    world.service.send({ threadId: "thr_a", projectId: null, fields: { title: "Unstuck" }, source: "tool" });
+    expect(world.service.banner("thr_a")).toMatchObject({ flare: { title: "Unstuck" }, count: 1, fresh: 1 });
+  });
+
+  it("refreshes the widget when a look moves forward, and only then", () => {
+    const world = setup();
+    const sent = world.service.send({ threadId: "thr_a", projectId: null, fields: { title: "First" }, source: "tool" });
+    if (sent.status !== "sent") throw new Error("expected a flare");
+    const before = world.harness.inspection.experimental_rpcInvalidations.length;
+    world.service.look("thr_a", sent.flare.createdAt);
+    world.service.look("thr_a", sent.flare.createdAt);
+    expect(world.harness.inspection.experimental_rpcInvalidations.slice(before)).toEqual([[threadTag("thr_a")]]);
+  });
+
   it("matches open turns to the threads really running after a restart", async () => {
     const world = setup({ threads: { thr_new: { parentThreadId: "thr_p" } }, running: ["thr_new"], prompt: "Keep going" });
     world.service.onActive(active("thr_gone"));

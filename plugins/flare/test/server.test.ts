@@ -168,6 +168,17 @@ describe("the frontend reads", () => {
   });
 });
 
+describe("the widget's looks", () => {
+  it("counts flares since the last look", async () => {
+    const harness = await load();
+    await harness.behavior.callAgentTool("flare", { title: "Going with Postgres", kind: "decision" }, { threadId: "thr_a" });
+    const banner = (await harness.behavior.callRpc("banner", { threadId: "thr_a" })) as { flare: { createdAt: number }; fresh: number };
+    expect(banner.fresh).toBe(1);
+    await harness.behavior.callRpc("look", { threadId: "thr_a", through: banner.flare.createdAt });
+    expect(await harness.behavior.callRpc("banner", { threadId: "thr_a" })).toMatchObject({ fresh: 0, count: 1 });
+  });
+});
+
 describe("thread events", () => {
   it("tracks turns from bb's thread events", async () => {
     const harness = await load();

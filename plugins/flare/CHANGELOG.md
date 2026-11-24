@@ -2,6 +2,17 @@
 
 Notable changes to Flare, newest first. Releases are tagged `flare/vX.Y.Z` in this repository.
 
+## 0.4.0 (2026-11-24)
+
+Flare moves into bb's thread context row instead of drawing a line of its own above the message box.
+
+### Changed
+
+- The newest flare shows as a segment in the context row above the message box, beside the thread's other context such as changed files. bb owns expanding it, one segment at a time, as it does for Shuttle's pull requests. The segment shows the flare's kind, title and age, and how many flares arrived since you last opened it or the Flares tab. In a narrow composer it keeps the glyph, that count and the dismiss button.
+- An X at the end of the segment dismisses it until the next flare, without opening it. The dismissal rule is unchanged.
+- Opening the segment lists the turn's newest eight flares, newest open, with a mark on each one that arrived since you last looked. One opens at a time, with its prose, its child thread and its views in the Flares tab, and a link leads to the turn's earlier flares. A failed turn says so at the top. The footer opens the Flares tab or dismisses.
+- Opening the segment, opening the Flares tab or dismissing counts as a look, so the "new" count clears on every device.
+
 ## 0.3.2 (2026-11-12)
 
 Agents draw a flare's evidence with genui or inline-vis when they are installed, and the banner fits narrow composer panes.

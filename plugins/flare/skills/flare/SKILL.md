@@ -5,7 +5,7 @@ description: Send the user a flare mid-turn with the Flare plugin, a short findi
 
 # Flare
 
-A flare is a short note the user sees while you keep working: a banner above the thread's message box, the thread's Flares tab, and a push notification for blockers. It is fire and forget. The call returns at once with "Flare sent. Keep working; nothing will reply." and your turn carries on. Never wait for an answer and never end your turn because you sent one.
+A flare is a short note the user sees while you keep working: a widget in the context row above the thread's message box, the thread's Flares tab, and a push notification for blockers. It is fire and forget. The call returns at once with "Flare sent. Keep working; nothing will reply." and your turn carries on. Never wait for an answer and never end your turn because you sent one.
 
 ## When to send one
 

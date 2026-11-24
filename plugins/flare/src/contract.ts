@@ -35,11 +35,18 @@ export const runSchema = z.object({
 });
 export type RunDto = z.infer<typeof runSchema>;
 
+/** How many flares the widget lists; the rest of the turn's are in the Flares tab. */
+export const BANNER_LIST = 8;
+
 export const bannerSchema = z.object({
   flare: flareSchema.nullable(),
+  /** The newest flares of the current or last turn, newest first, at most BANNER_LIST. */
+  flares: z.array(flareSchema),
   /** Flares in the current or last turn, the shown one included. */
   count: z.number().int(),
   childCount: z.number().int(),
+  /** Flares of the turn that arrived since the person last opened the widget or the Flares tab. */
+  fresh: z.number().int(),
   run: runSchema.nullable(),
 });
 export type BannerDto = z.infer<typeof bannerSchema>;
@@ -76,6 +83,10 @@ export const rpcContract = defineContract({
     tags: ({ threadId }: { threadId: string }) => [threadTag(threadId)],
   },
   dismiss: {
+    input: z.object({ threadId, through: z.number().int().nonnegative() }).strict(),
+    output: z.object({ ok: z.literal(true) }),
+  },
+  look: {
     input: z.object({ threadId, through: z.number().int().nonnegative() }).strict(),
     output: z.object({ ok: z.literal(true) }),
   },

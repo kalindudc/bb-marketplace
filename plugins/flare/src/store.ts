@@ -80,6 +80,8 @@ export const MIGRATIONS = [
   `CREATE TABLE shown (flare_id TEXT NOT NULL, viewer_id TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (flare_id, viewer_id))`,
   // A flare too old for a new companion's replay: it is not drawn there, and it is not waiting to be either.
   `ALTER TABLE shown ADD COLUMN skipped INTEGER NOT NULL DEFAULT 0`,
+  // The newest flare the person had seen in a thread when they last opened its widget or Flares tab.
+  `CREATE TABLE looks (thread_id TEXT PRIMARY KEY, through INTEGER NOT NULL)`,
 ];
 
 type FlareRecord = {
@@ -142,7 +144,7 @@ const run = (row: RunRecord): RunRow => ({
 
 const newId = (prefix: string): string => `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
 
-/** Flares, the runs (turns) they belong to and banner dismissals, in the plugin's own SQLite database. */
+/** Flares, the runs (turns) they belong to, and the widget's dismissals and looks, in the plugin's own SQLite database. */
 export class FlareStore {
   constructor(private readonly db: Database.Database) {}
 
@@ -348,6 +350,17 @@ export class FlareStore {
       .run(threadId, through);
   }
 
+  lookedThrough(threadId: string): number | null {
+    const row = this.db.prepare(`SELECT through FROM looks WHERE thread_id = ?`).get(threadId) as { through: number } | undefined;
+    return row?.through ?? null;
+  }
+
+  look(threadId: string, through: number): void {
+    this.db
+      .prepare(`INSERT INTO looks (thread_id, through) VALUES (?, ?) ON CONFLICT (thread_id) DO UPDATE SET through = max(through, excluded.through)`)
+      .run(threadId, through);
+  }
+
   companionOf(viewerId: string): string | null {
     const row = this.db.prepare(`SELECT companion_id FROM companions WHERE viewer_id = ?`).get(viewerId) as { companion_id: string } | undefined;
     return row?.companion_id ?? null;
@@ -448,6 +461,7 @@ export class FlareStore {
       this.db.prepare(`DELETE FROM flares WHERE thread_id = ?`).run(threadId);
       this.db.prepare(`DELETE FROM runs WHERE thread_id = ?`).run(threadId);
       this.db.prepare(`DELETE FROM dismissals WHERE thread_id = ?`).run(threadId);
+      this.db.prepare(`DELETE FROM looks WHERE thread_id = ?`).run(threadId);
     })();
   }
 

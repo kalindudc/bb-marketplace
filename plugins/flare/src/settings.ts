@@ -26,7 +26,7 @@ export const SETTING_DESCRIPTORS = {
     type: "select",
     label: "Tell the parent agent",
     description:
-      "Which flares from a child thread are also sent to its parent's agent, as a note it reads while it works. They are sent only while the parent's turn runs; they never start a turn. The parent's banner and Flares tab show every child flare either way.",
+      "Which flares from a child thread are also sent to its parent's agent, as a note it reads while it works. They are sent only while the parent's turn runs; they never start a turn. The parent's widget and Flares tab show every child flare either way.",
     options: [...FORWARD_MODES],
     experimental_optionLabels: { blockers: "Blockers and urgent flares", all: "Every flare", off: "None" },
     default: "blockers",

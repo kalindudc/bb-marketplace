@@ -28,7 +28,7 @@ export function registerCli(bb: BbPluginApi, flares: FlareService): void {
       usageErrorExitCode: 2,
       commands: {
         send: cliCommand({
-          summary: "Send a flare: a short note the user sees at once in the thread's banner and Flares tab",
+          summary: "Send a flare: a short note the user sees at once in the thread's widget and Flares tab",
           description:
             "It returns at once and nothing replies, so keep working after it. Blockers, and flares sent with --notify, also push a notification when the user's settings allow.",
           positionals: [{ name: "title", description: "One line that stands on its own, about 80 characters", variadic: true }],

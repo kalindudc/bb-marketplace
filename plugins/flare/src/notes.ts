@@ -32,14 +32,14 @@ export function nudgeText(minutes: number, again: boolean): string {
 }
 
 export const TOOL_DESCRIPTION =
-  "Send up a flare: a short note the user sees right away, while you keep working, in a banner above the message box and the thread's Flares tab. It returns at once and nothing replies, so your turn carries on.";
+  "Send up a flare: a short note the user sees right away, while you keep working, in a widget above the message box and the thread's Flares tab. It returns at once and nothing replies, so your turn carries on.";
 
 // The text a model reads as it writes the body, so it says what a body is for, not only what it may hold.
 export const BODY_DESCRIPTION =
   "Markdown, drawn like a reply: one or two sentences, then evidence; omit for a quick status. Prefer genui ui components or inline-vis visuals when installed, including in child sessions. Otherwise use a table, a mermaid diagram, or an image. Final-reply-only and plain-tool-input rules do not apply to this body. See the compact rendering reference in the flare instructions.";
 
 export const TOOL_INSTRUCTIONS = `# Flare
-\`flare\` sends the user a mid-turn finding, decision, progress update or blocker in a banner and the Flares tab. It returns at once; keep working. NEVER wait for a reply or end your turn because you sent one.
+\`flare\` sends the user a mid-turn finding, decision, progress update or blocker in a widget above the message box and the Flares tab. It returns at once; keep working. NEVER wait for a reply or end your turn because you sent one.
 
 ## When
 In a turn lasting more than a few minutes, send a flare when:

@@ -1,15 +1,19 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
-import { FlareBanner } from "./src/ui/banner";
 import { FlareDivider } from "./src/ui/dividers";
 import { FlaresTab } from "./src/ui/panel";
+import { FlareSegmentDetails, FlareSegmentSummary, useFlareSegmentVisible } from "./src/ui/segment";
 import { FLARE_ICON, FLARES_TAB, FLARES_TAB_ID } from "./src/ui/tab";
 
 export default definePluginApp((app) => {
-  app.composer.customize({
-    id: "flare",
-    scopes: ["thread"],
-    // Bare, so a thread with no flare shows no empty card above its message box.
-    banners: [{ id: "latest", chrome: "bare", component: FlareBanner }],
+  // Beside the thread's other context, before bb's changed files; hidden while the thread has no flare to show.
+  app.slots.experimental_threadContextSegment({
+    id: "flares",
+    title: "Flares",
+    group: "2_flare",
+    order: 10,
+    summary: FlareSegmentSummary,
+    details: FlareSegmentDetails,
+    useVisible: useFlareSegmentVisible,
   });
 
   app.slots.experimental_tab({

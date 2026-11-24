@@ -2,7 +2,7 @@ import type { BbPluginApi, MessageDispatchHookContext, PluginThreadEventPayloads
 import { z } from "zod";
 import { leadLine } from "./blocks";
 import type { Companions } from "./companion";
-import { FEED_LIMIT, threadTag, type BannerDto, type FeedDto, type FlareDto, type RunDto } from "./contract";
+import { BANNER_LIST, FEED_LIMIT, threadTag, type BannerDto, type FeedDto, type FlareDto, type RunDto } from "./contract";
 import { KIND_LABELS } from "./kinds";
 import { normalizeFlare, type FlareFields } from "./normalize";
 import { FORWARD_PREFIX, NUDGE_PREFIX, forwardText, nudgeText } from "./notes";
@@ -449,11 +449,14 @@ export class FlareService {
     const since = run?.startedAt ?? this.now() - 86_400_000;
     const dismissed = this.store.dismissedThrough(threadId) ?? -1;
     const flares = this.store.flaresFor(threadId, { since, limit: 200, children: true }).filter((row) => row.createdAt > dismissed);
+    const looked = this.store.lookedThrough(threadId) ?? -1;
     const top = flares[0];
     return {
       flare: top === undefined ? null : flareDto(top, threadId),
+      flares: flares.slice(0, BANNER_LIST).map((row) => flareDto(row, threadId)),
       count: flares.length,
       childCount: flares.filter((row) => row.threadId !== threadId).length,
+      fresh: flares.filter((row) => row.createdAt > looked).length,
       run: run === null ? null : runDto(run),
     };
   }
@@ -478,8 +481,17 @@ export class FlareService {
     return this.store.flaresFor(threadId, { limit: options.limit, children: options.children });
   }
 
+  /** Hides the widget until a newer flare; what it hid counts as seen. */
   dismiss(threadId: string, through: number): void {
     this.store.dismiss(threadId, through);
+    this.store.look(threadId, through);
+    this.invalidate([threadId]);
+  }
+
+  /** The person opened the widget or the Flares tab: flares up to `through` no longer count as new. */
+  look(threadId: string, through: number): void {
+    if (through <= (this.store.lookedThrough(threadId) ?? -1)) return;
+    this.store.look(threadId, through);
     this.invalidate([threadId]);
   }
 
