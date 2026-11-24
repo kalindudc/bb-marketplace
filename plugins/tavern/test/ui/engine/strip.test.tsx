@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PartyStrip } from "../../../src/ui/engine/strip";
+import type { StripRoad } from "../../../src/shared/strip-scene";
 import * as engine from "../../../src/ui/engine/scheduler";
 import * as sprites from "../../../src/ui/engine/sprites";
 import { Actor } from "../../../src/ui/engine/actor";
@@ -80,26 +81,117 @@ it("uses the avatar seed and member class and places the carried light in page c
   expect(world!.lightAnchors?.()).toEqual([expect.objectContaining({ kind: "ember" })]);
 });
 
-it("paints an inert prop in the same 70px canvas and does not invalidate when the prop stays the same", () => {
-  const fillRect = vi.fn();
-  const ctx = { fillRect, beginPath() {}, rect() {}, clip() {}, clearRect() {}, save() {}, restore() {}, translate() {}, scale() {} };
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+const road: StripRoad = { key: "fixture", title: "Restore the lanterns", current: "w1", places: [
+  { id: "plan", kind: "plan", state: "done" },
+  { id: "w1", kind: "make", state: "active", waypoint: "Fit the hinges" },
+] };
+
+it("opens place details and closes them on Escape, outside press and timeout", () => {
+  vi.useFakeTimers();
+  try {
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(390);
+    const view = render(<PartyStrip {...wanderer} road={road} />);
+    const forge = screen.getByRole("button", { name: /the forge.*fit the hinges/i });
+    const actor = screen.getByRole("button", { name: /wren, wanderer/i });
+    expect(actor.compareDocumentPosition(forge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(forge.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(forge);
+    expect(screen.getByRole("tooltip").textContent).toContain("Wren is making this part here, at Fit the hinges (quest: Restore the lanterns).");
+    expect(forge.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.keyDown(forge, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(forge.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(forge);
+    fireEvent.pointerDown(actor);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    fireEvent.click(forge);
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    view.unmount();
+  } finally { vi.useRealTimers(); }
+});
+
+it("anchors upward details above both the character and the held ask", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(390);
+  const top = Math.ceil(window.innerHeight * 0.6);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    if (this.matches(".twalk-place")) return new DOMRect(112, top + 24, 44, 44);
+    if (this.matches(".twalk-actor")) return new DOMRect(156, top + 12, 48, 56);
+    if (this.matches(".twalk-ask-button")) return new DOMRect(204, top, 44, 44);
+    return new DOMRect(0, top, 390, 70);
+  });
+  const heldRoad: StripRoad = { ...road, places: [road.places[0]!, { ...road.places[1]!, state: "held" }] };
+  render(<PartyStrip {...wanderer} road={heldRoad} held mood="waiting" askDisclosure={askDisclosure} />);
+  fireEvent.click(screen.getByRole("button", { name: /the forge/i }));
+  const tooltip = screen.getByRole("tooltip");
+  const tooltipBottom = window.innerHeight - Number.parseFloat(tooltip.style.bottom);
+  const actor = screen.getByRole("button", { name: /wren, wanderer/i });
+  const ask = screen.getByRole("button", { name: /open asks/i });
+  expect(tooltipBottom).toBe(ask.getBoundingClientRect().top - 4);
+  expect(tooltipBottom).toBeLessThan(actor.getBoundingClientRect().top);
+  expect(tooltip.textContent).toContain("Wren is waiting on you here, at Fit the hinges (quest: Restore the lanterns).");
+});
+
+it("describes a held place without an ask as stopped, not waiting on you", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(390);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  const heldRoad: StripRoad = { ...road, places: [road.places[0]!, { ...road.places[1]!, state: "held" }] };
+  render(<PartyStrip {...wanderer} road={heldRoad} held mood="blocked" />);
+  expect(screen.queryByRole("button", { name: /open asks/i })).toBeNull();
+  const forge = screen.getByRole("button", { name: /the forge/i });
+  fireEvent.click(forge);
+  const expected = "Wren has stopped here, at Fit the hinges (quest: Restore the lanterns).";
+  expect(screen.getByRole("tooltip").textContent).toContain(expected);
+  expect(forge.getAttribute("aria-label")).toBe(`The forge. ${expected}`);
+});
+
+it("keeps details open on unrelated scrolls and closes when the place moves", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(390);
+  const { container } = render(<><div data-transcript /><div data-lane><PartyStrip {...wanderer} road={road} /></div></>);
+  const signpost = screen.getByRole("button", { name: /the signpost/i });
+  let top = 200, left = 8;
+  vi.spyOn(signpost, "getBoundingClientRect").mockImplementation(() => new DOMRect(left, top, 44, 44));
+  fireEvent.click(signpost);
+  fireEvent.scroll(container.querySelector("[data-transcript]")!);
+  expect(screen.getByRole("tooltip").textContent).toContain("Wren planned the route here (quest: Restore the lanterns).");
+  top -= 20;
+  fireEvent.scroll(container.querySelector("[data-lane]")!);
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  fireEvent.click(signpost);
+  left += 20;
+  fireEvent.scroll(container.querySelector("[data-lane]")!);
+  expect(screen.queryByRole("tooltip")).toBeNull();
+});
+
+it("keeps the road in its own 70px layer and caches equal data and unchanged paint", () => {
+  const roadPaints = vi.fn();
+  const ctx = { fillRect() {}, beginPath() {}, rect() {}, clip() {}, clearRect() {}, save() {}, restore() {}, translate() {}, scale() {} };
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
+    return (this.classList.contains("twalk-road") ? { ...ctx, clearRect: roadPaints } : ctx) as unknown as CanvasRenderingContext2D;
+  });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(320);
   const invalidate = vi.fn();
+  let world!: engine.EngineWorld;
   vi.spyOn(engine, "observeWorld").mockImplementation((_, candidate) => {
-    invalidate.mockImplementation(change => { change?.(); candidate.draw(true); });
+    world = candidate;
+    invalidate.mockImplementation(change => { change?.(); candidate.refresh?.(); candidate.draw(true); });
+    candidate.refresh?.();
     candidate.draw(true);
     return { invalidate, remove() {} };
   });
-  const view = render(<PartyStrip {...wanderer} prop="book" />);
-  expect(screen.getByRole("region").querySelector("canvas")?.height).toBe(70);
-  expect(fillRect.mock.calls.some(([x, y]) => x >= 48 && y >= 34)).toBe(true);
+  const view = render(<PartyStrip {...wanderer} road={road} />);
+  const layers = [...screen.getByRole("region").querySelectorAll("canvas")];
+  expect(layers.map(layer => layer.height)).toEqual([70, 70]);
+  expect(roadPaints).toHaveBeenCalledOnce();
   const calls = invalidate.mock.calls.length;
-  view.rerender(<PartyStrip {...wanderer} prop="book" />);
+  view.rerender(<PartyStrip {...wanderer} road={{ ...road, places: structuredClone(road.places) }} />);
   expect(invalidate).toHaveBeenCalledTimes(calls);
-  view.rerender(<PartyStrip {...wanderer} prop="seal" />);
-  expect(invalidate).toHaveBeenCalledTimes(calls + 1);
-  expect(screen.getAllByRole("button")).toHaveLength(1);
+  world.draw(true);
+  expect(roadPaints).toHaveBeenCalledOnce();
+  view.rerender(<PartyStrip {...wanderer} road={road} held askDisclosure={askDisclosure} />);
+  const ask = screen.getByRole("button", { name: /open asks/i });
+  expect(ask.style.left).toBe("196px");
+  expect(screen.getAllByRole("button")).toHaveLength(4);
 });
 
 it("leaves the host's transcript-to-composer fade and backing alone", () => {

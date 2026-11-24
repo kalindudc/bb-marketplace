@@ -35,16 +35,51 @@
   left: 0;
   width: 48px;
   height: 56px;
+  z-index: 2;
+  background: transparent;
 }
 .tavern button.twalk-actor:focus-visible {
   outline: 2px solid var(--tavern-hearth);
   outline-offset: -3px;
 }
-.tavern.twalk .twalk-ask-button { position: absolute; top: 0; left: 48px; width: 44px; height: 44px; padding: 0; border: 0; background: transparent; pointer-events: auto; cursor: pointer; }
+.tavern.twalk .twalk-ask-button { position: absolute; top: 0; left: 48px; width: 44px; height: 44px; padding: 0; border: 0; background: transparent; pointer-events: auto; cursor: pointer; z-index: 2; }
 .tavern.twalk .twalk-ask-button:focus-visible { outline: 2px solid var(--tavern-hearth); outline-offset: -2px; }
 .tavern.twalk .twalk-need { top: 4px; left: 8px; right: auto; --tchar-card: var(--card); border-radius: 0; pointer-events: none; }
+.tavern.twalk .twalk-place {
+  position: absolute;
+  top: 24px;
+  z-index: 1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: auto;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.tavern.twalk .twalk-place:focus-visible {
+  outline: 2px solid var(--tavern-hearth);
+  outline-offset: -2px;
+}
+.tavern .twalk-place-tip {
+  --twalk-tip-width: min(264px, calc(100vw - 16px));
+  position: fixed;
+  z-index: 100;
+  left: clamp(8px, var(--twalk-tip-x), calc(100vw - var(--twalk-tip-width) - 8px));
+  width: var(--twalk-tip-width);
+  max-height: calc(50dvh - 8px);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border: 1px solid var(--tavern-hearth);
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.tavern .twalk-place-tip strong { display: block; }
 .tavern .twalk-speech {
   position: absolute;
+  z-index: 3;
   top: 5px;
   left: var(--speech-origin);
   width: max-content;

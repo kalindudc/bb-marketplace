@@ -20,6 +20,8 @@ export class Actor {
   private gait: ReturnType<typeof strideCycle>;
   private activity: "stand" | "walk" | "quiet" = "stand";
   private held = false;
+  private roadHome: number | null = null;
+  private detour: number | null = null;
   private cue: { kind: Cue; start: number; auto: boolean; launch: number } | null = null;
 
   constructor(readonly id: string, public art: CharacterArt, public mood: Mood, memberId = id) {
@@ -75,9 +77,33 @@ export class Actor {
     this.body.vx = this.body.ax = this.body.swing = this.body.angularVelocity = 0;
   }
 
+  setRoadHome(home: number | null, snap: boolean) {
+    const changed = home !== this.roadHome;
+    if (changed) this.detour = null;
+    this.roadHome = home;
+    if (home !== null && snap) {
+      this.detour = null;
+      if (this.body.x !== home) {
+        this.body.x = home;
+        this.body.vx = this.body.ax = 0;
+        return true;
+      }
+    }
+    return changed;
+  }
+
+  wander(span: number) {
+    const home = this.roadHome;
+    if (home === null || this.body.x !== home) return;
+    const distance = 20 + this.motionSeed % 10;
+    this.detour = home + distance <= span ? home + distance : Math.max(0, home - distance);
+  }
+
   setRules(rules: ActorRules, span: number) {
     const requested = actorActivity(this.mood, rules);
-    const activity = requested === "walk" && span <= 0 ? "stand" : requested;
+    const activity = this.roadHome !== null && rules.mode === "lively" && !rules.typing && !rules.held && !isAttentionMood(this.mood) &&
+      (this.body.x !== this.roadHome || this.detour !== null) ? "walk"
+      : requested === "walk" && (span <= 0 || this.roadHome !== null) ? "stand" : requested;
     const x = Math.min(span, Math.max(0, this.body.x));
     const clipped = x !== this.body.x;
     const changed = clipped || this.activity !== activity || this.held !== rules.held;
@@ -113,7 +139,8 @@ export class Actor {
         this.cue.launch = 0;
       }
       const previous = this.body.x;
-      this.target = walk && !this.cue ? (this.facing === 1 ? span : 0) : null;
+      this.target = walk && !this.cue ? this.detour ?? this.roadHome ?? (this.facing === 1 ? span : 0) : null;
+      if (this.roadHome !== null && this.target !== null && this.target !== this.body.x) this.facing = this.target > this.body.x ? 1 : -1;
       const drive = this.target === null ? 0 : this.facing * 17 * Math.sin(2 * Math.PI * this.distance / this.gait.length) * Math.min(1, Math.abs(this.body.vx) / this.gait.speed);
       stepBody(this.body, this.target, dt, this.gait.speed, drive);
       if (this.target !== null) {
@@ -122,7 +149,10 @@ export class Actor {
           this.distance -= this.gait.length;
           this.gait = strideCycle(this.motionSeed, ++this.cycle);
         }
-        if (this.body.x === this.target) this.facing = this.facing === 1 ? -1 : 1;
+        if (this.body.x === this.target) {
+          if (this.target === this.detour) this.detour = null;
+          if (this.roadHome === null) this.facing = this.facing === 1 ? -1 : 1;
+        }
       }
     }
   }

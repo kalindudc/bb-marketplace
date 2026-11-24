@@ -61,6 +61,27 @@ it("never travels in Calm, walks in Lively at work, and stands when waiting", ()
   expect(a.body.x).toBe(at);
 });
 
+it("walks to a waystation, wanders once between turns and comes back", () => {
+  const a = actor();
+  a.setRoadHome(40, true);
+  step(a, clear, 180);
+  expect(a.body.x).toBe(40);
+  a.setRoadHome(106, false);
+  step(a, clear, 60);
+  expect(a.body.x).toBeGreaterThan(40);
+  expect(a.body.x).toBeLessThan(106);
+  step(a, clear, 300);
+  expect(a.body.x).toBe(106);
+  expect(a.frame(false).activity).toBe("stand");
+  a.setMood("idle");
+  a.wander(150);
+  step(a, clear, 30);
+  expect(a.body.x).toBeGreaterThan(106);
+  step(a, clear, 220);
+  expect(a.body.x).toBe(106);
+  expect(a.nextDraw(150)).toBeNull();
+});
+
 it("faces the direction of the resize before the next animation step", () => {
   const a = actor();
   step(a);

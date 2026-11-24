@@ -1,7 +1,7 @@
 import { useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ThreadDecor } from "../../shared/contract";
-import { dialogueSlot, SPEECH_REPLY_MS, stripProp, type DialogueRequest } from "../../shared/strip-scene";
+import { dialogueSlot, SPEECH_REPLY_MS, type DialogueRequest } from "../../shared/strip-scene";
 import { DialogueSocket, type DialogueLine } from "./dialogue-socket";
 import { characterMood, REPORTED_MS, VERIFIED_MS, widgetMoodFacts } from "../../shared/mood";
 import { pickLine, type LineFacts } from "../../shared/says";
@@ -201,7 +201,7 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
     <PartyStrip
     character={character} classId={member.classId} classLabel={classLabel} mood={mood} memberId={member.threadId}
     askDisclosure={askDisclosure} keeper={!!data.keeperView} surface={surface} region="widget" mode={motionMode} held={held} quiet={quiet}
-    prop={stripProp(data.stripScene)} contactKey={workbench?.posture === "clear" && workbench.moment !== "report" ? workbench.revision : undefined}
+    road={workbench?.road}
     actorMenu={{ mode: motionMode, voice, voiceBeforeOff: data.voiceBeforeOff, quietUntil: quiet ? data.characterQuietUntil : undefined, change, openSheet: () => navigate.toPluginPanel("tavern", { subPath: `character/${character.id}` }) }}
     speech={line && reply?.text ? { ...line, text: reply.text } : line ?? null} canClickSpeak={speechMode !== "off" && speechSlot(mood) && !!character.says?.[contextualSlot ?? mood]?.length}
     onSpeechVisible={contextual ? setSpeechVisible : undefined}

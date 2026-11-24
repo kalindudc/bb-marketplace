@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import type { CharacterDef } from "../../shared/schema";
-import type { StripProp } from "../../shared/strip-scene";
-import { drawStripProp, propLeft } from "./strip-prop";
+import type { StripRoad } from "../../shared/strip-scene";
+import { RoadControls } from "./road-controls";
+import { drawRoad, layoutRoad, ROAD_BEAT, ROAD_RISE, type RoadLayout } from "./road-places";
 import { clockTime } from "../../shared/time";
 import { readPalette, type CharacterPalette } from "../kit/characters";
 import { motion, stuckInView, type Surface } from "../kit/motion";
@@ -51,8 +52,7 @@ type PartyStripProps = {
   held?: boolean;
   quiet?: boolean;
   speech?: StripSpeech | null;
-  prop?: StripProp | null;
-  contactKey?: string;
+  road?: StripRoad;
   canClickSpeak?: boolean;
   askDisclosure?: AskDisclosure;
   onActorClick?: (actorId: string) => void;
@@ -64,6 +64,9 @@ type PartyStripProps = {
 export function PartyStrip(props: PartyStripProps) {
   const { character, classId, classLabel, keeper, mood, speech } = props;
   const scene = props.pageScene;
+  const roadKey = props.road ? JSON.stringify(props.road) : "";
+  const road = useMemo(() => props.road, [roadKey]);
+  const [lane, setLane] = useState(0);
   const menuId = useId();
   const [menuTrigger, setMenuTrigger] = useState<HTMLButtonElement | null>(null);
   const touchPress = useRef<{ pointerId: number; x: number; y: number; timer: ReturnType<typeof setTimeout> } | null>(null);
@@ -90,31 +93,32 @@ export function PartyStrip(props: PartyStripProps) {
   const actor = useMemo(() => new Actor(actorId, art, mood, memberId), [actorId, memberId]);
   const strip = useRef<HTMLElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
+  const roadCanvas = useRef<HTMLCanvasElement>(null);
   const button = useRef<HTMLButtonElement>(null);
-  const contact = useRef<{ key: string | undefined; cue: Cue | null }>({ key: props.contactKey, cue: null });
+  const askButton = useRef<HTMLButtonElement>(null);
   const bubble = useRef<HTMLSpanElement>(null);
-  const runtime = useRef<{ invalidate(change?: () => void): void; cue(kind: Cue, auto: boolean, onEnd?: () => void): void; click(): void }>(null);
-  const latest = useRef(props);
+  const runtime = useRef<{ invalidate(change?: () => void): void; cue(kind: Cue, auto: boolean, onEnd?: () => void): void; click(): void; wander(): void; highlight(id: string | null): void }>(null);
+  const latest = useRef({ ...props, road });
+  const highlight = useCallback((id: string | null) => runtime.current?.highlight(id), []);
+  const layout = useMemo(() => road && layoutRoad(road, lane, art.width * SCALE, !!props.askDisclosure), [road, lane, art.width, !!props.askDisclosure]);
   const words = !props.held && speech?.actorId === actor.id ? speech.text : null;
 
-  useLayoutEffect(() => { latest.current = props; });
+  useLayoutEffect(() => { latest.current = { ...props, road }; });
   useLayoutEffect(() => {
-    const applyMood = () => { actor.art = art; return actor.setMood(mood); };
+    const applyMood = () => {
+      actor.art = art;
+      if (road && props.mode === "lively" && actor.mood === "working" && mood === "idle") runtime.current?.wander();
+      return actor.setMood(mood);
+    };
     let cue: Cue | null = null;
     if (runtime.current) runtime.current.invalidate(() => { cue = applyMood(); });
     else cue = applyMood();
     if (scene && (props.held || props.quiet || isAttentionMood(mood) || props.mode === "off")) motion.settle(c => c.el === button.current);
-    if (contact.current.key !== props.contactKey) contact.current = { key: props.contactKey, cue: props.prop && !props.held ? cue : null };
     if (cue && !scene) {
-      const currentContact = contact.current;
-      const finish = () => {
-        if (contact.current === currentContact) contact.current.cue = null;
-        props.onMoodCueEnd?.();
-      };
-      if (runtime.current) runtime.current.cue(cue, true, finish);
-      else finish();
+      if (runtime.current) runtime.current.cue(cue, true, props.onMoodCueEnd);
+      else props.onMoodCueEnd?.();
     }
-  }, [actor, art, mood, props.mode, props.held, props.quiet, words, scene, !!props.askDisclosure, props.prop, props.contactKey]);
+  }, [actor, art, mood, props.mode, props.held, props.quiet, words, scene, !!props.askDisclosure, road]);
 
   useLayoutEffect(() => {
     const el = strip.current!, board = canvas.current!, control = button.current!;
@@ -124,6 +128,7 @@ export function PartyStrip(props: PartyStripProps) {
     let palette: CharacterPalette = readPalette(control);
     actor.dark = document.documentElement.classList.contains("dark");
     let width = 0;
+    let track = 0;
     let span = 0;
     let lastPosition = "";
     let cueNumber = 0;
@@ -132,6 +137,24 @@ export function PartyStrip(props: PartyStripProps) {
     let drawnX = 0;
     let drawnY = 0;
     let inView = false;
+    let roadTime = 0, hoverAt = 0, riseAt = -Infinity;
+    let hovered: string | null = null;
+    let roadInput: StripRoad | undefined, roadLayout: RoadLayout | null = null;
+    let roadWidth = -1, roadAsk = false;
+    let roadPaint: { layout: RoadLayout; palette: CharacterPalette; hovered: string | null; beat: number; rise: number; spark: boolean } | null = null;
+    const syncRoad = () => {
+      const input = latest.current.road;
+      const ask = !!latest.current.askDisclosure;
+      if (input === roadInput && track === roadWidth && ask === roadAsk) return false;
+      const fresh = !!input && input.key !== roadInput?.key;
+      if (!fresh && input && input.current !== roadInput?.current && mode() === "lively" && !holds().held) riseAt = roadTime;
+      else if (fresh || ask || !input) riseAt = -Infinity;
+      roadInput = input;
+      roadWidth = track;
+      roadAsk = ask;
+      roadLayout = input ? layoutRoad(input, track, actor.art.width * SCALE, ask) : null;
+      return fresh;
+    };
     const speechVisibility = (visible: boolean) => {
       const { typing, held } = motion.getHolds(latest.current.surface);
       latest.current.onSpeechVisible?.(visible && !document.hidden && !typing && !held);
@@ -139,28 +162,46 @@ export function PartyStrip(props: PartyStripProps) {
     const holds = () => {
       const { surface, held } = latest.current;
       const current = motion.getHolds(surface);
-      return { typing: current.typing, held: held ?? current.held };
+      return { typing: current.typing || !!latest.current.road && control.matches(":focus-visible"),
+        held: held ?? current.held };
     };
-    const mode = () => latest.current.quiet ? "off" : scene ? sceneMode : latest.current.mode === "lively" && !!latest.current.prop && control === document.activeElement ? "calm" : latest.current.mode ?? "calm";
+    const mode = () => latest.current.quiet ? "off" : scene ? sceneMode : latest.current.mode ?? "calm";
     let activeRules = { mode: mode(), ...holds() };
-    let painted: { x: number; y: number; key: number; art: typeof art; palette: CharacterPalette; stride: number; glint: number; prop: StripProp | null; propX: number | null; touch: boolean } | null = null;
+    let painted: { x: number; y: number; key: number; art: typeof art; palette: CharacterPalette; stride: number; glint: number } | null = null;
     const world: EngineWorld = {
       mode,
       refresh() {
         activeRules = { mode: mode(), ...holds() };
         if (latest.current.onSpeechVisible) speechVisibility(inView);
-        return actor.setRules(activeRules, span);
+        const fresh = syncRoad();
+        const anchored = actor.setRoadHome(roadLayout?.items.length ? roadLayout.home : null,
+          fresh || activeRules.mode !== "lively" || activeRules.held || isAttentionMood(actor.mood));
+        return actor.setRules(activeRules, span) || anchored;
       },
       update(seconds, steps) {
         if (scene && (!motion.mayLoop("page") || stuckInView())) motion.settle(cue => cue.el === control);
+        roadTime += seconds * steps * 1_000;
         actor.update(seconds, span, activeRules, steps);
       },
-      nextDraw: () => actor.nextDraw(span),
+      nextDraw() {
+        const actorDue = actor.nextDraw(span);
+        if (roadTime - riseAt < ROAD_RISE) return 0;
+        if (!hovered) return actorDue;
+        return Math.min(actorDue ?? Infinity, ROAD_BEAT - (roadTime - hoverAt + 1e-6) % ROAD_BEAT);
+      },
       draw(still) {
         const spriteWidth = actor.art.width * SCALE;
         const spriteHeight = actor.art.height * SCALE;
         const ask = !!latest.current.askDisclosure;
-        const x = ask ? 0 : scene && (still || !scene.road) ? Math.max(0, Math.floor((width - spriteWidth) / 2)) : Math.round(actor.body.x / SCALE) * SCALE;
+        const roadHome = roadLayout?.items.length ? roadLayout.home : null;
+        if (still && roadHome !== null) actor.setRoadHome(roadHome, true);
+        const x = roadHome !== null && (still || ask) ? roadHome : ask ? 0
+          : scene && (still || !scene.road) ? Math.max(0, Math.floor((width - spriteWidth) / 2)) : Math.round(actor.body.x / SCALE) * SCALE;
+        const askControl = askButton.current;
+        if (askControl) {
+          const left = roadLayout?.askX == null ? "" : `${roadLayout.askX}px`;
+          if (askControl.style.left !== left) askControl.style.left = left;
+        }
         const restY = ground - actor.art.ground * SCALE;
         const y = Math.max(0, restY - (still || actor.small ? 0 : Math.round(actor.body.lift / SCALE) * SCALE));
         const lift = restY - y;
@@ -196,23 +237,38 @@ export function PartyStrip(props: PartyStripProps) {
             holdRim: held,
           } : null);
         }
+        const places = roadCanvas.current;
+        if (roadLayout?.items.length && places) {
+          const beat = !still && hovered ? Math.floor((roadTime - hoverAt + 1e-6) / ROAD_BEAT) : -1;
+          const rise = still || activeRules.held ? 1 : Math.min(1, Math.max(0, (roadTime - riseAt) / ROAD_RISE));
+          const spark = actor.art.signature === "hammer" && (frame.cue === "signature" || frame.cue === "tap") &&
+            frame.progress > 0.45 && frame.progress < 0.66;
+          if (places.width !== width) { places.width = width; roadPaint = null; }
+          if (roadPaint?.layout !== roadLayout || roadPaint.palette !== palette || roadPaint.hovered !== hovered ||
+              roadPaint.beat !== beat || roadPaint.rise !== rise || roadPaint.spark !== spark) {
+            const back = places.getContext("2d");
+            if (back) {
+              back.clearRect(0, 0, width, height);
+              drawRoad(back, roadLayout, width, ground - SCALE, palette, palette.hue[latest.current.character.hue], hovered, beat, rise, spark);
+              roadPaint = { layout: roadLayout, palette, hovered, beat, rise, spark };
+            }
+          }
+        } else if (places && roadPaint) {
+          places.getContext("2d")?.clearRect(0, 0, places.width, height);
+          roadPaint = null;
+        }
         if (ctx === undefined) {
           ctx = board.getContext("2d");
           if (ctx) ctx.imageSmoothingEnabled = false;
         }
         if (!ctx) return;
-        const prop = latest.current.prop ?? null;
-        const propX = prop ? propLeft(x, spriteWidth, width, ask) : null;
-        const touch = propX !== null && frame.cue !== null && frame.cue === contact.current.cue &&
-          frame.progress < 0.24 && frame.progress > 0 && !frame.small && !activeRules.typing && control !== document.activeElement;
         const key = actor.art.pixelKey(frame);
         const stride = !frame.dark && frame.activity === "walk" ? 2 + Number(frame.step % 4 >= 2) : 0;
         const glint = frame.dark ? 0 : daylightGlint(frame, activeRules.typing);
         if (painted?.x === x && painted.y === y && painted.key === key && painted.art === actor.art && painted.palette === palette &&
-          painted.stride === stride && painted.glint === glint && painted.prop === prop && painted.propX === propX && painted.touch === touch) return;
-        painted = { x, y, key, art: actor.art, palette, stride, glint, prop, propX, touch };
+          painted.stride === stride && painted.glint === glint) return;
+        painted = { x, y, key, art: actor.art, palette, stride, glint };
         ctx.clearRect(0, 0, width, height);
-        if (prop && propX !== null) drawStripProp(ctx, prop, propX, ground - SCALE, palette, touch);
         ctx.save();
         ctx.translate(x, y);
         ctx.beginPath();
@@ -241,7 +297,9 @@ export function PartyStrip(props: PartyStripProps) {
     };
     const measure = () => {
       width = el.clientWidth;
-      const reach = walkSpan(composer?.clientWidth ?? null, width, actor.art.width * SCALE);
+      track = Math.min(width, composer?.clientWidth || width);
+      setLane(track);
+      const reach = walkSpan(track, width, actor.art.width * SCALE);
       span = Math.floor(reach / SCALE) * SCALE;
       if (board.width !== width) { board.width = width; painted = null; }
       if (ctx) ctx.imageSmoothingEnabled = false;
@@ -252,9 +310,9 @@ export function PartyStrip(props: PartyStripProps) {
       speechVisibility(visible);
     } : undefined);
     const onResize = () => {
-      const oldWidth = width, oldSpan = span;
+      const oldWidth = width, oldTrack = track;
       measure();
-      if (oldWidth !== width || oldSpan !== span) handle.invalidate();
+      if (oldWidth !== width || oldTrack !== track) handle.invalidate();
     };
     const resize = typeof ResizeObserver === "function" ? new ResizeObserver(onResize) : null;
     resize?.observe(el);
@@ -284,6 +342,10 @@ export function PartyStrip(props: PartyStripProps) {
     };
     runtime.current = {
       invalidate: handle.invalidate, cue,
+      wander: () => actor.wander(span),
+      highlight(id) {
+        if (hovered !== id) handle.invalidate(() => { hovered = id; hoverAt = roadTime; });
+      },
       click() {
         const rules = { mode: world.mode(), ...holds() };
         const reaction = actor.nextReaction();
@@ -330,7 +392,8 @@ export function PartyStrip(props: PartyStripProps) {
     : props.canClickSpeak && !props.held && !isAttentionMood(mood) ? `${label}. Click for a word.` : label;
   return <section ref={strip} className={`tavern twalk ${scene ? "twalk-page" : "twalk-thread"}`} style={{ height }} data-part="TavernWalk" data-light-held={props.held || undefined} data-page-scene-actor={scene ? scene.road ? "road" : "table" : undefined} aria-label={scene ? undefined : `${character.name} walking`}>
     {scene && <span className="twalk-ground" aria-hidden="true" />}
-    <canvas ref={canvas} className="twalk-canvas" height={height} aria-hidden="true" />
+    {road && <canvas ref={roadCanvas} className="twalk-canvas twalk-road" height={height} aria-hidden="true" />}
+    <canvas ref={canvas} className="twalk-canvas twalk-sprite" height={height} aria-hidden="true" />
     <button ref={button} type="button" className="tchar twalk-actor" data-actor={actor.id} data-mood={mood}
       data-pose={scene ? "still" : undefined}
       aria-controls={menuTrigger ? menuId : undefined}
@@ -374,8 +437,8 @@ export function PartyStrip(props: PartyStripProps) {
         setMenuTrigger(e.currentTarget);
       } : undefined}
       aria-label={scene ? `Open ${character.name}'s thread: ${MOOD_WORD[mood]}` : actorLabel}
-      onFocus={() => { if (!scene && props.prop && props.mode === "lively") runtime.current?.invalidate(); }}
-      onBlur={() => { if (!scene && props.prop && props.mode === "lively") runtime.current?.invalidate(); }}
+      onFocus={() => { if (!scene && road && props.mode === "lively") runtime.current?.invalidate(); }}
+      onBlur={() => { if (!scene && road && props.mode === "lively") runtime.current?.invalidate(); }}
       onPointerEnter={e => { if (!scene && !props.quiet && e.pointerType !== "touch") runtime.current?.cue("notice", false); }}
       onClick={e => {
         if (e.detail > 0 && suppressTap.current) {
@@ -385,11 +448,12 @@ export function PartyStrip(props: PartyStripProps) {
         if (scene) props.onActorClick?.(actor.id);
         else runtime.current?.click();
       }} />
-    {props.askDisclosure && <button type="button" className="twalk-ask-button"
+    {props.askDisclosure && <button ref={askButton} type="button" className="twalk-ask-button"
       aria-label={`Open asks for ${character.name}`} aria-expanded={props.askDisclosure.expanded} aria-controls={props.askDisclosure.panelId}
       onClick={event => props.askDisclosure!.open(event.currentTarget)}>
       <span className="tchar-need twalk-need" data-tavern-still aria-hidden="true">!</span>
     </button>}
+    {!!layout?.items.length && <RoadControls key={road?.key} items={layout.items} member={character.name} hasAsk={!!props.askDisclosure} title={road?.title} highlight={highlight} />}
     {props.actorMenu && <span id={`${menuId}-hint`} className="sr">{MENU_HINT}</span>}
     {menuTrigger && props.actorMenu && <CharacterMenu id={menuId} trigger={menuTrigger} name={character.name} close={closeMenu} {...props.actorMenu} />}
     {words && <span ref={bubble} className="twalk-speech" data-contextual={speech?.contextual || undefined}
