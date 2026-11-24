@@ -5,7 +5,7 @@ import { exportToml, previewToml } from "./toml";
 import { importSettings } from "./files";
 import type { SettingsStore } from "./store";
 import { LIMITS } from "../limits";
-import { settingsPatchSchema, importSummary, isGuardrailSetting } from "../../shared/settings";
+import { settingsPatchSchema, importSummary, isGuardrailSetting, SPEECH_LAUNCH_KEYS } from "../../shared/settings";
 
 import { FORGE_SETTINGS_PAGE_ONLY, withoutForgeCommands } from "./forge-cli";
 import { KeeperStore } from "../keeper/store";
@@ -19,7 +19,7 @@ export function settingsCommands(bb: BbPluginApi, store: SettingsStore) {
   const keepers = new KeeperStore(store.db);
   function guardrails(ctx: PluginCliContext, keys: string[]) {
     if (!ctx.threadId) return;
-    const consent = [...new Set(keys.filter(key => key === "keepers.alwaysAsk" || key === "away.neverWhileClosed" || key === "scopes.sendTools" || key === "tavern.gitProgram" || key === "tavern.piProgram"))];
+    const consent = [...new Set(keys.filter(key => key === "keepers.alwaysAsk" || key === "away.neverWhileClosed" || key === "scopes.sendTools" || key === "tavern.gitProgram" || key === "tavern.piProgram" || SPEECH_LAUNCH_KEYS.some(field => key === `tavern.${field}`)))];
     if (consent.length) throw new PluginCliError(`Only you can change ${consent.join(", ")}. Use Tavern Settings or a terminal outside an agent thread.`);
     if (!keepers.get("members", ctx.threadId)) return;
     const blocked = [...new Set(keys.filter(isGuardrailSetting))].sort();

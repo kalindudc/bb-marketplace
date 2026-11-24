@@ -18,14 +18,14 @@ For the complete key-by-key schema (every default, bound, TOML path, and edit pe
 
 ## Contextual speech
 
-Contextual speech is off by default. Open **Settings → Atmosphere → Contextual speech** to turn it on, choose the Pi model and thinking, and edit the two limits. The defaults are 12 attempts per thread and 100 for the whole install. The read-only count shows how many attempts the install has used today. Both limits reset at midnight UTC. An attempt counts even if the reply never appears.
+Contextual speech is off by default. Open **Settings → Atmosphere → Contextual speech** to turn it on and choose the Pi model and thinking. Pi writes only while you are looking at the thread: when you click a character, at certain events, or when a timed remark is due. **Time between remarks** sets the average gap for timed remarks, with or without Pi. The default is five minutes, varied between three and seven minutes. The read-only attempt count starts over at midnight UTC. One attempt is one request to Pi, even if no reply appears.
 
-Tavern runs Pi for each attempt without tools or a saved session. It sends only the class, work stage and kind of change, not chat, titles or reports from the member. No bb thread is created. Pi must be installed and signed in where Tavern runs. Leave **Pi program** empty to use Pi from PATH, or set its absolute path. Only you can change the executable path. The character's usual line shows first. A valid reply can replace it only while the same bubble is still showing. Turning off ordinary speech also suppresses contextual speech.
+Tavern keeps one Pi process open without tools or saved sessions. It loads only the extensions listed under **Extensions for speech** and uses **Speech instructions** as its system prompt. No extensions are loaded by default. If your model needs an extension to sign in, enter the absolute path to that trusted extension. For each remark Tavern starts fresh and sends only the class, work stage and kind of remark, not chat, titles or reports. Extensions run code and may provide their own context. Only you can change these two settings directly; imports and backup restores cannot change them. No bb thread is created. It closes when Tavern stops, when contextual speech is off, or after ten minutes without a watched strip. Pi must be installed and signed in where Tavern runs. Leave **Pi program** empty to use Pi from PATH, or set its absolute path. Only you can change the executable path. The character's usual line shows first while Tavern waits up to ten seconds. A reply that arrives in time replaces it for four and a half seconds; a late reply is ignored. Turning off ordinary speech also suppresses contextual speech.
 
 The CLI can set these just like other Atmosphere settings. For example:
 
 ```sh
-bb tavern settings set tavern.contextualSpeech=true tavern.speechThreadLimit=8 tavern.speechInstallLimit=60 --apply
+bb tavern settings set tavern.contextualSpeech=true tavern.speechGapMinutes=8 --apply
 ```
 
 ## Guided setup with an agent

@@ -14,12 +14,13 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `tavern.default_class` | Starts new eligible threads as this class. None starts a plain thread. | `"none"` | User; Granted |
 | `tavern.widget_row` | Shows the Tavern widget above the composer. | `true` | User; Granted |
 | `tavern.voice` | Sets full, light or off voice for Tavern's character presentation. | `"full"` | User; Granted |
-| `tavern.contextual_speech` | Run Pi without tools or sessions to write character remarks for watched milestones. | `false` | User; Granted |
+| `tavern.contextual_speech` | Run Pi without tools or sessions to write character remarks on clicks, at watched milestones, and when a timed remark is due. | `false` | User; Granted |
+| `tavern.speech_extensions` | Absolute paths to the only Pi extensions loaded for speech; start with none and add only trusted sign-in extensions if needed. Not changed by imports. | `[]` | User only |
+| `tavern.speech_instructions` | System instructions for speech, 1–2,000 characters. Not changed by imports. | `"Write only a brief in-character remark. Do not use tools."` | User only |
 | `tavern.pi_program` | Absolute executable path on the machine running Tavern. Empty uses Pi from PATH. | `""` | User only |
 | `tavern.speech_model` | Model for contextual speech. | `"openai/gpt-5-nano"` | User; Granted |
 | `tavern.speech_reasoning` | Thinking level for contextual speech. | `"low"` | User; Granted |
-| `tavern.speech_thread_limit` | Attempts per member thread per UTC day, 1–100. | `12` | User; Granted |
-| `tavern.speech_install_limit` | Attempts across this install per UTC day, 1–500. | `100` | User; Granted |
+| `tavern.speech_gap_minutes` | Average time between unprompted remarks, 1–120 minutes. Each wait varies by up to 40%, with or without contextual speech. | `5` | User; Granted |
 | `tavern.voice_before_off` | Remembers the last speech level when you turn speech off from the character menu or Atmosphere. Turning speech back on from the menu restores this level. | `"full"` | User; Granted |
 | `tavern.levels` | Shows character levels. | `true` | User; Granted |
 | `tavern.characters` | Shows the animated character strip without changing class membership. | `true` | User; Granted |

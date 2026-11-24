@@ -7,7 +7,7 @@ import { exportToml } from "./toml";
 import { SettingsConflict, type SettingsStore } from "./store";
 import { importSettings, type SettingsFiles, type SettingsPreview } from "./files";
 import { gitProgramProblem } from "../../shared/git-safety";
-import { BubbleQuota } from "../strip-dialogue";
+import { SpeechAttempts } from "../strip-dialogue";
 
 export function settingsHandlers(store: SettingsStore, files: SettingsFiles, validate?: (settings: TavernSettings) => void,
   speechProblem?: (settings: TavernSettings["tavern"]) => string | null): ExperimentalPluginRpcHandlersWithContext<typeof settingsContract> {
@@ -16,7 +16,7 @@ export function settingsHandlers(store: SettingsStore, files: SettingsFiles, val
     return requireUserAct(context, "settingsUpdate");
   };
   const records = new KeeperStore(store.db);
-  const quota = new BubbleQuota(records);
+  const attempts = new SpeechAttempts(records);
   const view = () => {
     const snapshot = store.snapshot();
     const liveOverrides = Object.entries(store.questOverrides()).flatMap(([questId, values]) => {
@@ -32,7 +32,7 @@ export function settingsHandlers(store: SettingsStore, files: SettingsFiles, val
     const problem = gitProgramProblem(snapshot.effective.tavern.gitProgram);
     const speech = speechProblem?.(snapshot.effective.tavern);
     return { ...snapshot, ...store.placementRepair(), file: files.status(), liveOverrides, lastChangers: store.lastChangers(),
-      speechAttemptsToday: quota.used(store.now()), ...(speech ? { speechProblem: speech } : {}), ...(problem ? { gitProgramProblem: problem } : {}) };
+      speechAttemptsToday: attempts.used(store.now()), ...(speech ? { speechProblem: speech } : {}), ...(problem ? { gitProgramProblem: problem } : {}) };
   };
   function mutate(action: () => SettingDecision | null | void) {
     try {

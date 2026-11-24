@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BUBBLE_MS, speechDecision, type SpeechInput } from "../../../src/ui/engine/speech";
+import { BUBBLE_MS, planSpeech, speechDecision, type SpeechInput } from "../../../src/ui/engine/speech";
 
 const base: SpeechInput = { actorId: "wren:lead", voice: "full", mood: "idle", moodSince: 0, pageSince: 0, now: 500_000, lastLineAt: null };
 const decide = (change: Partial<SpeechInput> = {}) => speechDecision({ ...base, ...change });
@@ -39,6 +39,20 @@ describe("speech policy", () => {
 
   it("does not replay a wrap from before the page opened", () => {
     expect(decide({ voice: "light", pageSince: 500_000, wrappedAt: 499_999 })).toBeNull();
+  });
+
+  it.each([1, 5, 120])("seeds each ambient gap for a %i minute average", speechGapMinutes => {
+    const since = 250_000, average = speechGapMinutes * 60_000;
+    const gaps = new Set<number>();
+    for (let i = 0; i < 20; i++) {
+      const input = { ...base, actorId: `actor-${i}`, speechGapMinutes, lastLineAt: since };
+      const scheduled = planSpeech(input)!;
+      expect(scheduled.at - since).toBeGreaterThanOrEqual(average * .6);
+      expect(scheduled.at - since).toBeLessThanOrEqual(average * 1.4 + 0.001);
+      expect(planSpeech({ ...input, now: scheduled.at + 1 })).toEqual(scheduled);
+      gaps.add(scheduled.at - since);
+    }
+    expect(gaps.size).toBeGreaterThan(1);
   });
 
   it.each(["idle", "working", "resting"] as const)("keeps a seeded three to seven minute gap in %s", mood => {

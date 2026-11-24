@@ -1150,6 +1150,8 @@
 .tavern.tv-page .tv-paste { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .tavern.tv-page .tv-paste label { font-size: 12px; font-weight: 700; }
 .tavern.tv-page .tv-toml { width: 100%; padding: 6px 8px; font-family: var(--font-mono, monospace); line-height: 1.5; resize: vertical; }
+.tavern.tv-page .tv-speech-launch { width: min(28rem, 100%); min-width: min(13rem, 100%); }
+.tavern.tv-page .tv-speech-launch p { margin: 4px 0 0; color: var(--destructive); }
 .tavern.tv-page .tv-preview-box { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--tavern-line); background: var(--tv-elev-recessed); }
 .tavern.tv-page .tv-changes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
 .tavern.tv-page .tv-changes li { display: flex; flex-wrap: wrap; gap: 4px 10px; }

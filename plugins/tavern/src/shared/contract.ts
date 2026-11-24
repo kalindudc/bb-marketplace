@@ -10,7 +10,7 @@ import { pullRequestSchema } from "./pull-request";
 import { stripSceneSchema } from "./strip-scene";
 import { defineContract } from "./define-contract";
 import { stopAllContract } from "./stop-all";
-import { characterQuietUntilSchema, voiceBeforeOffSchema, voiceModeSchema } from "./settings";
+import { characterQuietUntilSchema, speechGapMinutesSchema, voiceBeforeOffSchema, voiceModeSchema } from "./settings";
 import { placementContract } from "./placement-rpc";
 import { placementViewSchema } from "./placement-view";
 import { awayContract } from "./away-rpc";
@@ -185,6 +185,7 @@ export const threadDecorSchema = z.object({
   reportedPoseSeconds: z.number().int().positive().optional(), verifiedPoseMinutes: z.number().int().positive().optional(),
   stripScene: stripSceneSchema.optional(),
   contextualSpeech: z.boolean().optional(),
+  speechGapMinutes: speechGapMinutesSchema.optional(),
   moodSignals: z.object({
     released: z.boolean(),
     archived: z.boolean(),

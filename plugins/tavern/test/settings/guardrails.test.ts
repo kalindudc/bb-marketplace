@@ -3,6 +3,7 @@ import Sqlite from "better-sqlite3";
 import { expect, it } from "vitest";
 import { defineCli, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { settingsCommands } from "../../src/server/settings/cli";
+import { previewToml } from "../../src/server/settings/toml";
 import { SettingsStore } from "../../src/server/settings/store";
 import { KeeperStore } from "../../src/server/keeper/store";
 import { MIGRATIONS } from "../../src/server/migrations";
@@ -24,6 +25,26 @@ it.each([["gitProgram", "git"], ["piProgram", "pi"]])("requires a user terminal 
   expect(store.read().tavern).toMatchObject({[key]: path});
   expect(store.snapshot().history[0]).toMatchObject({by:"user",changes:[{key:setting}]});
  } finally { db.close(); }
+});
+
+it("lets only the user set speech launch options and preserves them across TOML imports", async () => {
+  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n"));
+  try {
+    const store = new SettingsStore(db as unknown as Database);
+    const cli = defineCli({ name: "tavern", summary: "Tavern", commands: settingsCommands({} as BbPluginApi, store) });
+    const options = { speechExtensions: ["/fixture/pi/sign-in.ts"], speechInstructions: "Short and calm." };
+    for (const [key, value] of Object.entries(options)) {
+      const args = ["settings", "set", `tavern.${key}=${JSON.stringify(value)}`, "--apply"];
+      expect((await cli.run(args, { threadId: "plain" })).exitCode).toBe(1);
+      expect((await cli.run(args, {})).exitCode).toBe(0);
+    }
+    const toml = '[tavern]\nspeech_extensions=["/fixture/different.ts"]\nspeech_instructions="Different"';
+    for (const context of [{ threadId: "plain" }, {}])
+      expect((await cli.run(["settings", "import", "--toml", toml, "--apply"], context)).exitCode).toBe(1);
+    expect(previewToml(toml, store.snapshot(), "patch").problems.map(p => p.key)).toEqual(["tavern.speech_extensions", "tavern.speech_instructions"]);
+    expect((await cli.run(["settings", "import", "--toml", "[tavern]\nvoice='light'", "--apply"], {})).exitCode).toBe(0);
+    expect(store.read().tavern).toMatchObject({ ...options, voice: "light" });
+  } finally { db.close(); }
 });
 
 it.each(["member", "keeper"] as const)("blocks guardrail applies from a persisted %s, including archived callers", async role => {

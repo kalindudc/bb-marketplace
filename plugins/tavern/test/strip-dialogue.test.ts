@@ -2,8 +2,8 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import Database from "better-sqlite3";
 import { describe, expect, it, vi } from "vitest";
-import { dialogueSlot, validateDialogue, type StripScene } from "../src/shared/strip-scene";
-import { BubbleQuota, DialogueWatches } from "../src/server/strip-dialogue";
+import { dialogueSlot, validateDialogue, type SpeechContext, type StripScene } from "../src/shared/strip-scene";
+import { SpeechAttempts, DialogueWatches } from "../src/server/strip-dialogue";
 import { MIGRATIONS } from "../src/server/migrations";
 import { KeeperStore } from "../src/server/keeper/store";
 import { registerDialogueWatch } from "../src/server/strip-dialogue-watch";
@@ -93,7 +93,7 @@ describe("contextual strip dialogue", () => {
     let value = { ...scene, revision: "first" };
     let finish!: (text: string) => void;
     const reply = new Promise<string>(done => { finish = done; });
-    const complete = vi.fn((_scene: StripScene, _signal: AbortSignal) => reply);
+    const complete = vi.fn((_scene: SpeechContext, _signal: AbortSignal) => reply);
     const send = vi.fn();
     let now = 200;
     const watch = new DialogueWatches(() => ({ scene: value, voice: "full" }), () => true, complete, () => now);
@@ -108,7 +108,7 @@ describe("contextual strip dialogue", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("binds the hosted watch before dispatch and ignores frames sent by a client", async () => {
+  it("checks the socket binding and accepts only bound clicks, due ambient requests and committed events", async () => {
     const f = setup();
     const host = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { get: async ({ threadId }: { threadId: string }) => makeThreadResponse({
       id: threadId, projectId: "project", visibility: threadId === "hidden" ? "hidden" : "visible",
@@ -116,55 +116,82 @@ describe("contextual strip dialogue", () => {
     const db = f.k.store.db;
     const config = f.runtime.config();
     const configured = vi.spyOn(f.runtime, "config").mockReturnValue({ ...config, tavern: { ...config.tavern, voice: "full", contextualSpeech: false } });
-    const complete = vi.fn(async (_scene: unknown, _config: unknown, _signal: AbortSignal, reserve: () => boolean) => reserve() ? "The anvil awaits." : null);
-    const speech = { complete, dispose: vi.fn(async () => {}) };
+    const complete = vi.fn(async (_scene: SpeechContext, _config: unknown, _signal: AbortSignal, reserve: () => boolean): Promise<string | null> => reserve() ? "The anvil awaits." : null);
+    const speech = { complete, dispose: vi.fn(async () => {}), refresh: vi.fn(async () => {}), setWatching: vi.fn(), stop: vi.fn(async () => {}) };
     try {
       f.k.bind("maker", "smith", "bram", "project");
       putMemberFixture(f.k.store, "maker", { role: "member", keeperThreadId: "lead", errand: true, engagement: "active" });
       const refresh = registerDialogueWatch(host.bb, f.runtime, speech);
       const off = await host.harness.experimental_openWebSocket("/strip-dialogue?thread=maker&project=project");
       expect(off.closeCalls[0]?.code).toBe(1008);
-      configured.mockReturnValue({ ...config, tavern: { ...config.tavern, voice: "full", contextualSpeech: true } });
+      configured.mockReturnValue({ ...config, tavern: { ...config.tavern, voice: "full", contextualSpeech: true, speechGapMinutes: 1 } });
       refresh();
       const denied = await host.harness.experimental_openWebSocket("/strip-dialogue?thread=maker&project=foreign");
       const hidden = await host.harness.experimental_openWebSocket("/strip-dialogue?thread=hidden&project=project");
       expect(denied.closeCalls[0]?.code).toBe(1008);
       expect(hidden.closeCalls[0]?.code).toBe(1008);
+      expect(speech.setWatching).not.toHaveBeenCalled();
       const pane = await host.harness.experimental_openWebSocket("/strip-dialogue?thread=maker&project=project");
-      await pane.receive(JSON.stringify({ moment: "wrapped", revision: "fabricated" }));
+      const request = (kind: "ambient" | "click", at = f.time()) => JSON.stringify({ kind, at });
+      await pane.receive(JSON.stringify({ kind: "click", at: 1, stage: "rest" }));
+      await pane.receive(request("ambient"));
       expect(complete).not.toHaveBeenCalled();
       f.advance(100);
       f.k.store.patch("maker", { lastBriefAt: f.time(), briefVersion: 1 });
       f.k.store.event(f.time(), "lead", null, "member.briefed", "Private fixture title", { memberThreadId: "maker" });
       await vi.waitFor(() => expect(pane.sent).toHaveLength(1));
       expect(JSON.parse(String(pane.sent[0])).text).toBe("The anvil awaits.");
-      expect(new BubbleQuota(f.k.store).used(f.time())).toBe(1);
+      expect(new SpeechAttempts(f.k.store).used(f.time())).toBe(1);
+      f.advance(36_000);
+      const ambientAt = f.time();
+      const otherPane = await host.harness.experimental_openWebSocket("/strip-dialogue?thread=maker&project=project");
+      await pane.receive(request("ambient"));
+      await vi.waitFor(() => expect(pane.sent).toHaveLength(2));
+      expect(JSON.parse(String(pane.sent[1]))).toMatchObject({ request: { kind: "ambient", at: ambientAt }, text: "The anvil awaits." });
+      expect(complete.mock.lastCall?.[0]).toEqual({ role: "smith", stage: "work", moment: "ambient" });
+      await pane.receive(request("ambient", ambientAt + 1));
+      expect(new SpeechAttempts(f.k.store).used(f.time())).toBe(2);
+      expect(pane.sent).toHaveLength(2);
+      expect(otherPane.sent).toHaveLength(0);
+
+      const reply = "The lantern warms us.";
+      let finish!: (text: string) => void;
+      complete.mockImplementationOnce(async (_scene, _config, _signal, reserve) => reserve()
+        ? new Promise<string>(done => { finish = done; }) : null);
+      const clicked = otherPane.receive(request("click", 1));
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      await otherPane.receive(request("click", 2));
+      await pane.receive(request("click", 3));
+      expect(complete).toHaveBeenCalledTimes(3);
+      expect(complete.mock.lastCall?.[0]).toEqual({ role: "smith", stage: "work", moment: "click" });
+      finish(reply);
+      await clicked;
+      await vi.waitFor(() => expect(otherPane.sent).toHaveLength(1));
+      expect(JSON.parse(String(otherPane.sent[0]))).toMatchObject({ request: { kind: "click", at: 2 }, text: reply });
+      expect(JSON.parse(String(pane.sent[2]))).toMatchObject({ request: { kind: "click", at: 3 }, text: reply });
+      expect(new SpeechAttempts(f.k.store).used(f.time())).toBe(3);
+      await otherPane.close();
+      expect(speech.setWatching.mock.calls).toEqual([[true]]);
       await pane.close();
+      expect(speech.setWatching.mock.calls).toEqual([[true], [false]]);
     } finally { await host.harness.lifecycle.dispose(); (db as unknown as Database.Database).close(); }
   });
 
-  it("reserves atomically and keeps daily limits across restarts, panes and UTC rollover", () => {
+  it("rejects duplicate events but counts every distinct attempt until UTC rollover", () => {
     const db = new Database(":memory:");
     try {
       db.exec(MIGRATIONS.join(";\n"));
       const wrap = new KeeperStore(db as never);
       const t = Date.UTC(2026, 5, 2, 23, 59, 58);
-      const quota = new BubbleQuota(wrap);
-      expect(quota.reserve("thread-one", t, t)).toBe(true);
-      expect(new BubbleQuota(wrap).reserve("thread-one", t, t + 1)).toBe(false);
-      for (let i = 1; i < 12; i++) expect(quota.reserve("thread-one", t + i, t + i)).toBe(true);
-      expect(quota.reserve("thread-one", t + 20, t + 20)).toBe(false);
-      for (let i = 0; i < 88; i++) expect(quota.reserve(`thread-${i}`, t + i, t + i)).toBe(true);
-      expect(quota.reserve("another", t + 100, t + 100)).toBe(false);
-      expect(quota.reserve("thread-one", t + 999, t + 2001)).toBe(false);
-      expect(quota.reserve("thread-one", t + 2001, t + 2001)).toBe(true);
-      const limits = { speechThreadLimit: 2, speechInstallLimit: 3 };
-      expect(quota.used(t + 2001)).toBe(1);
-      expect(quota.reserve("thread-one", t + 2002, t + 2002, limits)).toBe(true);
-      expect(quota.reserve("thread-one", t + 2003, t + 2003, limits)).toBe(false);
-      expect(quota.reserve("another", t + 2004, t + 2004, limits)).toBe(true);
-      expect(quota.reserve("third", t + 2005, t + 2005, limits)).toBe(false);
-      expect(quota.used(t + 2005)).toBe(3);
+      const attempts = new SpeechAttempts(wrap);
+      expect(attempts.reserve("thread-one", t, t)).toBe(true);
+      expect(new SpeechAttempts(wrap).reserve("thread-one", t, t + 1)).toBe(false);
+      for (let i = 1; i <= 505; i++) expect(attempts.reserve("thread-one", t + i, t + i)).toBe(true);
+      expect(attempts.used(t + 505)).toBe(506);
+      expect(attempts.reserve("thread-one", t + 504, t + 505)).toBe(false);
+      expect(attempts.reserve("thread-one", t + 999, t + 2001)).toBe(false);
+      expect(attempts.reserve("thread-one", t + 2001, t + 2001)).toBe(true);
+      expect(attempts.used(t + 2001)).toBe(1);
     } finally { db.close(); }
   });
 });

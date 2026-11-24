@@ -46,8 +46,9 @@ it("previews multiple keys, audits an agent apply and allows undo", async () => 
  expect(store.read().tavern.ambientMotion).toBe("calm");
  expect((await cli.run(["settings","get","tavern.repeatSeconds"], {})).stdout).toContain("20");
  expect((await cli.run(["settings","set","tavern.repeatSeconds=2","--apply"], {})).exitCode).not.toBe(0);
- expect((await cli.run(["settings","set","tavern.contextualSpeech=true","tavern.speechInstallLimit=60","tavern.speechModel=vendor/model","--apply"], { threadId:"agent" })).exitCode).toBe(0);
- expect(store.read().tavern).toMatchObject({ contextualSpeech: true, speechInstallLimit: 60, speechModel: "vendor/model" });
+ expect((await cli.run(["settings","set","tavern.contextualSpeech=true","tavern.speechGapMinutes=60","tavern.speechModel=vendor/model","--apply"], { threadId:"agent" })).exitCode).toBe(0);
+ expect(store.read().tavern).toMatchObject({ contextualSpeech: true, speechGapMinutes: 60, speechModel: "vendor/model" });
+ expect((await cli.run(["settings","set","tavern.speechInstallLimit=60","--apply"], {threadId:"agent"})).exitCode).not.toBe(0);
  store.update({revision:store.snapshot().revision,patch:{tavern:{agentsMayChangeSettings:false}},why:"Lock"});
  expect((await cli.run([...args,"--apply"],{threadId:"agent"})).exitCode).toBe(1);
  expect((await cli.run(["settings","import","--toml","[tavern]\npaused=true"],{threadId:"agent"})).exitCode).toBe(0);

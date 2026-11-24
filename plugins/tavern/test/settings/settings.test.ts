@@ -27,10 +27,10 @@ it("accepts an absolute Git program or the default, not a command line or a rela
 });
 
 describe("settings compatibility and validation", () => {
-  it("defaults contextual speech off, accepts sparse edits, and bounds attempts", () => {
+  it("defaults contextual speech off and accepts sparse, bounded cadence edits", () => {
     const { store } = fixture();
-    expect(store.read().tavern).toMatchObject({ contextualSpeech: false, piProgram: "", speechModel: "openai/gpt-5-nano", speechReasoning: "low", speechThreadLimit: 12, speechInstallLimit: 100 });
-    const patch = { tavern: { contextualSpeech: true, speechThreadLimit: 6, speechInstallLimit: 80, speechModel: "vendor/model", speechReasoning: "low" as const } };
+    expect(store.read().tavern).toMatchObject({ contextualSpeech: false, piProgram: "", speechModel: "openai/gpt-5-nano", speechReasoning: "low", speechGapMinutes: 5 });
+    const patch = { tavern: { contextualSpeech: true, speechGapMinutes: 6, speechModel: "vendor/model", speechReasoning: "low" as const } };
     expect(settingsPatchSchema.parse(patch)).toEqual(patch);
     expect(settingsPatchSchema.parse({ tavern: { contextualSpeech: true } })).toEqual({ tavern: { contextualSpeech: true } });
     expect(isGuardrailSetting("tavern.contextualSpeech")).toBe(false);
@@ -38,8 +38,10 @@ describe("settings compatibility and validation", () => {
     expect(settingsPatchSchema.safeParse({ tavern: { piProgram: "./pi" } }).success).toBe(false);
     expect(settingsPatchSchema.safeParse({ tavern: { speechReasoning: "--tools=bash" } }).success).toBe(false);
     expect(settingsPatchSchema.safeParse({ tavern: { speechModel: "--model=other" } }).success).toBe(false);
-    for (const key of ["speechThreadLimit", "speechInstallLimit"])
-      for (const value of [-1, 1.5, 10_000]) expect(settingsPatchSchema.safeParse({ tavern: { [key]: value } }).success).toBe(false);
+    expect(isGuardrailSetting("tavern.speechGapMinutes")).toBe(false);
+    for (const speechGapMinutes of [0, 1.5, 121]) expect(settingsPatchSchema.safeParse({ tavern: { speechGapMinutes } }).success).toBe(false);
+    for (const speechGapMinutes of [1, 120]) expect(settingsPatchSchema.safeParse({ tavern: { speechGapMinutes } }).success).toBe(true);
+    for (const key of ["speechThreadLimit", "speechInstallLimit"]) expect(settingsPatchSchema.safeParse({ tavern: { [key]: 10 } }).success).toBe(false);
     store.update({ revision: 0, patch, why: "Choose a speech model" });
     expect(store.read().tavern).toMatchObject(patch.tavern);
     expect(previewToml(exportToml(store.snapshot()), store.snapshot()).problems).toEqual([]);
@@ -235,6 +237,17 @@ describe("settings compatibility and validation", () => {
 });
 
 describe("TOML transfer", () => {
+  it("drops retired speech limits from saved settings and older settings files", () => {
+    const { db, store } = fixture();
+    db.prepare("UPDATE tavern_settings SET data=? WHERE id=1").run(JSON.stringify({
+      user: { tavern: { contextualSpeech: true, speechThreadLimit: 4, speechInstallLimit: 50 } },
+    }));
+    expect(store.snapshot().user).toEqual({ tavern: { contextualSpeech: true } });
+    const preview = previewToml("[tavern]\ncontextual_speech = true\nspeech_thread_limit = 4\nspeech_install_limit = 50", store.snapshot());
+    expect(preview.problems).toEqual([]);
+    expect(preview.user).toEqual({ tavern: { contextualSpeech: true } });
+    expect(preview.changes).toEqual([]);
+  });
   it("round-trips only explicit settings and pins unless tuned values are requested", () => {
     const { store } = fixture();
     store.update({ revision: 0, patch: { tavern: { voice: "light" }, tuning: { mode: "apply" } }, pins: { staleMinutes: 30 }, why: "Personal settings" });

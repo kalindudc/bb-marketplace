@@ -4,6 +4,8 @@ export type SpeechKey = (typeof SPEECH_KEYS)[number];
 const fields = ["quest", "waypoint", "checker", "minutes"] as const;
 export type LineFacts = Partial<Record<(typeof fields)[number], string | number | null>>;
 
+export const speechMinGapMs = (minutes: number) => minutes * 36_000;
+
 export function speechSeed(key: string): number {
   let seed = 2166136261;
   for (let i = 0; i < key.length; i++) seed = Math.imul(seed ^ key.charCodeAt(i), 16777619);

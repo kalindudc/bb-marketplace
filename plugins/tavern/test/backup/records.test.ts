@@ -71,7 +71,7 @@ describe("Tavern records snapshots", () => {
       expect(target.records.empty()).toBe(true);
     } finally { source.db.close(); target.db.close(); }
   });
-  it("does not copy the install's speech quota through a portable backup", () => {
+  it("does not copy the install's speech attempt count through a portable backup", () => {
     const source = setup(), target = setup();
     try {
       populate(source);

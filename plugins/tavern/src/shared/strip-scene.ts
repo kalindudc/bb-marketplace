@@ -13,6 +13,10 @@ export const stripSceneSchema = z.object({
 });
 
 export type StripScene = z.infer<typeof stripSceneSchema>;
+export const SPEECH_REPLY_MS = 10_000;
+export const dialogueRequestSchema = z.object({ kind: z.enum(["click", "ambient"]), at: z.number().int().nonnegative() }).strict();
+export type DialogueRequest = z.infer<typeof dialogueRequestSchema>;
+export type SpeechContext = Pick<StripScene, "role" | "stage"> & { moment: StripScene["moment"] | DialogueRequest["kind"] };
 export type StripProp = "scroll" | "book" | "bookmarked" | "folio" | "anvil" | "seal";
 
 export function dialogueSlot(scene: StripScene | undefined, voice: VoiceMode): SpeechKey | null {

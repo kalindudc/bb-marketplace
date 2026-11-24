@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
 import { backupContract } from "../../src/shared/backup";
+import { sealBundle } from "../../src/server/backup/codec";
 import { registerBackupRpc } from "../../src/server/backup/rpc";
 import { createFakePluginHost } from "../server/host";
 import { fixture, override } from "./helpers";
@@ -46,6 +47,33 @@ it("refuses non-client backup restores and skips forge profiles even for a clien
   expect(applied.code).toBe("applied");
   expect(target.settings.read().machines.forges.map(profile => profile.id)).toEqual(["current"]);
   expect(target.settings.read().tavern.repeatSeconds).toBe(7);
+});
+it("restores legacy speech settings without reintroducing the caps", async () => {
+  const f = setup();
+  const exported = JSON.parse((await f.backup.export({ parts: ["settings"] })).json!);
+  const from = { bundle: JSON.stringify(sealBundle(exported.manifest, [{
+    ...exported.manifest.files[0], text: "[tavern]\ncontextual_speech = true\nspeech_thread_limit = 8\nspeech_install_limit = 60",
+  }])) };
+  const preview = backupContract.backupRestore.output.parse(await f.harness.invokeRpc("backupRestore", { from, apply: false }));
+  expect(preview.code).toBe("preview");
+  const applied = backupContract.backupRestore.output.parse(await f.harness.invokeRpc("backupRestore", { from, apply: true, previewHash: preview.previewHash }));
+  expect(applied.code).toBe("applied");
+  expect(f.settings.snapshot().user).toEqual({ tavern: { contextualSpeech: true } });
+});
+it("refuses incoming speech launch options and preserves local options absent in a backup", async () => {
+  const source = setup(), target = setup();
+  const local = { speechExtensions: ["/fixture/local.ts"], speechInstructions: "Keep it quiet." };
+  target.settings.update({ revision: 0, patch: { tavern: local }, why: "Direct settings" });
+  const plain = { bundle: (await source.backup.export({ parts: ["settings"] })).json! };
+  source.settings.update({ revision: 0, patch: { tavern: { speechExtensions: ["/fixture/imported.ts"], speechInstructions: "Incoming." } }, why: "Direct settings" });
+  const unsafe = { bundle: (await source.backup.export({ parts: ["settings"] })).json! };
+  const blocked = backupContract.backupRestore.output.parse(await target.harness.invokeRpc("backupRestore", { from: unsafe, apply: false }));
+  expect(blocked.code).toBe("invalid");
+  expect(blocked.problems.join(" ")).toMatch(/speech_extensions.*speech_instructions/);
+  const preview = backupContract.backupRestore.output.parse(await target.harness.invokeRpc("backupRestore", { from: plain, apply: false }));
+  const applied = backupContract.backupRestore.output.parse(await target.harness.invokeRpc("backupRestore", { from: plain, apply: true, previewHash: preview.previewHash }));
+  expect(applied.code).toBe("applied");
+  expect(target.settings.read().tavern).toMatchObject(local);
 });
 it("returns stale-safe restore previews through the registered RPC shape", async () => {
   const source = setup(); override(source);

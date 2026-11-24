@@ -1,12 +1,10 @@
 import type { MoodOrGone } from "./art";
-import { speechSeed, type SpeechKey } from "../../shared/says";
-import type { VoiceMode } from "../../shared/settings";
+import { speechMinGapMs, speechSeed, type SpeechKey } from "../../shared/says";
+import { SPEECH_GAP, type VoiceMode } from "../../shared/settings";
 
 export const BUBBLE_MS = 4_500;
 const CUE_SETTLE_MS = 1_000;
 const REPORT_HOLD_MS = 60_000;
-const MIN_GAP_MS = 180_000;
-const GAP_SPAN_MS = 240_000;
 
 export type SpeechInput = {
   actorId: string;
@@ -16,6 +14,7 @@ export type SpeechInput = {
   pageSince: number;
   now: number;
   lastLineAt: number | null;
+  speechGapMinutes?: number;
   cueEndsAt?: number;
   milestone?: boolean;
   lastAmbientAttemptAt?: number;
@@ -58,7 +57,8 @@ export function planSpeech(input: SpeechInput) {
   if (voice !== "full") return null;
   const since = Math.max(pageSince, moodSince, lastLineAt ?? pageSince, input.lastAmbientAttemptAt ?? pageSince);
   const next = line(mood, "ambient", since);
-  return { ...next, at: since + MIN_GAP_MS + speechSeed(next.key) % (GAP_SPAN_MS + 1) };
+  const minutes = input.speechGapMinutes ?? SPEECH_GAP.default;
+  return { ...next, at: since + speechMinGapMs(minutes) + speechSeed(next.key) % (minutes * 48_000 + 1) };
 }
 
 export function speechDecision(input: SpeechInput): { slot: SpeechKey; key: string } | null {

@@ -75,7 +75,7 @@ export type SparseTunables = Partial<Tunables>;
 
 export const GUARDRAIL_SETTING_KEYS = [
   "scopes.*", "away.*", "keepers.alwaysAsk", "keepers.greenlight", "keepers.partyMax", "keepers.decisionTimerMax",
-  "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "tavern.gitProgram", "tavern.piProgram", "attention.reviewBudget", "attention.notify", "attention.quietHours", "tuning.mode",
+  "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "tavern.gitProgram", "tavern.piProgram", "tavern.speechExtensions", "tavern.speechInstructions", "attention.reviewBudget", "attention.notify", "attention.quietHours", "tuning.mode",
   "knobs.typingHoldSeconds", "knobs.afterMessageHoldSeconds", "knobs.rangerTimeboxMaxMinutes",
 ] as const;
 export function isGuardrailSetting(key: string) {
@@ -105,16 +105,20 @@ const lanternStrengthSchema = z.enum(["low", "medium", "high"]);
 const providerSetting = z.string().trim().min(1).max(100);
 const modelSetting = z.string().trim().min(1).max(200);
 const reasoningSetting = z.string().trim().min(1).max(40);
-export const SPEECH_LIMITS = {
-  speechThreadLimit: { default: 12, min: 1, max: 100, label: "Attempts per thread" },
-  speechInstallLimit: { default: 100, min: 1, max: 500, label: "Attempts per install" },
-} as const;
+export const SPEECH_GAP = { default: 5, min: 1, max: 120, unit: "minutes", label: "Time between remarks" } as const;
+export const speechGapMinutesSchema = z.number().int().min(SPEECH_GAP.min).max(SPEECH_GAP.max);
 export const piSpeechReasoningSchema = z.enum(["none", "off", "minimal", "low", "medium", "high", "xhigh", "max"]).nullable();
+export const SPEECH_LAUNCH_KEYS = ["speechExtensions", "speechInstructions"] as const;
+export const DEFAULT_SPEECH_INSTRUCTIONS = "Write only a brief in-character remark. Do not use tools.";
+export const speechExtensionsSchema = z.array(z.string().max(1024)
+  .refine(path => /^(?:\/|[A-Za-z]:[\\/]|\\\\[^\\]+\\)/.test(path) && !/[\0\r\n]/.test(path), "Use an absolute extension path.")).max(8)
+  .refine(paths => new Set(paths).size === paths.length, "List each extension only once.");
+export const speechInstructionsSchema = z.string().trim().min(1).max(2000).refine(text => !text.includes("\0") && !text.startsWith("-"), "Enter instructions that do not start with a dash.");
 const speechFields = {
   contextualSpeech: z.boolean(), piProgram: piProgramSettingSchema,
   speechModel: modelSetting.regex(/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:/-]*$/i, "Choose a Pi model as provider/id."),
-  speechReasoning: piSpeechReasoningSchema,
-  ...numberFields(SPEECH_LIMITS),
+  speechReasoning: piSpeechReasoningSchema, speechGapMinutes: speechGapMinutesSchema,
+  speechExtensions: speechExtensionsSchema, speechInstructions: speechInstructionsSchema,
 };
 
 const sections = {
@@ -143,7 +147,8 @@ const sections = {
 };
 export const settingsSchema = z.object({
   tavern: sections.tavern.extend({ ...defaultNumbers(KNOB_FIELDS.tavern), characterQuietUntil: characterQuietUntilSchema.default(0), voiceBeforeOff: voiceBeforeOffSchema.default(DEFAULT_VOICE),
-    ...defaultNumbers(SPEECH_LIMITS), contextualSpeech: speechFields.contextualSpeech.default(false),
+    contextualSpeech: speechFields.contextualSpeech.default(false), speechGapMinutes: speechGapMinutesSchema.default(SPEECH_GAP.default),
+    speechExtensions: speechExtensionsSchema.default([]), speechInstructions: speechInstructionsSchema.default(DEFAULT_SPEECH_INSTRUCTIONS),
     piProgram: piProgramSettingSchema.default(""), speechModel: speechFields.speechModel.default("openai/gpt-5-nano"), speechReasoning: speechFields.speechReasoning.default("low"),
   }).prefault({ paused: false, defaultClass: "none", widgetRow: true, voice: DEFAULT_VOICE, levels: true, characters: true, hearthFlicker: true, agentsMayChangeSettings: true, ambientMotion: "calm", repeatSeconds: 20, batchWakeEvents: false }),
   away: sections.away.extend(defaultNumbers(KNOB_FIELDS.away)).prefault({ neverWhileClosed: [...AWAY_STOP_LIST],

@@ -1,6 +1,7 @@
+import { isDeepStrictEqual } from "node:util";
 import { parse } from "smol-toml";
 import { z } from "zod";
-import { settingsSchema, settingsPatchSchema, sparseTunablesSchema, TUNABLES, type SettingsSnapshot, type SettingsPatch, type SparseTunables,
+import { settingsSchema, settingsPatchSchema, sparseTunablesSchema, SPEECH_LAUNCH_KEYS, TUNABLES, type SettingsSnapshot, type SettingsPatch, type SparseTunables,
   type SettingsChange } from "../../shared/settings";
 import { displayChanges } from "./store";
 import { LIMITS } from "../limits";
@@ -69,8 +70,8 @@ export function previewToml(source: string, snapshot: Pick<SettingsSnapshot, "us
     const path = error.path.map(snake);
     return { ...empty, problems: [{ line: lineFor(path), key: path.join("."), message: error.message }] };
   }
-  if (isObject(converted.tavern) && Object.hasOwn(converted.tavern, "voiceChecksPerHour")) {
-    delete converted.tavern.voiceChecksPerHour;
+  if (isObject(converted.tavern)) {
+    for (const retired of ["voiceChecksPerHour", "speechThreadLimit", "speechInstallLimit"]) delete converted.tavern[retired];
     if (!Object.keys(converted.tavern).length) delete converted.tavern;
   }
   const tuning = isObject(converted.tuning) ? converted.tuning : null;
@@ -108,6 +109,17 @@ export function previewToml(source: string, snapshot: Pick<SettingsSnapshot, "us
   const pinned = validate(sparseTunablesSchema, pins, ["tuning", "pinned"]);
   const machine = hasTuned ? validate(sparseTunablesSchema, tuned, ["tuned"]) : undefined;
   if (problems.length || user === undefined || pinned === undefined) return { ...empty, problems };
+  for (const key of SPEECH_LAUNCH_KEYS) {
+    const previous = snapshot.user.tavern?.[key], incoming = user.tavern?.[key];
+    if (incoming !== undefined && !isDeepStrictEqual(incoming, previous)) {
+      const path = ["tavern", snake(key)];
+      problems.push({ line: lineFor(path), key: path.join("."), message: "Change this setting directly in Atmosphere, not through an import." });
+    }
+    if (user.tavern) delete user.tavern[key];
+    if (mode === "replace" && previous !== undefined) Object.assign(user.tavern ??= {}, { [key]: previous });
+  }
+  if (user.tavern && !Object.keys(user.tavern).length) delete user.tavern;
+  if (problems.length) return { ...empty, problems };
   if (mode === "patch") return { user, pinned, ...(hasTuned ? { tuned: machine } : {}), changes: [], problems };
   try { encodeSettingsToml({ user, pinned, tuned: machine ?? snapshot.tuned }, true); }
   catch (error) { return { ...empty, problems: [{ line: 1, key: "", message: error instanceof Error ? error.message : String(error) }] }; }

@@ -12,15 +12,21 @@ import { ReportCard } from "../../../src/ui/thread/cards";
 import { fixtureBoard, fixtureDecor, fixtureMember, fixtureRegistry, fixtureReport } from "../../../src/ui/thread/fixtures";
 import { installAnimations } from "../kit/motion-fakes";
 
-const socket = vi.hoisted(() => ({ onLine: undefined as undefined | ((line: { revision: string; text: string; receivedAt: number }) => void) }));
+type Request = { kind: "click" | "ambient"; at: number };
+const socket = vi.hoisted(() => ({ send: vi.fn<(request: Request) => void>(), onLine: undefined as undefined | ((line: { revision: string; text: string; receivedAt: number; request?: Request }) => void) }));
 vi.mock("../../../src/ui/engine/dialogue-socket", () => ({
-  DialogueSocket: ({ onLine }: { onLine: NonNullable<typeof socket.onLine> }) => { socket.onLine = onLine; return null; },
+  DialogueSocket: ({ onLine, request }: { onLine: NonNullable<typeof socket.onLine>; request?: Request }) => {
+    socket.onLine = onLine;
+    if (request) socket.send(request);
+    return null;
+  },
 }));
 
 let fx: ReturnType<typeof installAnimations>;
 const rect = new DOMRect(8, 8, 360, 64);
 beforeEach(() => {
   motion.reset();
+  socket.send.mockClear();
   fx = installAnimations({});
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(rect);
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(360);
@@ -38,14 +44,14 @@ afterEach(() => {
 const signals = { archived: false, released: false, handBack: false, report: null, verdict: null };
 const says = { working: ["Lantern high.", "Good footing."], verified: ["{checker} set a seal for {waypoint} in {quest}."], wrap: ["{quest} ends by the hearth."], greet: ["The lantern is ready."], reported: ["Road clear."] };
 
-async function widget(patch: Partial<ThreadDecor> = {}) {
+async function widget(patch: Partial<ThreadDecor> = {}, activeThread = "keeper-1") {
   let data: ThreadDecor = {
     ...fixtureDecor,
     member: { ...fixtureMember, role: "member", state: "working", waypointId: "w1" },
     keeperView: null, boardQuest: fixtureBoard, voice: "full", moodSignals: signals, ...patch,
   };
   const registry = { ...fixtureRegistry, characters: [{ ...fixtureRegistry.characters[0]!, says }] };
-  const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { decor: () => data, registry: () => registry } });
+  const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { context: { projectId: "project", threadId: activeThread }, rpc: { decor: () => data, registry: () => registry } });
   const actor = () => slot.container.querySelector<HTMLButtonElement>("[data-actor]");
   const speech = () => slot.container.querySelector<HTMLElement>(".twalk-speech:not([hidden])")?.textContent ?? null;
   await waitFor(() => expect(actor()).not.toBeNull());
@@ -140,16 +146,19 @@ describe("thread strip speech", () => {
     const scene = { revision: "first", at: Date.now() - 10, role: "smith", stage: "work", activity: "unknown", moment: "assignment", posture: "clear" } as const;
     const w = await widget({ contextualSpeech: true, stripScene: scene });
     vi.useFakeTimers();
-    await tick(480_000);
+    await tick(30_000);
     expect(w.speech()).toBeNull();
     await w.update({ stripScene: { ...scene, revision: "second", at: Date.now() } });
     await tick(0);
     expect(says.working).toContain(w.speech());
     expect(w.actor()?.closest("section")?.querySelector(".twalk-speech")?.getAttribute("aria-hidden")).toBe("true");
-    await tick(3_000);
+    await tick(9_500);
+    expect(says.working).toContain(w.speech());
     await act(async () => socket.onLine?.({ revision: "second", text: "The anvil awaits.", receivedAt: Date.now() }));
     expect(w.speech()).toBe("The anvil awaits.");
-    await tick(BUBBLE_MS - 3_000);
+    await tick(BUBBLE_MS - 1);
+    expect(w.speech()).toBe("The anvil awaits.");
+    await tick(1);
     expect(w.speech()).toBeNull();
     await act(async () => socket.onLine?.({ revision: "second", text: "The road is clear.", receivedAt: Date.now() }));
     await w.update({ pendingEvents: 3 });
@@ -157,6 +166,82 @@ describe("thread strip speech", () => {
     w.click();
     expect(says.working).toContain(w.speech());
     expect(w.actor()?.closest("section")?.querySelector(".twalk-speech")?.getAttribute("role")).toBe("status");
+  });
+
+  it("closes a pending fallback by ten seconds and drops a late reply", async () => {
+    const scene = { revision: "first", at: Date.now() - 10, role: "smith", stage: "work", activity: "unknown", moment: "assignment", posture: "clear" } as const;
+    const w = await widget({ contextualSpeech: true, stripScene: scene });
+    vi.useFakeTimers();
+    await w.update({ stripScene: { ...scene, revision: "second", at: Date.now() } });
+    await tick(9_998);
+    expect(w.speech()).not.toBeNull();
+    await tick(2);
+    expect(w.speech()).toBeNull();
+    await act(async () => socket.onLine?.({ revision: "second", text: "The anvil awaits.", receivedAt: Date.now() }));
+    expect(w.speech()).toBeNull();
+  });
+
+  it.each([false, true])("uses the ambient cadence when contextual speech is %s", async contextualSpeech => {
+    const w = await widget({ contextualSpeech, ambientMotion: "off",
+      stripScene: { revision: "neutral", at: null, role: "smith", stage: "neutral", activity: "unknown", moment: "none", posture: "clear" } });
+    vi.useFakeTimers();
+    await w.update({ speechGapMinutes: 1 });
+    await tick(35_000);
+    expect(w.speech()).toBeNull();
+    for (let elapsed = 35_000; elapsed < 84_000 && !w.speech(); elapsed += 500) await tick(500);
+    expect(says.working).toContain(w.speech());
+    if (contextualSpeech) {
+      const request = socket.send.mock.lastCall?.[0];
+      expect(request).toEqual({ kind: "ambient", at: expect.any(Number) });
+      await tick(5_000);
+      await act(async () => socket.onLine?.({ revision: "neutral", text: "The anvil awaits.", receivedAt: Date.now(), request }));
+      expect(w.speech()).toBe("The anvil awaits.");
+    } else {
+      expect(socket.send).not.toHaveBeenCalled();
+      await tick(BUBBLE_MS);
+      expect(w.speech()).toBeNull();
+    }
+  });
+
+  it.each(["hidden window", "another thread"] as const)("does not request Pi for %s", async situation => {
+    const w = await widget({ contextualSpeech: true, ambientMotion: "off", stripScene: {
+      revision: "neutral", at: null, role: "smith", stage: "neutral", activity: "unknown", moment: "none", posture: "clear",
+    } }, situation === "another thread" ? "other-thread" : "keeper-1");
+    vi.useFakeTimers();
+    if (situation === "hidden window") vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    w.click();
+    expect(socket.send).not.toHaveBeenCalled();
+    if (situation === "another thread") expect(says.working).toContain(w.speech());
+    await tick(BUBBLE_MS);
+    expect(w.speech()).toBeNull();
+    await w.update({ speechGapMinutes: 1 });
+    for (let elapsed = 0; elapsed < 84_000 && !w.speech(); elapsed += 500) await tick(500);
+    if (situation === "another thread") expect(says.working).toContain(w.speech());
+    expect(socket.send).not.toHaveBeenCalled();
+  });
+
+  it("replaces the latest clicked bubble with Pi's reply and keeps its status announcement", async () => {
+    const w = await widget({ contextualSpeech: true, stripScene: {
+      revision: "neutral", at: null, role: "smith", stage: "neutral", activity: "unknown", moment: "none", posture: "clear",
+    } });
+    vi.useFakeTimers();
+    w.click();
+    expect(says.working).toContain(w.speech());
+    const first = socket.send.mock.lastCall?.[0];
+    expect(first).toEqual({ kind: "click", at: expect.any(Number) });
+    await tick(1_000);
+    w.click();
+    const request = socket.send.mock.lastCall?.[0];
+    expect(request).toEqual({ kind: "click", at: expect.any(Number) });
+    expect(request).not.toEqual(first);
+    await tick(5_000);
+    await act(async () => socket.onLine?.({ revision: "neutral", text: "This reply was for the first click.", receivedAt: Date.now(), request: first }));
+    expect(says.working).toContain(w.speech());
+    await act(async () => socket.onLine?.({ revision: "neutral", text: "The anvil awaits.", receivedAt: Date.now(), request }));
+    expect(w.speech()).toBe("The anvil awaits.");
+    expect(w.actor()?.closest("section")?.querySelector(".twalk-speech")?.getAttribute("role")).toBe("status");
+    await tick(BUBBLE_MS);
+    expect(w.speech()).toBeNull();
   });
 
   it("speaks on click without repeating after an unrelated widget update", async () => {

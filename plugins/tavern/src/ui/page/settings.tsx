@@ -1,6 +1,6 @@
 import { experimental_ProviderModelPicker as ProviderModelPicker, experimental_copyToClipboard, experimental_useProviders, experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate, type ExperimentalProviderModelPickerValue } from "@get-bb/plugin-sdk/app";
 import { createContext, useContext, useCallback, useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
-import { ambientMotionPatch, characterQuietPatch, charactersPatch, CHARACTER_QUIET_HOUR_MS, DEFAULT_SETTINGS, KNOB_FIELDS, SPEECH_LIMITS, piSpeechReasoningSchema, importSummary, isGuardrailSetting, settingsContract, voicePatch, type TavernSettings, type SettingsChange, type SettingsPatch, type ResettableSetting, type SettingsView, type TunableKey } from "../../shared/settings";
+import { ambientMotionPatch, characterQuietPatch, charactersPatch, CHARACTER_QUIET_HOUR_MS, DEFAULT_SETTINGS, KNOB_FIELDS, SPEECH_GAP, speechExtensionsSchema, speechInstructionsSchema, piSpeechReasoningSchema, importSummary, isGuardrailSetting, settingsContract, voicePatch, type TavernSettings, type SettingsChange, type SettingsPatch, type ResettableSetting, type SettingsView, type TunableKey } from "../../shared/settings";
 import { Glyph, OpensMark, TimeAgo, plural, useRegistry, useSidebarActorNames, useRemembered, ExpandsMark, FoldSummary } from "../kit";
 import { useCharacterQuiet } from "../engine/character-quiet";
 import { ReadState, SegFilter } from "./common";
@@ -259,12 +259,35 @@ export function AtmosphereSection() {
   </>; }}</Shell>;
 }
 
+function SpeechLaunchText({ id, setting, value, pending, save, problem }: {
+  id: string; setting: "speechExtensions" | "speechInstructions"; value: string; pending: boolean; save: (patch: SettingsPatch) => void; problem?: string;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => { setDraft(value); }, [value]);
+  const parsed = setting === "speechExtensions"
+    ? speechExtensionsSchema.safeParse(draft.split(/\r?\n/).map(line => line.trim()).filter(Boolean))
+    : speechInstructionsSchema.safeParse(draft);
+  return <div className="tv-speech-launch">
+    <textarea id={id} className="tv-text tv-toml" rows={3} spellCheck={false} disabled={pending} value={draft}
+      aria-invalid={!parsed.success || !!problem} aria-describedby={!parsed.success || problem ? `${id}-error` : undefined}
+      onChange={event => setDraft(event.target.value)}
+      onBlur={() => {
+        if (!parsed.success || draft === value) return;
+        save(Array.isArray(parsed.data) ? { tavern: { speechExtensions: parsed.data } } : { tavern: { speechInstructions: parsed.data } });
+      }} />
+    {(!parsed.success || problem) && <p id={`${id}-error`} role="alert">{parsed.success ? problem
+      : setting === "speechExtensions" ? "Enter up to eight different absolute paths, one per line." : "Enter 1 to 2,000 characters, without a leading dash."}</p>}
+  </div>;
+}
+
 function SpeechSettings({ api, settings }: { api: Api; settings: SettingsView }) {
   const t = settings.effective.tavern, defaults = DEFAULT_SETTINGS.tavern;
   const keys = ["tavern.speechModel", "tavern.speechReasoning"] as const;
   const chosen = keys.some(key => differsFromDefault(settings.effective, key));
-  return <SettingsCard title="Contextual speech" hint="Choose a model and set daily limits for character remarks." glyph="file">
-    <Row label="Contextual speech" setting="tavern.contextualSpeech" help="Pi writes a remark from only the class, stage and kind of change. The usual line shows while it waits."
+  const extensionProblem = settings.speechProblem?.includes("Extensions for speech") ? settings.speechProblem : undefined;
+  const instructionsProblem = settings.speechProblem?.includes("Speech instructions") ? settings.speechProblem : undefined;
+  return <SettingsCard title="Contextual speech" hint="Choose when characters speak and how Pi writes their remarks." glyph="file">
+    <Row label="Contextual speech" setting="tavern.contextualSpeech" help="Pi writes remarks only while you are looking at the thread: when you click a character, at certain events, or when a timed remark is due. The usual line shows while Tavern waits up to 10 seconds."
       control={id => <Toggle id={id} checked={t.contextualSpeech} disabled={api.pending} onChange={contextualSpeech => void api.save({ tavern: { contextualSpeech } })} />} />
     <Row label="Speech model" group coveredBy={[...keys]} control={() =>
       <ClassExecution label="contextual speech" allowProviderChange={false} defaultLabel="Default" resetLabel="Use the default speech model" defaults={{ provider: "pi", model: defaults.speechModel, reasoning: defaults.speechReasoning }}
@@ -276,10 +299,14 @@ function SpeechSettings({ api, settings }: { api: Api; settings: SettingsView })
           } else if (!value) await api.save({}, undefined, [...keys]);
         }} />} />
     <Row label="Pi program" setting="tavern.piProgram" help="Leave empty to use Pi from PATH. Only you can set a different executable."
-      control={id => <ProgramField field="piProgram" id={id} value={t.piProgram} problem={settings.speechProblem} api={api} />} />
-    {(["speechThreadLimit", "speechInstallLimit"] as const).map(key => <Row key={key} label={SPEECH_LIMITS[key].label} setting={`tavern.${key}`}
-      control={id => <NumberField id={id} value={t[key]} min={SPEECH_LIMITS[key].min} max={SPEECH_LIMITS[key].max} disabled={api.pending} onSave={value => void api.save({ tavern: { [key]: value } })} />} />)}
-    <Row label="Today's attempts used" help="Both limits reset at midnight UTC." control={id => <output id={id}>{settings.speechAttemptsToday ?? 0}</output>} />
+      control={id => <ProgramField field="piProgram" id={id} value={t.piProgram} problem={extensionProblem || instructionsProblem ? undefined : settings.speechProblem} api={api} />} />
+    <Row label="Extensions for speech" setting="tavern.speechExtensions" help="Only these Pi extensions load. Enter one absolute path per line on the Tavern machine. Leave blank for none. Extensions run code; list only ones you trust, such as an extension Pi needs to sign in."
+      control={id => <SpeechLaunchText id={id} setting="speechExtensions" value={t.speechExtensions.join("\n")} pending={api.pending} save={patch => void api.save(patch)} problem={extensionProblem} />} />
+    <Row label="Speech instructions" setting="tavern.speechInstructions" help="System instructions Pi receives for writing remarks. For each remark, Tavern adds only the character’s class, current stage and kind of remark, not the thread’s text."
+      control={id => <SpeechLaunchText id={id} setting="speechInstructions" value={t.speechInstructions} pending={api.pending} save={patch => void api.save(patch)} problem={instructionsProblem} />} />
+    <Row label={SPEECH_GAP.label} setting="tavern.speechGapMinutes" help="Average wait between remarks a character makes on its own. The wait varies by up to 40% each time. Greetings, milestones, wraps and clicks keep their usual timing."
+      control={id => <NumberField id={id} value={t.speechGapMinutes} min={SPEECH_GAP.min} max={SPEECH_GAP.max} unit={SPEECH_GAP.unit} disabled={api.pending} onSave={speechGapMinutes => void api.save({ tavern: { speechGapMinutes } })} />} />
+    <Row label="Today's attempts used" help="One attempt is one request to Pi, even if no reply appears. The count starts over at midnight UTC." control={id => <output id={id}>{settings.speechAttemptsToday ?? 0}</output>} />
   </SettingsCard>;
 }
 
