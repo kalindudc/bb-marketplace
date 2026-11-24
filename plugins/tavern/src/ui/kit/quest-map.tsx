@@ -39,8 +39,6 @@ const shortLead = (t: string | null) => t === null ? "unknown" : t.replace(/^abo
 const STATE_WORD: Record<WaypointView["state"], string> = { planned: "planned", todo: "to do", doing: "in progress", blocked: "blocked", reported: "reported", verified: "verified", rejected: "rejected", accepted: "accepted", done: "done", skipped: "skipped", waived: "waived" };
 const CHECK_WORD = { warden: "Warden check", keeper: "Keeper accepts", none: "no check", you: "you mark done" };
 
-export const checkWord = (waypoint: Pick<WaypointView, "actor" | "check">) => CHECK_WORD[waypointCheck(waypoint)];
-
 type Owner = { kind: "member" | "proposed" | "class" | "you" | "outside"; name: string; identity: ReturnType<typeof memberIdentity>; level?: Level | null };
 function ownerOf(w: WaypointView, quest: BoardQuestSummary, registry: Registry | undefined): Owner {
   if (w.actor === "user") return { kind: "you", name: "You", identity: null };
@@ -107,7 +105,7 @@ function Mark({ w, owner, size = 30 }: { w: WaypointView; owner: Owner; size?: n
 
 /** The quest map: one route in dependency order; each owner's mark stands on the waypoint it owns. Columns are order, not a promised ETA. */
 /** `memberCredits` (tale mode) names who made and verified each waypoint; `stretch` spreads the route across the full width with two-line labels. */
-export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, stretch = false, showChecks = mode === "plan", rowsOnly = false, showAll = false }: { quest: BoardQuestSummary; mode: "plan" | "live" | "tale"; dealt?: boolean; memberCredits?: BoardQuestDetail["memberCredits"]; stretch?: boolean; showChecks?: boolean; rowsOnly?: boolean; showAll?: boolean }) {
+export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, stretch = false, showChecks = mode === "plan", rowsOnly = false }: { quest: BoardQuestSummary; mode: "plan" | "live" | "tale"; dealt?: boolean; memberCredits?: BoardQuestDetail["memberCredits"]; stretch?: boolean; showChecks?: boolean; rowsOnly?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const registry = useRegistry();
   const container = useRef<HTMLElement>(null);
@@ -115,7 +113,7 @@ export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, s
   useEffect(() => { const node = container.current; if (!node || typeof ResizeObserver === "undefined") return; const observer = new ResizeObserver(entries => { const entry = entries[0]; if (entry) setAvailableWidth(entry.contentRect.width); }); observer.observe(node); return () => observer.disconnect(); }, []);
   let nodes: ReturnType<typeof layoutWaypoints>;
   try { nodes = layoutWaypoints(quest.waypoints, showChecks ? 116 : LANE); } catch (error) { return <p className="problem" role="alert">{String(error instanceof Error ? error.message : error)}</p>; }
-  const shown = showAll || expanded ? nodes : nodes.slice(0, 8);
+  const shown = expanded ? nodes : nodes.slice(0, 8);
   const natural = Math.max(...shown.map(n => n.x + PAD_X));
   const columns = Math.max(...shown.map(n => n.column)) + 1;
   const spread = stretch && availableWidth > natural;
@@ -140,7 +138,7 @@ export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, s
   }));
   const narrow = availableWidth > 0 && availableWidth < Math.min(natural, 520);
   const credit = (w: WaypointView) => credits ? creditLine(w, owners.get(w.id)!, quest, registry.data, credits) : null;
-  const describe = (w: WaypointView) => { const o = owners.get(w.id)!; return `${w.title}: ${o.name}, ${resolutionWords(w)}${showChecks ? `, ${checkWord(w)}` : ""}, lead time ${w.leadTime ?? "unknown"}`; };
+  const describe = (w: WaypointView) => { const o = owners.get(w.id)!; return `${w.title}: ${o.name}, ${resolutionWords(w)}${showChecks ? `, ${CHECK_WORD[waypointCheck(w)]}` : ""}, lead time ${w.leadTime ?? "unknown"}`; };
   return (
     <section ref={container} className={`tavern quest-map-container qmap m-${mode} ${rowsOnly || narrow ? "list-only" : ""} ${dealt ? "dealt" : ""} ${stretch ? "stretch" : ""}`} data-part="QuestMap" aria-label={`Quest map: ${quest.title}`}>
       {showChecks && !quest.waypoints.some(w => waypointCheck(w) === "warden") && <p className="wp-check-note m">No Warden checks on this map</p>}
@@ -152,7 +150,7 @@ export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, s
             <foreignObject className="wp-fo" x={n.x - 16} y={n.y - 16} width={32} height={32}><Mark w={w} owner={o} size={32} /></foreignObject>
             {verifiedWaypoint(w) && <g className="ok" transform={`translate(${n.x + 10} ${n.y - 20})`}><rect width="12" height="12" /><path d="M2.5 6.2 5 8.6 9.6 3.4" /></g>}
             <foreignObject x={n.x - labelW / 2} y={n.y + 19} width={labelW} height={labelH}>
-              <div className="map-label" title={`${describe(w)}${credit(w) ? ` · ${credit(w)}` : ""}`}><b className="clamp">{w.title}</b>{credit(w) ? <span className={`o o-${o.kind} o-credit`}><span className="m clamp">{credit(w)}</span></span> : <span className={`o o-${o.kind}`}>{o.name}{!showChecks && <span className="m"> · {mode === "tale" ? (verifiedWaypoint(w) ? `${w.evidenceCount} evidence` : STATE_WORD[w.state]) : w.state === "planned" || w.state === "todo" ? shortLead(w.leadTime) : STATE_WORD[w.state]}</span>}</span>}{showChecks && <span className="wp-check m">{checkWord(w)}</span>}</div>
+              <div className="map-label" title={`${describe(w)}${credit(w) ? ` · ${credit(w)}` : ""}`}><b className="clamp">{w.title}</b>{credit(w) ? <span className={`o o-${o.kind} o-credit`}><span className="m clamp">{credit(w)}</span></span> : <span className={`o o-${o.kind}`}>{o.name}{!showChecks && <span className="m"> · {mode === "tale" ? (verifiedWaypoint(w) ? `${w.evidenceCount} evidence` : STATE_WORD[w.state]) : w.state === "planned" || w.state === "todo" ? shortLead(w.leadTime) : STATE_WORD[w.state]}</span>}</span>}{showChecks && <span className="wp-check m">{CHECK_WORD[waypointCheck(w)]}</span>}</div>
             </foreignObject>
           </g>
         ); })}
@@ -161,12 +159,12 @@ export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, s
         {visible.map(({ waypoint: w }) => { const o = owners.get(w.id)!; return (
           <li key={w.id} className={settled(w) ? "done" : w.state === "doing" ? "cur" : ""}>
             <span className="vw"><Mark w={w} owner={o} size={20} /></span>
-            <span className="qt"><b>{w.title}</b><span className="m">{credit(w) ?? (o.kind === "you" ? "Your move" : o.kind === "outside" ? `Waits on ${o.name}` : o.kind === "proposed" ? `${o.name} (proposed)` : o.name)}{showChecks && <> · <span className="wp-check">{checkWord(w)}</span></>} · {w.leadTime ?? "lead time unknown"}{w.dependsOn.length > 0 ? ` · after ${w.dependsOn.map(d => d.replace(/^w/, "")).join(", ")}` : ""}{!credit(w) && mode === "tale" ? ` · ${w.evidenceCount} evidence${verifiedWaypoint(w) ? " · verified" : ""}` : ""}</span>{w.rejectedReason && <span className="m">Rejected: {w.rejectedReason}</span>}{w.resolutionReason && <span className="wp-reason m">{w.resolutionReason}</span>}</span>
+            <span className="qt"><b>{w.title}</b><span className="m">{credit(w) ?? (o.kind === "you" ? "Your move" : o.kind === "outside" ? `Waits on ${o.name}` : o.kind === "proposed" ? `${o.name} (proposed)` : o.name)}{showChecks && <> · <span className="wp-check">{CHECK_WORD[waypointCheck(w)]}</span></>} · {w.leadTime ?? "lead time unknown"}{w.dependsOn.length > 0 ? ` · after ${w.dependsOn.map(d => d.replace(/^w/, "")).join(", ")}` : ""}{!credit(w) && mode === "tale" ? ` · ${w.evidenceCount} evidence${verifiedWaypoint(w) ? " · verified" : ""}` : ""}</span>{w.rejectedReason && <span className="m">Rejected: {w.rejectedReason}</span>}{w.resolutionReason && <span className="wp-reason m">{w.resolutionReason}</span>}</span>
             <StatusPill status={w.state} mark={w.state === "done" ? "·" : undefined}>{STATE_WORD[w.state]}</StatusPill>
           </li>
         ); })}
       </ol>
-      {!showAll && nodes.length > 8 && <button type="button" className="btn sm" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "Fold after 8 waypoints" : `Show ${nodes.length - 8} more waypoints`}</button>}
+      {nodes.length > 8 && <button type="button" className="btn sm" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "Fold after 8 waypoints" : `Show ${nodes.length - 8} more waypoints`}</button>}
     </section>
   );
 }

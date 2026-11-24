@@ -238,14 +238,6 @@ html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--atten
 .tavern .qm-q { color: var(--tavern-muted); }
 .tavern .qm-steer { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border: 1px solid var(--primary); font-size: 11px; white-space: nowrap; }
 .tavern .qm-wait { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; background: var(--tavern-you-fill); border: 1px solid color-mix(in oklab, var(--attention) 60%, var(--tavern-line)); font-size: 12px; font-weight: 700; white-space: nowrap; }
-.tavern .plan-changes { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--tavern-line); border-radius: var(--radius); font-size: 13px; overflow-wrap: anywhere; }
-.tavern .plan-changes h3, .tavern .plan-changes p, .tavern .plan-changes ul { margin: 0; }
-.tavern .plan-changes h3 { font-size: 13px; font-weight: 700; }
-.tavern .plan-changes ul { display: grid; gap: 2px; padding: 0; list-style: none; }
-.tavern .plan-changes .lg-clamp { padding: 0; font-size: inherit; }
-.tavern .plan-changes button.lg-clamp { min-height: 44px; }
-.tavern .qm-mapfold > .btn { min-height: 44px; }
-.tavern .qm-mapfold > div:not([hidden]) { margin-top: 8px; }
 .tavern .qm-goal { font-size: 13px; overflow-wrap: anywhere; }
 .tavern .qm-goal .m { font-size: 12px; }
 .tavern .qm-key { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 11px; }

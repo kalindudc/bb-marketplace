@@ -120,7 +120,7 @@ export function glowVars(seed: string): Record<string, string> {
 }
 
 /** Long text in one or two lines. It becomes an expand-in-place control only when the clamp cuts it or `more` (such as a decision's why) is folded behind it; otherwise it stays plain text. */
-export function Clamp({ text, more, lines = 2, className = "", children }: { text: string; more?: string; lines?: 1 | 2 | 3; className?: string; children?: ReactNode }) {
+export function Clamp({ text, more, lines = 2, className = "" }: { text: string; more?: string; lines?: 1 | 2 | 3; className?: string }) {
   const [open, setOpen] = useState(false);
   const [cut, setCut] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
@@ -133,7 +133,7 @@ export function Clamp({ text, more, lines = 2, className = "", children }: { tex
     ro?.observe(el);
     return () => ro?.disconnect();
   }, [text, lines, open, cut]);
-  const body = <span className="ct" ref={ref} data-content>{children ?? text}{open && more && <span className="m"> {more}</span>}</span>;
+  const body = <span className="ct" ref={ref} data-content>{text}{open && more && <span className="m"> {more}</span>}</span>;
   if (!more && !cut && !open) return <span className={`lg-clamp still l${lines} ${className}`}>{body}</span>;
   return <button type="button" className={`lg-clamp act l${lines} ${open ? "open" : ""} ${className}`} aria-expanded={open} title={open ? "Show less" : more ? `${text} · ${more}` : text} onClick={() => setOpen(!open)}>{body}<ExpandsMark open={open} /></button>;
 }
