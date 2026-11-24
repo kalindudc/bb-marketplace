@@ -427,7 +427,6 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .tw-panel:has(> .tw-section-body) { overflow: hidden; }
 .tavern .tw-section-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .tavern .tw-section-actions { flex: none; justify-content: flex-end; }
-.tavern .tw-section-actions .btn { min-height: 44px; }
 .tavern .tw-panel-ledger { display: none; margin-inline-end: auto; }
 .tavern .tw-ask-keeper { margin-inline-end: auto; min-height: 24px; }
 .tavern .tw-section-actions :is(.tw-show-characters, .tw-guard) { display: none; }

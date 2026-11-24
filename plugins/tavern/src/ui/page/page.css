@@ -437,12 +437,11 @@
 .tavern.tv-page .tv-rename { padding-inline: 10px; }
 .tavern.tv-page .tv-rename-form { display: grid; gap: 10px; max-width: 64ch; padding-block: 8px 12px; }
 .tavern.tv-page .tv-rename-field { display: grid; gap: 4px; min-width: 0; }
-.tavern.tv-page .tv-rename :is(.btn, .tv-text) { min-height: 44px; }
 .tavern.tv-page .tv-rename .tv-text { width: 100%; }
 .tavern.tv-page .tv-rename .tv-text[aria-invalid="true"] { border-color: var(--tavern-bad); }
 .tavern.tv-page .tv-rename-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .tavern.tv-page .tv-rename-error { margin: 0; color: var(--tavern-bad); }
-@media (max-width: 560px), (pointer: coarse) { .tavern.tv-page .tv-rename .tv-text { font-size: 16px; } }
+@media (max-width: 560px), (pointer: coarse) { .tavern.tv-page .tv-rename .tv-text { min-height: 44px; font-size: 16px; } }
 .tavern.tv-page .tv-stop { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--tavern-bad); box-shadow: inset 3px 0 0 var(--tavern-bad); background: var(--tv-blk-fill); font-size: 12px; }
 .tavern.tv-page .tv-stop .tv-sp { min-width: 200px; }
 .tavern.tv-page .tv-stop-why { display: flex; flex-direction: column; gap: 2px; flex: 1 1 100%; min-width: 0; color: var(--foreground); }
@@ -1056,7 +1055,6 @@
 .tavern.tv-page .tv-alert-route { display: grid; gap: 10px; padding-top: 8px; overflow-wrap: anywhere; }
 .tavern.tv-page .tv-alert-route p { margin: 0; }
 .tavern.tv-page .tv-alert-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.tavern.tv-page .tv-alert-actions .btn { min-height: 44px; }
 .tavern.tv-page .tv-history-toggle { display: flex; gap: 8px; align-items: center; padding: 8px 0; min-height: 44px; width: 100%; border: 0; background: transparent; color: var(--foreground); font: inherit; text-align: left; cursor: pointer; }
 .tavern.tv-page .tv-settings-history { list-style: none; margin: 0; padding: 0; }
 .tavern.tv-page .tv-settings-change { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 14px 0; border-top: 1px solid var(--tavern-line); overflow-wrap: anywhere; }

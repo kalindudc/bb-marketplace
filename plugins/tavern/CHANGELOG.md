@@ -31,6 +31,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- The widget’s Close button matches the other small buttons on desktop. It still has a 44 px touch target on touch screens and in narrow windows, as do the quest rename fields and buttons and the alert test buttons.
 - Contextual remarks now work when Pi refuses to disable extensions. Tavern uses a separate Pi folder that keeps Pi's required extensions and your selected speech extensions without loading your ordinary Pi setup. If Pi still cannot start, Settings can show its startup error.
 - The Ledger’s Guardrails highlight fills the row all the way to the card border on hover.
 - Keeper cards on the board show the Keeper’s name once, keep quest badges inside the card, and put Refresh Keeper below the quests. Long titles and next steps show an ellipsis with the full text on hover.
