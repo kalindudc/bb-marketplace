@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defineContract } from "./define-contract";
 import { sendToolsSchema } from "./communication";
-import { gitProgramSettingSchema } from "./git-program";
+import { gitProgramSettingSchema, piProgramSettingSchema } from "./git-program";
 import { placementSettingsSchema, placementSettingsPatchSchema, placementPolicyReadSchema, settingsJsonValueSchema } from "./placement-settings";
 
 import { AWAY_STOP_LIST, PRODUCTION_WAKE_HOURS, awayQuestSchema, awayStopListSchema } from "./away";
@@ -75,7 +75,7 @@ export type SparseTunables = Partial<Tunables>;
 
 export const GUARDRAIL_SETTING_KEYS = [
   "scopes.*", "away.*", "keepers.alwaysAsk", "keepers.greenlight", "keepers.partyMax", "keepers.decisionTimerMax",
-  "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "tavern.gitProgram", "attention.reviewBudget", "attention.notify", "attention.quietHours", "tuning.mode",
+  "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "tavern.gitProgram", "tavern.piProgram", "attention.reviewBudget", "attention.notify", "attention.quietHours", "tuning.mode",
   "knobs.typingHoldSeconds", "knobs.afterMessageHoldSeconds", "knobs.rangerTimeboxMaxMinutes",
 ] as const;
 export function isGuardrailSetting(key: string) {
@@ -102,11 +102,26 @@ const quietHoursSchema = z.object({
 }).strict().refine(value => value.start !== value.end, "Start and end must differ");
 
 const lanternStrengthSchema = z.enum(["low", "medium", "high"]);
+const providerSetting = z.string().trim().min(1).max(100);
+const modelSetting = z.string().trim().min(1).max(200);
+const reasoningSetting = z.string().trim().min(1).max(40);
+export const SPEECH_LIMITS = {
+  speechThreadLimit: { default: 12, min: 1, max: 100, label: "Attempts per thread" },
+  speechInstallLimit: { default: 100, min: 1, max: 500, label: "Attempts per install" },
+} as const;
+export const piSpeechReasoningSchema = z.enum(["none", "off", "minimal", "low", "medium", "high", "xhigh", "max"]).nullable();
+const speechFields = {
+  contextualSpeech: z.boolean(), piProgram: piProgramSettingSchema,
+  speechModel: modelSetting.regex(/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:/-]*$/i, "Choose a Pi model as provider/id."),
+  speechReasoning: piSpeechReasoningSchema,
+  ...numberFields(SPEECH_LIMITS),
+};
 
 const sections = {
   tavern: z.object({ paused: z.boolean(), defaultClass: z.union([z.literal("none"), classId]),
     widgetRow: z.boolean(), voice: voiceModeSchema, voiceBeforeOff: voiceBeforeOffSchema, levels: z.boolean(), characters: z.boolean().default(true), hearthFlicker: z.boolean(), agentsMayChangeSettings: z.boolean().default(true),
     ambientMotion: z.enum(["calm", "lively", "off"]).default("calm"), characterQuietUntil: characterQuietUntilSchema, repeatSeconds: z.number().int().min(3).max(60).default(20),
+    ...speechFields,
     lanternLight: z.boolean().default(true), lanternStrength: lanternStrengthSchema.default("medium"), lanternLightBb: z.boolean().default(true),
     // Wake-delivered ticks may hold briefly to gather more events; regular sweep ticks ignore it. Off by default.
     batchWakeEvents: z.boolean().default(false), gitProgram: gitProgramSettingSchema.default(""), ...numberFields(KNOB_FIELDS.tavern) }).strict(),
@@ -118,8 +133,8 @@ const sections = {
     decisionTimerMax: z.number().int().min(1).max(10080), partyMax: z.number().int().min(1).max(1000),
     chainDepth: z.number().int().min(1).max(3), chainMembers: z.number().int().min(1).max(1000),
     staleStrikes: z.number().int().min(1).max(4), alwaysAsk: alwaysAskSchema, ...numberFields(KNOB_FIELDS.keepers) }).strict(),
-  classes: z.record(classId, z.object({ provider: z.string().trim().min(1).max(100).optional(), model: z.string().trim().min(1).max(200).optional(),
-    reasoning: z.string().trim().min(1).max(40).nullable().optional() }).strict()),
+  classes: z.record(classId, z.object({ provider: providerSetting.optional(), model: modelSetting.optional(),
+    reasoning: reasoningSetting.nullable().optional() }).strict()),
   scopes: z.object({ mode: z.enum(["enforce", "watch", "off"]), sendTools: sendToolsSchema }).strict(),
   journal: z.object({ journalReminders: z.boolean(), journalQuietMinutes: z.number().int().min(1).max(120), ...numberFields(KNOB_FIELDS.journal) }).strict(),
   data: z.object({ historyDays: z.number().int().min(0).max(3650).describe("Retains optional Insights samples only. Zero keeps them forever; orchestration records are never pruned."), autoArchiveDays: z.number().int().min(0).max(3650), backupKeep: z.number().int().min(0).max(365).describe("Saved backups to keep. Zero keeps every backup; this never prunes live Tavern records.") }).strict(),
@@ -127,7 +142,10 @@ const sections = {
   knobs: tunablesSchema.extend({ rangerTimeboxMaxMinutes: z.number().int().min(3).max(30), ...numberFields(KNOB_FIELDS.knobs) }),
 };
 export const settingsSchema = z.object({
-  tavern: sections.tavern.extend({ ...defaultNumbers(KNOB_FIELDS.tavern), characterQuietUntil: characterQuietUntilSchema.default(0), voiceBeforeOff: voiceBeforeOffSchema.default(DEFAULT_VOICE) }).prefault({ paused: false, defaultClass: "none", widgetRow: true, voice: DEFAULT_VOICE, levels: true, characters: true, hearthFlicker: true, agentsMayChangeSettings: true, ambientMotion: "calm", repeatSeconds: 20, batchWakeEvents: false }),
+  tavern: sections.tavern.extend({ ...defaultNumbers(KNOB_FIELDS.tavern), characterQuietUntil: characterQuietUntilSchema.default(0), voiceBeforeOff: voiceBeforeOffSchema.default(DEFAULT_VOICE),
+    ...defaultNumbers(SPEECH_LIMITS), contextualSpeech: speechFields.contextualSpeech.default(false),
+    piProgram: piProgramSettingSchema.default(""), speechModel: speechFields.speechModel.default("openai/gpt-5-nano"), speechReasoning: speechFields.speechReasoning.default("low"),
+  }).prefault({ paused: false, defaultClass: "none", widgetRow: true, voice: DEFAULT_VOICE, levels: true, characters: true, hearthFlicker: true, agentsMayChangeSettings: true, ambientMotion: "calm", repeatSeconds: 20, batchWakeEvents: false }),
   away: sections.away.extend(defaultNumbers(KNOB_FIELDS.away)).prefault({ neverWhileClosed: [...AWAY_STOP_LIST],
     defaultEndState: "drafts-ready", defaultAllowWatched: false, defaultWakeBlockers: true, defaultWakeProduction: false }),
   attention: sections.attention.default({ reviewBudget: 3, notify: "consequential", quietHours: null }),
@@ -203,7 +221,7 @@ export type SettingsSnapshot = z.infer<typeof settingsSnapshotSchema>;
 export const settingsFileSchema = z.object({ path: z.string(), exists: z.boolean(), differs: z.boolean(), error: z.string().nullable(), changedKeys: z.array(z.string()), hash: z.string().nullable().optional() });
 const settingAuthorSchema = settingDecisionSchema.pick({ at: true, by: true, threadId: true });
 export const settingsViewSchema = settingsSnapshotSchema.extend({ file: settingsFileSchema, gitProgramProblem: z.string().optional(),
-  contextualSpeech: z.boolean().optional(),
+  speechAttemptsToday: z.number().int().nonnegative().optional(), speechProblem: z.string().optional(),
   lastChangers: z.record(z.string(), settingAuthorSchema).optional(),
   liveOverrides: z.array(z.object({ questId: z.string(), questTitle: z.string(), keeperThreadId: z.string(), keeperName: z.string(),
     key: z.enum(QUEST_TUNABLE_KEYS), value: z.number(), applied: z.boolean() })).optional(),

@@ -9,19 +9,20 @@ import { MIGRATIONS } from "../../src/server/migrations";
 import type { Database } from "../../src/server/ports";
 import { fixtureMember } from "../../src/ui/thread/fixtures";
 
-it("requires a user terminal or Settings to change the Git program", async () => {
+it.each([["gitProgram", "git"], ["piProgram", "pi"]])("requires a user terminal or Settings to change tavern.%s", async (key, file) => {
  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n"));
  try {
   const store = new SettingsStore(db as unknown as Database);
   const cli = defineCli({name:"tavern",summary:"Tavern",commands:settingsCommands({} as BbPluginApi,store)});
-  const args=["settings","set","tavern.gitProgram=/fixture/bin/git","--apply"];
+  const path = `/fixture/bin/${file}`, setting = `tavern.${key}`;
+  const args=["settings","set",`${setting}=${path}`,"--apply"];
   const agent=await cli.run(args,{threadId:"plain"});
   expect(agent.exitCode).toBe(1);
-  expect(agent.stderr).toContain("Only you can change tavern.gitProgram");
-  expect(store.read().tavern.gitProgram).toBe("");
+  expect(agent.stderr).toContain(`Only you can change ${setting}`);
+  expect(store.read().tavern).toMatchObject({[key]: ""});
   expect((await cli.run(args, {})).exitCode).toBe(0);
-  expect(store.read().tavern.gitProgram).toBe("/fixture/bin/git");
-  expect(store.snapshot().history[0]).toMatchObject({by:"user",changes:[{key:"tavern.gitProgram"}]});
+  expect(store.read().tavern).toMatchObject({[key]: path});
+  expect(store.snapshot().history[0]).toMatchObject({by:"user",changes:[{key:setting}]});
  } finally { db.close(); }
 });
 

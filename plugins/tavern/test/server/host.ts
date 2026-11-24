@@ -173,6 +173,7 @@ export function createFakePluginHost(options: {
     providers: { register: vi.fn(), experimental_contributeEnv: vi.fn() },
     experimental_hooks: { recheck: vi.fn(async () => {}) },
     events: { on: vi.fn() },
+    http: { experimental_websocket: vi.fn() },
     onDispose: vi.fn(),
     rpc: {
       register: <C extends PluginRpcContract>(contract: C, value: PluginRpcHandlers<C>) => {

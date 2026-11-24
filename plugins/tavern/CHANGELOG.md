@@ -11,7 +11,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 - Search Tavern Settings by label, help text or setting key. Matches open their sections without changing your folds, and Escape clears the search.
 
 - The character strip uses one pixel-art prop to show planning, reading, making or verification. Its ask button has a separate touch target.
-- Contextual speech is off by default. A server operator can qualify and enable a service that receives only work type and stage. Settings shows both daily limits; when no reply arrives, Tavern uses the character’s own lines.
+- Turn contextual speech on in Atmosphere, choose its model and thinking, and change both daily limits. Tavern runs Pi without tools or a saved session, and never opens a chat thread for a remark. The character’s usual line shows first, and a reply that arrives after the bubble closes is ignored.
 - Settings lets you choose which Git program Tavern runs on its own machine. A direct Git binary used about half the CPU per Git call in a local test. Leave the setting empty to keep using Git from PATH; other machines keep their own Git.
 
 ### Changed

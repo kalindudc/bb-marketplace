@@ -54,7 +54,9 @@ it("filters across sections by label, help and setting key without saving a sear
  expect(s.getByText("3 matches")).toBeTruthy();
  filter("contextual speech");
  expect(s.getByText("1 match")).toBeTruthy();
- expect(s.getByLabelText("Contextual speech").closest("[hidden]")).toBeNull();
+ expect(s.getByRole("switch", { name: "Contextual speech" }).closest("[hidden]")).toBeNull();
+ filter("tavern.speechInstallLimit");
+ expect(s.getByRole("spinbutton", { name: "Attempts per install" }).closest("[hidden]")).toBeNull();
  filter("no-such-setting");
  expect(s.getByText("No settings match")).toBeTruthy();
  expect(results.querySelectorAll(".tv-settings-group:not([hidden])")).toHaveLength(0);
@@ -63,6 +65,20 @@ it("filters across sections by label, help and setting key without saving a sear
  expect(document.activeElement).toBe(search);
  expect(results.querySelector("#tavern-settings-title-atmosphere")?.closest("[hidden]")).toBeNull();
  expect({ ...localStorage }).toEqual(storage);
+});
+it("edits contextual speech using ordinary Atmosphere settings and displays today's attempts", async () => {
+ const save = vi.fn((input: unknown) => ({ code: "ok", revision: 1, problems: [], settings: null }));
+ const s = await section("atmosphere", { ...settingsView, speechAttemptsToday: 7, speechProblem: "Pi was not found on PATH." }, { settingsUpdate: save });
+ const toggle = await s.findByRole("switch", { name: "Contextual speech" });
+ expect(toggle.getAttribute("aria-checked")).toBe("false");
+ expect(s.getByLabelText("Today's attempts used").textContent).toBe("7");
+ const program = s.getByRole("textbox", { name: "Pi program" });
+ expect(program.getAttribute("aria-invalid")).toBe("true");
+ expect(s.getByRole("alert").textContent).toBe("Pi was not found on PATH.");
+ expect(s.getByRole("spinbutton", { name: "Attempts per thread" })).toHaveProperty("value", "12");
+ expect(s.getByRole("spinbutton", { name: "Attempts per install" })).toHaveProperty("value", "100");
+ fireEvent.click(toggle);
+ await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ patch: { tavern: { contextualSpeech: true } } })));
 });
 it("updates matches when the settings finish loading", async () => {
  let finish!: (view: typeof settingsView) => void;
@@ -265,11 +281,10 @@ it("groups Atmosphere controls and links to the character sheets",async()=>{
  const party=await s.findByRole("region",{name:"The party"});
  const motion=s.getByRole("region",{name:"Motion"});
  expect(s.getByText("How the tavern looks and feels: its characters, their speech and its motion.")).toBeTruthy();
- expect(s.getAllByRole("heading",{level:3}).map(h=>h.textContent)).toEqual(["The party","Motion","Lantern","Character cues"]);
+ expect(s.getAllByRole("heading",{level:3}).map(h=>h.textContent)).toEqual(["The party","Contextual speech","Motion","Lantern","Character cues"]);
  const labels=(el:HTMLElement)=>[...el.querySelectorAll(".tv-set-row label")].map(l=>l.textContent);
- expect(labels(party)).toEqual(["Show characters","Speech bubbles","Contextual speech","Levels and crest notches"]);
- expect(within(party).getByText("Off",{selector:"output"})).toBeTruthy();
- expect(within(party).getByText(/12 attempts per thread and 100 for this install/)).toBeTruthy();
+ expect(labels(party)).toEqual(["Show characters","Speech bubbles","Levels and crest notches"]);
+ expect(s.getByRole("region", { name: "Contextual speech" })).toBeTruthy();
  expect(labels(motion)).toEqual(["Ambient motion","Character quiet","Repeat every"]);
  expect(labels(s.getByRole("region",{name:"Lantern"}))).toEqual(["Lantern light","Strength","Light bb's surfaces"]);
  expect(s.container.querySelector("#tavern-settings-atmosphere")).toBeTruthy();

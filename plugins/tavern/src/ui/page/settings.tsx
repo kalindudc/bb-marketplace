@@ -1,7 +1,6 @@
 import { experimental_ProviderModelPicker as ProviderModelPicker, experimental_copyToClipboard, experimental_useProviders, experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate, type ExperimentalProviderModelPickerValue } from "@get-bb/plugin-sdk/app";
 import { createContext, useContext, useCallback, useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
-import { DIALOGUE_INSTALL_CAP, DIALOGUE_THREAD_CAP } from "../../shared/strip-scene";
-import { ambientMotionPatch, characterQuietPatch, charactersPatch, CHARACTER_QUIET_HOUR_MS, DEFAULT_SETTINGS, KNOB_FIELDS, importSummary, isGuardrailSetting, settingsContract, voicePatch, type TavernSettings, type SettingsChange, type SettingsPatch, type ResettableSetting, type SettingsView, type TunableKey } from "../../shared/settings";
+import { ambientMotionPatch, characterQuietPatch, charactersPatch, CHARACTER_QUIET_HOUR_MS, DEFAULT_SETTINGS, KNOB_FIELDS, SPEECH_LIMITS, piSpeechReasoningSchema, importSummary, isGuardrailSetting, settingsContract, voicePatch, type TavernSettings, type SettingsChange, type SettingsPatch, type ResettableSetting, type SettingsView, type TunableKey } from "../../shared/settings";
 import { Glyph, OpensMark, TimeAgo, plural, useRegistry, useSidebarActorNames, useRemembered, ExpandsMark, FoldSummary } from "../kit";
 import { useCharacterQuiet } from "../engine/character-quiet";
 import { ReadState, SegFilter } from "./common";
@@ -21,7 +20,7 @@ import { alertRouteContract, type AlertRouteView, type HoldReason } from "../../
 import { insightsContract } from "../../shared/insights";
 import { WardenQualitySection } from "./warden-quality";
 import { MemorySettings } from "./memory-settings";
-import { gitProgramSettingSchema } from "../../shared/git-program";
+import { gitProgramSettingSchema, piProgramSettingSchema } from "../../shared/git-program";
 import { SettingsSearch } from "./settings-search";
 
 const WHY = "Changed on the settings page";
@@ -87,7 +86,7 @@ export function SettingDefault({ setting, api: provided, managed = false }: { se
   const api = provided ?? inherited;
   const context = api?.data;
   const value = settingsValue(DEFAULT_SETTINGS, setting);
-  const fallback = setting === "tavern.gitProgram" ? "Git from PATH" : defaultWords(setting, value);
+  const fallback = setting === "tavern.gitProgram" ? "Git from PATH" : setting === "tavern.piProgram" ? "Pi from PATH" : defaultWords(setting, value);
   const changed = !!context && differsFromDefault(context.effective, setting);
   const last = context?.lastChangers?.[setting] ?? context?.history.find(change => change.changes.some(c => c.key === setting));
   return <div className="tv-set-default">
@@ -97,9 +96,10 @@ export function SettingDefault({ setting, api: provided, managed = false }: { se
   </div>;
 }
 
-function Row({ label, help, children, control, setting, managed = false, coveredBy = [] }: { label: string; help?: ReactNode; children?: ReactNode; control: (id: string) => ReactNode; setting?: SettingKey; managed?: boolean; coveredBy?: SettingKey[] }) {
+function Row({ label, help, children, control, setting, managed = false, coveredBy = [], group = false }: { label: string; help?: ReactNode; children?: ReactNode; control: (id: string) => ReactNode; setting?: SettingKey; managed?: boolean; coveredBy?: SettingKey[]; group?: boolean }) {
   const id = useId();
-  return <div className="tv-set-row" data-settings-row={setting ? undefined : ""} data-setting-keys={setting ? [setting, ...coveredBy].join(" ") : undefined}><div className="tv-set-l"><label htmlFor={id} data-settings-copy>{label}</label>{help && <p data-settings-copy>{help}</p>}{children}{setting && <SettingDefault setting={setting} managed={managed} />}</div><div className="tv-set-c">{control(id)}</div></div>;
+  const keys = setting ? [setting, ...coveredBy] : coveredBy;
+  return <div className="tv-set-row" data-settings-row={keys.length ? undefined : ""} data-setting-keys={keys.length ? keys.join(" ") : undefined}><div className="tv-set-l">{group ? <span className="tv-set-lbl" id={id} data-settings-copy>{label}</span> : <label htmlFor={id} data-settings-copy>{label}</label>}{help && <p data-settings-copy>{help}</p>}{children}{setting && <SettingDefault setting={setting} managed={managed} />}</div><div className="tv-set-c" role={group ? "group" : undefined} aria-labelledby={group ? id : undefined}>{control(id)}</div></div>;
 }
 
 const NUMBER_HELP: Record<{ [G in keyof typeof KNOB_FIELDS]: keyof typeof KNOB_FIELDS[G] }[keyof typeof KNOB_FIELDS], string> = {
@@ -172,12 +172,14 @@ export function NumberField({ id, value, min, max, unit, onSave, disabled }: { i
 }
 
 
-function GitProgramField({ id, value, problem, api }: { id: string; value: string; problem?: string; api: Api }) {
+function ProgramField({ id, value, problem, api, field }: {
+  id: string; value: string; problem?: string; api: Api; field: "gitProgram" | "piProgram";
+}) {
   const [text, setText] = useState(value);
   useEffect(() => setText(value), [value]);
-  const valid = gitProgramSettingSchema.safeParse(text).success;
+  const valid = (field === "piProgram" ? piProgramSettingSchema : gitProgramSettingSchema).safeParse(text).success;
   const error = !valid ? "Enter an absolute path or leave it empty." : text === value ? problem : undefined;
-  const save = () => { if (valid && text !== value) void api.save({ tavern: { gitProgram: text } }); };
+  const save = () => { if (valid && text !== value) void api.save({ tavern: { [field]: text } }); };
   return <div className="tv-git-program">
     <input id={id} className="tv-text" type="text" value={text} disabled={api.pending} spellCheck={false} autoComplete="off"
       aria-invalid={!!error} aria-describedby={error ? `${id}-error` : undefined}
@@ -195,7 +197,7 @@ export function TavernSection() {
     <Row label="Pause every Keeper" setting="tavern.paused" help="No ticks, hires or timers while paused. Asks stay answerable." control={(id) => <Toggle id={id} checked={t.paused} disabled={api.pending} onChange={(v) => void api.save({ tavern: { paused: v } })} />} />
     <Row label="Agents may change settings" setting="tavern.agentsMayChangeSettings" help="Agent CLI changes are recorded with their thread and can be undone below." control={(id) => <Toggle id={id} checked={t.agentsMayChangeSettings} disabled={api.pending} onChange={(v) => void api.save({ tavern: { agentsMayChangeSettings: v } })} />} />
     <Row label="Git program" setting="tavern.gitProgram" help="Absolute path on the machine running Tavern. Leave empty to use Git from PATH. Other machines keep their own Git."
-      control={id => <GitProgramField id={id} value={t.gitProgram} problem={d.gitProgramProblem} api={api} />} />
+      control={id => <ProgramField field="gitProgram" id={id} value={t.gitProgram} problem={d.gitProgramProblem} api={api} />} />
 </SettingsCard>
 <SettingsCard title="New threads" hint="Choose how a thread starts and where Tavern appears." glyph="file">
     <Row label="New threads start as" setting="tavern.defaultClass" help="The class a new thread starts with. None is an ordinary thread." control={(id) => <select id={id} className="tv-select" value={t.defaultClass} disabled={api.pending} onChange={(e) => void api.save({ tavern: { defaultClass: e.target.value } })}><option value="none">None (an ordinary thread)</option>{registry.data?.classes.map((c) => <option key={c.id} value={c.id}>{c.label} ({c.plain})</option>)}</select>} />
@@ -239,11 +241,10 @@ export function AtmosphereSection() {
     <SettingsCard title="The party" hint="Choose how characters appear and open their sheets to roll new avatars." glyph="shield">
       <Row label="Show characters" setting="tavern.characters" help="Draws the pixel-art characters above the composer. Off leaves the class crest in the widget row." control={id => <Toggle id={id} checked={t.characters} disabled={api.pending} onChange={v => void api.save(charactersPatch(v))} />} />
       <Row label="Speech bubbles" setting="tavern.voice" coveredBy={["tavern.voiceBeforeOff"]} help={VOICE_HELP[t.voice]} control={() => <SegFilter label="Speech bubbles" value={t.voice} onChange={v => void api.save(voicePatch(v, t.voice))} options={[{ id: "full", label: "Full" }, { id: "light", label: "Light" }, { id: "off", label: "Off" }]} />} />
-      <Row label="Contextual speech" help={`Sends only work type and stage to the selected service, never chat, titles, or reports. Limits per UTC day: ${DIALOGUE_THREAD_CAP} attempts per thread and ${DIALOGUE_INSTALL_CAP} for this install (under $0.10 at qualified rates). Enable it in the server environment.`}
-        control={id => <output id={id}>{d.contextualSpeech ? "On" : "Off"}</output>} />
       <Row label="Levels and crest notches" setting="tavern.levels" help="Shows levels and crest notches earned from verified work. Off hides them without changing what characters have earned." control={id => <Toggle id={id} checked={t.levels} disabled={api.pending} onChange={v => void api.save({ tavern: { levels: v } })} />} />
       <div className="tv-set-links"><button type="button" className="tv-ilink act" onClick={() => navigate.toPluginPanel("tavern", { subPath: "characters" })}><span>Character sheets</span><OpensMark /></button></div>
     </SettingsCard>
+    <SpeechSettings api={api} settings={d} />
     <SettingsCard title="Motion" hint="Choose how the tavern moves while work runs." glyph="lantern">
       <Row label="Ambient motion" setting="tavern.ambientMotion" coveredBy={["tavern.hearthFlicker"]} help="Calm uses brief cues and keeps characters in place. Lively lets working characters walk and repeats ambient cues. Off keeps the characters and hearth still and stops ambient repeats." control={() => <SegFilter label="Ambient motion" value={t.hearthFlicker ? t.ambientMotion : "off"} onChange={v => void api.save(ambientMotionPatch(v))} options={[{ id: "calm", label: "Calm" }, { id: "lively", label: "Lively" }, { id: "off", label: "Off" }]} />} />
       <CharacterQuietRow until={t.characterQuietUntil} api={api} />
@@ -256,6 +257,30 @@ export function AtmosphereSection() {
     </SettingsCard>
     <SettingsCard title="Character cues" hint="Choose how long poses last." glyph="shield"><NumberKnobRows group="tavern" /></SettingsCard>
   </>; }}</Shell>;
+}
+
+function SpeechSettings({ api, settings }: { api: Api; settings: SettingsView }) {
+  const t = settings.effective.tavern, defaults = DEFAULT_SETTINGS.tavern;
+  const keys = ["tavern.speechModel", "tavern.speechReasoning"] as const;
+  const chosen = keys.some(key => differsFromDefault(settings.effective, key));
+  return <SettingsCard title="Contextual speech" hint="Choose a model and set daily limits for character remarks." glyph="file">
+    <Row label="Contextual speech" setting="tavern.contextualSpeech" help="Pi writes a remark from only the class, stage and kind of change. The usual line shows while it waits."
+      control={id => <Toggle id={id} checked={t.contextualSpeech} disabled={api.pending} onChange={contextualSpeech => void api.save({ tavern: { contextualSpeech } })} />} />
+    <Row label="Speech model" group coveredBy={[...keys]} control={() =>
+      <ClassExecution label="contextual speech" allowProviderChange={false} defaultLabel="Default" resetLabel="Use the default speech model" defaults={{ provider: "pi", model: defaults.speechModel, reasoning: defaults.speechReasoning }}
+        override={chosen ? { provider: "pi", model: t.speechModel, reasoning: t.speechReasoning } : {}}
+        onSave={async value => {
+          if (value?.model) {
+            const speechReasoning = piSpeechReasoningSchema.parse(value.reasoning ?? null);
+            await api.save({ tavern: { speechModel: value.model, speechReasoning } });
+          } else if (!value) await api.save({}, undefined, [...keys]);
+        }} />} />
+    <Row label="Pi program" setting="tavern.piProgram" help="Leave empty to use Pi from PATH. Only you can set a different executable."
+      control={id => <ProgramField field="piProgram" id={id} value={t.piProgram} problem={settings.speechProblem} api={api} />} />
+    {(["speechThreadLimit", "speechInstallLimit"] as const).map(key => <Row key={key} label={SPEECH_LIMITS[key].label} setting={`tavern.${key}`}
+      control={id => <NumberField id={id} value={t[key]} min={SPEECH_LIMITS[key].min} max={SPEECH_LIMITS[key].max} disabled={api.pending} onSave={value => void api.save({ tavern: { [key]: value } })} />} />)}
+    <Row label="Today's attempts used" help="Both limits reset at midnight UTC." control={id => <output id={id}>{settings.speechAttemptsToday ?? 0}</output>} />
+  </SettingsCard>;
 }
 
 export function AwaySettingsSection() {
@@ -462,7 +487,10 @@ type ClassDefaults = { provider: string | null; model: string | null; reasoning:
 const describeExecution = (e: ClassDefaults | ClassOverride, providers: DisplayProviders, chosen = false) => <>{e.model ? <ModelName value={e.model} /> : "the agent's default model"}{e.reasoning ? `, ${e.reasoning} thinking` : chosen && e.reasoning === null ? ", the model's default thinking" : null}{e.provider && `, on ${providers.find(p => p.id === e.provider)?.displayName ?? e.provider}`}</>;
 
 /** bb's own agent, model and thinking picker for one class; until one is chosen, the class file decides. */
-function ClassExecution({ label, defaults, override, onSave }: { label: string; defaults: ClassDefaults; override: ClassOverride; onSave: (next: ClassOverride | null) => void | Promise<void> }) {
+function ClassExecution({ label, defaults, override, onSave, defaultLabel = "Class file", resetLabel = "Use the class file", allowProviderChange }: {
+  label: string; defaults: ClassDefaults; override: ClassOverride; onSave: (next: ClassOverride | null) => void | Promise<void>;
+  defaultLabel?: string; resetLabel?: string; allowProviderChange?: boolean;
+}) {
   const providers = experimental_useProviders();
   const [seed, setSeed] = useState<ExperimentalProviderModelPickerValue | null>(null);
   const [draft, setDraft] = useState<ExperimentalProviderModelPickerValue | null>(null);
@@ -509,17 +537,17 @@ function ClassExecution({ label, defaults, override, onSave }: { label: string; 
     return () => observer.disconnect();
   });
   useEffect(() => { if (!touched.current && !pending.current) setDraft(null); }, [override.provider, override.model, override.reasoning]);
-  const fileLine = <span className="tv-exec-d">Class file: {describeExecution(defaults, providers.providers)}</span>;
+  const fileLine = <span className="tv-exec-d">{defaultLabel}: {describeExecution(defaults, providers.providers)}</span>;
   const editing = chosen || seed !== null;
   const value = draft ?? (chosen ? { providerId: providerId ?? "", model: override.model ?? "", reasoningLevel: override.reasoning ?? "" } : seed!);
   return <div ref={root} className={`tv-exec${!chosen && seed ? " tv-exec-draft" : ""}`}
     onPointerDownCapture={touch} onClickCapture={touch} onKeyDownCapture={(e) => { if (e.key !== "Tab" && e.key !== "Shift" && e.key !== "Escape") touch(); }}>
     {!chosen && fileLine}
     {chosen && !providerId && <span className="tv-exec-d">Set here: {describeExecution(override, providers.providers, true)}{providers.status === "loading" ? " (loading agents)" : ""}</span>}
-    {editing && providerId && <ProviderModelPicker key="picker" value={value} onChange={chosen ? change : setSeed} align="end" />}
+    {editing && providerId && <ProviderModelPicker key="picker" value={value} onChange={chosen ? change : setSeed} align="end" allowProviderChange={allowProviderChange} />}
     {saving > 0 && <span role="status">Saving {label}…</span>}
     {error && <span role="alert">{error}</span>}
-    {chosen ? <button type="button" className="lnk-btn act" disabled={saving > 0} onClick={() => { setDraft(null); setSeed(null); void persist(null); }} aria-label={`Use the class file for ${label}`}><span>Use the class file</span></button>
+    {chosen ? <button type="button" className="lnk-btn act" disabled={saving > 0} onClick={() => { setDraft(null); setSeed(null); void persist(null); }} aria-label={`${resetLabel} for ${label}`}><span>{resetLabel}</span></button>
       : seed ? <>
         <button type="button" className="btn sm pri" disabled={saving > 0 || !seed.model} aria-label={`Save model and thinking for ${label}`} title={!seed.model ? "Pick a model first" : undefined} onClick={() => { setDraft(seed); void persist(seed); }}><span>Save</span></button>
         <button type="button" className="lnk-btn act" onClick={() => { touched.current = false; pending.current = null; setSeed(null); setDraft(null); }} aria-label={`Cancel choosing for ${label}`}><span>Cancel</span></button>

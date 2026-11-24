@@ -225,7 +225,7 @@ export function rpcHandlers(
       return {
         threadId,
         ...(scene ? { stripScene: scene } : {}),
-        ...(runtime.contextualSpeech ? { contextualSpeech: true } : {}),
+        ...(runtime.config().tavern.contextualSpeech ? { contextualSpeech: true } : {}),
         widgetRow: runtime.config().tavern.widgetRow,
         succession: runtime.succession.view(threadId),
         ambientMotion: runtime.config().tavern.hearthFlicker ? runtime.config().tavern.ambientMotion : "off",

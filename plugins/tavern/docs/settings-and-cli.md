@@ -18,11 +18,15 @@ For the complete key-by-key schema (every default, bound, TOML path, and edit pe
 
 ## Contextual speech
 
-Contextual speech is off by default. The strip still draws a prop, and the existing Speech bubbles setting still controls ordinary character lines. Contextual speech does not open agent threads, send chat or start on a timer.
+Contextual speech is off by default. Open **Settings → Atmosphere → Contextual speech** to turn it on, choose the Pi model and thinking, and edit the two limits. The defaults are 12 attempts per thread and 100 for the whole install. The read-only count shows how many attempts the install has used today. Both limits reset at midnight UTC. An attempt counts even if the reply never appears.
 
-To opt in, a server operator selects an HTTPS text service that accepts the Responses protocol with reasoning off, no storage, a hard output limit and reported usage. Qualify the exact service, model and standard tariff using synthetic examples first: at least 30 events, at least 95% accepted lines, and 95% of calls within two seconds. Keep the profile off if these checks fail. Set `TAVERN_SPEECH_PROFILE` in the bb server process environment (not the agent environment) to a JSON object with `endpoint`, `model`, `inputUsdPerMillion`, `outputUsdPerMillion` and `qualified: true`. Supply `TAVERN_SPEECH_API_KEY` separately as a server secret. Restart the server after adding or removing the profile. Ordinary Tavern settings, agent tools and imported settings cannot enable it.
+Tavern runs Pi for each attempt without tools or a saved session. It sends only the class, work stage and kind of change, not chat, titles or reports from the member. No bb thread is created. Pi must be installed and signed in where Tavern runs. Leave **Pi program** empty to use Pi from PATH, or set its absolute path. Only you can change the executable path. The character's usual line shows first. A valid reply can replace it only while the same bubble is still showing. Turning off ordinary speech also suppresses contextual speech.
 
-Atmosphere shows whether the profile is on, the 12 attempts per thread per UTC day and the 100 attempts for the whole install. The profile must price those 100 attempts below $0.10 at 800 input and 64 output tokens each. A timed-out or invalid reply still uses one attempt. Tavern sends only the class, work stage and kind of change, and falls back to an existing canned line when a request cannot be used.
+The CLI can set these just like other Atmosphere settings. For example:
+
+```sh
+bb tavern settings set tavern.contextualSpeech=true tavern.speechThreadLimit=8 tavern.speechInstallLimit=60 --apply
+```
 
 ## Guided setup with an agent
 

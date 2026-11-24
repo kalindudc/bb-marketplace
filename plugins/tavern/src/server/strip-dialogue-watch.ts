@@ -1,9 +1,11 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { readStripScene } from "./strip-scene";
-import { BubbleQuota, DialogueWatches, requestDialogue, type DialogueProfile } from "./strip-dialogue";
+import { BubbleQuota, DialogueWatches } from "./strip-dialogue";
+import type { PiSpeech } from "./pi-speech";
+import { stopAllReason } from "./stop-all";
 import type { TavernRuntime } from "./runtime";
 
-export function registerDialogueWatch(bb: BbPluginApi, runtime: TavernRuntime, profile: DialogueProfile) {
+export function registerDialogueWatch(bb: BbPluginApi, runtime: TavernRuntime, speech: Pick<PiSpeech, "complete" | "dispose">) {
   const { keeper } = runtime;
   const quota = new BubbleQuota(keeper.store);
   const watches = new DialogueWatches(threadId => {
@@ -11,14 +13,18 @@ export function registerDialogueWatch(bb: BbPluginApi, runtime: TavernRuntime, p
     const config = runtime.config();
     const settings = config.tavern;
     const now = keeper.now();
-    if (!member || !settings.characters || !settings.widgetRow || settings.characterQuietUntil > now) return null;
+    if (!member || !settings.contextualSpeech || !settings.characters || !settings.widgetRow || settings.characterQuietUntil > now || stopAllReason(keeper.store)) return null;
     const scene = readStripScene(keeper, member);
     const thread = keeper.store.runtime(threadId);
     const held = (member.lastReportAt != null && now - member.lastReportAt < 60_000) ||
       (thread.typingAt != null && now - thread.typingAt < config.knobs.typingHoldSeconds * 1_000) ||
       runtime.scopes?.view(threadId)?.pendingAskId;
     return { scene: held && scene.posture === "clear" ? { ...scene, posture: "held" as const } : scene, voice: settings.voice };
-  }, (seat, at, now) => quota.reserve(seat, at, now), async (scene, signal) => (await requestDialogue(profile, scene, signal))?.text ?? null, () => keeper.now());
+  }, (seat, at, now) => {
+    const reserved = quota.reserve(seat, at, now, runtime.config().tavern);
+    if (reserved) bb.rpc.experimental_invalidate(["tavern:settings"]);
+    return reserved;
+  }, (scene, signal, reserve) => speech.complete(scene, runtime.config().tavern, signal, reserve), () => keeper.now());
   const notice = (threadId: string | null) => {
     if (!threadId || !watches.has(threadId)) return;
     queueMicrotask(() => void watches.changed(threadId).catch(() => {}));
@@ -27,6 +33,7 @@ export function registerDialogueWatch(bb: BbPluginApi, runtime: TavernRuntime, p
   keeper.store.onEvent = event => {
     onEvent?.(event);
     const { type, data, keeperThreadId, actor } = event;
+    if (type === "tavern.stopped") watches.cancelFlights();
     if (data.phase || type.startsWith("ask.") || type === "route.recorded" || type === "route.corrected") notice(keeperThreadId);
     if ((type === "waypoint.review-round" || type === "waypoint.review-rejected") && actor.kind === "agent") notice(actor.threadId);
     if ((type.startsWith("member.") || type === "report.filed" || type.startsWith("ask.")) && typeof data.memberThreadId === "string") notice(data.memberThreadId);
@@ -55,6 +62,6 @@ export function registerDialogueWatch(bb: BbPluginApi, runtime: TavernRuntime, p
   const drop = ({ thread }: { thread: { id: string } }) => watches.drop(thread.id);
   bb.events.on("thread.archived", drop);
   bb.events.on("thread.deleted", drop);
-  bb.onDispose(() => { unlistenJournal(); watches.dispose(); });
+  bb.onDispose(() => { unlistenJournal(); watches.dispose(); return speech.dispose(); });
   return () => watches.cancelFlights();
 }

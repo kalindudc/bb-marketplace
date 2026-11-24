@@ -22,7 +22,7 @@ import { registerScopeSettings } from "./src/server/scopes";
 import { SettingsStore } from "./src/server/settings/store";
 import { SettingsFiles } from "./src/server/settings/files";
 import { settingsHandlers } from "./src/server/settings/rpc";
-import { dialogueProfile } from "./src/server/strip-dialogue";
+import { PiSpeech } from "./src/server/pi-speech";
 import { registerDialogueWatch } from "./src/server/strip-dialogue-watch";
 import { InsightsReader, insightsHandlers } from "./src/server/insights/index";
 import { BurnCosts } from "./src/server/insights/burn";
@@ -126,12 +126,11 @@ export default async function tavern(bb: BbPluginApi) {
   const burn = new BurnCosts(bb);
   const insights = new InsightsReader(db, settings, Date.now, (data, from, to) => burn.read(data, from, to), () => ({ characters: runtime.snapshot().characters.map(character => ({ id: character.id, classIds: character.classes })), serviceRecords: runtime.serviceRecords.read() }));
   runtime.enableSettings(settings, insights);
-  const profile = dialogueProfile(process.env);
-  runtime.contextualSpeech = !!profile;
-  let cancelDialogue: (() => void) | null = null;
+  const speech = new PiSpeech(bb, dirname(db.name));
+  const refreshDialogue = registerDialogueWatch(bb, runtime, speech);
   applySettings = () => {
     gitProgram = settings.read().tavern.gitProgram;
-    cancelDialogue?.();
+    refreshDialogue();
     runtime.settingsChanged();
   };
   await registerScopeSettings(bb, runtime);
@@ -144,8 +143,7 @@ export default async function tavern(bb: BbPluginApi) {
   const setup = new SetupService(bb, settings, store, new SetupPreflight(bb, async (projectId, id) =>
     (projectId === null ? runtime.snapshot() : await runtime.prepareRegistry(projectId)).classes.find(role => role.id === id)));
   const handlers = rpcHandlers(runtime);
-  cancelDialogue = profile ? registerDialogueWatch(bb, runtime, profile) : null;
-  bb.rpc.register(rpcContract, { ...handlers, ...settingsHandlers(settings, new SettingsFiles(settings), undefined, runtime.contextualSpeech), ...setup.handlers(), ...backupHandlers(backups),
+  bb.rpc.register(rpcContract, { ...handlers, ...settingsHandlers(settings, new SettingsFiles(settings), undefined, t => speech.problem(t)), ...setup.handlers(), ...backupHandlers(backups),
     ...insightsHandlers(insights), ...memoryHandlers(runtime) });
   registerCli(bb, runtime, backups, setup);
   bb.agents.configure((ctx) => runtime.configure(ctx));
@@ -190,7 +188,7 @@ export default async function tavern(bb: BbPluginApi) {
       return { context: `${item.title} (${item.subtitle}) is a Tavern thread. Refer to it by name and role.` };
     },
   });
-  bb.experimental_hooks.on("message.dispatch", (ctx) => runtime.dispatch(ctx));
+  bb.experimental_hooks.on("message.dispatch", ctx => runtime.dispatch(ctx));
   bb.onDispose(
     journal.onChange((threadId, _entryIds, boardIds) => {
       const member = keeper.member(threadId);

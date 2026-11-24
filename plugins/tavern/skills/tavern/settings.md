@@ -14,6 +14,12 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `tavern.default_class` | Starts new eligible threads as this class. None starts a plain thread. | `"none"` | User; Granted |
 | `tavern.widget_row` | Shows the Tavern widget above the composer. | `true` | User; Granted |
 | `tavern.voice` | Sets full, light or off voice for Tavern's character presentation. | `"full"` | User; Granted |
+| `tavern.contextual_speech` | Run Pi without tools or sessions to write character remarks for watched milestones. | `false` | User; Granted |
+| `tavern.pi_program` | Absolute executable path on the machine running Tavern. Empty uses Pi from PATH. | `""` | User only |
+| `tavern.speech_model` | Model for contextual speech. | `"openai/gpt-5-nano"` | User; Granted |
+| `tavern.speech_reasoning` | Thinking level for contextual speech. | `"low"` | User; Granted |
+| `tavern.speech_thread_limit` | Attempts per member thread per UTC day, 1–100. | `12` | User; Granted |
+| `tavern.speech_install_limit` | Attempts across this install per UTC day, 1–500. | `100` | User; Granted |
 | `tavern.voice_before_off` | Remembers the last speech level when you turn speech off from the character menu or Atmosphere. Turning speech back on from the menu restores this level. | `"full"` | User; Granted |
 | `tavern.levels` | Shows character levels. | `true` | User; Granted |
 | `tavern.characters` | Shows the animated character strip without changing class membership. | `true` | User; Granted |

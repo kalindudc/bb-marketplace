@@ -15,11 +15,6 @@ export const stripSceneSchema = z.object({
 export type StripScene = z.infer<typeof stripSceneSchema>;
 export type StripProp = "scroll" | "book" | "bookmarked" | "folio" | "anvil" | "seal";
 
-export const DIALOGUE_THREAD_CAP = 12;
-export const DIALOGUE_INSTALL_CAP = 100;
-export const DIALOGUE_DEADLINE_MS = 2_000;
-export const DIALOGUE_CACHE_MS = 10 * 60_000;
-
 export function dialogueSlot(scene: StripScene | undefined, voice: VoiceMode): SpeechKey | null {
   if (!scene || scene.posture !== "clear" || scene.at === null || voice === "off") return null;
   if (scene.moment === "verified") return "verified";

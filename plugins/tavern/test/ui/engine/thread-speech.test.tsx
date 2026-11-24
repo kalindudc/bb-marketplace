@@ -12,6 +12,11 @@ import { ReportCard } from "../../../src/ui/thread/cards";
 import { fixtureBoard, fixtureDecor, fixtureMember, fixtureRegistry, fixtureReport } from "../../../src/ui/thread/fixtures";
 import { installAnimations } from "../kit/motion-fakes";
 
+const socket = vi.hoisted(() => ({ onLine: undefined as undefined | ((line: { revision: string; text: string; receivedAt: number }) => void) }));
+vi.mock("../../../src/ui/engine/dialogue-socket", () => ({
+  DialogueSocket: ({ onLine }: { onLine: NonNullable<typeof socket.onLine> }) => { socket.onLine = onLine; return null; },
+}));
+
 let fx: ReturnType<typeof installAnimations>;
 const rect = new DOMRect(8, 8, 360, 64);
 beforeEach(() => {
@@ -138,12 +143,16 @@ describe("thread strip speech", () => {
     await tick(480_000);
     expect(w.speech()).toBeNull();
     await w.update({ stripScene: { ...scene, revision: "second", at: Date.now() } });
-    await tick(1_999);
+    await tick(0);
     expect(says.working).toContain(w.speech());
     expect(w.actor()?.closest("section")?.querySelector(".twalk-speech")?.getAttribute("aria-hidden")).toBe("true");
-    await tick(BUBBLE_MS);
+    await tick(3_000);
+    await act(async () => socket.onLine?.({ revision: "second", text: "The anvil awaits.", receivedAt: Date.now() }));
+    expect(w.speech()).toBe("The anvil awaits.");
+    await tick(BUBBLE_MS - 3_000);
+    expect(w.speech()).toBeNull();
+    await act(async () => socket.onLine?.({ revision: "second", text: "The road is clear.", receivedAt: Date.now() }));
     await w.update({ pendingEvents: 3 });
-    await tick(2_000);
     expect(w.speech()).toBeNull();
     w.click();
     expect(says.working).toContain(w.speech());
