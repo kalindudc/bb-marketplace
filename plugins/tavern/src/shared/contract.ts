@@ -95,6 +95,7 @@ export const registrySchema = z.object({
 
 /** A waypoint with its live state, derived from the linked journal entries of its owner. */
 export const waypointViewSchema = waypointSchema.extend({
+  askId: id.optional(),
   // added by Builder B: contact is a server-recorded fact, not a plan-author assertion.
   gate: gateRecordSchema.nullable().optional(),
   state: z.enum(WAYPOINT_STATES),
@@ -134,7 +135,7 @@ export const boardQuestSummarySchema = boardQuestSchema.extend({
   members: z.array(memberSchema),
   openAsks: z.number().int(),
   /** "you", "keeper", "party", "outside": whose move it is now, with one line. */
-  move: z.object({ who: z.enum(["you", "keeper", "party", "outside", "nobody"]), text: z.string() }),
+  move: z.object({ who: z.enum(["you", "keeper", "party", "outside", "nobody"]), text: z.string(), askId: id.optional() }),
 });
 export type BoardQuestSummary = z.infer<typeof boardQuestSummarySchema>;
 export const mapHistorySchema = z.object({ keepers: z.array(z.object({ threadId: z.string(), total: z.number().int().nonnegative(), quests: z.array(boardQuestSchema.extend({ members: z.array(memberSchema) })).max(5) })) });

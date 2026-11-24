@@ -43,9 +43,13 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const noteLabel = typeof note.presentation?.label === "object" ? note.presentation.label.pending : note.presentation?.label;
   const noteMetadata = note.name + (noteLabel ?? "") + note.description;
   const ask = registered.mock.calls.find(([tool]) => tool.name === "tavern_ask")![0];
-  const askSchemas = (ask.parameters as { anyOf: Array<{ properties: { target?: { properties: Record<string, unknown> } } }> }).anyOf;
+  const askSchemas = (ask.parameters as { anyOf: Array<{ properties: { target?: { properties: Record<string, unknown> }; waypointId?: unknown; completeOn?: unknown } }> }).anyOf;
   const mergeAskSchema = askSchemas.at(-1);
   expect(mergeAskSchema).toMatchObject({ required: ["mergeAskId", "action", "reason"] });
+  const { waypointId, completeOn, ...previousAsk } = askSchemas[0]!.properties;
+  expect(waypointId).toBeDefined();
+  expect(completeOn).toBeDefined();
+  const waypointAskDelta = Buffer.byteLength(JSON.stringify(askSchemas[0]!.properties)) - Buffer.byteLength(JSON.stringify(previousAsk));
   const targetProperties = askSchemas[0]!.properties.target!.properties;
   const { merge, ...priorTarget } = targetProperties;
   expect(merge).toMatchObject({ required: ["repository", "targetBranch"] });
@@ -60,7 +64,7 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const { permanent, ...previousSlot } = slotProperties;
   expect(permanent).toBeDefined();
   const permanentSlotDelta = Buffer.byteLength(JSON.stringify(slotProperties)) - Buffer.byteLength(JSON.stringify(previousSlot));
-  const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + mergeAskSchemaDelta + judgeBytes + checkpointDelta + permanentSlotDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
+  const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + mergeAskSchemaDelta + waypointAskDelta + judgeBytes + checkpointDelta + permanentSlotDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
   if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${bytes}\nMERGE_TARGET_SCHEMA_BYTES=${mergeTargetDelta}\n`);
   expect(bytes).toBeLessThanOrEqual(34754);
 });

@@ -105,6 +105,8 @@ function baseQuestMove(quest: BoardQuestSummary, asks: Ask[], names: { keeper: s
   if (quest.phase === "stopping") return { tone: "bad", who: "Stopping", next: stoppingWords(quest) };
   if (opts.keeperArchived) return { tone: "archived", who: "Keeper's thread archived", next: "" };
   if (open.length || hold) {
+    const userAsk = !hold && open.length === 1 && open[0]!.id === quest.move.askId ? open[0] : null;
+    if (userAsk) return { tone: "you", who: "You", next: `answer the ask: ${userAsk.question}`, verb: "answer the ask:", task: userAsk.question };
     const blocked = open.some((a) => a.kind === "blocker");
     const asked = !open.length ? null : blocked ? "blocked" : open.length === 1 ? open[0]!.kind === "greenlight" ? "form the party" : "1 ask" : `${open.length} asks`;
     return { tone: blocked ? "bad" : "you", who: "You", next: [asked, hold && "1 hold"].filter(Boolean).join(" · ") };
@@ -207,7 +209,7 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
   const path = pathProgress(quest), verified = verifiedOf(quest), change = pathChangeWords(quest);
   const unread = attentionView(quest.attention).summaries ?? 0;
   const summaryCount = unread > 0 && <span className="qrow-unread m">{summaryCountWords(unread)}</span>;
-  const name = (detail?: string) => <button type="button" className="qrow-name act" data-quest-name onClick={() => open(`quest/${quest.id}`)} title={`${isFinished(quest.phase) ? "Open the quest record" : "Open the quest page"}: ${quest.title}${detail ? `\n${detail}` : ""}`}><b data-content>{quest.short}</b></button>;
+  const name = (detail?: string, askId?: string) => <button type="button" className="qrow-name act" data-quest-name onClick={() => open(`quest/${quest.id}${askId ? `/ask/${encodeURIComponent(askId)}` : ""}`)} title={`${askId ? "Open your ask" : isFinished(quest.phase) ? "Open the quest record" : "Open the quest page"}: ${quest.title}${detail ? `\n${detail}` : ""}`}><b data-content>{quest.short}</b></button>;
   if (isFinished(quest.phase)) {
     const returned = quest.phase === "done";
     return <div className={`tavern qrow qrow-done ${returned ? "" : "stopped"}`} data-variant={returned ? "returned" : "stopped"} data-quest={quest.id} data-part="QuestRow">
@@ -226,9 +228,10 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
   if (yours) move.tone = "you";
   // The name button covers the row, so its tooltip must include the move beneath it.
   const moveTitle = `${move.who}${move.next ? ` · ${move.next}` : ""}`;
+  const userAsk = move.tone === "you" && room.asks.some(ask => ask.id === quest.move.askId && ask.state === "open") ? quest.move.askId : undefined;
   // showKeeper adds mixed-Keeper labels and ask/hold tags; every row keeps questMove’s edge rule.
   return <div className={`tavern qrow qrow-live t-${move.tone}${showKeeper ? " qrow-home" : ""}`} data-variant={yours ? "your-move" : move.tone === "archived" ? "archived" : quest.phase === "stopping" ? "stopping" : "active"} data-quest={quest.id} {...(yours ? { "data-ask": "" } : {})} data-part="QuestRow">
-    {name(moveTitle)}
+    {name(moveTitle, userAsk)}
     <TimeAgo at={quest.updatedAt} />
     {/* A stopping quest gets no "new" cue: nothing new is happening on it. */}
     {arrival && quest.phase !== "stopping" && <ArrivalMark at={quest.updatedAt} since={arrival.since} surface="page" cueKey={`row:${quest.id}`} still={yours || move.tone === "bad"} />}

@@ -116,7 +116,7 @@ function Mark({ w, owner, size = 30 }: { w: WaypointView; owner: Owner; size?: n
 
 /** The quest map: one route in dependency order; each owner's mark stands on the waypoint it owns. Columns are order, not a promised ETA. */
 /** `memberCredits` (tale mode) names who made and verified each waypoint; `stretch` spreads the route across the full width with two-line labels. */
-export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, stretch = false, showChecks = mode === "plan", rowsOnly = false, showAll = false, drawn = false }: { quest: BoardQuestSummary; mode: "plan" | "live" | "tale"; dealt?: boolean; memberCredits?: BoardQuestDetail["memberCredits"]; stretch?: boolean; showChecks?: boolean; rowsOnly?: boolean; showAll?: boolean; drawn?: boolean }) {
+export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, stretch = false, showChecks = mode === "plan", rowsOnly = false, showAll = false, drawn = false, onOpenAsk }: { quest: BoardQuestSummary; mode: "plan" | "live" | "tale"; dealt?: boolean; memberCredits?: BoardQuestDetail["memberCredits"]; stretch?: boolean; showChecks?: boolean; rowsOnly?: boolean; showAll?: boolean; drawn?: boolean; onOpenAsk?: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const registry = useRegistry();
   const container = useRef<HTMLElement>(null);
@@ -177,6 +177,7 @@ export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, s
           </li>
         ); })}
       </ol>
+      {onOpenAsk && visible.map(({ waypoint: w }) => w.askId && <button key={w.askId} type="button" className="btn sm wp-ask" onClick={() => onOpenAsk(w.askId!)}>Answer ask: {w.title}</button>)}
       {!showAll && nodes.length > 8 && <button type="button" className="btn sm" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "Fold after 8 waypoints" : `Show ${nodes.length - 8} more waypoints`}</button>}
     </section>
   );

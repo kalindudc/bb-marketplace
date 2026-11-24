@@ -1756,14 +1756,10 @@ export class TavernRuntime {
     const ids = new Set(input.waypoints.map((waypoint) => waypoint.id));
     if (input.party.some((slot) => slot.waypointIds.some((id) => !ids.has(id))))
       throw new Error("Party assignments must name waypoints in this plan");
-    const userWaypoints = input.waypoints.filter(w => w.actor === "user");
-    for (const memberId of new Set([...links.map(link => link.member.threadId), ...(userWaypoints.length ? [threadId] : [])]))
+    for (const memberId of new Set(links.map(link => link.member.threadId)))
       await this.keeper.journal.prepare(memberId);
     return this.keeper.store.atomic(() => {
       const plan = this.keeper.plan(threadId, draft);
-      for (const waypoint of userWaypoints) {
-        this.keeper.journal.linkWaypoint(threadId, { boardQuestId: q.id, waypointId: waypoint.id }, waypoint.title, "You", { kind: "agent", threadId });
-      }
       for (const { waypoint, member } of links) {
         this.keeper.journal.linkWaypoint(
           member.threadId,

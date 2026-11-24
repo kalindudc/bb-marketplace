@@ -103,6 +103,7 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
   const [lead, ...goal] = sentences(plan.goal);
   const mode = sealed || noStaffingGreenlight ? "live" : "plan";
   const forecast = plan.eta ?? (unknownLead ? `pending ${unknownLead} unknown lead time${unknownLead === 1 ? "" : "s"}` : "no ETA given");
+  const openAsk = (id: string) => revealAsk(quest.keeperThreadId, id);
   return (
     <article ref={card} {...moment} className={`tavern tcard qmcard ${sealed ? "sealed" : ""}`} style={glowVars(`map:${detail.quest.id}`) as CSSProperties} aria-label={`Quest map${noStaffingGreenlight ? "" : " (greenlight)"}: ${detail.quest.title}, plan v${plan.version}`} data-part="QuestMapCard">
       <header className="qm-h">
@@ -124,7 +125,7 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
         <div className="qm-leaf" data-part="PlanRoad">
           <section className="qm-route" aria-label="Route in order">
             <h4>Route <span className="m">in order</span></h4>
-            <QuestMap quest={quest} mode={mode} rowsOnly showChecks showAll />
+            <QuestMap quest={quest} mode={mode} rowsOnly showChecks showAll onOpenAsk={openAsk} />
           </section>
           <section className="qm-qs" aria-label="Comes back to you">
             <h4>Comes back to you</h4>
@@ -139,7 +140,7 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
         </div>
       </div>
       <PlanMapFold key={plan.version}>
-        <QuestMap quest={quest} mode={mode} dealt={sealed} stretch={!sealed} showChecks showAll drawn />
+        <QuestMap quest={quest} mode={mode} dealt={sealed} stretch={!sealed} showChecks showAll drawn onOpenAsk={openAsk} />
         <div className="qm-key m"><span><i className="k crest" />agent</span><span><i className="k you" />your move</span><span><i className="k gate" />outside owner</span><span>left to right is order, not a schedule</span></div>
       </PlanMapFold>
       <div className="qm-facts"><span className="qm-forecast"><b>Forecast</b><Clamp text={forecast} lines={1} /></span><span className="qm-more">

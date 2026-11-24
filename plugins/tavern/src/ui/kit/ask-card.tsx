@@ -84,6 +84,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
   const readiness = experimental_useRpcQuery({ contract: rpcContract, method: "clusterRunStatus", input: { askId: ask.id }, enabled: cluster && ask.state === "open" });
   const shellGrant = ask.effect?.type === "grant-shell-act" ? ask.effect : null;
   const repair = ask.effect?.type === "repair-guard";
+  const userMove = ask.effect?.type === "user-waypoint" ? ask.effect : null;
   const [optionId, setOption] = useState<string | null>(repair ? "done" : ask.kind === "decision" && !shellGrant ? ask.options.find(o => o.recommended)?.id ?? null : null);
   const [note, setNote] = useState("");
   const [error, setError] = useState<unknown>(null);
@@ -105,6 +106,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
         {ask.answer?.preapproval && <span>{preapprovalWords(ask.answer.preapproval)}</span>}
         {ask.answer?.by === "keeper" && <span>Decided by the Keeper, with Undo in the ledger</span>}
         {(receipt || ask.answer?.by === "user" && ask.answer?.surface === "client (unattested)") && <span className="m">answered from a client Tavern could not attribute</span>}
+        {userMove && (receipt || ask.answer?.by === "user") && <span>{userMove.completeOn.includes(ask.answer?.optionId ?? optionId ?? "") ? "Your waypoint is done." : "Your waypoint stays open."}</span>}
         {receiptNote && <span className="receipt-note" data-content>“{receiptNote}”</span>}
         {cluster && ask.clusterApproval && <span>Approved {VIA[ask.clusterApproval.via]} at {clockTime(ask.clusterApproval.at)}</span>}
         {receipt?.clusterGrantError && <span role="alert" className="problem">{receipt.clusterGrantError}</span>}
@@ -193,7 +195,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
         {ask.options.map(o => (
           <label key={o.id} className="opt">
             <input type="radio" name={name} checked={optionId === o.id} onChange={() => setOption(o.id)} disabled={answer.isPending || (missingGrant && GRANTING(o.id)) || (cluster && o.id !== "deny" && readiness.data?.guarded !== true)} />
-            <span className="ol"><b>{o.label}{o.recommended && <span className="rec"> · recommended</span>}</b>{o.detail && <span className="m">{o.detail}</span>}</span>
+            <span className="ol"><b>{o.label}{o.recommended && <span className="rec"> · recommended</span>}</b>{o.detail && <span className="m">{o.detail}</span>}{userMove && <span className="m">{userMove.completeOn.includes(o.id) ? "Finishes your waypoint." : "Leaves your waypoint open."}</span>}</span>
           </label>
         ))}
       </fieldset>}

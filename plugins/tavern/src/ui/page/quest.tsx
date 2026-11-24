@@ -1,6 +1,6 @@
 import { hasEndedEngagement } from "../../shared/member-engagement";
 import { experimental_useRpcMutation, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { rpcContract, type BoardQuestDetail, type BoardQuestSummary, type Room } from "../../shared/contract";
 
 import { attentionView, attentionNotes } from "../../shared/attention";
@@ -118,8 +118,16 @@ function CellarQuest({ quest }: { quest: BoardQuestDetail["quest"] }) {
   </div>{armed && <div className="tv-stop problem" role="group" aria-label="Confirm deleting quest"><span>Delete this quest? It leaves the board, the cellar and the map, and its threads are archived. You can restore it from the cellar's Deleted view.</span><button type="button" className="btn danger" disabled={pending} onClick={() => void remove()}>Delete</button><button type="button" className="btn" disabled={pending} onClick={() => setArmed(false)}>Cancel</button></div>}{mutation.error && <p role="alert">Could not delete: {mutation.error.message}</p>}<ArchiveReceiptLine api={archive} /></div>;
 }
 
+const askAnchor = (id: string) => `tv-ask-${id}`;
+function focusAsk(id: string) {
+  const card = document.getElementById(askAnchor(id));
+  if (!(card instanceof HTMLDetailsElement)) return;
+  card.open = true;
+  card.querySelector("summary")?.focus();
+}
+
 /** A quest's page: the live page while it is in play, the record once it has returned or stopped. */
-export function QuestPage({ detail, registry, room, summaryId, recheck }: { detail: BoardQuestDetail; registry: Registry; room?: Room; summaryId?: string; recheck?: () => unknown }) {
+export function QuestPage({ detail, registry, room, summaryId, askId, recheck }: { detail: BoardQuestDetail; registry: Registry; room?: Room; summaryId?: string; askId?: string; recheck?: () => unknown }) {
   const navigate = useBbNavigate();
   const quest = detail.quest;
   const now = useNow();
@@ -137,6 +145,9 @@ export function QuestPage({ detail, registry, room, summaryId, recheck }: { deta
   const members = new Map([...(room ? visibleMembers(room) : []), ...quest.members].map((m) => [m.threadId, m]));
   const attention = attentionView(detail.attention);
   const openAsks = detail.asks.filter(a => attention.items.some(item => item.kind === "ask" && item.id === a.id));
+  const moveAsk = openAsks.find(a => a.id === quest.move.askId);
+  const focusId = openAsks.find(a => a.id === askId)?.id;
+  useEffect(() => { if (focusId) focusAsk(focusId); }, [focusId]);
   const finished = isFinished(quest.phase);
   const [promisesMore, setPromisesMore] = usePanelState("quest.promises.more", false);
   const [factsMore, setFactsMore] = usePanelState("quest.facts.more", false);
@@ -165,6 +176,7 @@ export function QuestPage({ detail, registry, room, summaryId, recheck }: { deta
             : stop.stopping ? <><StateMark tone="warn"><b>{stoppingWords(stop.stopping.unconfirmed)}</b></StateMark>{stop.stopping.since && <span>since <b>{clockTime(stop.stopping.since)}</b></span>}</>
             : quest.phase === "held" ? <StateMark tone={move.tone}>{quest.move.text.replace(/ · Resume$/, "")}</StateMark>
             : <><StateMark tone={move.tone}><b>{phaseWord(quest.phase)} · {move.who === "You" ? "your move" : move.who}</b>{move.next ? ` · ${move.next}` : ""}</StateMark><span>updated <b><Ago at={quest.updatedAt} /></b></span></>}
+          {moveAsk && <button type="button" className="lnk-btn act" onClick={() => focusAsk(moveAsk.id)}>Answer ask<ExpandsMark open={false} /></button>}
           <span>path <b className="num">{finished ? finishedPath ? verifiedWords(finishedPath) : "not mapped" : path ? `${path.done} of ${path.total}` : "not mapped yet"}</b>{!finished && path && change && <> · <span className="tv-path-change">{change}</span></>}</span>
           <span>plan <b>v{quest.planVersion}</b>{steer && <span className="tag tv-steer-tag" title={`From your steer: ${steer.text}`}>steer {clockTime(steer.at)}</span>}</span>
           {room && !finished && <span>review <b className="num">{room.review.waiting} of {room.review.budget}</b></span>}
@@ -192,7 +204,7 @@ export function QuestPage({ detail, registry, room, summaryId, recheck }: { deta
       <header className="tv-colh"><h2 id="tv-qmap-h"><Vocabulary word="map" /></h2><span className="tv-colh-aside">{mapAside(quest)}</span><span className="tv-sp" />{steer && showMap && <span className="tag tv-steer-tag" title={steer.text}><PageGlyph name="steer" /><span>v{quest.planVersion} from your steer, {clockTime(steer.at)}</span></span>}{finished && <button type="button" className="tv-fold act" aria-label={`${vocab("map")} ${mapAside(quest)} ${mapOpen ? "Hide" : "Show"}`} aria-expanded={mapOpen} aria-controls="tv-qmap-b" onClick={() => setMapOpen(!mapOpen)}><ExpandsMark open={mapOpen} /><span>{mapOpen ? "Hide" : "Show"}</span></button>}</header>
       {quest.plan && <PlanChanges plan={quest.plan} plans={detail.plans} quest={quest} registry={registry} />}
       {showMap && <div id="tv-qmap-b">
-        {quest.waypoints.length ? <QuestMap quest={quest} mode="live" /> : <p className="tv-empty tv-qmap-empty" data-empty><PageGlyph name="plan" />No quest map yet: {move.who}{move.next ? ` · ${move.next}` : ""}.</p>}
+        {quest.waypoints.length ? <QuestMap quest={quest} mode="live" onOpenAsk={finished ? undefined : focusAsk} /> : <p className="tv-empty tv-qmap-empty" data-empty><PageGlyph name="plan" />No quest map yet: {move.who}{move.next ? ` · ${move.next}` : ""}.</p>}
         <GateRows waypoints={quest.waypoints} />
       </div>}
     </section>
@@ -203,7 +215,7 @@ export function QuestPage({ detail, registry, room, summaryId, recheck }: { deta
           {!finished && <CheckerHold quest={quest} asks={openAsks} />}
           {handBacks.length > 0 && <div className="tv-grp"><KeeperNoteRows notes={handBacks} label="Handed back to you" /></div>}
           {attention.needYou > 0 && <div className="tv-grp"><div className="tv-grp-h"><StateMark tone="you">Needs you</StateMark><span className="num m">{attention.needYou} need you</span></div>
-            <div className="tv-asks">{openAsks.map((ask) => <details key={ask.id} open className={`tv-ask-disclosure ${ask.kind === "blocker" ? "blk" : ""}`}><summary className="tv-askrow"><PageGlyph name={ask.kind === "blocker" ? "fail" : "you"} size={13} className="tv-askrow-g" /><span className="tv-askrow-t"><span className="tv-askrow-q" data-content>{ask.question}</span><span className="tv-askrow-s">{KIND[ask.kind]} · {heldTitles(ask, quest).length ? `holds ${heldTitles(ask, quest).join(", ")}` : ask.why}</span></span><span className="tv-askrow-a"><Ago at={ask.createdAt} /></span></summary><AskCard ask={ask} via="page" headless /></details>)}</div></div>}
+            <div className="tv-asks">{openAsks.map((ask) => <details key={ask.id} id={askAnchor(ask.id)} open className={`tv-ask-disclosure ${ask.kind === "blocker" ? "blk" : ""}`}><summary className="tv-askrow"><PageGlyph name={ask.kind === "blocker" ? "fail" : "you"} size={13} className="tv-askrow-g" /><span className="tv-askrow-t"><span className="tv-askrow-q" data-content>{ask.question}</span><span className="tv-askrow-s">{KIND[ask.kind]} · {heldTitles(ask, quest).length ? `holds ${heldTitles(ask, quest).join(", ")}` : ask.why}</span></span><span className="tv-askrow-a"><Ago at={ask.createdAt} /></span></summary><AskCard ask={ask} via="page" headless /></details>)}</div></div>}
           {groups.map((group) => { const items = quest.waypoints.filter((w) => groupOf(w) === group); if (!items.length) return null; if (group === "Done" && !showDone) return <button key={group} type="button" className="tv-fold act" aria-expanded={false} onClick={() => setShowDone(true)}><ExpandsMark open={false} />Done · {items.length}</button>; return <div className="tv-grp" key={group}><div className="tv-grp-h"><StateMark tone={groupTone[group]}>{group}</StateMark><span className="num m">{items.length}</span></div><ul className="tv-items">{items.map((w) => {
             const owner = w.actor === "user" ? "You" : w.ownerMember ? characterName(registry, w.ownerMember) : w.owner ?? "Unassigned";
             const report = detail.reports.find((r) => r.waypointId === w.id);
@@ -211,7 +223,7 @@ export function QuestPage({ detail, registry, room, summaryId, recheck }: { deta
               {w.ownerMember ? <CrestOf member={w.ownerMember} registry={registry} size={16} /> : <PageGlyph name={w.actor === "user" ? "diamond" : w.actor === "outside" ? "gate" : "wait"} className={w.actor === "user" ? "tv-mn-you" : ""} />}
               <span className="tv-item-t" data-content title={`${owner}: ${w.title}`}>{owner}: {w.title}</span>
               <span className="m small num">{w.leadTime ?? "lead time unknown"}</span>
-              <span className="tv-item-s">{w.ownerMember && <><CheckIndependence member={w.ownerMember} /><GuardPosture member={w.ownerMember} /></>}<span>{w.doneWhen ? `done when ${w.doneWhen}` : "no done-when"}</span>{w.evidenceCount > 0 && <span>{w.evidenceCount} evidence</span>}{verifiedWaypoint(w) ? <span>verified by the Warden</span> : <span>{resolutionWords(w)}</span>}{w.rejectedReason && <span className="tv-st-bad">rejected: {w.rejectedReason}</span>}<MemberEstimate confidence={report?.confidence ?? null} /></span>
+              <span className="tv-item-s">{w.ownerMember && <><CheckIndependence member={w.ownerMember} /><GuardPosture member={w.ownerMember} /></>}<span>{w.doneWhen ? `done when ${w.doneWhen}` : "no done-when"}</span>{w.evidenceCount > 0 && <span>{w.evidenceCount} evidence</span>}{verifiedWaypoint(w) ? <span>verified by the Warden</span> : <span>{resolutionWords(w)}</span>}{w.resolutionReason && w.actor === "user" && !settled(w) && <span>{w.resolutionReason}</span>}{w.rejectedReason && <span className="tv-st-bad">rejected: {w.rejectedReason}</span>}<MemberEstimate confidence={report?.confidence ?? null} /></span>
               {group === "Blocked" && <AlertAction action={{ kind: "tell", keeperThreadId: quest.keeperThreadId,
                 text: `Review the blocked waypoint “${w.title}” in “${quest.title}” and tell me what needs to change before it can continue.` }} />}
               {w.ownerMember && <PlacementFacts placement={w.ownerMember.placement} memberName={owner} variant="status" />}

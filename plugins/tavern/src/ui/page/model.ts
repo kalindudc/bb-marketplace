@@ -12,7 +12,7 @@ import { hearthWords } from "../kit/hearth";
 export { isFinished, PHASE_STEPS, phaseIndex, phaseWord, pathProgress, questMove, keeperStatus, endedCounts, type MoveTone, type KeeperStatus } from "../kit";
 import { heldQuests, isFinished, keeperStatus, phaseWord, pathProgress, releaseWords, type MoveTone } from "../kit";
 
-export type PageRoute = { kind: "room" | "map" | "characters" | "classes" | "closing" | "digest" | "returned" | "archive" | "insights" | "memory" | "missing" } | { kind: "quest" | "tale" | "character" | "class"; id: string; summaryId?: string } | { kind: "machines"; rule?: string; hire?: string };
+export type PageRoute = { kind: "room" | "map" | "characters" | "classes" | "closing" | "digest" | "returned" | "archive" | "insights" | "memory" | "missing" } | { kind: "quest" | "tale" | "character" | "class"; id: string; summaryId?: string; askId?: string } | { kind: "machines"; rule?: string; hire?: string };
 export function decodePageRoute(subPath: string): PageRoute {
   let parts: string[];
   try { parts = subPath.split("/").map(decodeURIComponent); } catch { return { kind: "missing" }; }
@@ -21,7 +21,10 @@ export function decodePageRoute(subPath: string): PageRoute {
     if (kind === "room" || kind === "map" || kind === "characters" || kind === "classes" || kind === "closing" || kind === "digest" || kind === "returned" || kind === "archive" || kind === "insights" || kind === "memory") return { kind };
   }
   if (parts[0] === "machines" && parts.length <= 3 && parts.slice(1).every(Boolean)) return { kind: "machines", ...(parts[1] ? { rule: parts[1] } : {}), ...(parts[2] ? { hire: parts[2] } : {}) };
-  if (parts.length === 4 && parts[0] === "quest" && parts[1] && parts[2] === "summary" && parts[3]) return { kind: "quest", id: parts[1], summaryId: parts[3] };
+  if (parts.length === 4 && parts[0] === "quest" && parts[1] && parts[3]) {
+    if (parts[2] === "summary") return { kind: "quest", id: parts[1], summaryId: parts[3] };
+    if (parts[2] === "ask") return { kind: "quest", id: parts[1], askId: parts[3] };
+  }
   if (parts.length === 2 && parts[1]) {
     const kind = parts[0];
     if (kind === "quest" || kind === "tale" || kind === "character" || kind === "class") return { kind, id: parts[1] };

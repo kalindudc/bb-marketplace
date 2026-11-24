@@ -153,6 +153,29 @@ describe("Tavern page surfaces", () => {
     expect(slot.inspection.composer.draft.mentions).toMatchObject([{ provider: "classes", id: "keeper", pluginId: "tavern" }]);
     expect(slot.inspection.composer.submits).toHaveLength(0);
   });
+  it("opens the exact user-move card from the map and explains why a redirect leaves it open", async () => {
+    const quest = { ...detail.quest, waypoints: [{ ...detail.quest.waypoints[0]!, actor: "user" as const, check: "you" as const,
+      title: "Approve the mock", askId: "mock" }], move: { who: "you" as const, text: "Approve the mock?", askId: "mock" } };
+    const ask = { ...detail.asks[0]!, id: "mock", question: "Approve the mock?", kind: "decision" as const, draft: null,
+      holds: [], effect: { type: "user-waypoint" as const, planVersion: quest.planVersion, waypointId: quest.waypoints[0]!.id, completeOn: ["approve"] },
+      options: [{ id: "approve", label: "Approve", detail: "", recommended: false }, { id: "redirect", label: "Try another", detail: "", recommended: false }] };
+    const answerAsk = vi.fn(() => ({ ok: true as const }));
+    const slot = await page(`quest/${quest.id}`, { boardQuest: () => ({ ...detail, quest, asks: [ask] }), answerAsk });
+    const map = await slot.findByRole("region", { name: `Quest map: ${quest.title}` });
+    const card = await slot.findByRole("region", { name: "Ask: Approve the mock?" });
+    const disclosure = card.closest("details")!;
+    disclosure.open = false;
+    fireEvent.click(within(map).getByRole("button", { name: "Answer ask: Approve the mock" }));
+    expect(disclosure.open).toBe(true);
+    expect(document.activeElement).toBe(disclosure.querySelector("summary"));
+    const redirect = within(card).getByRole("radio", { name: /Try another.*Leaves your waypoint open/ });
+    fireEvent.click(redirect);
+    fireEvent.click(within(card).getByRole("button", { name: "Send answer" }));
+    const receipt = await slot.findByRole("status", { name: "Ask answered: Approve the mock?" });
+    expect(receipt.textContent).toContain("Your waypoint stays open.");
+    expect(answerAsk).toHaveBeenCalledWith({ askId: "mock", optionId: "redirect", note: null, via: "page" });
+  });
+
   it("shows the full sends-as-you consent before accepting an explicit choice", async () => {
     const answer = vi.fn((_input: { askId: string; optionId: string; note?: string | null; via: string }) => ({ ok: true as const }));
     const slot = await page("", { answerAsk: answer });

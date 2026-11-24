@@ -1,8 +1,9 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { attention } from "../../src/server/attention";
+import { requireUserAct } from "../../src/server/authority";
 import { memberCredits } from "../../src/server/tale";
-import { rpcHandlers } from "../../src/server/rpc";
+import { registerRpc, rpcHandlers } from "../../src/server/rpc";
 import { registerTools } from "../../src/server/tools";
 import { setup } from "./runtime-fixture";
 import { planInput, seedQuest, waypointEntry } from "./support";
@@ -15,6 +16,7 @@ const completed = { status: "done" as const, outcome: "The evidence is attached.
 async function fixture() {
   const f = setup(); databases.push(f.k.store.db);
   registerTools(f.bb, f.runtime);
+  registerRpc(f.bb, f.runtime);
   const q = await seedQuest(f.k, "lead", "Watch the release", "Watch");
   const base = planInput(q.id);
   const ask = (kind: "greenlight" | "conclude") => f.k.store.openAsks("lead", q.id).find(a => a.kind === kind);
@@ -38,8 +40,109 @@ async function fixture() {
     const get = f.port.get;
     f.port.get = id => ({ ...get(id), entries: rows.filter(row => row.threadId === id) });
   };
-  return { ...f, q, base, ask, propose, settle, approve, summary, conclude, bind, entries };
+  return { ...f, q, base, ask, propose, settle, approve, summary, conclude, bind, entries, tool };
 }
+
+const userWaypoint = { ...baseWaypoint, title: "Approve the mock", actor: "user", check: "you", owner: null };
+const userOptions = [
+  { id: "approve", label: "Approve", detail: "", recommended: false },
+  { id: "decline", label: "Decline", detail: "", recommended: false },
+  { id: "redirect", label: "Use another mock", detail: "", recommended: false },
+];
+async function userMove(title = userWaypoint.title) {
+  const f = await fixture();
+  const link = vi.spyOn(f.port, "linkWaypoint");
+  await f.propose([{ ...userWaypoint, title }]);
+  await f.approve();
+  const open = async (overrides: Record<string, unknown> = {}) => {
+    await f.tool("tavern_ask", { boardQuestId: f.q.id, waypointId: "w1", completeOn: ["approve"], kind: "decision",
+      question: title, why: "Only you can do this", options: userOptions, holds: [], meanwhile: "Other work continues.", ...overrides });
+    return f.k.store.openAsks("lead", f.q.id).find(a => a.kind === "decision")!;
+  };
+  const answer = (askId: string, optionId: string, via = "page") => f.harness.invokeRpc("answerAsk", { askId, optionId, via });
+  return { ...f, link, open, answer };
+}
+
+describe("your move", () => {
+  it("closes mock sign-off with the card answer alone, without creating a journal entry", async () => {
+    const f = await userMove();
+    expect(f.link).not.toHaveBeenCalled();
+    const ask = await f.open();
+    const ledger = await rpcHandlers(f.runtime).ledger({ threadId: "lead" });
+    expect(ledger.boardQuests.find(q => q.id === f.q.id)).toMatchObject({
+      move: { who: "you", askId: ask.id },
+      waypoints: [{ state: "planned", askId: ask.id }],
+    });
+    await f.answer(ask.id, "approve");
+    expect(f.summary().waypoints[0]).toMatchObject({ state: "done" });
+    expect(f.k.store.get("asks", ask.id)?.answer).toMatchObject({ by: "user", optionId: "approve" });
+    await f.conclude();
+  });
+
+  it("refuses Keeper, plugin, timer and terminal answers", async () => {
+    const f = await userMove();
+    const ask = await f.open();
+    expect(() => f.k.answerAsk(ask.id, "approve", null, "chat", "keeper")).toThrow(/explicit|belongs to the user/i);
+    await expect(f.harness.invokeRpc("answerAsk", { askId: ask.id, optionId: "approve", via: "page" },
+      { experimental_caller: { kind: "plugin", pluginId: "fixture-agent" } })).rejects.toThrow();
+    expect(() => f.k.answerAsk(ask.id, "approve", null, "timer", "default")).toThrow();
+    const receipt = requireUserAct({ experimental_caller: { kind: "client" } } as never, "answerAsk");
+    await expect(f.runtime.answerAsk(ask.id, "approve", null, "cli", true, "terminal", receipt)).rejects.toThrow(/explicit.*card/i);
+    expect(f.k.store.get("asks", ask.id)?.state).toBe("open");
+    expect(f.summary().waypoints[0]?.state).toBe("planned");
+  });
+
+  it("accepts Done for a non-choice step", async () => {
+    const f = await userMove("Try it on your phone");
+    const ask = await f.open({ completeOn: ["done"], options: [{ id: "done", label: "Done" }] });
+    await f.answer(ask.id, "done", "banner");
+    expect(f.summary().waypoints[0]?.state).toBe("done");
+  });
+
+  it.each(["decline", "redirect"])("records %s and says the waypoint is still open", async optionId => {
+    const f = await userMove();
+    const ask = await f.open();
+    await f.answer(ask.id, optionId);
+    expect(f.k.store.get("asks", ask.id)?.answer).toMatchObject({ by: "user", optionId });
+    expect(f.summary().waypoints[0]).toMatchObject({ state: "planned", resolutionReason: expect.stringMatching(/stays open/i) });
+  });
+
+  it("withdraws an old card rather than applying it to a changed waypoint", async () => {
+    const f = await userMove();
+    const ask = await f.open();
+    await f.propose([{ ...userWaypoint, title: "Approve a different mock" }]);
+    expect(f.k.store.get("asks", ask.id)?.withdrawnCause).toBe("plan-superseded");
+    await expect(f.answer(ask.id, "approve")).rejects.toThrow(/no longer open|old plan/i);
+    expect(f.summary().waypoints[0]?.state).toBe("planned");
+  });
+
+  it("does not reuse an unrelated answer even when that ask holds the waypoint", async () => {
+    const f = await userMove();
+    const ask = await f.open({ waypointId: undefined, completeOn: undefined, holds: ["w1"] });
+    await f.answer(ask.id, "approve");
+    expect(f.summary().waypoints[0]?.state).toBe("planned");
+  });
+
+  it("carries a completed answer only through revisions that leave the waypoint unchanged", async () => {
+    const f = await userMove();
+    const ask = await f.open();
+    await f.answer(ask.id, "approve");
+    await f.propose([userWaypoint], { changeNote: "Updated the overview." });
+    expect(f.summary().waypoints[0]?.state).toBe("done");
+    await f.propose([{ ...userWaypoint, doneWhen: "A different mock is approved" }]);
+    expect(f.summary().waypoints[0]?.state).toBe("planned");
+    await f.propose([userWaypoint]);
+    expect(f.summary().waypoints[0]?.state).toBe("planned");
+  });
+
+  it("rejects timed and misbound asks", async () => {
+    const f = await userMove();
+    await expect(f.open({ proceedInMinutes: 1, reversible: true })).rejects.toThrow(/never.*tim|timed/i);
+    await expect(f.open({ waypointId: "missing" })).rejects.toThrow(/user waypoint/i);
+    await expect(f.open({ completeOn: ["missing"] })).rejects.toThrow(/completeOn/i);
+    expect(f.k.store.openAsks("lead", f.q.id)).toEqual([]);
+  });
+});
 
 describe("planned waypoint checks", () => {
   it("refuses a party class outside the Keeper's hire policy before requesting greenlight", async () => {
@@ -167,13 +270,13 @@ describe("planned waypoint checks", () => {
     expect(f.summary().waypoints[1]?.state).toBe("skipped");
   });
 
-  it("settles your mark, but leaves an answered outside gate open until the Keeper accepts it", async () => {
+  it("keeps a legacy You entry working and still requires Keeper acceptance for an outside gate", async () => {
     const f = await fixture();
-    const link = vi.spyOn(f.port, "linkWaypoint");
-    await f.propose([{ ...baseWaypoint, actor: "user", check: "you", owner: null }, { ...baseWaypoint, id: "w2", actor: "outside", check: "keeper", owner: "Release team" }]);
+    await f.propose([{ ...userWaypoint }, { ...baseWaypoint, id: "w2", actor: "outside", check: "keeper", owner: "Release team" }]);
     await f.approve();
-    expect(link).toHaveBeenCalledWith("lead", { boardQuestId: f.q.id, waypointId: "w1" }, baseWaypoint.title, "You", { kind: "agent", threadId: "lead" });
-    const entry = waypointEntry("lead", f.q.id);
+    const entry = { ...waypointEntry("lead", f.q.id), owner: "You" };
+    f.entries([{ ...entry, status: "todo" }]);
+    expect(f.summary().waypoints[0]?.state).toBe("todo");
     f.entries([{ ...entry, doneBy: { kind: "agent", threadId: "lead" } }]);
     expect(f.summary().waypoints[0]?.state).not.toBe("done");
     f.entries([{ ...entry, doneBy: { kind: "user" } }]);

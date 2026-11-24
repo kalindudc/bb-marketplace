@@ -225,6 +225,7 @@ html[data-motion="reduced"] .tavern, html[data-motion="reduced"] .tavern::before
 .tavern .map-label b.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; }
 .tavern .map-label .m { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tavern .qmap .wp-check-note { font-size: 11px; margin: 0 0 4px; }
+.tavern .qmap .wp-ask { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .tavern .qlist .wp-reason { display: block; overflow-wrap: anywhere; }
 .tavern .qlist { display: none; }
 .tavern .qlist li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 5px 0; position: relative; font-size: 12px; min-height: 40px; }

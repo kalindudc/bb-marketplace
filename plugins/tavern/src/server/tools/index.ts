@@ -417,7 +417,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_ask",
     "Opened an ask",
-    "Ask only when the user must choose. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. Cluster writes need target.command, change, known undo and runThreadId for a member. Approve and confirm each run on its card. Use shellGrant.heldEventId for held shell acts or heldCommunicationAskId for held messages (dismiss:true to discard). Give the full sends-as-you draft and recipient. For checker handoff, use blocker, boardQuestId and releaseCheckerHandoff:true. Include options, recommendation, what continues and held waypoints. For an existing merge, give mergeAskId, action ask-user or withdraw, and reason. Chat and timers give no approval. Never use native question tools. Answers do not execute acts or supply credentials.",
+    "Ask for a user choice or move. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. Cluster writes need target.command, change, known undo and runThreadId for a member. Approve and confirm each run on its card. Use shellGrant.heldEventId for held shell acts or heldCommunicationAskId for held messages (dismiss:true to discard). Give the full sends-as-you draft and recipient. For checker handoff use blocker, boardQuestId and releaseCheckerHandoff:true. Include options, recommendation, what continues and held waypoints. For an existing merge, give mergeAskId, action ask-user or withdraw, and reason. Chat and timers give no approval. Never use native question tools. Answers do not execute acts or supply credentials.",
     z.union([askSchema
       .pick({
         question: true,
@@ -430,6 +430,8 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       .extend({
         boardQuestId: optionalQuest,
         releaseCheckerHandoff: z.literal(true).optional(),
+        waypointId: id.optional(),
+        completeOn: z.array(askSchema.shape.options.element.shape.id).min(1).max(5).optional(),
         proceedInMinutes: z.number().int().min(1).max(10080).nullish(),
         reversible: z.boolean().optional(),
         unsure: z.boolean().optional(),
@@ -457,6 +459,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         return ask.lane === "user" ? `Held message reviewed.\n::tavern-ask{id="${ask.id}"}` : "Held message reviewed; use tavern_decide in your delegated lane.";
       }
       if (input.shellGrant) {
+        if (input.waypointId || input.completeOn) throw new Error("A shell grant cannot close a user waypoint.");
         if (!runtime.scopes) throw new Error("Shell grants are unavailable.");
         if (input.proceedInMinutes != null) throw new Error("Shell grant asks never default.");
         const ask = runtime.scopes.askAct(threadId, { ...input.shellGrant, why: input.why, unsure: input.unsure, draft: input.draft });

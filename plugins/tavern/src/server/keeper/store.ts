@@ -660,6 +660,13 @@ export class KeeperStore {
     const total = (this.db.prepare(`SELECT count(*) AS n ${from}`).get() as { n: number }).n;
     return { quests, total, nextCursor: rows.length > limit && last ? Buffer.from(JSON.stringify([last.deletedAt, last.id])).toString("base64url") : null };
   }
+  answeredUserWaypoints(boardQuestId: string): Ask[] {
+    const rows = this.db.prepare(`SELECT data FROM tavern_records WHERE kind='asks'
+      AND json_extract(data,'$.boardQuestId')=? AND json_extract(data,'$.effect.type')='user-waypoint'
+      AND json_extract(data,'$.state')='answered' AND json_extract(data,'$.answer.by')='user'
+      ORDER BY rowid`).all(boardQuestId) as { data: string }[];
+    return rows.map(row => this.decode("asks", row.data));
+  }
   openAsks(
     keeperThreadId?: string,
     boardQuestId?: string,

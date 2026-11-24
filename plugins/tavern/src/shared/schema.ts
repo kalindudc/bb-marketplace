@@ -539,6 +539,7 @@ export const askEffectSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("close-early"), draft: closeEarlyDraftSchema }),
   z.object({ type: z.literal("release-hold"), holdId: id }),
   settleWaypointSchema.omit({ boardQuestId: true }).extend({ type: z.literal("settle-waypoint"), planVersion: z.number().int().positive() }),
+  z.object({ type: z.literal("user-waypoint"), waypointId: id, planVersion: z.number().int().positive(), completeOn: z.array(askOptionSchema.shape.id).min(1).max(5) }),
   z.object({ type: z.literal("soft-limit"), limit: z.enum(["party", "rangers"]), text: z.string().min(1).max(400), reason: z.string().max(600) }),
   z.object({ type: z.literal("pull-request-draft"), operation: pullRequestDraftOperationSchema }),
   z.object({ type: z.literal("communication-hold"), hold: communicationHoldSchema, keeperReview: z.literal(true).optional() }).strict(),
