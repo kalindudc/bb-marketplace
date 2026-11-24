@@ -2,6 +2,16 @@
 
 Notable changes to Flare, newest first. Releases are tagged `flare/vX.Y.Z` in this repository.
 
+## 0.4.1 (2026-11-24)
+
+Flare's segment shares the context row fairly when the composer is narrow.
+
+### Fixed
+
+- The segment no longer squeezes the segment next to it, such as Cortex's memory, down to its icon. It takes three shares of the row's free space to that segment's one, never more than it needs.
+- The title stays until the composer is narrower than 24rem, and below that the segment shows its glyph, the new count and the X. It used to drop the title below 34rem even when there was room.
+- The age shows from a 44rem composer. It used to need 48rem, wider than bb's composer ever gets, so it never appeared.
+
 ## 0.4.0 (2026-11-24)
 
 Flare moves into bb's thread context row instead of drawing a line of its own above the message box.

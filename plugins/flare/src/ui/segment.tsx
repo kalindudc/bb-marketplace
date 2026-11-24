@@ -123,10 +123,12 @@ export function FlareSegmentSummary({ threadId, isExpanded, onToggle }: Experime
   const action = isExpanded ? "Hide this turn's flares" : "Show this turn's flares";
 
   return (
+    // bb's Cortex segment grows from nothing, so a segment sized to its content would leave Cortex an icon. Growing
+    // three to its one shares the free space and keeps both readable.
     <span
       data-flare-segment
       className={cn(
-        "group/flare inline-flex min-w-0 max-w-max flex-initial shrink-[4] items-center rounded transition-colors hover:bg-state-hover",
+        "group/flare inline-flex min-w-0 max-w-max flex-[3_1_0%] items-center rounded transition-colors hover:bg-state-hover",
         isExpanded && "bg-state-hover",
       )}
     >
@@ -143,20 +145,20 @@ export function FlareSegmentSummary({ threadId, isExpanded, onToggle }: Experime
         )}
       >
         {failed ? <Icon name="AlertTriangle" className="size-3.5 shrink-0 text-destructive-text" aria-hidden /> : <KindIcon kind={flare.kind} className="size-3.5" />}
-        <span data-flare-title className="min-w-0 max-w-[13rem] truncate text-foreground @max-[34rem]/promptbox-shell:hidden">
+        <span data-flare-title className="min-w-0 max-w-[13rem] truncate text-foreground @max-[24rem]/promptbox-shell:hidden">
           {flare.title}
         </span>
         {data.fresh > 0 && (
           <span data-flare-fresh className="shrink-0 tabular-nums">
-            <span aria-hidden className="@max-[34rem]/promptbox-shell:hidden">· </span>
+            <span aria-hidden className="@max-[24rem]/promptbox-shell:hidden">· </span>
             {data.fresh} new
           </span>
         )}
-        <span data-flare-metadata className="shrink-0 @max-[48rem]/promptbox-shell:hidden">
+        <span data-flare-metadata className="shrink-0 @max-[44rem]/promptbox-shell:hidden">
           · {ago(flare.createdAt, now)}
         </span>
-        {flare.fromChild !== null && <Icon name="ChildThread" className="size-3 shrink-0 @max-[48rem]/promptbox-shell:hidden" aria-hidden />}
-        <Icon name={isExpanded ? "ChevronDown" : "ChevronRight"} className="size-3 shrink-0 @max-[34rem]/promptbox-shell:hidden" aria-hidden />
+        {flare.fromChild !== null && <Icon name="ChildThread" className="size-3 shrink-0 @max-[44rem]/promptbox-shell:hidden" aria-hidden />}
+        <Icon name={isExpanded ? "ChevronDown" : "ChevronRight"} className="size-3 shrink-0 @max-[24rem]/promptbox-shell:hidden" aria-hidden />
       </button>
       <button
         type="button"
@@ -202,12 +204,12 @@ function FlareRow({ flare, open, marked, now, onSelect, onOpenTab }: { flare: Fl
           <span aria-hidden className="size-2 shrink-0" />
         )}
         <KindIcon kind={flare.kind} className="size-3.5" />
-        <span className="w-16 shrink-0 text-muted-foreground @max-[34rem]/promptbox-shell:hidden">{KIND_LABELS[flare.kind]}</span>
+        <span className="w-16 shrink-0 text-muted-foreground @max-[26rem]/promptbox-shell:hidden">{KIND_LABELS[flare.kind]}</span>
         <span className={cn("min-w-0 flex-1 text-foreground", open ? "font-medium" : "truncate")}>{flare.title}</span>
         <span className="shrink-0 text-muted-foreground">{ago(flare.createdAt, now)}</span>
       </button>
       {open && (preview.text !== "" || preview.blocks > 0 || flare.fromChild !== null) && (
-        <div data-flare-detail className="max-h-56 overflow-y-auto py-1.5 pr-2 pl-12 text-sm @max-[34rem]/promptbox-shell:pl-4">
+        <div data-flare-detail className="max-h-56 overflow-y-auto py-1.5 pr-2 pl-12 text-sm @max-[26rem]/promptbox-shell:pl-4">
           {preview.text !== "" && <Markdown content={preview.text} />}
           {(flare.fromChild !== null || preview.blocks > 0) && (
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">

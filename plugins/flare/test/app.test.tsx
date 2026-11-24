@@ -194,8 +194,8 @@ describe("the context segment", () => {
   it("keeps narrow composers to the glyph, the count and the dismiss button", async () => {
     const slot = await render(banner({ flare: flare({ fromChild: { threadId: "thr_child", title: "Child" } }), fresh: 2 }));
     await screen.findByText("Root cause found");
-    expect(slot.container.querySelector("[data-flare-title]")?.className).toContain("@max-[34rem]/promptbox-shell:hidden");
-    expect(slot.container.querySelector("[data-flare-metadata]")?.className).toContain("@max-[48rem]/promptbox-shell:hidden");
+    expect(slot.container.querySelector("[data-flare-title]")?.className).toContain("@max-[24rem]/promptbox-shell:hidden");
+    expect(slot.container.querySelector("[data-flare-metadata]")?.className).toContain("@max-[44rem]/promptbox-shell:hidden");
     expect(slot.container.querySelector("[data-flare-fresh]")?.className).not.toContain("hidden");
   });
 });
