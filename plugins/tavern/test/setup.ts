@@ -7,6 +7,10 @@ if (typeof document !== "undefined") {
   const { configure } = await import("@testing-library/react");
   // findBy* and waitFor wait 1 s by default, too short under full-suite load.
   configure({ asyncUtilTimeout: 5_000 });
+  const { notifyManager } = await import("@tanstack/react-query");
+  const view = document.defaultView!;
+  // jsdom cancels its window's timers when Vitest tears down the DOM, unlike Node timers.
+  notifyManager.setScheduler(callback => { if (view.document) view.setTimeout(callback, 0); });
 }
 
 const root = process.env.TAVERN_TEST_ROOT, realHome = process.env.TAVERN_TEST_REAL_HOME;
