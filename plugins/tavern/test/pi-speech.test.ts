@@ -1,18 +1,23 @@
 // @vitest-environment node
 import { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, expect, it, vi } from "vitest";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { DEFAULT_SETTINGS } from "../src/shared/settings";
 import { PiSpeech } from "../src/server/pi-speech";
 
-vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
+vi.mock("node:child_process", () => ({ spawn: vi.fn(),
+  execFile: (_file: string, _args: string[], _options: unknown, ready: (error: null, stdout: string, stderr: string) => void) => ready(null, "1.0.0", ""),
+}));
 const start = vi.mocked(spawn);
 const settings = { ...DEFAULT_SETTINGS.tavern, contextualSpeech: true, piProgram: process.execPath };
 const scene = { role: "smith", stage: "work", moment: "assignment", revision: "private thread title", report: "private report" } as const;
 const signal = new AbortController().signal;
-const voices: PiSpeech[] = [];
+const voices: { voice: PiSpeech; data: string }[] = [];
 
 function worker(autoReply = true) {
   const child = Object.assign(new EventEmitter(), {
@@ -41,15 +46,19 @@ function setup(models = [{ model: "openai/gpt-5-nano" }]) {
   const list = vi.fn(async () => ({ models }));
   const invalidate = vi.fn();
   const bb = { sdk: { providers: { models: list } }, rpc: { experimental_invalidate: invalidate } } as unknown as BbPluginApi;
-  const voice = new PiSpeech(bb, process.cwd());
-  voices.push(voice);
+  const data = mkdtempSync(join(tmpdir(), "tavern-speech-"));
+  const voice = new PiSpeech(bb, data);
+  voices.push({ voice, data });
   const say = (context: Parameters<PiSpeech["complete"]>[0] = scene, cancel = signal, reserve = () => true) =>
     voice.complete(context, settings, cancel, reserve);
   return { voice, list, invalidate, say };
 }
 
 afterEach(async () => {
-  await Promise.all(voices.splice(0).map(voice => voice.dispose()));
+  await Promise.all(voices.splice(0).map(async ({ voice, data }) => {
+    await voice.dispose();
+    rmSync(data, { recursive: true, force: true });
+  }));
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.resetAllMocks();

@@ -72,13 +72,14 @@ it("filters across sections by label, help and setting key without saving a sear
 });
 it("edits contextual speech using ordinary Atmosphere settings and displays today's attempts", async () => {
  const save = vi.fn((input: unknown) => ({ code: "ok", revision: 1, problems: [], settings: null }));
- const s = await section("atmosphere", { ...settingsView, speechAttemptsToday: 7, speechProblem: "Pi was not found on PATH." }, { settingsUpdate: save });
+ const s = await section("atmosphere", { ...settingsView, speechAttemptsToday: 7, speechProblem: "Pi refused to start: Refusing --no-extensions: this device requires an extension." }, { settingsUpdate: save });
  const toggle = await s.findByRole("switch", { name: "Contextual speech" });
  expect(toggle.getAttribute("aria-checked")).toBe("false");
  expect(s.getByLabelText("Today's attempts used").textContent).toBe("7");
  const program = s.getByRole("textbox", { name: "Pi program" });
  expect(program.getAttribute("aria-invalid")).toBe("true");
- expect(s.getByRole("alert").textContent).toBe("Pi was not found on PATH.");
+ expect(s.getByRole("alert").textContent).toBe("Pi refused to start: Refusing --no-extensions: this device requires an extension.");
+ expect(s.getByText(/if Pi refuses --no-extensions/i)).toBeTruthy();
  expect(s.getByRole("textbox", { name: "Extensions for speech" })).toHaveProperty("value", "");
  expect(s.getByRole("textbox", { name: "Speech instructions" })).toHaveProperty("value", "Write only a brief in-character remark. Do not use tools.");
  const cadence = s.getByRole("spinbutton", { name: "Time between remarks" });

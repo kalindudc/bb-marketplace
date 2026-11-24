@@ -15,7 +15,7 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `tavern.widget_row` | Shows the Tavern widget above the composer. | `true` | User; Granted |
 | `tavern.voice` | Sets full, light or off voice for Tavern's character presentation. | `"full"` | User; Granted |
 | `tavern.contextual_speech` | Run Pi without tools or sessions to write character remarks on clicks, at watched milestones, and when a timed remark is due. | `false` | User; Granted |
-| `tavern.speech_extensions` | Absolute paths to the only Pi extensions loaded for speech; start with none and add only trusted sign-in extensions if needed. Not changed by imports. | `[]` | User only |
+| `tavern.speech_extensions` | Extra trusted Pi extensions for speech, as absolute paths. Normally only these load. When Pi refuses `--no-extensions`, speech uses a separate agent folder so Pi can load extensions it requires. Not changed by imports. | `[]` | User only |
 | `tavern.speech_instructions` | System instructions for speech, 1–2,000 characters. Not changed by imports. | `"Write only a brief in-character remark. Do not use tools."` | User only |
 | `tavern.pi_program` | Absolute executable path on the machine running Tavern. Empty uses Pi from PATH. | `""` | User only |
 | `tavern.speech_model` | Model for contextual speech. | `"openai/gpt-5-nano"` | User; Granted |

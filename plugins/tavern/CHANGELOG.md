@@ -29,6 +29,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- Contextual remarks now work when Pi refuses to disable extensions. Tavern uses a separate Pi folder that keeps Pi's required extensions and your selected speech extensions without loading your ordinary Pi setup. If Pi still cannot start, Settings can show its startup error.
 - The Ledger’s Guardrails highlight fills the row all the way to the card border on hover.
 - Keeper cards on the board show the Keeper’s name once, keep quest badges inside the card, and put Refresh Keeper below the quests. Long titles and next steps show an ellipsis with the full text on hover.
 - UI tests no longer leave query notification timers running after the test browser closes.

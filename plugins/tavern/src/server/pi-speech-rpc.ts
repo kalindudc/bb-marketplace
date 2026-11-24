@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { stripVTControlCharacters } from "node:util";
 
 type Frame = Record<string, unknown>;
 const record = (value: unknown): value is Frame => !!value && typeof value === "object" && !Array.isArray(value);
@@ -15,6 +16,7 @@ function assistantText(messages: unknown): string | null {
 }
 
 export class PiSpeechExtensionError extends Error {}
+export class PiSpeechStartupError extends Error {}
 
 export class PiSpeechRpc {
   private readonly lifetime = new AbortController();
@@ -23,14 +25,17 @@ export class PiSpeechRpc {
   private readonly exited: Promise<void>;
   private buffer = "";
   private serial = 0;
+  private started = false;
   private closing?: Promise<void>;
 
-  constructor(file: string, args: string[], cwd: string, unexpectedExit: (reason: unknown) => void) {
-    const child = this.child = spawn(file, args, { cwd, shell: false, stdio: ["pipe", "pipe", "pipe"] });
-    let startupDiagnostic = "";
+  constructor(file: string, args: string[], cwd: string, env: NodeJS.ProcessEnv | undefined, unexpectedExit: (reason: unknown) => void) {
+    const child = this.child = spawn(file, args, { cwd, env, shell: false, stdio: ["pipe", "pipe", "pipe"] });
+    let startupDiagnostic = "", diagnosticTail = "";
     this.exited = new Promise(resolve => child.once("close", () => {
-      const reason = /(?:^|\n)Error: Failed to load extension /.test(startupDiagnostic)
-        ? new PiSpeechExtensionError("Pi could not load a speech extension") : new Error("Pi exited");
+      const firstLine = stripVTControlCharacters(startupDiagnostic).split(/[\r\n]/, 1)[0]?.replace(/\p{C}/gu, "").trim().slice(0, 160);
+      const reason = !this.started && /(?:^|\n)Error: Failed to load extension /.test(diagnosticTail)
+        ? new PiSpeechExtensionError("Pi could not load a speech extension")
+        : !this.started && firstLine ? new PiSpeechStartupError("Pi refused to start: " + firstLine) : new Error("Pi exited");
       this.lifetime.abort(reason);
       if (!this.closing) unexpectedExit(reason);
       resolve();
@@ -43,11 +48,15 @@ export class PiSpeechRpc {
         void this.close();
       }
     });
-    // Pi reports loader failures on stderr before it starts the RPC loop.
-    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { startupDiagnostic = (startupDiagnostic + chunk).slice(-2048); });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      if (this.started) return;
+      startupDiagnostic = (startupDiagnostic + chunk).slice(0, 2048);
+      diagnosticTail = (diagnosticTail + chunk).slice(-2048);
+    });
     const failed = (error: Error) => this.lifetime.abort(error);
     child.on("error", failed);
-    child.stdin.on("error", failed);
+    // A startup exit can break stdin before its stderr has drained.
+    child.stdin.on("error", (error: NodeJS.ErrnoException) => { if (this.started || error.code !== "EPIPE") failed(error); });
     child.stdout.on("error", failed);
     child.stderr.on("error", failed);
   }
@@ -62,6 +71,7 @@ export class PiSpeechRpc {
       if (Buffer.byteLength(line) > MAX_FRAME_BYTES) throw new Error("Pi RPC frame too large");
       const frame: unknown = JSON.parse(line);
       if (!record(frame) || typeof frame.type !== "string") throw new Error("Invalid Pi RPC frame");
+      if (frame.type === "response") this.started = true;
       // A trusted extension can offer MCP registration while Pi is deliberately using --no-mcp.
       if (frame.type === "extension_error" && frame.event !== "register_mcp_server") throw new PiSpeechExtensionError("Pi could not load a speech extension");
       for (const listener of this.listeners) listener(frame);

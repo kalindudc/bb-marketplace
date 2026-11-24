@@ -300,7 +300,7 @@ function SpeechSettings({ api, settings }: { api: Api; settings: SettingsView })
         }} />} />
     <Row label="Pi program" setting="tavern.piProgram" help="Leave empty to use Pi from PATH. Only you can set a different executable."
       control={id => <ProgramField field="piProgram" id={id} value={t.piProgram} problem={extensionProblem || instructionsProblem ? undefined : settings.speechProblem} api={api} />} />
-    <Row label="Extensions for speech" setting="tavern.speechExtensions" help="Only these Pi extensions load. Enter one absolute path per line on the Tavern machine. Leave blank for none. Extensions run code; list only ones you trust, such as an extension Pi needs to sign in."
+    <Row label="Extensions for speech" setting="tavern.speechExtensions" help="Enter one absolute path per line on the Tavern machine. Leave blank to add none. Extensions run code; list only ones you trust. If Pi refuses --no-extensions, speech uses a separate Pi folder so Pi can load extensions it requires."
       control={id => <SpeechLaunchText id={id} setting="speechExtensions" value={t.speechExtensions.join("\n")} pending={api.pending} save={patch => void api.save(patch)} problem={extensionProblem} />} />
     <Row label="Speech instructions" setting="tavern.speechInstructions" help="System instructions Pi receives for writing remarks. For each remark, Tavern adds only the character’s class, current stage and kind of remark, not the thread’s text."
       control={id => <SpeechLaunchText id={id} setting="speechInstructions" value={t.speechInstructions} pending={api.pending} save={patch => void api.save(patch)} problem={instructionsProblem} />} />
