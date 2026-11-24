@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
   Markdown,
   experimental_useAppPanel,
   experimental_useRpcMutation,
   experimental_useRpcQuery,
+  useSettings,
   type ExperimentalThreadContextSegmentInput,
   type ExperimentalThreadContextSegmentProps,
 } from "@get-bb/plugin-sdk/app";
@@ -13,6 +14,7 @@ import { previewBody } from "../blocks";
 import { rpcContract, type BannerDto, type FlareDto } from "../contract";
 import { ago } from "../format";
 import { KIND_LABELS } from "../kinds";
+import type { DisplayMode } from "../settings";
 import { ChildLink, KindIcon } from "./flare-card";
 import { FLARES_TAB } from "./tab";
 import { useNow } from "./use-now";
@@ -29,6 +31,19 @@ interface OpenState {
 const CLOSED: OpenState = { started: false, flareId: null, marked: new Set() };
 const openStates = new Map<string, OpenState>();
 const listeners = new Set<() => void>();
+
+/** How many panes have each thread's list open; the shared state resets only when the last one closes. */
+const openPanes = new Map<string, number>();
+
+function retainOpen(threadId: string): () => void {
+  openPanes.set(threadId, (openPanes.get(threadId) ?? 0) + 1);
+  return () => {
+    const left = (openPanes.get(threadId) ?? 1) - 1;
+    if (left > 0) return void openPanes.set(threadId, left);
+    openPanes.delete(threadId);
+    setOpenState(threadId, CLOSED);
+  };
+}
 
 function setOpenState(threadId: string, next: OpenState): void {
   openStates.set(threadId, next);
@@ -86,9 +101,17 @@ export function useLook(threadId: string): (through: number) => void {
   return (through: number) => void look.mutate({ threadId, through }).catch(() => undefined);
 }
 
+/** Where the newest flare shows, from the settings; null until they load, so neither place flashes up first. */
+export function useDisplay(): DisplayMode | null {
+  const { values } = useSettings();
+  if (values === undefined) return null;
+  return values.display === "widget" ? "widget" : "banner";
+}
+
 export const useFlareSegmentVisible = ({ threadId }: ExperimentalThreadContextSegmentInput): boolean => {
-  const { data } = experimental_useRpcQuery({ contract: rpcContract, method: "banner", input: { threadId } });
-  return (data?.flare ?? null) !== null;
+  const widget = useDisplay() === "widget";
+  const { data } = experimental_useRpcQuery({ contract: rpcContract, method: "banner", input: { threadId }, enabled: widget });
+  return widget && (data?.flare ?? null) !== null;
 };
 
 /** The flares that arrived since the last look: the newest `fresh` of the list. */
@@ -108,7 +131,14 @@ export function FlareSegmentSummary({ threadId, isExpanded, onToggle }: Experime
   const failed = turnFailed(data, flare);
   const open = () => {
     if (isExpanded) return onToggle();
-    setOpenState(threadId, { started: true, flareId: flare.id, marked: freshIds(data) });
+    // Another pane with this thread's list open keeps what it has open; this pane joins it and adds the new marks.
+    const current = openStates.get(threadId) ?? CLOSED;
+    setOpenState(
+      threadId,
+      current.started
+        ? { ...current, marked: new Set([...current.marked, ...freshIds(data)]) }
+        : { started: true, flareId: flare.id, marked: freshIds(data) },
+    );
     onToggle();
     if (data.fresh > 0) look(flare.createdAt);
   };
@@ -249,12 +279,8 @@ export function FlareSegmentDetails({ threadId, isExpanded, onToggle }: Experime
     if (fresh > 0) look(flare.createdAt);
   }, [isExpanded, flare?.id, fresh]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Only the pane that closed its list resets it; another pane on the same thread that never opened it leaves it be.
-  const wasExpanded = useRef(false);
-  useEffect(() => {
-    if (wasExpanded.current && !isExpanded) setOpenState(threadId, CLOSED);
-    wasExpanded.current = isExpanded;
-  }, [isExpanded, threadId]);
+  // Panes showing the same thread share its open list; it resets only when the last of them closes it.
+  useEffect(() => (isExpanded ? retainOpen(threadId) : undefined), [isExpanded, threadId]);
 
   if (!isExpanded || data === undefined || flare === null) return null;
   const openTab = () => {

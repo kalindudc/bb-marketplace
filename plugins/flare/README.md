@@ -6,10 +6,11 @@ above the message box, instead of waiting for the message that ends its turn.
 
 - The `flare` agent tool sends a finding, progress, a decision, a blocker or
   a summary. It writes one row and returns; the turn never waits on it.
-- A segment in the thread's context row, above the message box, shows the
-  newest flare of the current turn and how many arrived since you last
-  looked. Click it for the turn's flares and their detail; its X dismisses
-  it until the next flare.
+- A banner above the message box shows the newest flare of the current
+  turn, with how many more arrived. Click it for the detail. **Show the
+  newest flare as** in settings moves it into the thread's context row
+  instead, as a widget that counts the flares since you last looked; its X
+  dismisses it until the next flare.
 - The **Flares** tab shows every flare the way bb shows a reply, so any
   block an installed plugin draws appears, including the flares of threads
   this one started. **Cards** switches to Flare's own list by turn.
@@ -42,7 +43,7 @@ bb plugin install flare@kalindudc
 | --- | --- |
 | Fire and forget | `flare`'s `execute` is synchronous. It normalizes the input (`src/normalize.ts`), writes one row to the plugin's SQLite database and returns. Its parameters are a raw JSON schema, which bb does not validate, so a stringified boolean or a number for a title reaches the normalizer instead of failing the call. A missing title, an unknown kind or an over-long body come back as a note in the result; a database error comes back as "send it again later". Everything else runs after the result is sent, from `setImmediate` (`FlareService.fanOut`). |
 | Turns | `thread.active`, `thread.idle` and `thread.failed` open and close a run per thread (`runs` table), and the newest `client/turn/requested` event labels it. The `turns` background service matches open runs to `bb.sdk.threads.listRunning()` at start, so a reload does not leave a run open. |
-| Widget and tab | The `banner` and `feed` RPC reads are tagged `flare:thread:<id>`. A flare, a turn change, a dismissal or a look invalidates the tag, so every open client refreshes without polling. The widget is a thread context segment (`experimental_threadContextSegment`), so bb draws it in the row with the thread's other context and owns expanding it; the tab is an action tab (`experimental_tab`). |
+| Banner, widget and tab | The `banner` and `feed` RPC reads are tagged `flare:thread:<id>`. A flare, a turn change, a dismissal or a look invalidates the tag, so every open client refreshes without polling. The banner is a bare composer banner (`app.composer.customize`). The widget is a thread context segment (`experimental_threadContextSegment`), so bb draws it in the row with the thread's other context and owns expanding it. Both are registered, and the `display` setting decides which one draws; the banner reads nothing while it is off. The tab is an action tab (`experimental_tab`). |
 | Seen | `looks` keeps, per thread, the newest flare the person had seen when they last opened the widget or a visible Flares tab, or dismissed it. `banner` counts the turn's flares after that point (`fresh`). Opening the widget opens the newest flare, keeps a mark on each one that was new, and posts `look`. |
 | Child threads | After a flare, `experimental_listAncestors` finds the threads above it and records them in `audience`, so a parent reads its children's flares with one query. |
 | Push | `notifications.send` on the push notifications plugin, after checking `threadNotifications.list` for a muted thread. Past 20 flares in one turn, flares are still kept but stop notifying. |

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { rpcContract, type BannerDto, type FeedDto, type FlareDto } from "../src/contract";
@@ -43,16 +43,16 @@ function banner(overrides: Partial<BannerDto> = {}): BannerDto {
 }
 
 describe("registrations", () => {
-  it("adds a segment to the thread's context row, a Flares tab and a palette command", async () => {
+  it("adds a banner to thread composers, a segment to the thread's context row, a Flares tab and a palette command", async () => {
     const loaded = await app();
-    expect(loaded.composerCustomizations).toEqual([]);
+    expect(loaded.composerCustomizations).toEqual([expect.objectContaining({ id: "flare", scopes: ["thread"] })]);
     expect(loaded.threadContextSegments).toEqual([expect.objectContaining({ id: "flares", title: "Flares", group: "2_flare" })]);
     expect(loaded.tabs).toEqual([expect.objectContaining({ id: "flares", title: "Flares", icon: "flare/flare", availability: "action" })]);
   });
 });
 
 describe("the context segment", () => {
-  const render = async (data: BannerDto, options: { dismiss?: (input: unknown) => unknown; look?: (input: unknown) => unknown; expanded?: boolean } = {}) => {
+  const render = async (data: BannerDto, options: { dismiss?: (input: unknown) => unknown; look?: (input: unknown) => unknown; expanded?: boolean; settings?: Record<string, string> } = {}) => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(NOW);
     const loaded = await app();
@@ -83,9 +83,19 @@ describe("the context segment", () => {
           look: options.look ?? (() => ({ ok: true as const })),
         },
         experimental_panel: { openTab: () => true },
+        settings: options.settings ?? { display: "widget" },
       },
     );
   };
+
+  it("shows only when the settings ask for the widget", async () => {
+    for (const settings of [{}, { display: "banner" }] as Record<string, string>[]) {
+      const slot = await render(banner(), { settings });
+      await screen.findByText("Root cause found");
+      expect(slot.container.querySelector("[data-visible]")?.getAttribute("data-visible")).toBe("false");
+      cleanup();
+    }
+  });
 
   it("is hidden until a flare arrives", async () => {
     const slot = await render(banner({ flare: null }));
@@ -143,6 +153,55 @@ describe("the context segment", () => {
     expect(lookedThrough(newer.createdAt)(read).fresh).toBe(0);
   });
 
+  it("keeps one pane's open flare and marks when a second pane on the thread opens and closes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    const top = flare({ id: "fl_top", title: "Newest", createdAt: NOW - 30_000 });
+    const old = flare({ id: "fl_old", title: "Older", body: "The older detail.", createdAt: NOW - 90_000 });
+    let data = banner({ flare: top, flares: [top, old], count: 2, fresh: 2 });
+    const loaded = await app();
+    const registration = loaded.threadContextSegments[0]!;
+    const Summary = registration.summary;
+    const Details = registration.details!;
+    function Pane({ name }: { name: string }) {
+      const [expanded, setExpanded] = useState(false);
+      const props = { threadId: "thr_a", projectId: "proj_a", environment: null, segments: [], isExpanded: expanded, onToggle: () => setExpanded(!expanded) };
+      return (
+        <section aria-label={name}>
+          <Summary {...props} />
+          <Details {...props} />
+        </section>
+      );
+    }
+    renderSlot(
+      { component: () => (<><Pane name="A" /><Pane name="B" /></>) },
+      {},
+      {
+        experimental_rpcContract: rpcContract,
+        rpc: { banner: () => data, dismiss: () => ({ ok: true as const }), look: () => { data = { ...data, fresh: 0 }; return { ok: true as const }; } },
+        experimental_panel: { openTab: () => true },
+        settings: { display: "widget" },
+      },
+    );
+    const pane = (name: string) => within(screen.getByRole("region", { name }));
+    await waitFor(() => expect(pane("A").getAllByRole("button", { name: /^Flare: Finding: Newest/ })).toHaveLength(1));
+    fireEvent.click(pane("A").getByRole("button", { name: /^Flare: Finding: Newest/ }));
+    fireEvent.click(await pane("A").findByRole("button", { name: /^Finding: Older/ }));
+    expect(await pane("A").findByText("The older detail.")).toBeTruthy();
+    const marks = () => screen.getByRole("region", { name: "A" }).querySelectorAll("[data-flare-marked]").length;
+    expect(marks()).toBe(2);
+
+    fireEvent.click(pane("B").getByRole("button", { name: /^Flare: Finding: Newest/ }));
+    await pane("B").findByText("The older detail.");
+    expect(pane("A").getByText("The older detail.")).toBeTruthy();
+    expect(marks()).toBe(2);
+
+    fireEvent.click(pane("B").getByRole("button", { name: /^Flare: Finding: Newest/ }));
+    await waitFor(() => expect(pane("B").queryByText("The older detail.")).toBeNull());
+    expect(pane("A").getByText("The older detail.")).toBeTruthy();
+    expect(marks()).toBe(2);
+  });
+
   it("dismisses from the row without opening the list", async () => {
     const dismiss = vi.fn(() => ({ ok: true as const }));
     await render(banner({ fresh: 1 }), { dismiss });
@@ -197,6 +256,115 @@ describe("the context segment", () => {
     expect(slot.container.querySelector("[data-flare-title]")?.className).toContain("@max-[24rem]/promptbox-shell:hidden");
     expect(slot.container.querySelector("[data-flare-metadata]")?.className).toContain("@max-[44rem]/promptbox-shell:hidden");
     expect(slot.container.querySelector("[data-flare-fresh]")?.className).not.toContain("hidden");
+  });
+});
+
+describe("the banner", () => {
+  const render = async (data: Omit<BannerDto, "flares" | "fresh"> & Partial<BannerDto>, options: { dismiss?: () => unknown; settings?: Record<string, string> | "loading" } = {}) => {
+    const banner: BannerDto = { flares: data.flare === null ? [] : [data.flare], fresh: 0, ...data };
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    const loaded = await app();
+    const component = loaded.composerCustomizations[0]!.banners![0]!;
+    return renderSlot(
+      component,
+      {},
+      {
+        experimental_rpcContract: rpcContract,
+        rpc: { banner: () => banner, dismiss: options.dismiss ?? (() => ({ ok: true as const })) },
+        composer: { scope: { kind: "thread", threadId: "thr_a" } },
+        experimental_panel: { openTab: () => true },
+        ...(options.settings === "loading" ? {} : { settings: options.settings ?? {} }),
+      },
+    );
+  };
+
+  it("is the default, and steps aside when the settings ask for the widget or have not loaded", async () => {
+    await render({ flare: flare(), count: 1, childCount: 0, run });
+    expect(await screen.findByLabelText("Latest flare")).toBeTruthy();
+    cleanup();
+    for (const settings of [{ display: "widget" }, "loading"] as const) {
+      const slot = await render({ flare: flare(), count: 1, childCount: 0, run }, { settings });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(slot.container.querySelector("[data-flare-banner]")).toBeNull();
+      // The banner never asks for its data while it is not shown.
+      expect(slot.inspection.rpcCalls).toEqual([]);
+      cleanup();
+    }
+  });
+
+  it("shows nothing until a flare arrives", async () => {
+    const slot = await render({ flare: null, count: 0, childCount: 0, run });
+    await waitFor(() => expect(slot.inspection.rpcCalls.length).toBeGreaterThan(0));
+    expect(screen.queryByLabelText("Latest flare")).toBeNull();
+  });
+
+  it("shows the newest flare, how many more there are, and its detail on click", async () => {
+    const slot = await render({ flare: flare({ body: "The **cache key** drops the locale." }), count: 3, childCount: 0, run });
+    expect(await screen.findByText("Root cause found")).toBeTruthy();
+    expect(screen.getByText("2 min ago")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "2 more flares" }));
+    expect(slot.inspection.experimental_panelCalls).toEqual([expect.objectContaining({ method: "openTab" })]);
+    fireEvent.click(screen.getByText("Root cause found"));
+    expect(await screen.findByText(/drops the locale/)).toBeTruthy();
+  });
+
+  it("gives the title room in narrow panes without losing its actions or metadata", async () => {
+    const slot = await render({
+      flare: flare({ body: "The cache key drops the locale.", fromChild: { threadId: "thr_child", title: "A very long child thread title" } }),
+      count: 3, childCount: 1, run,
+    });
+    const title = await screen.findByRole("button", { name: /Finding: Root cause found/ });
+    expect(title.getAttribute("title")).toContain("A very long child thread title");
+    const banner = slot.container.querySelector("[data-flare-banner]")!;
+    for (const entry of banner.querySelectorAll("[data-flare-metadata]")) {
+      expect(entry.className).toContain("@max-[48rem]/promptbox-shell:hidden");
+    }
+    const child = screen.getByRole("button", { name: "Open child thread: A very long child thread title" });
+    expect(child.querySelector("[data-flare-child-title]")?.className).toContain("@max-[48rem]/promptbox-shell:hidden");
+    fireEvent.click(child);
+    expect(slot.inspection.navigateCalls).toContainEqual({ method: "toThread", threadId: "thr_child" });
+    expect(screen.getByRole("button", { name: "Open the Flares tab" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
+    fireEvent.click(title);
+    expect(await screen.findByText("The cache key drops the locale.")).toBeTruthy();
+  });
+
+  it("says when the turn failed and which child sent the flare", async () => {
+    await render({
+      flare: flare({ kind: "blocker", fromChild: { threadId: "thr_child", title: "Check the logs" } }),
+      count: 1,
+      childCount: 1,
+      run: { ...run, outcome: "failed", endedAt: NOW, error: "Connection error." },
+    });
+    expect(await screen.findByText("Turn failed · Blocker")).toBeTruthy();
+    expect(screen.getByText("from Check the logs")).toBeTruthy();
+  });
+
+  it("does not mark a flare that arrived after a failed turn as part of it", async () => {
+    await render({
+      flare: flare({ createdAt: NOW - 60_000 }),
+      count: 1,
+      childCount: 0,
+      run: { ...run, outcome: "failed", endedAt: NOW - 120_000, error: "boom" },
+    });
+    expect(await screen.findByText("Finding")).toBeTruthy();
+    expect(screen.queryByText(/Turn failed/)).toBeNull();
+  });
+
+  it("previews only the prose and points at the Flares tab for blocks", async () => {
+    await render({ flare: flare({ body: "The chart is ready.\n\n```ui\nChart(\"bar\", [], [1])\n```" }), count: 1, childCount: 0, run });
+    fireEvent.click(await screen.findByText("Root cause found"));
+    expect(await screen.findByText("The chart is ready.")).toBeTruthy();
+    expect(screen.getByText("1 view in the Flares tab")).toBeTruthy();
+    expect(screen.queryByText(/Chart\(/)).toBeNull();
+  });
+
+  it("dismisses through the shown flare and hides at once", async () => {
+    const dismiss = vi.fn(() => ({ ok: true as const }));
+    await render({ flare: flare(), count: 1, childCount: 0, run }, { dismiss });
+    fireEvent.click(await screen.findByLabelText("Dismiss"));
+    await waitFor(() => expect(dismiss).toHaveBeenCalledWith({ threadId: "thr_a", through: NOW - 2 * 60_000 }));
   });
 });
 

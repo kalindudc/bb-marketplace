@@ -512,6 +512,12 @@ describe("turns", () => {
     expect(world.service.banner("thr_a").fresh).toBe(1);
   });
 
+  it("shows the newest flare as a banner unless the settings ask for the widget", () => {
+    expect(readSettings({}).display).toBe("banner");
+    expect(readSettings({ display: "widget" }).display).toBe("widget");
+    expect(readSettings({ display: "sidebar" }).display).toBe("banner");
+  });
+
   it("counts what a dismissal hid as seen", () => {
     const world = setup();
     const sent = world.service.send({ threadId: "thr_a", projectId: null, fields: { title: "Stuck", kind: "blocker" }, source: "tool" });

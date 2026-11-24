@@ -2,6 +2,20 @@
 
 Notable changes to Flare, newest first. Releases are tagged `flare/vX.Y.Z` in this repository.
 
+## 0.4.2 (2026-11-24)
+
+The banner above the message box is back as the default. The context-row widget from 0.4.0 is a setting.
+
+### Added
+
+- A new setting, **Show the newest flare as**, chooses between the banner (the default) and the widget in the thread's context row. Only the chosen one draws. Neither appears until the settings load, so the other never flashes up first.
+
+### Fixed
+
+- 0.4.0 replaced the banner with the widget for everyone, which changed where existing users found their flares. The banner is restored as it was in 0.3.2, with its title, +N more, the Flares tab button, dismiss, and the failed-turn mark.
+- The agent-facing tool text, the skill and the CLI describe a flare as appearing above the message box, which is true of either choice.
+- With the same thread open in two panes, opening the widget in the second pane no longer resets the flare the first pane has open or its marks on new flares. Closing the second pane leaves them too; the list resets when the last pane closes it.
+
 ## 0.4.1 (2026-11-24)
 
 Flare's segment shares the context row fairly when the composer is narrow.

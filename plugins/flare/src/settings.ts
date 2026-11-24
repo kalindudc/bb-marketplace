@@ -3,10 +3,21 @@ import { z } from "zod";
 
 export const NOTIFY_MODES = ["blockers", "all", "off"] as const;
 export type NotifyMode = (typeof NOTIFY_MODES)[number];
+export const DISPLAY_MODES = ["banner", "widget"] as const;
+export type DisplayMode = (typeof DISPLAY_MODES)[number];
 export const FORWARD_MODES = ["blockers", "all", "off"] as const;
 export type ForwardMode = (typeof FORWARD_MODES)[number];
 
 export const SETTING_DESCRIPTORS = {
+  display: {
+    type: "select",
+    label: "Show the newest flare as",
+    description:
+      "Banner puts the newest flare on a line of its own above the message box. Widget puts it in the thread's context row beside its other context, with how many flares arrived since you last looked.",
+    options: [...DISPLAY_MODES],
+    experimental_optionLabels: { banner: "A banner above the message box", widget: "A widget in the context row" },
+    default: "banner",
+  },
   notify: {
     type: "select",
     label: "Push notifications",
@@ -26,7 +37,7 @@ export const SETTING_DESCRIPTORS = {
     type: "select",
     label: "Tell the parent agent",
     description:
-      "Which flares from a child thread are also sent to its parent's agent, as a note it reads while it works. They are sent only while the parent's turn runs; they never start a turn. The parent's widget and Flares tab show every child flare either way.",
+      "Which flares from a child thread are also sent to its parent's agent, as a note it reads while it works. They are sent only while the parent's turn runs; they never start a turn. The parent's banner or widget and its Flares tab show every child flare either way.",
     options: [...FORWARD_MODES],
     experimental_optionLabels: { blockers: "Blockers and urgent flares", all: "Every flare", off: "None" },
     default: "blockers",
@@ -64,6 +75,7 @@ export const SETTING_DESCRIPTORS = {
 } satisfies PluginSettingDescriptors;
 
 export interface FlareSettings {
+  display: DisplayMode;
   notify: NotifyMode;
   notifyOnFailure: boolean;
   forwardToParent: ForwardMode;
@@ -80,6 +92,7 @@ const oneOf = <T extends string>(values: readonly T[], value: unknown, fallback:
 export function readSettings(values: Record<string, unknown>): FlareSettings {
   const number = (value: unknown, fallback: number): number => (typeof value === "number" && Number.isFinite(value) ? value : fallback);
   return {
+    display: oneOf(DISPLAY_MODES, values.display, "banner"),
     notify: oneOf(NOTIFY_MODES, values.notify, "blockers"),
     notifyOnFailure: values.notifyOnFailure === true,
     forwardToParent: oneOf(FORWARD_MODES, values.forwardToParent, "blockers"),
