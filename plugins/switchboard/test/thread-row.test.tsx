@@ -231,6 +231,30 @@ describe("thread row", () => {
     shelf.slot.unmount();
   });
 
+  it("draws the agent provider icon before the title only when provider icons are on", () => {
+    const providers = { status: "ready", providers: [{ id: "pi", displayName: "Pi" }] };
+    const off = mount({}, { providers });
+    expect(off.slot.container.querySelector("[data-provider-id]")).toBeNull();
+    off.slot.unmount();
+    const on = mount({ settings: { ...DEFAULT_SETTINGS, showProviderIcons: true } }, { providers });
+    const icon = on.slot.container.querySelector(".switchboard-row-line [data-provider-id='pi']");
+    expect(icon?.getAttribute("data-provider-kind")).toBe("agent");
+    expect(screen.getByRole("img", { name: "Pi" })).toBeTruthy();
+    expect(icon?.closest(".switchboard-provider")?.classList.contains("pointer-events-auto")).toBe(true);
+    expect(icon?.closest(".switchboard-provider")?.nextElementSibling?.textContent).toBe("A thread");
+    on.slot.unmount();
+    const twoLine = mount({ settings: { ...DEFAULT_SETTINGS, showProviderIcons: true, density: "two-line" } }, { providers });
+    expect(twoLine.slot.container.querySelector(".switchboard-two-line-title [data-provider-id='pi']")).toBeTruthy();
+    twoLine.slot.unmount();
+  });
+
+  it("falls back to the provider id when bb does not list the provider", () => {
+    const { slot } = mount({ settings: { ...DEFAULT_SETTINGS, showProviderIcons: true } });
+    expect(slot.container.querySelector("[data-provider-id='pi']")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "pi" })).toBeTruthy();
+    slot.unmount();
+  });
+
   it("passes a reusable environment to bb's menu", () => {
     const target = toActionTarget(sidebarThread({ environment: {
       id: "env", path: "/work", name: "work", branchName: "main", isWorktree: false, providerId: null, workspaceDisplayKind: null,
