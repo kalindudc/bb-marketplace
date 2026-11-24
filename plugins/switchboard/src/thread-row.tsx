@@ -40,7 +40,9 @@ export interface ThreadRowProps {
   hue?: HueId | null;
   stale?: boolean;
   wakeLabel?: string;
-  onSnooze?(): void;
+  splitLocation?: string;
+  onInspect?(id: string, trigger: HTMLButtonElement): void;
+  onSnooze?(id: string): void;
   onWake?(): void;
   bulk?: RowBulk;
 }
@@ -78,7 +80,7 @@ function ProviderMark({ providerId, onPointerDown, onClick }: ProviderMarkProps)
 
 function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, onToggle,
   drag, isSelected, selectedRun, isDragging, dropState, flash, onSelect, onKeyboardMove,
-  variant = "tree", parentTitle, hue, stale, wakeLabel, onSnooze, onWake, bulk }: ThreadRowProps) {
+  variant = "tree", parentTitle, hue, stale, wakeLabel, splitLocation, onInspect, onSnooze, onWake, bulk }: ThreadRowProps) {
   const { thread, state, depth, guides, isLast, childCount, collapsed, rollup, rollupCount } = row;
   const [menuOpen, setMenuOpen] = useState(false);
   const split = experimental_useSidebarThreadSplit(thread.id);
@@ -107,15 +109,15 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
       <ThreadRowMetadata thread={thread} /></span>;
   const inline = useMemo<PluginThreadActionsInlineItem[] | undefined>(() => onSnooze && [{
     key: "switchboard/snooze", group: ACTION_GROUPS.state,
-    action: { label: `Snooze until ${snoozeUntil}`, icon: "Clock", run: onSnooze },
-  }], [onSnooze, snoozeUntil]);
+    action: { label: `Snooze until ${snoozeUntil}`, icon: "Clock", run: () => onSnooze(thread.id) },
+  }], [onSnooze, snoozeUntil, thread.id]);
   const hostGlyph = ((state === "idle" || state === "unread") && rowStatus) || (state === "idle" && draft.hasUnsubmittedDraft);
   const label = thread.indicatorLabel ?? STATE_LABEL[state];
   const emphasis = variant === "archived" ? "text-muted-foreground" :
     `${state === "failed" || state === "needs" || state === "unread" ? "font-semibold" : ""} ${state === "idle" ? "text-muted-foreground" : ""}`;
   const title = <>
     {settings.showProviderIcons && <ProviderMark providerId={thread.providerId} onPointerDown={onLinkPointerDown} onClick={forwardClick} />}
-    <span className={`relative z-1 min-w-24 flex-1 truncate ${emphasis}`}>
+    <span className={`switchboard-thread-title relative z-1 min-w-24 flex-1 truncate ${emphasis}`}>
       <ThreadTitle threadId={thread.id} />
     </span>
   </>;
@@ -123,7 +125,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
   const age = variant !== "snoozed" && (settings.showAge || (shortcut && variant === "tree")) && <span className={`${shortcut && variant === "tree" ? "switchboard-shortcut" : "switchboard-age"} switchboard-meta relative z-1 shrink-0 font-mono tabular-nums text-subtle-foreground`}>
     {shortcut && variant === "tree" ? shortcut.label : ageLabel(now, variant === "archived" ? thread.archivedAt ?? lastActivity(thread) : lastActivity(thread))}
   </span>;
-  const count = childCount > 0 && <span className="switchboard-meta relative z-1 inline-flex shrink-0 items-center gap-0.5 font-mono text-subtle-foreground" aria-label={`${childCount} child threads`}>
+  const count = childCount > 0 && <span className="switchboard-child-count switchboard-meta relative z-1 inline-flex shrink-0 items-center gap-0.5 font-mono text-subtle-foreground" aria-label={`${childCount} child threads`}>
     {rollup ? <StatusGlyph state={rollup} label={STATE_LABEL[rollup]} /> : "↳"}{rollup ? rollupCount : childCount}
   </span>;
   const tags = <>
@@ -157,12 +159,8 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
             style={{ left: `calc(var(--switchboard-base) + ${depth - 1} * var(--switchboard-indent) + 7px)` }} />
           {!isLast && <span aria-hidden className="switchboard-guide switchboard-guide-nested-bottom pointer-events-none absolute w-px"
             style={{ left: `calc(var(--switchboard-base) + ${depth - 1} * var(--switchboard-indent) + 7px)` }} />}
-        </> : <>
-          <span aria-hidden className="switchboard-elbow pointer-events-none absolute top-0 rounded-bl border-b border-l"
-            style={{ left: `calc(var(--switchboard-base) + ${depth - 1} * var(--switchboard-indent) + 7px)` }} />
-          {!isLast && <span aria-hidden className="switchboard-guide switchboard-guide-cont pointer-events-none absolute bottom-0 w-px"
-            style={{ left: `calc(var(--switchboard-base) + ${depth - 1} * var(--switchboard-indent) + 7px)` }} />}
-        </>}
+        </> : <span aria-hidden className="switchboard-elbow pointer-events-none absolute top-0 rounded-bl border-b border-l"
+          style={{ left: `calc(var(--switchboard-base) + ${depth - 1} * var(--switchboard-indent) + 7px)` }} />}
       </>}
       {variant === "tree" && childCount > 0 && <button type="button" aria-label={`${collapsed ? "Expand" : "Collapse"} ${thread.displayTitle}`}
         aria-expanded={!collapsed} onClick={() => onToggle?.(`thread:${thread.id}`)}
@@ -171,7 +169,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
       <InfoCard thread={thread} state={state} projectName={projectName} stale={stale === true} now={now}>
       <a ref={linkRef} href={thread.href} data-sidebar-thread-shortcut-target={variant === "tree" || variant === "lane" ? "" : undefined}
         data-sidebar-thread-id={variant === "tree" || variant === "lane" ? thread.id : undefined}
-        aria-label={thread.displayTitle} aria-current={isActive ? "page" : undefined}
+        aria-label={splitLocation ? `${thread.displayTitle}, ${splitLocation}` : thread.displayTitle} aria-current={isActive ? "page" : undefined}
         aria-keyshortcuts={variant === "tree" ? shortcut?.ariaKeyshortcuts : undefined}
         className="switchboard-row-link absolute inset-0 z-0" draggable={false} {...split.splitProps}
         onPointerDown={onLinkPointerDown}
@@ -182,9 +180,11 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
             onSelect?.(thread.id, event.altKey ? "toggle" : "range");
             return;
           }
-          if ((event.metaKey || event.ctrlKey) && split.isAvailable) {
-            event.preventDefault(); navigate.toThread(thread.id, { split: true });
-          } else onNavigate();
+          if (event.metaKey || event.ctrlKey) {
+            if (split.isAvailable) { event.preventDefault(); navigate.toThread(thread.id, { split: true }); }
+            return;
+          }
+          onNavigate();
         }}
         onKeyDown={(event) => {
           if (variant !== "tree" || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -213,6 +213,18 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
       {variant === "snoozed" && <span className="switchboard-meta relative z-1 shrink-0 font-mono text-subtle-foreground">{wakeLabel}</span>}
       {variant === "snoozed" && <button type="button" className="switchboard-control switchboard-text-button relative z-10 shrink-0 text-[11px] text-muted-foreground"
         onClick={onWake}>Wake</button>}
+      {splitLocation && <span aria-hidden className="switchboard-split-mark relative z-1 shrink-0">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+          <path d="M2.5 3h11v10h-11zM8 3v10" />
+        </svg>
+      </span>}
+      {infoCardMode !== "off" && onInspect && <button type="button" aria-label={`Info for ${thread.displayTitle}`}
+        aria-haspopup="dialog" className="switchboard-info-trigger switchboard-control switchboard-icon-button relative z-10 shrink-0 text-muted-foreground"
+        onClick={(event) => onInspect(thread.id, event.currentTarget)}>
+        <svg aria-hidden width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+          <circle cx="8" cy="8" r="6" /><path strokeLinecap="round" d="M8 7.5v3.5m0-6h.01" />
+        </svg>
+      </button>}
       {actions}
       {withMenu && <ThreadActionsMenu thread={target} inline={inline} side="right" align="start" onOpenChange={setMenuOpen}
         trigger={(triggerProps) => <button {...triggerProps} type="button" aria-label="Thread actions"
@@ -237,4 +249,5 @@ export const ThreadRow = memo(ThreadRowView, (left, right) =>
   left.onSelect === right.onSelect && left.onKeyboardMove === right.onKeyboardMove &&
   left.variant === right.variant && left.parentTitle === right.parentTitle && left.hue === right.hue &&
   left.stale === right.stale && left.wakeLabel === right.wakeLabel &&
+  left.splitLocation === right.splitLocation && left.onInspect === right.onInspect &&
   left.onSnooze === right.onSnooze && left.onWake === right.onWake && left.bulk === right.bulk);

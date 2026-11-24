@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { pullRequestContract, usePullRequest, type PullRequest } from "../src/pull-request";
 
@@ -13,8 +13,9 @@ function View({ environmentId, copies = 1 }: ViewProps) {
   return <>{Array.from({ length: copies }, (_, index) => <Reader key={index} environmentId={environmentId} />)}</>;
 }
 function Reader({ environmentId }: { environmentId?: string | null }) {
-  const pr = usePullRequest(environmentId);
-  return <output>{pr ? `#${pr.number} ${pr.state} ${pr.checks.state} ${pr.review.state}` : "No PR data"}</output>;
+  const result = usePullRequest(environmentId);
+  const pr = result?.status === "ready" ? result.value : null;
+  return <output data-rpc-state={result?.status ?? "none"}>{pr ? `#${pr.number} ${pr.state} ${pr.checks.state} ${pr.review.state}` : "No PR data"}</output>;
 }
 type Result = { outcome: "available"; pullRequest: PullRequest } | { outcome: "absent" } | { outcome: "unavailable"; message: string };
 const available: Result = { outcome: "available", pullRequest };
@@ -47,6 +48,15 @@ describe("environment-keyed pull requests", () => {
       await waitFor(() => expect(handler).toHaveBeenCalledOnce());
       expect(screen.getByText("No PR data")).toBeTruthy();
     });
+
+  it("distinguishes a pending request from a response missing the requested workspace", async () => {
+    let resolve!: (value: Record<string, Result>) => void;
+    const { handler } = mount("e", () => new Promise(done => { resolve = done; }));
+    await waitFor(() => expect(handler).toHaveBeenCalledOnce());
+    expect(screen.getByRole("status").getAttribute("data-rpc-state")).toBe("loading");
+    await act(async () => { resolve({}); });
+    await waitFor(() => expect(screen.getByRole("status").getAttribute("data-rpc-state")).toBe("error"));
+  });
 
   it("survives a missing or disabled plugin", async () => {
     const { slot } = mount("e", async () => { throw new Error("Plugin is disabled"); });

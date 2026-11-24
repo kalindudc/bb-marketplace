@@ -45,9 +45,10 @@ function Meter({ usage }: { usage: format.Usage }) {
   </span>;
 }
 
-function changesText(status: format.WorkspaceStatus): ReactNode {
+function changesText(status: format.WorkspaceStatus, explicit = false): ReactNode {
   const changes = format.changesSummary(status);
-  if (!changes) return null;
+  if (!changes) return explicit ? status.outcome === "not_applicable" ? "Not applicable" : "Unavailable" : null;
+  if (explicit && !changes.committed && !changes.uncommitted) return "Clean working tree";
   const label = format.changesLabel(changes);
   const shown = changes.committed ?? changes.uncommitted;
   if (!shown) return label;
@@ -74,11 +75,13 @@ const tone = (word: Word) => word.tone ? `switchboard-info-tone-${word.tone}` : 
 const joined = (words: Word[]) => words.map((word, index) =>
   <Fragment key={word.text}>{index > 0 && " · "}<span className={tone(word) || undefined}>{word.text}</span></Fragment>);
 
-export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk }: { thread: PluginSidebarThread; state: RowState;
-  projectName: string; stale: boolean; now: number; mode: Exclude<InfoCardMode, "off">; sdk: PluginBrowserBbSdk }): ReactElement {
+export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk, location }: { thread: PluginSidebarThread; state: RowState;
+  projectName: string; stale: boolean; now: number; mode: Exclude<InfoCardMode, "off">; sdk: PluginBrowserBbSdk;
+  location?: string }): ReactElement {
   const sidebar = experimental_useSidebarThreads();
   const { providers } = experimental_useProviders();
-  const pullRequest = usePullRequest(thread.environment?.id);
+  const prResource = usePullRequest(thread.environment?.id);
+  const pullRequest = prResource?.status === "ready" ? prResource.value : null;
   const shortcut = useSidebarThreadShortcut(thread.id);
   const environmentId = thread.environment?.id ?? null;
   // The loaders read only these fields of the thread, so a streaming thread keeps its loaders.
@@ -104,17 +107,36 @@ export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk
   const age = ageLabel(now, lastActivity(thread));
   const ask = asks && !(asks.status === "ready" && format.askSummary(asks.value) === null) && asks;
 
+  const explicit = location !== undefined;
+  const workspace = thread.environment === null ? "No workspace" :
+    thread.environment.isWorktree === true ? "Managed worktree" :
+    thread.environment.isWorktree === false ? "Checkout" : "Type not reported";
+  const changeValue = changes?.status === "loading" ? "Loading…" :
+    changes ? <Field resource={changes}>{(value) => changesText(value, true)}</Field> :
+      thread.environment ? "Unavailable" : "Not applicable";
+  const prValue = prResource?.status === "loading" ? "Loading…" :
+    prResource ? <Field resource={prResource}>{(pr) => pr ? joined(pullRequestWords(pr, mode !== "glance")) : "None"}</Field> :
+      thread.environment ? "Unavailable" : "Not applicable";
+  const workspaceDetails = explicit && <dl className="switchboard-info-rows">
+    <dt>Open in</dt><dd>{location}</dd>
+    <dt>Workspace</dt><dd>{workspace}</dd>
+    <dt>Branch</dt><dd className="switchboard-info-mono">{branch ?? (thread.environment ? "Not reported" : "Not applicable")}</dd>
+    <dt>Changes</dt><dd>{changeValue}</dd>
+    <dt>Pull request</dt><dd>{prValue}</dd>
+  </dl>;
+
   const header = <>
     <div className="switchboard-info-top">
       <StatusGlyph state={state} label={STATE_LABEL[state]} />
       <span>{thread.indicatorLabel ?? STATE_LABEL[state]} · {age === "now" ? "active now" : `${age} ago`}</span>
       {shortcut && <span className="switchboard-info-kbd switchboard-info-mono">{shortcut.label}</span>}
     </div>
-    <div className="switchboard-info-title"><ThreadTitle threadId={thread.id} /></div>
+    {!explicit && <div className="switchboard-info-title"><ThreadTitle threadId={thread.id} /></div>}
     <div className="switchboard-info-crumb">{projectName} › {section}</div>
     {parent && <div className="switchboard-info-crumb">↳ Child of {parent}</div>}
     {stale && <div className="switchboard-info-crumb">Idle for {Math.floor((now - lastActivity(thread)) / 86_400_000)} days</div>}
     {ask && <div className="switchboard-info-ask">⚑ <Field resource={ask}>{format.askSummary}</Field></div>}
+    {workspaceDetails}
   </>;
 
   if (mode === "glance") return <>
@@ -122,10 +144,10 @@ export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk
     <dl className="switchboard-info-rows">
       <dt>Model</dt><dd><Field resource={options}>{model}</Field></dd>
       <dt>Context</dt><dd><Field resource={usage}>{(value) => value && <Meter usage={value} />}</Field></dd>
-      {branch ? <><dt>Branch</dt><dd className="switchboard-info-mono">{branch}</dd></> :
+      {!explicit && branch ? <><dt>Branch</dt><dd className="switchboard-info-mono">{branch}</dd></> :
         machine && <><dt>Machine</dt><dd>{machine}</dd></>}
-      {changes && <><dt>Changes</dt><dd><Field resource={changes}>{changesText}</Field></dd></>}
-      {pullRequest && <><dt>Pull request</dt><dd>{joined(pullRequestWords(pullRequest, false))}</dd></>}
+      {!explicit && changes && <><dt>Changes</dt><dd><Field resource={changes}>{changesText}</Field></dd></>}
+      {!explicit && pullRequest && <><dt>Pull request</dt><dd>{joined(pullRequestWords(pullRequest, false))}</dd></>}
       {notifies && <><dt>Parent</dt><dd>{notifies}</dd></>}
     </dl>
   </>;
@@ -146,15 +168,15 @@ export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk
       <span className="switchboard-info-chip"><Field resource={options}>{(value) => value && format.permissionLabel(value.permissionMode)}</Field></span>
     </div>
     <div className="switchboard-info-line"><span className="switchboard-info-muted">Context</span><Field resource={usage}>{(value) => value && <Meter usage={value} />}</Field></div>
-    {branch && <div className="switchboard-info-line switchboard-info-single">
+    {!explicit && branch && <div className="switchboard-info-line switchboard-info-single">
       <span className="switchboard-info-muted">⑂</span><span className="switchboard-info-mono switchboard-info-ellipsis">{branch}</span>
       {thread.environment?.isWorktree && <span className="switchboard-info-chip">worktree</span>}
     </div>}
     {changes && <div className="switchboard-info-line">
-      <Field resource={changes}>{changesText}</Field>
+      {!explicit && <Field resource={changes}>{changesText}</Field>}
       <span className="switchboard-info-muted switchboard-info-mono"><Field resource={changes}>{(value) => aheadBehind(value, false)}</Field></span>
     </div>}
-    {pullRequest && <div className="switchboard-info-line">{pullRequestWords(pullRequest).map((word) =>
+    {!explicit && pullRequest && <div className="switchboard-info-line">{pullRequestWords(pullRequest).map((word) =>
       <span key={word.text} className={`switchboard-info-chip ${tone(word)}`}>{word.text}</span>)}</div>}
     {(children || notifies || background.length > 0) && <div className="switchboard-info-line">
       {children && <span className="switchboard-info-chip">↳ {children}</span>}
@@ -181,12 +203,12 @@ export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk
       {cell("Children", children ?? "—")}
       {cell("Background", background.length ? background.join(", ") : "—")}
       {notifies && cell("Parent", notifies, true)}
-      {cell("Branch", branch ? <span className="switchboard-info-mono">{branch}</span> : "—", true)}
-      {cell("Changes", changes ? <Field resource={changes}>{changesText}</Field> : "—")}
+      {!explicit && cell("Branch", branch ? <span className="switchboard-info-mono">{branch}</span> : "—", true)}
+      {!explicit && cell("Changes", changes ? <Field resource={changes}>{changesText}</Field> : "—")}
       {cell("Base", changes ? <Field resource={changes}>{(value) => aheadBehind(value, true)}</Field> : "—")}
-      {cell("Pull request", pullRequest ? joined(pullRequestWords(pullRequest)) : "—", true)}
+      {!explicit && cell("Pull request", pullRequest ? joined(pullRequestWords(pullRequest)) : "—", true)}
       {cell("Machine", machine ?? "—")}
-      {cell("Environment", thread.environment ? thread.environment.isWorktree ? "Managed worktree" : "Checkout" : "—")}
+      {!explicit && cell("Environment", thread.environment ? workspace : "—")}
       {cell("Created", ago(now, thread.createdAt))}
       {cell("Last read", thread.lastReadAt === null ? "—" : ago(now, thread.lastReadAt))}
     </div>

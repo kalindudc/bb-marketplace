@@ -15,17 +15,17 @@ In each bb client, choose **Switchboard** under **Settings → Appearance → Si
 
 ## Read the list
 
-Pinned threads appear first, followed by your sections and then Threads (unfiled roots). Children stay under their parent even when they belong to another project or section. A coloured rail or square identifies the root section. Failed, Needs you, Running, Finished unread and Idle glyphs show each thread's own state; collapsed parents also show the most urgent hidden descendant. The header count includes visible descendants. Filter by title, project, section or branch, or use the status chips. `/` focuses the filter and Escape clears its query and chips.
+Pinned threads appear first, followed by your sections and then Threads (unfiled roots). Children stay under their parent even when they belong to another project or section. A coloured rail or square identifies the root section. Failed, Needs you, Running, Finished unread and Idle glyphs show each thread's own state; collapsed parents also show the most urgent hidden descendant. The header count includes visible descendants. Filter by title, project, section or branch, or use the status chips. Needs you comes first; Draft finds threads with unsent composer text independently of their status. `/` focuses the filter and Escape clears its query and chips. When bb reports a split position, the row shows a split marker and includes the position in its accessible name.
 
 Root threads show bb's row badges after the title, such as GitHub PR Status's pull request number in its state's colour, with a dot while checks run and a cross when they fail.
 
 Density choices are Compact (28 px), Comfortable (32 px) and Two lines (48 px). A two-line status-lane child names its parent below the title. The view switch beside the filter and the View options menu change the current display; the menu also controls density, section colour, chips, the Needs-you shelf, archived threads, tree lines, branch names, pull request badges, provider icons, ages and stale fading. **Provider icons**, off by default, draw each thread's agent provider icon before its title, the way bb's own sidebar does. Hover or tab to a chip, the view switch, View options or a section's buttons for a short hint about what it does.
 
-Hover a row, or tab to it, to see an info card with the thread's model, context use, branch, changes and pull request. The Thread info card setting picks At a glance (the default), Briefing, which adds the first prompt and the latest reply, Full details, or Off. A child thread's card also says whether it notifies its parent. Cards never open on touch screens or in compact windows.
+Choose **Info** on a row to see details without opening the thread. On desktop the details sit beside the list, leaving the rest of bb usable, and close when you open another thread. On narrow and touch layouts, or when there isn't room beside the list, they fill the sidebar until dismissed. Close the details or press Escape from within them to return to the same Info button. With a desktop pointer you can still hover to preview; tabbing to a row does not open the preview. The Thread info card setting picks At a glance (the default), Briefing, which adds the first prompt and the latest reply, Full details, or Off. A child thread's card also says whether it notifies its parent. Narrow and touch layouts keep Info and the split and child markers, and move the row's Archive shortcut into **Thread actions**.
 
 Switchboard follows the active theme’s corner radii, fonts, surface shadows, and destructive foreground colors, including portalled cards and drag previews. Saved section colors are unchanged.
 
-This build requires bb 0.48.1 or newer (plugin SDK 0.6.104). PR numbers and card summaries come from the GitHub PR Status plugin, and the info card’s git changes come from bb’s Git plugin, both keyed by the thread’s environment. When a plugin is absent, disabled, or cannot provide current data, Switchboard omits the PR information and shows the changes as unavailable, without interrupting the thread list.
+This build requires bb 0.48.1 or newer (plugin SDK 0.6.104). PR numbers and card summaries come from the GitHub PR Status plugin, and the info card’s git changes come from bb’s Git plugin, both keyed by the thread’s environment. When a plugin is absent, disabled, or cannot provide current data, Info says the data is unavailable instead of reporting a clean checkout or no pull request. The pointer preview omits unavailable PR information. A worktree can exist without a reported branch. If bb does not report the workspace type or a split location, Info says so without guessing.
 
 ![The Briefing info card for a parent thread: first prompt, latest reply, model, context use, branch, uncommitted changes and its children](../../screenshots/switchboard/hover-card.png)
 
@@ -70,6 +70,7 @@ Change settings in bb's plugin settings or with `bb plugin config switchboard se
 | `treeGuides` | `true` | boolean |
 | `showBranch` | `false` | boolean |
 | `showPullRequests` | `true` | boolean |
+| `showProviderIcons` | `false` | boolean |
 | `showAge` | `true` | boolean |
 | `infoCard` | `glance` | `off`, `glance`, `briefing`, `full` |
 | `staleDays` | `3` | whole number 0–90; 0 turns fading off |
@@ -94,8 +95,4 @@ A path install from this directory picks up changes on reload. Replacing a marke
 
 ## Release
 
-After merging to an up-to-date `main`, tag the version and push the tag yourself:
-
-```sh
-git tag switchboard/v0.1.0 && git push origin switchboard/v0.1.0
-```
+Bump the package and lockfile versions and add a matching changelog entry in the same commit on `main`. The repository's Tag releases workflow creates the `switchboard/vX.Y.Z` tag.

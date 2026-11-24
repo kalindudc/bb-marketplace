@@ -1,17 +1,20 @@
 import type { Ref } from "react";
-import type { ListFilter } from "./filter";
+import type { Facet, FacetCounts, ListFilter } from "./filter";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { Hint } from "./hint";
-import { STATE_LABEL, type RowState, type StateCounts } from "./status";
+import { STATE_LABEL } from "./status";
 import { StatusGlyph } from "./status-glyph";
 import type { SwitchboardSettings } from "./settings";
 import { ViewMenu, ViewSwitch } from "./view-menu";
 
-const CHIP_NOUN: Readonly<Record<Exclude<RowState, "idle">, string>> = {
+type Chip = Exclude<Facet, "idle">;
+const CHIPS: readonly Chip[] = ["needs", "failed", "running", "unread", "draft"];
+const CHIP_NOUN: Readonly<Record<Chip, string>> = {
   failed: "failed threads", needs: "threads that need you", running: "running threads", unread: "unread threads",
+  draft: "threads with drafts",
 };
 
-export function chipHint(state: Exclude<RowState, "idle">, count: number, active: ReadonlySet<RowState>): string {
+export function chipHint(state: Chip, count: number, active: ReadonlySet<Facet>): string {
   if (active.has(state)) return `Stop filtering by ${CHIP_NOUN[state]}`;
   return `${active.size ? "Also show" : "Show only"} ${CHIP_NOUN[state]} (${count})`;
 }
@@ -27,7 +30,7 @@ function ArchivedToggle({ shown, onChange }: { shown: boolean; onChange(shown: b
 
 export function FilterBar(props: {
   filter: ListFilter;
-  counts: StateCounts;
+  counts: FacetCounts;
   showChips: boolean;
   inputRef: Ref<HTMLInputElement>;
   onChange(filter: ListFilter): void;
@@ -36,7 +39,6 @@ export function FilterBar(props: {
   onNewSection?(): void;
 }) {
   const { filter, counts, showChips, inputRef, onChange, settings, onSettingsChange, onNewSection } = props;
-  const states: Exclude<RowState, "idle">[] = ["failed", "needs", "running", "unread"];
   return <div className="switchboard-filter-bar pt-1">
     <div className="switchboard-filter-controls flex min-w-0 items-center gap-1">
     <label className="switchboard-filter flex min-w-0 flex-1 items-center border border-sidebar-border text-subtle-foreground">
@@ -56,16 +58,18 @@ export function FilterBar(props: {
       <ViewMenu settings={settings} onChange={onSettingsChange} onNewSection={onNewSection} /></>}
     </div>
     {showChips && <div className="switchboard-chips flex">
-      {states.map((state) => (counts[state] > 0 || filter.states.has(state)) && <Hint key={state}
+      {CHIPS.map((state) => (counts[state] > 0 || filter.states.has(state)) && <Hint key={state}
         label={chipHint(state, counts[state], filter.states)}><button
-        type="button" aria-label={`${STATE_LABEL[state]}: ${counts[state]}`} aria-pressed={filter.states.has(state)}
+        type="button" aria-label={`${state === "draft" ? "Draft" : STATE_LABEL[state]}: ${counts[state]}`} aria-pressed={filter.states.has(state)}
         className={`switchboard-control switchboard-chip inline-flex min-w-0 items-center rounded-md border border-sidebar-border font-mono text-[11px] ${filter.states.has(state) ? "bg-surface-selected text-sidebar-foreground" : "text-muted-foreground"}`}
         onClick={() => {
           const selected = new Set(filter.states);
           if (selected.has(state)) selected.delete(state); else selected.add(state);
           onChange({ ...filter, states: selected });
         }}>
-        <StatusGlyph state={state} label={STATE_LABEL[state]} />{counts[state]}
+        {state === "draft" ? <svg aria-hidden viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="m3 10 7-7 3 3-7 7H3zM9 4l3 3" />
+        </svg> : <StatusGlyph state={state} label={STATE_LABEL[state]} />}{state === "needs" && <span>Needs you</span>}{counts[state]}
       </button></Hint>)}
     </div>}
   </div>;

@@ -30,6 +30,6 @@ describe("filtering", () => {
     const filtered = filterGroups(groups, { query: "implementation", states: new Set(["running", "needs"]) }, names);
     expect(filtered[0].roots[0].children.map((node) => node.thread.id)).toEqual(["child"]);
     expect(filterGroups(groups, { query: "", states: new Set(["needs"]) }, names).map((group) => group.key)).toEqual(["loose"]);
-    expect(chipCounts(groups)).toEqual({ failed: 0, needs: 1, running: 1, unread: 0 });
+    expect(chipCounts(groups)).toEqual({ failed: 0, needs: 1, running: 1, unread: 0, draft: 0 });
   });
 });

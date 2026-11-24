@@ -48,6 +48,30 @@ describe("thread row", () => {
     slot.unmount();
   });
 
+  it("keeps the split marker inside the row's navigation and selection surface", () => {
+    const onSelect = vi.fn();
+    const drag = { onRowPointerDown: vi.fn(), consumeClick: vi.fn(() => false) };
+    const { slot, onNavigate } = mount({ splitLocation: "Left pane", onSelect, drag });
+    const link = screen.getByRole("link", { name: "A thread, Left pane" });
+    link.addEventListener("click", (event) => event.preventDefault());
+    const marker = slot.container.querySelector<HTMLElement>(".switchboard-split-mark")!;
+    const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
+    expect(css).toMatch(/\.switchboard-split-mark\s*\{[^}]*pointer-events:\s*none/);
+    expect(marker.getAttribute("aria-hidden")).toBe("true");
+    const aux = new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true });
+    link.dispatchEvent(aux);
+    expect(aux.defaultPrevented).toBe(false);
+    expect(onNavigate).not.toHaveBeenCalled();
+    fireEvent.pointerDown(link, { pointerType: "mouse", button: 0 });
+    expect(drag.onRowPointerDown).toHaveBeenCalledWith(expect.anything(), "t");
+    fireEvent.click(link, { altKey: true });
+    expect(onSelect).toHaveBeenCalledWith("t", "toggle");
+    expect(onNavigate).not.toHaveBeenCalled();
+    fireEvent.click(link);
+    expect(onNavigate).toHaveBeenCalledOnce();
+    slot.unmount();
+  });
+
   it("keeps the menu trigger laid out while its menu is open so the menu stays anchored", () => {
     const { slot } = mount({}, { threadActions: () => [{ key: "bb--core/archive", pluginId: "bb--core", group: "thread",
       action: { label: "Archive", icon: "Archive", run: async () => {} } }] });
@@ -202,6 +226,25 @@ describe("thread row", () => {
     };
     expect(trunks(" ")).toBe(0);
     expect(trunks("|")).toBe(1);
+  });
+
+  it.each(["default", "compact", "two-line"] as const)("uses one guide element for a non-last %s leaf", (density) => {
+    const leaf = { ...row, depth: 2, guides: "|", isLast: false, childCount: 0 };
+    const { slot } = mount({ row: leaf, settings: { ...DEFAULT_SETTINGS, density } });
+    try {
+      const node = slot.container.querySelector("[data-switchboard-row]")!;
+      expect(node.getAttribute("data-last-child")).toBe("false");
+      expect(node.querySelectorAll(".switchboard-elbow")).toHaveLength(1);
+      expect(node.querySelectorAll(".switchboard-guide")).toHaveLength(1);
+      expect(node.querySelector(".switchboard-guide.top-0.bottom-0")).toBeTruthy();
+    } finally { slot.unmount(); }
+  });
+
+  it("emits neither leaf nor ancestor guides when tree lines are off", () => {
+    const { slot } = mount({ row: { ...row, depth: 2, guides: "|", isLast: false, childCount: 0 },
+      settings: { ...DEFAULT_SETTINGS, treeGuides: false } });
+    expect(slot.container.querySelector(".switchboard-elbow, .switchboard-guide")).toBeNull();
+    slot.unmount();
   });
 
   it("keeps at least six rems for titles before truncating tags", () => {

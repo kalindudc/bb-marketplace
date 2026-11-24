@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactElement, type ReactNode } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import type { PluginBrowserBbSdk, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
-import { keyboardFocusOnly } from "./hint";
 import { portalScopeProps } from "./portal-scope";
 import { infoLoaders, prefetchInfo } from "./info-data";
 import { InfoCardBody } from "./info-card-body";
@@ -12,12 +11,12 @@ const OPEN_DELAY_MS = 300;
 const SKIP_DELAY_MS = 500;
 const PREFETCH_DELAY_MS = 120;
 
-interface InfoCardSettings { mode: InfoCardMode; sdk: PluginBrowserBbSdk | null; isSuppressed(): boolean }
-const InfoCardContext = createContext<InfoCardSettings>({ mode: "off", sdk: null, isSuppressed: () => true });
+interface InfoCardSettings { mode: InfoCardMode; sdk: PluginBrowserBbSdk | null; preview: boolean; isSuppressed(): boolean }
+const InfoCardContext = createContext<InfoCardSettings>({ mode: "off", sdk: null, preview: false, isSuppressed: () => true });
 
-export function InfoCardProvider({ mode, sdk, isSuppressed, children }: { mode: InfoCardMode; sdk: PluginBrowserBbSdk;
-  isSuppressed(): boolean; children: ReactNode }): ReactElement {
-  const value = useMemo(() => ({ mode, sdk, isSuppressed }), [mode, sdk, isSuppressed]);
+export function InfoCardProvider({ mode, sdk, preview = true, isSuppressed, children }: { mode: InfoCardMode; sdk: PluginBrowserBbSdk;
+  preview?: boolean; isSuppressed(): boolean; children: ReactNode }): ReactElement {
+  const value = useMemo(() => ({ mode, sdk, preview, isSuppressed }), [mode, sdk, preview, isSuppressed]);
   return <Tooltip.Provider delayDuration={OPEN_DELAY_MS} skipDelayDuration={SKIP_DELAY_MS} disableHoverableContent>
     <InfoCardContext.Provider value={value}>{children}</InfoCardContext.Provider>
   </Tooltip.Provider>;
@@ -30,8 +29,8 @@ export function useInfoCardMode(): InfoCardMode {
 interface InfoCardProps { thread: PluginSidebarThread; state: RowState; projectName: string; stale: boolean; now: number; children: ReactElement }
 
 export function InfoCard(props: InfoCardProps): ReactElement {
-  const { mode, sdk, isSuppressed } = useContext(InfoCardContext);
-  if (mode === "off" || sdk === null) return props.children;
+  const { mode, sdk, preview, isSuppressed } = useContext(InfoCardContext);
+  if (mode === "off" || sdk === null || !preview) return props.children;
   return <InfoCardRoot {...props} mode={mode} sdk={sdk} isSuppressed={isSuppressed} />;
 }
 
@@ -45,7 +44,7 @@ function InfoCardRoot({ thread, state, projectName, stale, now, children, mode, 
   };
   useEffect(() => cancelPrefetch, []);
   const startPrefetch = (event: PointerEvent<HTMLElement>) => {
-    if (event.pointerType === "touch") return;
+    if (event.pointerType === "touch" || isSuppressed()) return;
     cancelPrefetch();
     prefetchTimer.current = setTimeout(() => {
       prefetchTimer.current = null;
@@ -61,7 +60,7 @@ function InfoCardRoot({ thread, state, projectName, stale, now, children, mode, 
   const label = `${thread.indicatorLabel ?? STATE_LABEL[state]}, ${projectName}${branch ? `, branch ${branch}` : ""}`;
   // Switchboard's drag listens on window without pointer capture, so other rows still see pointer moves mid-drag.
   return <Tooltip.Root open={open} onOpenChange={(next) => setOpen(next && !isSuppressed())}>
-    <Tooltip.Trigger asChild onFocus={keyboardFocusOnly} onPointerDown={() => setOpen(false)}
+    <Tooltip.Trigger asChild onFocus={(event) => event.preventDefault()} onPointerDown={() => setOpen(false)}
       onPointerEnter={startPrefetch} onPointerLeave={leave}>{children}</Tooltip.Trigger>
     <Tooltip.Portal>
       <Tooltip.Content {...portalScopeProps()} side="right" align="start" sideOffset={8} collisionPadding={8}

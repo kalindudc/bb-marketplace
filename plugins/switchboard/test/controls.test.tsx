@@ -63,7 +63,7 @@ describe("list controls", () => {
     const onChange = vi.fn();
     const inputRef = { current: null };
     const filter = { query: "work", states: new Set(["running" as const]) };
-    const { rerender } = render(<FilterBar filter={filter} counts={{ ...EMPTY_COUNTS, failed: 2, running: 1 }}
+    const { rerender } = render(<FilterBar filter={filter} counts={{ ...EMPTY_COUNTS, failed: 2, running: 1, draft: 0 }}
       showChips inputRef={inputRef} onChange={onChange} />);
     expect(screen.queryByRole("button", { name: /needs you/i })).toBeNull();
     const failed = screen.getByRole("button", { name: "Failed: 2" });
@@ -74,7 +74,7 @@ describe("list controls", () => {
     expect(onChange.mock.lastCall?.[0].states).toEqual(new Set(["running", "failed"]));
     fireEvent.keyDown(screen.getByRole("searchbox", { name: "Filter threads" }), { key: "Escape" });
     expect(onChange).toHaveBeenLastCalledWith({ query: "", states: new Set() });
-    rerender(<FilterBar filter={{ query: "", states: new Set() }} counts={EMPTY_COUNTS}
+    rerender(<FilterBar filter={{ query: "", states: new Set() }} counts={{ ...EMPTY_COUNTS, draft: 0 }}
       showChips={false} inputRef={inputRef} onChange={onChange} />);
     expect(screen.queryByRole("button", { name: /failed/i })).toBeNull();
   });

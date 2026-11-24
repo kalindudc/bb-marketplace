@@ -16,12 +16,14 @@ export interface LanesViewProps {
   projectName(id: string): string;
   onToggle(key: CollapseKey): void;
   onNavigate(): void;
+  locations?: ReadonlyMap<string, string> | null;
+  onInspect?(id: string, trigger: HTMLButtonElement): void;
   onSnooze?(id: string): void;
   canSnooze?(id: string): boolean;
 }
 
 function LanesViewComponent({ lanes, collapsed, activeThreadId, settings, now, projectName,
-  onToggle, onNavigate, onSnooze, canSnooze }: LanesViewProps) {
+  onToggle, onNavigate, locations, onInspect, onSnooze, canSnooze }: LanesViewProps) {
   return <>{lanes.map((lane) => {
     const closed = collapsed.has(lane.key) && !lane.rows.some((row) => row.thread.id === activeThreadId);
     return <section key={lane.key} className="switchboard-lane">
@@ -41,7 +43,8 @@ function LanesViewComponent({ lanes, collapsed, activeThreadId, settings, now, p
           isActive={entry.thread.id === activeThreadId} settings={settings} now={now}
           projectName={projectName(entry.thread.projectId)} parentTitle={entry.parentTitle}
           hue={entry.hue} stale={entry.stale} onNavigate={onNavigate}
-          onSnooze={onSnooze && canSnooze?.(entry.thread.id) ? () => onSnooze(entry.thread.id) : undefined} />;
+          splitLocation={locations?.get(entry.thread.id)} onInspect={onInspect}
+          onSnooze={canSnooze?.(entry.thread.id) ? onSnooze : undefined} />;
       })}</div>}
     </section>;
   })}</>;

@@ -27,7 +27,7 @@ async function hoverHintFor(element: HTMLElement): Promise<string> {
 function renderBar(active: RowState[] = [], showArchived = false) {
   const onChange = vi.fn(), onSettingsChange = vi.fn();
   render(<FilterBar filter={{ query: "", states: new Set(active) }} inputRef={{ current: null }}
-    counts={{ ...EMPTY_COUNTS, failed: 1, running: 2 }} showChips onChange={onChange}
+    counts={{ ...EMPTY_COUNTS, failed: 1, running: 2, draft: 0 }} showChips onChange={onChange}
     settings={{ ...DEFAULT_SETTINGS, showArchived }} onSettingsChange={onSettingsChange} />);
   return { onChange, onSettingsChange };
 }

@@ -6,6 +6,7 @@ import { renderSlot, type PluginSdkTestFakes, type RenderSlotOptions } from "@ge
 import { useSdk, type PluginProvidersState, type PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { PullRequest } from "../src/pull-request";
 import { InfoCardProvider } from "../src/info-card";
+import { InfoCardBody } from "../src/info-card-body";
 import { resetInfoCache } from "../src/info-data";
 import type { InfoCardMode } from "../src/settings";
 import { ThreadRow, type ThreadRowProps } from "../src/thread-row";
@@ -91,28 +92,56 @@ function focus(link: HTMLElement) {
   fireEvent.keyDown(document.body, { key: "Tab" });
   act(() => link.focus());
 }
+const hoverRow = (link: HTMLElement) => fireEvent.pointerMove(link, { pointerType: "mouse" });
+const leaveRow = (link: HTMLElement) => fireEvent.pointerLeave(link, { pointerType: "mouse" });
 const card = () => document.querySelector<HTMLElement>(".switchboard-info-card");
 const methods = (slot: ReturnType<typeof mount>["slot"]) => slot.inspection.sdkCalls.map((call) => call.method);
 
 afterEach(() => { cleanup(); resetInfoCache(); vi.useRealTimers(); });
 
 describe("info card", () => {
-  it("opens nothing when off, and keeps the stale row's browser tooltip only then", () => {
+  it("reports an existing workspace type as unknown until bb supplies it", () => {
+    function Details({ shown }: { shown: PluginSidebarThread }) {
+      return <InfoCardBody thread={shown} state="idle" projectName="Marketplace" stale={false}
+        now={NOW} mode="full" sdk={useSdk()} location="No split location reported" />;
+    }
+    const withWorktree = (isWorktree: boolean | null) => ({
+      ...thread, environment: { ...environment, branchName: null, isWorktree },
+    });
+    const slot = renderSlot({ component: Details }, { shown: withWorktree(null) }, {
+      sidebarThreads: { threads }, sdk: sdkFakes().sdk,
+    });
+    const workspace = () => screen.getByText("Workspace").nextElementSibling?.textContent;
+    expect(workspace()).toBe("Type not reported");
+    slot.rerender(<Details shown={withWorktree(true)} />);
+    expect(workspace()).toBe("Managed worktree");
+    slot.rerender(<Details shown={withWorktree(false)} />);
+    expect(workspace()).toBe("Checkout");
+    slot.rerender(<Details shown={{ ...thread, environment: null }} />);
+    expect(workspace()).toBe("No workspace");
+    slot.unmount();
+  });
+
+  it("opens nothing on focus or when Off, while pointer intent still previews", async () => {
     const off = mount("off", { stale: true });
     focus(off.link);
+    hoverRow(off.link);
     expect(screen.queryByRole("tooltip")).toBeNull();
     expect(off.row.getAttribute("title")).toBe("Idle for 4 days");
     off.slot.unmount();
     const on = mount("glance", { stale: true });
     expect(on.row.hasAttribute("title")).toBe(false);
     focus(on.link);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    hoverRow(on.link);
+    await screen.findByRole("tooltip");
     expect(within(card()!).getByText("Idle for 4 days")).toBeTruthy();
   });
 
   it("paints free fields at once and fills fetched ones in place, without the outline, at a glance", async () => {
     const { sdk, resolveAll, status } = sdkFakes();
     const { slot, link } = mount("glance", { sdk, status });
-    focus(link);
+    hoverRow(link);
     await screen.findByRole("tooltip");
     const view = within(card()!);
     expect(card()!.className).toContain("switchboard-info-glance");
@@ -137,7 +166,7 @@ describe("info card", () => {
   it("summarises the conversation and says what a waiting thread needs, in the briefing", async () => {
     const { sdk, resolveAll, status } = sdkFakes();
     const { link } = mount("briefing", { sdk, status, row: waiting });
-    focus(link);
+    hoverRow(link);
     await screen.findByRole("tooltip");
     const view = within(card()!);
     await resolveAll();
@@ -160,7 +189,7 @@ describe("info card", () => {
   it("shows provider, permissions and cost in full details", async () => {
     const { sdk, resolveAll, status } = sdkFakes();
     const { link } = mount("full", { sdk, status });
-    focus(link);
+    hoverRow(link);
     await screen.findByRole("tooltip");
     const view = within(card()!);
     expect(card()!.className).toContain("switchboard-info-full");
@@ -188,8 +217,8 @@ describe("info card", () => {
       return Object.fromEntries(keys.map((key) => [key, values.status]));
     };
     const { link } = mount("glance", { sdk, status });
-    focus(link);
-    await act(async () => { await Promise.resolve(); });
+    hoverRow(link);
+    await act(async () => { vi.advanceTimersByTime(300); });
     expect(calls).toEqual(["options", "context"]);
     await act(async () => { vi.advanceTimersByTime(249); });
     expect(calls).not.toContain("status e");
@@ -201,12 +230,12 @@ describe("info card", () => {
     expect(view.getByText("109k / 1M · 11%")).toBeTruthy();
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(view.getByText(/· 21 files/)).toBeTruthy();
-    act(() => link.blur());
+    leaveRow(link);
     expect(card()).toBeNull();
     calls.length = 0;
     await act(async () => { vi.advanceTimersByTime(1_000); });
-    focus(link);
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    hoverRow(link);
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
     expect(calls).toContain("options");
     expect(calls).not.toContain("context");
     expect(within(card()!).getByText("109k / 1M · 11%")).toBeTruthy();
@@ -215,13 +244,13 @@ describe("info card", () => {
 
   it("marks git changes unavailable when bb's Git plugin fails a row or cannot answer", async () => {
     const failed = mount("glance", { status: async ({ keys }) => Object.fromEntries(keys.map((key) => [key, { outcome: "failed", message: "git crashed" }])) });
-    focus(failed.link);
+    hoverRow(failed.link);
     await screen.findByRole("tooltip");
     expect(await within(card()!).findByText("Unavailable")).toBeTruthy();
     failed.slot.unmount();
     resetInfoCache();
     const missing = mount("glance", { status: async () => { throw new Error("bb--git is disabled"); } });
-    focus(missing.link);
+    hoverRow(missing.link);
     await screen.findByRole("tooltip");
     expect(await within(card()!).findByText("Unavailable")).toBeTruthy();
   });
@@ -240,7 +269,7 @@ describe("info card", () => {
           rollup: null, rollupCount: 0, crossProject: null, dim: false } },
       { sidebarThreads: { threads, sections: [] }, providers: { status: "ready", providers }, sdk: sdkFakes().sdk,
         rpc: { pullRequests: () => ({ e: { outcome: "available", pullRequest: pr } }), status: () => new Promise(() => {}) } });
-      focus(screen.getByRole("link", { name: "Hover card" }));
+      hoverRow(screen.getByRole("link", { name: "Hover card" }));
       const view = within(await screen.findByRole("tooltip").then(() => card()!));
       const label = `#12 ${pr.state[0]!.toUpperCase()}${pr.state.slice(1)}`;
       expect((await view.findByText(label)).classList.contains(stateTone)).toBe(true);
@@ -274,22 +303,22 @@ describe("info card", () => {
 
   it("closes on pointer down, stays closed while suppressed, and holds only labelled text", async () => {
     const { slot, link } = mount("glance");
-    focus(link);
+    hoverRow(link);
     const tooltip = await screen.findByRole("tooltip");
     expect(tooltip.textContent).toBe("Idle, Marketplace, branch kalindudc/hover-card");
     expect(within(card()!).queryAllByRole("link")).toEqual([]);
     expect(within(card()!).queryAllByRole("button")).toEqual([]);
-    act(() => link.blur());
-    // Press before Radix's outside-press listener registers (one tick after opening), and with
-    // the default prevented as the drag handler does, so only the trigger's own handler can close it.
-    focus(link);
+    leaveRow(link);
+    // Press with the default prevented as the drag handler does.
+    hoverRow(link);
     expect(card()).not.toBeNull();
     link.addEventListener("pointerdown", (event) => event.preventDefault(), { once: true });
     fireEvent.pointerDown(link, { pointerType: "mouse", button: 0 });
     expect(card()).toBeNull();
     slot.unmount();
     const suppressed = mount("glance", { isSuppressed: () => true });
-    focus(suppressed.link);
+    hoverRow(suppressed.link);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 320)); });
     expect(card()).toBeNull();
   });
 });

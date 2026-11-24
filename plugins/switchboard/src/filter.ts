@@ -1,16 +1,23 @@
 import { EMPTY_COUNTS, type RowState, type StateCounts } from "./status";
 import { combineCounts, type Group, type TreeNode } from "./tree";
 
-export interface ListFilter { query: string; states: ReadonlySet<RowState> }
+export type Facet = RowState | "draft";
+export type FacetCounts = StateCounts & { readonly draft: number };
+export interface ListFilter { query: string; states: ReadonlySet<Facet> }
 export interface FilterNames { project(id: string): string; section(id: string | null): string }
 export function isFiltering(filter: ListFilter): boolean {
   return filter.query.trim().length > 0 || filter.states.size > 0;
 }
 
-export function chipCounts(groups: readonly Group[]): StateCounts {
-  const counts = { ...EMPTY_COUNTS };
+export function matchesFacet(filter: ListFilter, state: RowState, id: string, drafts?: ReadonlySet<string>): boolean {
+  return !filter.states.size || filter.states.has(state) || (filter.states.has("draft") && drafts?.has(id) === true);
+}
+
+export function chipCounts(groups: readonly Group[], drafts?: ReadonlySet<string>): FacetCounts {
+  const counts = { ...EMPTY_COUNTS, draft: 0 };
   const visit = (node: TreeNode) => {
     if (node.state !== "idle") counts[node.state]++;
+    if (drafts?.has(node.thread.id)) counts.draft++;
     node.children.forEach(visit);
   };
   groups.forEach((group) => group.roots.forEach(visit));
@@ -19,7 +26,7 @@ export function chipCounts(groups: readonly Group[]): StateCounts {
 
 export function filterGroups(
   groups: readonly Group[], filter: ListFilter,
-  names: FilterNames,
+  names: FilterNames, drafts?: ReadonlySet<string>,
 ): Group[] {
   if (!isFiltering(filter)) return [...groups];
   const query = filter.query.trim().toLocaleLowerCase();
@@ -29,7 +36,7 @@ export function filterGroups(
       const { thread } = node;
       const matches = (!query || [thread.displayTitle, names.project(thread.projectId),
         thread.environment?.branchName ?? "", sectionName].some((value) => value.toLocaleLowerCase().includes(query))) &&
-        (!filter.states.size || filter.states.has(node.state));
+        matchesFacet(filter, node.state, thread.id, drafts);
       const children = node.children.map(prune).filter((child): child is TreeNode => child !== null);
       return matches || children.length ? { ...node, matches, children } : null;
     };

@@ -4,6 +4,7 @@ import type { DensityMetrics } from "./metrics";
 import { planDrop, type DropPlan, type DropTarget, type TreeIndex } from "./drop-plan";
 import type { CollapseKey, GroupKey } from "./layout";
 import { selectionRoots, type Selection } from "./selection";
+import { sidebarScrollParent } from "./sidebar-viewport";
 
 export type DragSubject = { kind: "threads"; ids: readonly string[] } | { kind: "section"; sectionId: string };
 export type DragTarget = DropTarget | { kind: "section"; sectionId: string; edge: "above" | "below" };
@@ -42,12 +43,6 @@ type Ending = "drop" | "cancel" | "lost";
 const DRAG_START_PX = 5;
 const EDGE_PX = 32;
 const MAX_SCROLL_PX_PER_MS = 0.6;
-
-function scrollParent(element: HTMLElement | null): HTMLElement | null {
-  let current = element?.parentElement ?? null;
-  while (current && !/auto|scroll/.test(getComputedStyle(current).overflowY)) current = current.parentElement;
-  return current;
-}
 
 // Speeds up linearly across the edge band and stays at full speed past the edge.
 function edgeSpeed(y: number, top: number, bottom: number) {
@@ -223,7 +218,7 @@ export function useDrag(options: DragOptions): DragController {
     if (!current.started && Math.hypot(event.clientX - current.x, event.clientY - current.y) < DRAG_START_PX) return;
     if (!current.started) {
       current.started = true;
-      current.scroller = scrollParent(optionsRef.current.rootRef.current);
+      current.scroller = sidebarScrollParent(optionsRef.current.rootRef.current);
     }
     pointer.current = { x: event.clientX, y: event.clientY };
     track(current);

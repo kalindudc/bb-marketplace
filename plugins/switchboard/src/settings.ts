@@ -86,7 +86,7 @@ export const SETTING_DESCRIPTORS = {
   showProviderIcons: { type: "boolean", label: "Show provider icons", description: "Show each thread's agent provider icon before its title.", default: false },
   infoCard: {
     type: "select", label: "Thread info card",
-    description: "Show a card with a thread's details when you hover or tab to its row.",
+    description: "Choose the detail shown by Info and the desktop pointer preview.",
     options: ["off", "glance", "briefing", "full"],
     experimental_optionLabels: { off: "Off", glance: "At a glance", briefing: "Briefing", full: "Full details" },
     default: DEFAULT_SETTINGS.infoCard,

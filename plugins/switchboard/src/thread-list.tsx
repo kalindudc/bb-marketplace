@@ -1,6 +1,7 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import {
-  experimental_THREAD_ACTION_GROUPS as ACTION_GROUPS, experimental_useSidebarThreads, useBbNavigate, useSdk,
+  experimental_THREAD_ACTION_GROUPS as ACTION_GROUPS, experimental_useSidebarThreads,
+  useBbNavigate, useSdk, useSidebarSplitLayout, useSidebarThreadDraftIds,
   type PluginThreadListProps,
 } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
@@ -12,7 +13,7 @@ import { DropIndicator, DragGhost } from "./drop-indicator";
 import { indexGroups, planDrop, planKeyboardMove, type DropPlan } from "./drop-plan";
 import { FilterBar } from "./filter-bar";
 import { chipCounts, filterGroups, isFiltering, type ListFilter } from "./filter";
-import { buildLanes } from "./lanes";
+import { buildLanes, type Lane } from "./lanes";
 import { LanesView } from "./lanes-view";
 import { DraftSectionHeader, GroupHeader } from "./group-header";
 import { InfoCardProvider } from "./info-card";
@@ -20,7 +21,10 @@ import { leastUsedHue, type CollapseKey, type GroupKey, type HueId, type SortMod
 import { densityMetrics } from "./metrics";
 import { flattenGroup } from "./rows";
 import { EMPTY_SELECTION, selectedRuns, selectRange, selectionRoots, toggleRow, type Selection } from "./selection";
-import { EMPTY_COUNTS, rowState } from "./status";
+import { useCompactSidebar } from "./sidebar-viewport";
+import { splitLocations } from "./split-location";
+import { rowState } from "./status";
+import { ThreadInspector } from "./thread-inspector";
 import { useLayout } from "./use-layout";
 import { useDrag } from "./use-drag";
 import { useNow } from "./use-now";
@@ -37,6 +41,7 @@ const visit = (node: TreeNode, action: (entry: TreeNode) => void): void => {
   node.children.forEach((child) => visit(child, action));
 };
 const descendants = (node: TreeNode): number => node.children.reduce((total, child) => total + 1 + descendants(child), 0);
+const NO_LANES: readonly Lane[] = [];
 const WITH_ARCHIVED = { experimental_lifecycles: ["active", "archived"] } as const;
 const message = (cause: unknown): string => cause instanceof Error && cause.message ? cause.message : "Switchboard could not save that change";
 
@@ -53,6 +58,9 @@ export function ThreadList(props: PluginThreadListProps) {
   const sdk = useSdk();
   const navigate = useBbNavigate();
   const metrics = densityMetrics(settings.density);
+  const draftIds = useSidebarThreadDraftIds();
+  const splitLayout = useSidebarSplitLayout();
+  const locations = useMemo(() => splitLocations(splitLayout), [splitLayout]);
   const layoutApi = useLayout();
   const { layout, setCollapsed, setSectionOrder, setSectionHue, setSectionSort, setSectionProject, snooze, unsnooze } = layoutApi;
   const updateSettings = useUpdateSettings();
@@ -69,6 +77,25 @@ export function ThreadList(props: PluginThreadListProps) {
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLElement>(null);
+  const compact = useCompactSidebar(rootRef, props.isCompactViewport);
+  const allowInspectionFocusReturn = useRef(true);
+  const [inspection, setInspection] = useState<{ id: string; trigger: HTMLButtonElement; activeAtOpen: string | null } | null>(null);
+  const onInspect = useCallback((id: string, trigger: HTMLButtonElement) => {
+    allowInspectionFocusReturn.current = true;
+    setInspection({ id, trigger, activeAtOpen: props.activeThreadId });
+  }, [props.activeThreadId]);
+  const dismissInspection = useCallback(() => setInspection(null), []);
+  const inspectionRouteChanged = inspection !== null && inspection.activeAtOpen !== props.activeThreadId;
+  useLayoutEffect(() => {
+    if (!inspectionRouteChanged) return;
+    allowInspectionFocusReturn.current = false;
+    dismissInspection();
+  }, [inspectionRouteChanged, dismissInspection]);
+  const inspectedThread = inspection && sidebar.threads.find((thread) => thread.id === inspection.id && !thread.isHidden);
+  const inspectionMode = settings.infoCard;
+  useEffect(() => {
+    if (inspection && (inspectionMode === "off" || !inspectedThread)) dismissInspection();
+  }, [inspection, inspectionMode, inspectedThread, dismissInspection]);
   const projects = useMemo(() => new Map(sidebar.projects.map((project) => [project.id, project.name])), [sidebar.projects]);
   const sections = useMemo(() => new Map(sidebar.sections.map((section) => [section.id, section.name])), [sidebar.sections]);
   const names = useMemo(() => ({
@@ -84,10 +111,13 @@ export function ThreadList(props: PluginThreadListProps) {
   [settings.showArchived, filter.states.size, filter.query, sidebar.threads, names]);
   const { groups, snoozed } = model;
   const index = useMemo(() => indexGroups(groups, layout.sectionSort), [groups, layout.sectionSort]);
-  const counts = useMemo(() => chipCounts(groups), [groups]);
+  const counts = useMemo(() => chipCounts(groups, draftIds), [groups, draftIds]);
   const filtering = isFiltering(filter);
-  const visible = useMemo(() => filterGroups(groups, filter, names), [groups, filter, names]);
-  const lanes = useMemo(() => buildLanes(groups, filter, names), [groups, filter, names]);
+  const facetDrafts = filter.states.has("draft") ? draftIds : undefined;
+  const visible = useMemo(() => filterGroups(groups, filter, names, facetDrafts), [groups, filter, names, facetDrafts]);
+  const needsLanes = settings.view === "status" || settings.needsYouShelf;
+  const lanes = useMemo(() => needsLanes ? buildLanes(groups, filter, names, facetDrafts) : NO_LANES,
+    [needsLanes, groups, filter, names, facetDrafts]);
   const urgent = useMemo(() => lanes.flatMap((lane) => lane.state === "failed" || lane.state === "needs" ? lane.rows : [])
     .sort((a, b) => lastActivity(b.thread) - lastActivity(a.thread)), [lanes]);
   const collapsed = useMemo(() => new Set(layout.collapsed), [layout.collapsed]);
@@ -106,9 +136,6 @@ export function ThreadList(props: PluginThreadListProps) {
     const entry = index.byId.get(id);
     return entry?.parentId === null && canSnooze(entry.node);
   }, [index]);
-  const onSnoozeId = useCallback((id: string) => {
-    if (canSnoozeId(id)) snooze([id], nextWake(now, settings.snoozeHour));
-  }, [canSnoozeId, snooze, now, settings.snoozeHour]);
   useEffect(() => {
     const ready = Object.entries(layout.snoozes).filter(([id, entry]) =>
       !prunedSnoozes.current.has(id) && (now >= entry.until || index.byId.has(id))).map(([id]) => id);
@@ -116,10 +143,12 @@ export function ThreadList(props: PluginThreadListProps) {
     ready.forEach((id) => prunedSnoozes.current.add(id));
     for (let offset = 0; offset < ready.length; offset += 500) unsnooze(ready.slice(offset, offset + 500));
   }, [layout.snoozes, index, now, unsnooze]);
-  const onNavigate = useCallback(() => { setSelection(EMPTY_SELECTION); props.onNavigate(); }, [props.onNavigate]);
-  const onSelect = useCallback((id: string, mode: "toggle" | "range") => {
-    setSelection((current) => mode === "toggle" ? toggleRow(current, id) : selectRange(current, visibleIds, id));
-  }, [visibleIds]);
+  const onNavigate = useCallback(() => {
+    allowInspectionFocusReturn.current = false;
+    dismissInspection();
+    setSelection(EMPTY_SELECTION);
+    props.onNavigate();
+  }, [dismissInspection, props.onNavigate]);
   const flash = useCallback((ids: readonly string[]) => {
     if (flashTimer.current) clearTimeout(flashTimer.current);
     setFlashIds(new Set(ids));
@@ -152,9 +181,23 @@ export function ThreadList(props: PluginThreadListProps) {
     void applyPlan(plan, { sdk, layout: layoutApi, index, announce,
       onApplied: () => flash(plan.moves.map((move) => move.threadId)) });
   }, [sdk, layoutApi, index, flash]);
+  const rowActions = useRef({ apply, index, visibleIds, canSnoozeId, snooze, now, snoozeHour: settings.snoozeHour });
+  // Keep row handlers stable through streams and drags, but use the tree and order the user can actually see.
+  useLayoutEffect(() => {
+    rowActions.current = { apply, index, visibleIds, canSnoozeId, snooze, now, snoozeHour: settings.snoozeHour };
+  });
+  const onSelect = useCallback((id: string, mode: "toggle" | "range") => {
+    const { visibleIds } = rowActions.current;
+    setSelection((current) => mode === "toggle" ? toggleRow(current, id) : selectRange(current, visibleIds, id));
+  }, []);
   const onKeyboardMove = useCallback((id: string, direction: "up" | "down" | "right" | "left") => {
+    const { apply, index } = rowActions.current;
     apply(planKeyboardMove(index, id, direction));
-  }, [apply, index]);
+  }, []);
+  const onSnoozeId = useCallback((id: string) => {
+    const { canSnoozeId, snooze, now, snoozeHour } = rowActions.current;
+    if (canSnoozeId(id)) snooze([id], nextWake(now, snoozeHour));
+  }, []);
   const onSectionMove = useCallback((ids: readonly string[]) => {
     if (ids.every((id, position) => id === sectionIds[position])) return;
     const previous = sectionIds;
@@ -339,12 +382,13 @@ export function ThreadList(props: PluginThreadListProps) {
     "--switchboard-pill-r": `${metrics.pillRight}px`,
   } as CSSProperties;
   const dragActive = useRef(false);
-  dragActive.current = current !== null;
+  dragActive.current = current !== null || inspection !== null;
   const isSuppressed = useCallback(() => dragActive.current, []);
-  return <InfoCardProvider mode={props.isCompactViewport ? "off" : settings.infoCard} sdk={sdk} isSuppressed={isSuppressed}>
+  return <InfoCardProvider mode={inspectionMode} preview={!compact} sdk={sdk} isSuppressed={isSuppressed}>
   <nav ref={rootRef} aria-label="Threads" onKeyDown={onKeyDown} style={spacing} data-switchboard-dragging={current ? "" : undefined}
+    data-switchboard-compact={compact ? "" : undefined}
     className={`switchboard-list switchboard-density-${settings.density} relative min-w-0 pb-3 text-[13px] text-sidebar-foreground`}>
-    <FilterBar filter={filter} counts={sidebar.status === "ready" ? counts : EMPTY_COUNTS}
+    <FilterBar filter={filter} counts={counts}
       showChips={sidebar.status === "ready" && settings.statusChips} inputRef={inputRef}
       settings={settings} onSettingsChange={updateSettings}
       onChange={(next) => { setFilter(next); setSelection(EMPTY_SELECTION); }} onNewSection={onNewSection} />
@@ -357,7 +401,8 @@ export function ThreadList(props: PluginThreadListProps) {
         className="switchboard-group switchboard-pinned-drop absolute top-0 z-20 border border-primary bg-popover uppercase text-popover-foreground shadow-lg">Pinned</div>}
     {sidebar.status === "ready" && settings.view === "status" && <LanesView lanes={lanes} collapsed={collapsed}
       activeThreadId={props.activeThreadId} settings={settings} now={now} projectName={names.project}
-      onToggle={onToggle} onNavigate={onNavigate} onSnooze={onSnoozeId} canSnooze={canSnoozeId} />}
+      onToggle={onToggle} onNavigate={onNavigate} onSnooze={onSnoozeId} canSnooze={canSnoozeId}
+      onInspect={onInspect} locations={locations} />}
     {sidebar.status === "ready" && settings.view === "sections" && settings.needsYouShelf && urgent.length > 0 &&
       <section className="switchboard-needs-shelf">
         <div className="switchboard-group-header relative flex min-w-0 items-center text-muted-foreground">
@@ -372,7 +417,8 @@ export function ThreadList(props: PluginThreadListProps) {
           variant="mirror" row={{ thread: entry.thread, state: entry.state, depth: 0, guides: "", isLast: true,
             childCount: 0, collapsed: false, rollup: null, rollupCount: 0, crossProject: null, dim: false }}
           isActive={entry.thread.id === props.activeThreadId} settings={settings} now={now}
-          projectName={names.project(entry.thread.projectId)} hue={entry.hue} onNavigate={onNavigate} />)}</div>}
+          projectName={names.project(entry.thread.projectId)} hue={entry.hue} onNavigate={onNavigate}
+          onInspect={onInspect} splitLocation={locations?.get(entry.thread.id)} />)}</div>}
       </section>}
     {sidebar.status === "ready" && settings.view === "sections" && rows.map(({ group, items, isCollapsed }) => <Fragment key={group.key}>
     {group.kind === "loose" && draftNode && draftAfter === null && draftNode}
@@ -416,13 +462,14 @@ export function ThreadList(props: PluginThreadListProps) {
         {items.map((row) => <ThreadRow key={row.thread.id} row={row}
           isActive={row.thread.id === props.activeThreadId} settings={settings} now={now}
           projectName={names.project(row.thread.projectId)} drag={drag}
+          onInspect={onInspect} splitLocation={locations?.get(row.thread.id)}
           isSelected={selection.ids.has(row.thread.id)} selectedRun={runs.get(row.thread.id)}
           isDragging={current?.subject.kind === "threads" && current.subject.ids.includes(row.thread.id)}
           dropState={target?.kind === "row" && target.threadId === row.thread.id ?
             blocked ? "blocked" : target.instruction.kind === "child" ? "child" : null : null}
           flash={flashIds.has(row.thread.id)} onSelect={onSelect} onKeyboardMove={onKeyboardMove}
           stale={index.byId.get(row.thread.id)?.node.stale}
-          onSnooze={canSnoozeId(row.thread.id) ? () => onSnoozeId(row.thread.id) : undefined}
+          onSnooze={canSnoozeId(row.thread.id) ? onSnoozeId : undefined}
           bulk={selection.ids.has(row.thread.id) ? bulk : undefined}
           onNavigate={onNavigate} onToggle={onToggle} />)}
       </div>}
@@ -442,6 +489,7 @@ export function ThreadList(props: PluginThreadListProps) {
           childCount: 0, collapsed: false, rollup: null, rollupCount: 0, crossProject: null, dim: false }}
         isActive={node.thread.id === props.activeThreadId} settings={settings} now={now}
         projectName={names.project(node.thread.projectId)} onNavigate={onNavigate}
+        onInspect={onInspect} splitLocation={locations?.get(node.thread.id)}
         wakeLabel={wakeLabel(layout.snoozes[node.thread.id]!.until, now)} onWake={() => unsnooze([node.thread.id])} />)}</div>}
     </section>}
     {sidebar.status === "ready" && settings.showArchived && filter.states.size === 0 && (archived.length > 0 || !filter.query.trim()) &&
@@ -458,7 +506,8 @@ export function ThreadList(props: PluginThreadListProps) {
             row={{ thread, state: rowState(thread), depth: 0, guides: "", isLast: true, childCount: 0, collapsed: false,
               rollup: null, rollupCount: 0, crossProject: null, dim: false }}
             isActive={thread.id === props.activeThreadId} settings={settings} now={now}
-            projectName={names.project(thread.projectId)} onNavigate={onNavigate} />)}
+            projectName={names.project(thread.projectId)} onNavigate={onNavigate}
+            onInspect={onInspect} splitLocation={locations?.get(thread.id)} />)}
           {archivedPage?.status === "loading" && <p className="switchboard-shelf-note text-[11px] text-subtle-foreground">Loading archived threads…</p>}
           {archivedPage?.status === "error" && <p className="switchboard-shelf-note text-[11px] text-subtle-foreground">Could not load archived threads</p>}
           {archivedPage?.status === "ready" && archived.length === 0 && !archivedPage.hasNextPage &&
@@ -475,6 +524,11 @@ export function ThreadList(props: PluginThreadListProps) {
       <DragGhost view={current} ghostRef={drag.ghostRef}
         titleOf={(id) => index.byId.get(id)?.node.thread.displayTitle ?? sections.get(id) ?? id}
         stateOf={(id) => index.byId.get(id)?.node.state ?? "idle"} /></>}
+    {inspection && !inspectionRouteChanged && inspectedThread && inspectionMode !== "off" && <ThreadInspector key={inspection.id}
+      thread={inspectedThread} opener={inspection} sidebar={rootRef} fallback={inputRef} onDismiss={dismissInspection}
+      projectName={names.project(inspectedThread.projectId)} stale={index.byId.get(inspectedThread.id)?.node.stale ?? false}
+      now={now} mode={inspectionMode} sdk={sdk} compact={compact} allowFocusReturn={allowInspectionFocusReturn}
+      location={locations ? locations.get(inspectedThread.id) ?? "No split pane" : "No split location reported"} />}
     <span className="sr-only" aria-live="polite">{announcement}</span>
   </nav></InfoCardProvider>;
 }

@@ -26,6 +26,8 @@
 .switchboard-hue-sand { --switchboard-hue: var(--switchboard-hue-sand); }
 .switchboard-hue-slate { --switchboard-hue: var(--switchboard-hue-slate); }
 .switchboard-list, .switchboard-info-card { font-family: var(--font-sans); }
+.switchboard-split-mark { pointer-events: none; color: var(--timeline-accent, var(--primary)); }
+.switchboard-thread-title { min-width: 0; }
 .switchboard-row {
   min-height: var(--switchboard-row-h); align-items: center; gap: var(--switchboard-gap);
   padding-right: calc(var(--switchboard-pill-r) + 8px);
@@ -103,10 +105,10 @@
   padding: 0 8px 0 10px; border-radius: var(--radius-md);
 }
 .switchboard-chips {
-  flex-wrap: nowrap; gap: 6px; min-width: 0; overflow: hidden;
+  flex-wrap: wrap; gap: 4px; min-width: 0;
   margin: 10px var(--switchboard-pill-r) 2px var(--switchboard-pill-l);
 }
-.switchboard-chip { height: 22px; gap: 5px; padding: 0 9px 0 7px; flex-shrink: 1; }
+.switchboard-chip { min-height: 24px; gap: 4px; padding: 0 6px; flex-shrink: 0; white-space: nowrap; }
 .switchboard-chip:hover { border-color: color-mix(in oklch, var(--sidebar-foreground) 30%, transparent); }
 .switchboard-chip[aria-pressed="true"]:hover {
   background: color-mix(in oklch, var(--surface-selected) 88%, var(--sidebar-foreground) 12%);
@@ -146,7 +148,6 @@
   z-index: 2; pointer-events: none;
 }
 .switchboard-guide { z-index: 1; background: color-mix(in oklch, var(--sidebar-foreground) 16%, transparent); }
-.switchboard-guide-cont { top: 50%; }
 .switchboard-guide-nested-top { top: 0; height: calc(var(--switchboard-caret-center, 50%) - 6px); }
 .switchboard-guide-nested-bottom { top: calc(var(--switchboard-caret-center, 50%) + 6px); bottom: 0; }
 .switchboard-stale { opacity: .55; }
@@ -155,7 +156,18 @@
   border-color: color-mix(in oklch, var(--sidebar-foreground) 16%, transparent);
 }
 .switchboard-density-two-line .switchboard-elbow { height: 17px; }
-.switchboard-density-two-line .switchboard-guide-cont { top: 17px; }
+/* One border paints the whole trunk so fractional scaling cannot misalign its two halves. */
+.switchboard-row[data-last-child="false"] .switchboard-elbow {
+  --switchboard-branch-top: calc(50% - 1px);
+  height: 100%; border-bottom-width: 0; border-bottom-left-radius: 0;
+}
+.switchboard-density-two-line .switchboard-row[data-last-child="false"] .switchboard-elbow {
+  --switchboard-branch-top: 16px;
+}
+.switchboard-row[data-last-child="false"] .switchboard-elbow::after {
+  content: ""; position: absolute; top: var(--switchboard-branch-top); right: 0; left: 0;
+  border-bottom: 1px solid; border-color: inherit;
+}
 .switchboard-indicator {
   position: absolute; height: 2px; border-radius: var(--radius-xs, max(0px, calc(var(--radius) - 6px))); z-index: 20; pointer-events: none;
   background: var(--primary);
@@ -188,6 +200,28 @@
 .switchboard-info-glance { width: 288px; }
 .switchboard-info-briefing { width: 304px; }
 .switchboard-info-full { width: 360px; }
+.switchboard-inspector {
+  position: fixed; box-sizing: border-box; inset: auto; margin: 0;
+  left: var(--switchboard-inspector-left, 8px);
+  top: clamp(8px, var(--switchboard-inspector-top, 8px), max(8px, calc(100dvh - 25rem)));
+  max-width: var(--switchboard-inspector-width, calc(100vw - 16px));
+  max-height: min(25rem, calc(100dvh - 16px)); overflow: auto;
+}
+.switchboard-inspector[data-switchboard-inspector-compact] {
+  left: var(--switchboard-inspector-left, 0px); top: var(--switchboard-inspector-top, 0px);
+  width: var(--switchboard-inspector-width, 100vw); height: var(--switchboard-inspector-height, 100dvh);
+  max-width: none; max-height: none; border-radius: 0; box-shadow: none;
+}
+.switchboard-inspector[data-switchboard-inspector-compact] .switchboard-inspector-close { width: 44px; height: 44px; flex-shrink: 0; }
+.switchboard-inspector::backdrop { background: transparent; }
+.switchboard-inspector-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.switchboard-inspector-header > span { color: var(--muted-foreground); }
+.switchboard-inspector-header > .switchboard-info-title { grid-column: 1 / -1; }
+.switchboard-inspector-close { display: grid; place-items: center; grid-column: 2; grid-row: 1; }
+.switchboard-inspector .switchboard-info-rows dd, .switchboard-inspector .switchboard-info-value {
+  white-space: normal; overflow-wrap: anywhere;
+}
+.switchboard-inspector .switchboard-info-text { display: block; overflow-wrap: anywhere; }
 .switchboard-info-top { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted-foreground); }
 .switchboard-info-kbd { margin-left: auto; color: var(--subtle-foreground); }
 .switchboard-info-title { margin: 4px 0 2px; font-size: 13px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
@@ -268,9 +302,12 @@
   .switchboard-control { transition: none; }
   .switchboard-flash::after { animation: none; }
 }
-@media (pointer: coarse) { .switchboard-row { min-height: max(var(--switchboard-row-h), var(--bb-sidebar-row-height-coarse, 2.5rem)); } }
 @media (hover: hover) {
   .switchboard-quick-actions, .switchboard-menu-trigger { display: none; }
+  .switchboard-info-trigger { position: absolute; right: 0; opacity: 0; pointer-events: none; }
+  .switchboard-row:hover .switchboard-info-trigger, .switchboard-row:focus-within .switchboard-info-trigger {
+    position: relative; right: auto; opacity: 1; pointer-events: auto;
+  }
   /* The open menu is portalled outside the row and anchored to the trigger: hiding the
      trigger once the pointer leaves the row collapses its rect and flings the menu to 0,0. */
   .switchboard-row:hover .switchboard-quick-actions, .switchboard-row[data-menu-open] .switchboard-quick-actions { display: inline-flex; }
@@ -282,4 +319,17 @@
   .switchboard-menu-trigger { display: grid; }
   .switchboard-section-controls { visibility: visible; }
   .switchboard-section-rollups { visibility: hidden; }
+}
+.switchboard-list[data-switchboard-compact] .switchboard-row {
+  min-height: max(var(--switchboard-row-h), var(--bb-sidebar-row-height-coarse, 44px), 44px);
+  column-gap: 4px;
+}
+.switchboard-list[data-switchboard-compact] .switchboard-row .switchboard-quick-actions,
+.switchboard-list[data-switchboard-compact] .switchboard-row .switchboard-age,
+.switchboard-list[data-switchboard-compact] .switchboard-row .switchboard-row-meta { display: none; }
+.switchboard-list[data-switchboard-compact] .switchboard-row .switchboard-info-trigger {
+  position: relative; right: auto; opacity: 1; pointer-events: auto;
+}
+.switchboard-list[data-switchboard-compact] .switchboard-row :is(.switchboard-info-trigger, .switchboard-menu-trigger) {
+  display: grid; width: 44px; height: 44px;
 }

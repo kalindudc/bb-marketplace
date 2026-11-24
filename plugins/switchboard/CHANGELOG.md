@@ -8,6 +8,29 @@ Notable changes to Switchboard, newest first. Releases are tagged `switchboard/v
 
 - Rows can draw each thread's agent provider icon before its title: turn on **Provider icons** in View options (`showProviderIcons`, off by default). This matches bb's own sidebar option. The icon uses bb's provider artwork and names the provider on hover; a provider bb no longer lists gets bb's fallback icon and its id. A press on the icon opens, drags and selects the thread like the rest of the row.
 
+## 0.5.0 (2026-11-24)
+
+### Added
+
+- Open **Info** from a thread row without leaving the current thread. Details open beside the sidebar on desktop and fill it when space is tight. Closing the details returns focus to the Info button. Desktop hover previews are still available.
+- Filter for threads with unsent drafts, independently of their status. Split threads show which pane they occupy when bb reports it.
+- Turn on **Provider icons** in View options to show the agent provider beside each thread title. The setting is off by default. Thanks to [Maksim Kirianov (@mxv2)](https://github.com/mxv2) for [#5](https://github.com/kalindudc/bb-marketplace/pull/5).
+
+### Changed
+
+- The **Needs you** filter now comes first. On narrow or touch layouts, **Archive** stays available in the thread menu so the row has room for Info and its markers.
+- The sidebar updates fewer rows while threads stream or while you drag. Repeated synthetic Chrome tests showed the largest gains on long lists; startup and filtering were not consistently faster.
+
+### Fixed
+
+- Sibling tree guides share one continuous line instead of appearing doubled. The last child keeps its rounded elbow.
+- Info distinguishes missing workspace, Git, and pull request data from confirmed results. A worktree can exist even when bb reports no branch.
+- Pressing the provider icon works like pressing the row for opening, selecting, and starting a drag.
+
+### Compatibility
+
+- Still requires bb 0.48.1 or newer and Plugin SDK 0.6.104 or newer. Existing Switchboard settings and saved layouts carry over.
+
 ## 0.4.2 (2026-11-20)
 
 ### Fixed

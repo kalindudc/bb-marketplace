@@ -86,6 +86,23 @@ describe("organize in the sidebar", () => {
     slot.unmount();
   });
 
+  it("uses the latest committed row order for a range selection and a keyboard move", async () => {
+    const slot = await mount();
+    const first = link("A");
+    const second = link("B");
+    await slot.behavior.emitRealtime("layout", { key: "order:loose", value: ["b", "a"] });
+    expect(screen.getAllByRole("link").map((node) => node.getAttribute("data-sidebar-thread-id")))
+      .toEqual(["r", "b", "a", "child"]);
+    fireEvent.click(first, { altKey: true });
+    fireEvent.click(second, { shiftKey: true });
+    expect(screen.getByText("2 selected")).toBeTruthy();
+    fireEvent.keyDown(first, { key: "ArrowRight", altKey: true });
+    await waitFor(() => expect(sdkCalls(slot, "threads.update")).toContainEqual(expect.objectContaining({
+      args: [{ threadId: "a", parentThreadId: "b" }],
+    })));
+    slot.unmount();
+  });
+
   it("Alt-selects two roots, moves them into a section and archives roots with child count", async () => {
     const slot = await mount();
     fireEvent.click(link("A"), { altKey: true });

@@ -1,5 +1,6 @@
 import { experimental_useRpcKeyedQuery, type PluginRpcContract } from "@get-bb/plugin-sdk/app";
 import { z } from "zod";
+import type { Resource } from "./info-data";
 
 const pullRequestSchema = z.object({
   number: z.number().int().positive(), title: z.string(), url: z.string().url(),
@@ -21,11 +22,14 @@ export const pullRequestContract = {
   },
 } satisfies PluginRpcContract;
 
-export function usePullRequest(environmentId: string | null | undefined): PullRequest | null {
-  const { data, error } = experimental_useRpcKeyedQuery({
+export function usePullRequest(environmentId: string | null | undefined): Resource<PullRequest | null> | null {
+  const { data, error, isLoading } = experimental_useRpcKeyedQuery({
     contract: pullRequestContract, pluginId: "bb--github-pr-status", method: "pullRequests",
     keys: environmentId ? [environmentId] : [],
   });
   const result = environmentId ? data?.[environmentId] : undefined;
-  return !error && result?.outcome === "available" ? result.pullRequest : null;
+  if (!environmentId) return null;
+  if (error || result?.outcome === "unavailable") return { status: "error" };
+  if (!result) return { status: isLoading ? "loading" : "error" };
+  return { status: "ready", value: result.outcome === "available" ? result.pullRequest : null };
 }

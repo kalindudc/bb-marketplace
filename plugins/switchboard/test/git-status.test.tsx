@@ -56,6 +56,12 @@ describe("git status from bb's Git plugin", () => {
     await waitFor(() => expect(screen.getByRole("status").textContent).toBe("error"));
   });
 
+  it("marks a completed response without the requested key unavailable", async () => {
+    const { status } = mount("e", async () => ({}));
+    await waitFor(() => expect(status).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByRole("status").textContent).toBe("error"));
+  });
+
   it("reads nothing for a thread without an environment", async () => {
     const { status } = mount(null, rows(available));
     expect(screen.getByRole("status").textContent).toBe("none");

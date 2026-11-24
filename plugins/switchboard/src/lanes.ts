@@ -1,5 +1,5 @@
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
-import type { FilterNames, ListFilter } from "./filter";
+import { matchesFacet, type FilterNames, type ListFilter } from "./filter";
 import type { HueId } from "./layout";
 import { STATE_ORDER, type RowState } from "./status";
 import { lastActivity } from "./triage";
@@ -15,7 +15,7 @@ export interface LaneRow {
 }
 export interface Lane { key: `lane:${RowState}`; state: RowState; rows: readonly LaneRow[] }
 
-export function buildLanes(groups: readonly Group[], filter: ListFilter, names: FilterNames): Lane[] {
+export function buildLanes(groups: readonly Group[], filter: ListFilter, names: FilterNames, drafts?: ReadonlySet<string>): Lane[] {
   const rows: (LaneRow & { sectionName: string })[] = [];
   for (const group of groups) {
     const visit = (node: TreeNode, parentTitle: string | null) => {
@@ -26,7 +26,7 @@ export function buildLanes(groups: readonly Group[], filter: ListFilter, names: 
     group.roots.forEach((root) => visit(root, null));
   }
   const query = filter.query.trim().toLocaleLowerCase();
-  const matching = rows.filter((row) => (!filter.states.size || filter.states.has(row.state)) &&
+  const matching = rows.filter((row) => matchesFacet(filter, row.state, row.thread.id, drafts) &&
     (!query || [row.thread.displayTitle, names.project(row.thread.projectId),
       row.thread.environment?.branchName ?? "", row.sectionName].some((value) => value.toLocaleLowerCase().includes(query))));
   return STATE_ORDER.flatMap((state): Lane[] => {
