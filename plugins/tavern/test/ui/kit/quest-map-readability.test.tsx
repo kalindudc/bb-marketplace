@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { fixtureDetail, fixtureRegistry } from "../../../src/ui/thread/fixtures";
@@ -15,18 +15,19 @@ beforeEach(() => vi.stubGlobal("ResizeObserver", class { observe() {} unobserve(
 async function card(detail = fixtureDetail) {
   await loadPluginApp(definePluginApp(registerThreadSurfaces));
   const slot = renderSlot({ component: () => <QuestMapCard detail={detail} version={1} /> } as never, {}, { composer: { scope: { kind: "thread", threadId: "keeper-1" } }, rpc: { registry: () => fixtureRegistry, answerAsk: () => ({ ok: true }) } });
-  await waitFor(() => expect(slot.container.querySelector(".qmap")).not.toBeNull());
+  fireEvent.click(slot.getByRole("button", { name: "Quest map" }));
+  await waitFor(() => expect(slot.container.querySelector(".qmap .qsvg")).not.toBeNull());
   return slot;
 }
 
 describe("the quest map's readability", () => {
   it("stretches the plan map across the greenlight card, and leaves the live map alone", async () => {
     const plan = await card();
-    expect(plan.container.querySelector(".qmap")!.classList.contains("stretch")).toBe(true);
+    expect(plan.container.querySelector(".qmap .qsvg")!.closest(".qmap")!.classList.contains("stretch")).toBe(true);
     plan.lifecycle.unmount();
     const sealed = { ...fixtureDetail, quest: { ...fixtureDetail.quest, greenlitVersion: 1 } };
     const live = await card(sealed);
-    expect(live.container.querySelector(".qmap")!.classList.contains("stretch")).toBe(false);
+    expect(live.container.querySelector(".qmap .qsvg")!.closest(".qmap")!.classList.contains("stretch")).toBe(false);
     live.lifecycle.unmount();
   });
 

@@ -116,7 +116,7 @@ function Mark({ w, owner, size = 30 }: { w: WaypointView; owner: Owner; size?: n
 
 /** The quest map: one route in dependency order; each owner's mark stands on the waypoint it owns. Columns are order, not a promised ETA. */
 /** `memberCredits` (tale mode) names who made and verified each waypoint; `stretch` spreads the route across the full width with two-line labels. */
-export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, stretch = false, showChecks = mode === "plan", rowsOnly = false, showAll = false }: { quest: BoardQuestSummary; mode: "plan" | "live" | "tale"; dealt?: boolean; memberCredits?: BoardQuestDetail["memberCredits"]; stretch?: boolean; showChecks?: boolean; rowsOnly?: boolean; showAll?: boolean }) {
+export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, stretch = false, showChecks = mode === "plan", rowsOnly = false, showAll = false, drawn = false }: { quest: BoardQuestSummary; mode: "plan" | "live" | "tale"; dealt?: boolean; memberCredits?: BoardQuestDetail["memberCredits"]; stretch?: boolean; showChecks?: boolean; rowsOnly?: boolean; showAll?: boolean; drawn?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const registry = useRegistry();
   const container = useRef<HTMLElement>(null);
@@ -148,12 +148,14 @@ export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, s
     return [n.waypoint.id, identity ? { kind: "member" as const, name: identity.character.name, identity } : planned];
   }));
   const narrow = availableWidth > 0 && availableWidth < Math.min(natural, 520);
+  const scrolls = drawn && availableWidth > 0 && Math.round(width) > Math.round(availableWidth);
   const credit = (w: WaypointView) => credits ? creditLine(w, owners.get(w.id)!, quest, registry.data, credits) : null;
   const describe = (w: WaypointView) => { const o = owners.get(w.id)!; return `${w.title}: ${o.name}, ${resolutionWords(w)}${showChecks ? `, ${checkWord(w)}` : ""}, lead time ${w.leadTime ?? "unknown"}`; };
   return (
-    <section ref={container} className={`tavern quest-map-container qmap m-${mode} ${rowsOnly || narrow ? "list-only" : ""} ${dealt ? "dealt" : ""} ${stretch ? "stretch" : ""}`} data-part="QuestMap" aria-label={`Quest map: ${quest.title}`}>
+    <section ref={container} className={`tavern quest-map-container qmap m-${mode} ${drawn ? "drawn" : rowsOnly || narrow ? "list-only" : ""} ${dealt ? "dealt" : ""} ${stretch ? "stretch" : ""}`} data-part="QuestMap" aria-label={`${drawn ? "Drawn quest map" : "Quest map"}: ${quest.title}`} tabIndex={scrolls ? 0 : undefined}>
+      {scrolls && <p className="qm-scroll-hint m">Scroll sideways to see the full map</p>}
       {showChecks && !quest.waypoints.some(w => waypointCheck(w) === "warden") && <p className="wp-check-note m">No Warden checks on this map</p>}
-      {!rowsOnly && <svg className="qsvg" viewBox={`0 0 ${width} ${height}`} style={{ maxWidth: spread ? "none" : width }} role="img" aria-label={visible.map(({ waypoint }) => [describe(waypoint), credit(waypoint)].filter(Boolean).join(", ")).join("; ")}>
+      {!rowsOnly && <svg className="qsvg" viewBox={`0 0 ${width} ${height}`} style={{ maxWidth: spread ? "none" : width, minWidth: drawn ? width : undefined }} role="img" aria-label={visible.map(({ waypoint }) => [describe(waypoint), credit(waypoint)].filter(Boolean).join(", ")).join("; ")}>
         {visible.flatMap(n => n.waypoint.dependsOn.map(id => { const from = byId.get(id); if (!from) return null; const mx = (from.x + n.x) / 2; const done = settled(from.waypoint); return <path key={`${id}-${n.waypoint.id}`} className={`road ${done ? "done" : ""}`} d={from.y === n.y ? `M${from.x + 18} ${from.y}H${n.x - 18}` : `M${from.x + 18} ${from.y}C${mx} ${from.y} ${mx} ${n.y} ${n.x - 18} ${n.y}`} />; }))}
         {visible.map((n, i) => { const w = n.waypoint; const o = owners.get(w.id)!; return (
           <g key={w.id} className={`wp s-${w.state} o-${o.kind}`} style={{ ["--i" as string]: i }}>
@@ -170,8 +172,8 @@ export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, s
         {visible.map(({ waypoint: w }) => { const o = owners.get(w.id)!; return (
           <li key={w.id} className={settled(w) ? "done" : w.state === "doing" ? "cur" : ""}>
             <span className="vw"><Mark w={w} owner={o} size={20} /></span>
-            <span className="qt"><b>{w.title}</b><span className="m">{credit(w) ?? (o.kind === "you" ? "Your move" : o.kind === "outside" ? `Waits on ${o.name}` : o.kind === "proposed" ? `${o.name} (proposed)` : o.name)}{showChecks && <> · <span className="wp-check">{checkWord(w)}</span></>} · {w.leadTime ?? "lead time unknown"}{w.dependsOn.length > 0 ? ` · after ${w.dependsOn.map(d => d.replace(/^w/, "")).join(", ")}` : ""}{!credit(w) && mode === "tale" ? ` · ${w.evidenceCount} evidence${verifiedWaypoint(w) ? " · verified" : ""}` : ""}</span>{w.rejectedReason && <span className="m">Rejected: {w.rejectedReason}</span>}{w.resolutionReason && <span className="wp-reason m">{w.resolutionReason}</span>}</span>
-            <StatusPill status={w.state} mark={w.state === "done" ? "·" : undefined}>{STATE_WORD[w.state]}</StatusPill>
+            <span className="qt" data-content><b>{w.title}</b><span className="m">{credit(w) ?? (o.kind === "you" ? "Your move" : o.kind === "outside" ? `Waits on ${o.name}` : o.kind === "proposed" ? `${o.name} (proposed)` : o.name)}{showChecks && <> · <span className="wp-check">{checkWord(w)}</span></>} · {w.leadTime ?? "lead time unknown"}{w.dependsOn.length > 0 ? ` · after ${w.dependsOn.map(d => d.replace(/^w/, "")).join(", ")}` : ""}{!credit(w) && mode === "tale" ? ` · ${w.evidenceCount} evidence${verifiedWaypoint(w) ? " · verified" : ""}` : ""}</span>{w.rejectedReason && <span className="m">Rejected: {w.rejectedReason}</span>}{w.resolutionReason && <span className="wp-reason m">{w.resolutionReason}</span>}</span>
+            {!(mode === "plan" && rowsOnly && w.state === "planned") && <StatusPill status={w.state} mark={w.state === "done" ? "·" : undefined}>{STATE_WORD[w.state]}</StatusPill>}
           </li>
         ); })}
       </ol>

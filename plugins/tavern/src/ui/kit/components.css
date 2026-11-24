@@ -231,7 +231,8 @@
 .tavern.pointer .pk { font-weight: 700; white-space: nowrap; }
 .tavern.pointer .pq { flex: 1 1 0; width: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.tavern.qmcard { gap: 8px; padding: 10px 12px 0; position: relative; isolation: isolate; }
+.tavern.qmcard { gap: 8px; padding: 10px 12px 0; position: relative; isolation: isolate; container: plan-card / inline-size; }
+.tavern.qmcard:not(:has(.qm-f)) { padding-bottom: 10px; }
 html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--attention) 14%, transparent), 0 18px 46px -28px var(--tavern-lantern); }
 .tavern .qm-t { display: inline-flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .tavern .qm-t > b { font-size: 13px; }
@@ -242,33 +243,55 @@ html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--atten
 .tavern .plan-changes h3, .tavern .plan-changes p, .tavern .plan-changes ul { margin: 0; }
 .tavern .plan-changes h3 { font-size: 13px; font-weight: 700; }
 .tavern .plan-changes ul { display: grid; gap: 2px; padding: 0; list-style: none; }
-.tavern .plan-changes .lg-clamp { padding: 0; font-size: inherit; }
-.tavern .plan-changes button.lg-clamp { min-height: 44px; }
-.tavern .qm-mapfold > .btn { min-height: 44px; }
+.tavern .plan-changes li + li { border-top: 1px dotted var(--tavern-line); padding-top: 3px; }
+.tavern .plan-changes ins { text-decoration: none; font-weight: 600; }
+.tavern .qm-mapfold > .btn { display: flex; width: 100%; min-height: 32px; background: var(--tavern-recessed); }
+.tavern .qm-mapfold > .btn .act-i { margin-left: auto; }
 .tavern .qm-mapfold > div:not([hidden]) { margin-top: 8px; }
-.tavern .qm-goal { font-size: 13px; overflow-wrap: anywhere; }
-.tavern .qm-goal .m { font-size: 12px; }
+.tavern .qm-mapfold .qmap.drawn { overflow-x: auto; }
+.tavern .qm-mapfold .qmap.drawn:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.tavern .qm-mapfold .qm-scroll-hint { position: sticky; left: 0; font-size: 12px; }
+.tavern .qm-mapfold .qmap.drawn .qsvg { display: block; }
+.tavern .qm-mapfold .qmap.drawn .qlist { display: none; }
+.tavern .qm-goal { display: grid; gap: 4px; font-size: 13px; overflow-wrap: anywhere; }
+.tavern .qm-goal b { font-size: 14px; }
 .tavern .qm-key { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 11px; }
 .tavern .qm-key span { display: inline-flex; align-items: center; gap: 5px; }
 .tavern .qm-key .k { display: inline-block; width: 9px; height: 9px; }
 .tavern .qm-key .k.crest { background: var(--tavern-teal); clip-path: path("M0 0h9v4.5C9 7 7 8.4 4.5 9 2 8.4 0 7 0 4.5Z"); }
 .tavern .qm-key .k.you { background: var(--tavern-you); transform: rotate(45deg) scale(.8); }
 .tavern .qm-key .k.gate { border: 2px solid var(--foreground); border-bottom: 0; }
-.tavern .qm-cols { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 8px 16px; padding-top: 6px; border-top: 1px dashed var(--tavern-line); }
-.tavern .qm-cols h4 { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--tavern-muted); margin-bottom: 3px; }
-.tavern .qm-cols h4 .anc { text-transform: none; letter-spacing: 0; }
-.tavern .qm-qs ol { display: flex; flex-direction: column; gap: 3px; }
-.tavern .qm-qs li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 6px; font-size: 12px; }
+.tavern .qm-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-block: 1px solid var(--tavern-line); }
+.tavern .qm-leaf { display: grid; gap: 8px; align-content: start; min-width: 0; padding-block: 10px; overflow-wrap: anywhere; }
+.tavern .qm-leaf:first-child { padding-right: 12px; }
+.tavern .qm-leaf + .qm-leaf { padding-left: 12px; border-left: 1px solid var(--tavern-line); }
+.tavern .qm-cols h4 { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+.tavern .qm-cols h4 .m { font-size: 12px; font-weight: 400; }
+.tavern .qm-done, .tavern .qm-party, .tavern .qm-qs { border-top: 1px solid var(--tavern-line); padding-top: 6px; }
+.tavern .qm-criteria { display: grid; gap: 4px; list-style: square; padding-left: 16px; }
+.tavern .qm-criteria .lg-clamp { padding: 0; font-size: inherit; }
+.tavern .qm-checks, .tavern .qm-never { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 8px; margin-top: 6px; font-size: 12px; }
+.tavern :is(.qm-checks, .qm-never) > b { display: inline-flex; align-items: center; gap: 4px; }
+.tavern .qm-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.tavern .qm-chips code { display: inline-block; border: 1px solid var(--tavern-line); background: var(--tavern-recessed); padding: 1px 5px; max-width: 100%; }
+.tavern .qm-checks > div { flex: 0 0 100%; min-width: 0; }
+.tavern .qm-checks pre { padding: 6px 8px; border: 1px solid var(--tavern-line); background: var(--tavern-recessed); white-space: pre-wrap; }
+.tavern .qm-qs ul { display: grid; gap: 5px; padding: 0; }
+.tavern .qm-qs li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 6px; align-items: start; font-size: 12px; }
+.tavern .qm-qs li > .tavern-glyph { margin-top: 2px; }
 .tavern .qm-qs .qn { display: grid; place-items: center; width: 16px; height: 16px; border: 1px solid var(--tavern-you); font-size: 11px; font-weight: 700; margin-top: 1px; }
 .tavern .qm-qs .qx { display: flex; flex-direction: column; min-width: 0; }
-.tavern .qm-qs .qx .m { font-size: 11px; }
-.tavern .qm-party ul { display: flex; flex-direction: column; gap: 3px; }
-.tavern .qm-party li { display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; }
-.tavern .qm-party .pn { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tavern .qm-party .pn:has(.qm-permanent) { white-space: normal; }
-.tavern .qm-party .qm-permanent { display: block; overflow-wrap: anywhere; }
-.tavern .qm-party .pw { font-size: 11px; white-space: nowrap; }
-.tavern .qm-party .pw::before { content: "waypoint "; }
+.tavern .qm-qs .qx .m { font-size: 12px; }
+.tavern :is(.qm-review, .qm-forecast) { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+.tavern :is(.qm-review, .qm-forecast) > b { flex: none; }
+.tavern .qm-forecast { flex: 1 1 260px; }
+.tavern .qm-party ul { display: flex; flex-wrap: wrap; gap: 4px; }
+.tavern .qm-party li { display: flex; align-items: center; gap: 5px; padding: 2px 5px; border: 1px solid var(--tavern-line); font-size: 12px; min-width: 0; max-width: 100%; }
+.tavern .qm-party .pn { min-width: 0; }
+.tavern .qm-party .qm-permanent { display: block; }
+.tavern .qm-party .pw { font-size: 12px; }
+.tavern .qm-party .pw::before { content: "· "; }
+.tavern .qm-route .qlist .qt .m { font-size: 12px; }
 /* The two moments play once, under the class the coordinator adds (moment.ts), and end within --tavern-dur-moment at five members. */
 .tavern.qmcard.mo-seal .qm-party li { animation: tavern-card .4s var(--tavern-ease) both; animation-delay: calc(200ms + min(var(--i), 6) * 100ms); }
 .tavern .qm-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 16px; font-size: 12px; color: var(--tavern-muted); }
@@ -279,7 +302,7 @@ html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--atten
 .tavern .qm-more .tavern-glyph:first-child { color: var(--tavern-wax); }
 .tavern .qm-fold .dots { display: flex; flex-direction: column; gap: 2px; padding-left: 14px; list-style: square; font-size: 12px; }
 .tavern .qm-f { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px -12px 0; padding: 8px 12px; border-top: 1px solid var(--tavern-line); background: var(--tavern-recessed); position: sticky; bottom: 0; z-index: 2; }
-.tavern .qm-scope { flex: 1 1 220px; font-size: 11px; }
+.tavern .qm-scope { flex: 1 1 140px; font-size: 12px; }
 .tavern .qm-old { padding-bottom: 10px; }
 .tavern .btn.seal { background: var(--tavern-wax); border-color: var(--tavern-wax); color: var(--primary-foreground); min-height: 32px; padding: 0 12px; }
 .tavern .btn.seal:hover:not(:disabled) { background: color-mix(in oklab, var(--tavern-wax) 86%, var(--foreground)); }
@@ -329,7 +352,13 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 @keyframes tavern-rise { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
 .tavern .tale-left { font-size: 12px; padding: 6px 8px; background: var(--tavern-you-fill); border-left: 3px solid var(--tavern-you); }
 .tavern .lc-note { font-size: 13px; }
-@container page (max-width: 560px) { .tavern .qm-cols { grid-template-columns: minmax(0, 1fr); } .tavern .roll li { grid-template-columns: auto minmax(0, 1fr); } .tavern .roll .rl-w { grid-column: 2; } }
+@container plan-card (width <= 534px) {
+  .tavern .qm-cols { grid-template-columns: minmax(0, 1fr); }
+  .tavern .qm-leaf:first-child { padding-right: 0; }
+  .tavern .qm-leaf + .qm-leaf { padding-left: 0; border-left: 0; border-top: 1px solid var(--tavern-line); }
+  .tavern.qmcard :is(.btn, .lnk-btn, .lg-clamp.act) { min-height: 44px; }
+}
+@container page (max-width: 560px) { .tavern .roll li { grid-template-columns: auto minmax(0, 1fr); } .tavern .roll .rl-w { grid-column: 2; } }
 
 /* Labels sit on a translucent card fill under a text halo, so a dashed road passing beneath reads as a shade behind the words, never a slice through them. */
 .tavern .map-label b, .tavern .map-label .o { background: color-mix(in oklab, var(--card) 84%, transparent); text-shadow: 0 0 2px var(--card), 0 0 2px var(--card), 0 0 3px var(--card); }
