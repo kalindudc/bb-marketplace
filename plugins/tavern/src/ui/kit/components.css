@@ -477,7 +477,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 /* ---- Ledger: what the Keeper knows now first, history folded ---- */
 .tavern.ledger { gap: 10px; }
 .tavern .lg-now-line { margin: 0 12px; font-size: 12px; color: var(--tavern-muted); }
-.tavern .lg-card { margin: 0 12px; padding: 8px 10px; border: 1px solid var(--tavern-line); background: var(--card); box-shadow: var(--tavern-elev-raised-shadow); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tavern .lg-card { --lg-card-inline-padding: 10px; margin: 0 12px; padding: 8px var(--lg-card-inline-padding); border: 1px solid var(--tavern-line); background: var(--card); box-shadow: var(--tavern-elev-raised-shadow); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .tavern .lg-card.lg-needs { box-shadow: inset 3px 0 0 var(--tavern-you), var(--tavern-elev-raised-shadow); }
 .tavern .lg-card h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
 .tavern .lg-card h3 .num { min-width: 0; white-space: normal; overflow-wrap: anywhere; margin-left: auto; color: var(--tavern-muted); font-weight: 400; }

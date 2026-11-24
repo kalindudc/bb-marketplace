@@ -877,6 +877,7 @@
 
 .tavern .lg-guards { padding-block: 0; }
 .tavern .lg-guards .fold-summary { font-size: 12px; }
+.tavern .lg-guards [data-fold="guardrails"] > .fold-summary { margin-inline: calc(-1 * var(--lg-card-inline-padding)); padding-inline: var(--lg-card-inline-padding); }
 .tavern .lg-guards [data-fold="guardrails"] > .fold-summary > span { display: flex; align-items: center; gap: 6px; font-weight: 700; }
 .tavern .lg-guards [data-fold="guardrails"][open] { padding-bottom: 8px; }
 .tavern .lg-guards .tv-guard-summary { margin-block: 4px 0; font-size: 12px; color: var(--tavern-muted); }
