@@ -60,12 +60,18 @@ export function toActionTarget(thread: PluginSidebarThread): PluginThreadActionT
     environment: environment?.id ? { id: environment.id, path: environment.path } : null };
 }
 
-function ProviderMark({ providerId }: { providerId: string }) {
+interface ProviderMarkProps {
+  providerId: string;
+  onPointerDown(event: PointerEvent<HTMLElement>): void;
+  onClick(event: MouseEvent<HTMLElement>): void;
+}
+
+function ProviderMark({ providerId, onPointerDown, onClick }: ProviderMarkProps) {
   const { providers } = experimental_useProviders();
   const provider = providers.find((entry) => entry.id === providerId);
   const label = provider?.displayName ?? providerId;
-  return <span role="img" aria-label={label} title={label}
-    className="switchboard-provider pointer-events-auto relative z-1 grid shrink-0 place-items-center text-subtle-foreground">
+  return <span role="img" aria-label={label} title={label} onPointerDown={onPointerDown} onClick={onClick}
+    className="switchboard-provider pointer-events-auto relative z-1 grid shrink-0 cursor-pointer place-items-center text-subtle-foreground">
     <ProviderIcon providerKind="agent" provider={provider ?? { id: providerId }} className="size-3" aria-hidden />
   </span>;
 }
@@ -89,7 +95,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
     split.splitProps.onPointerDown?.(event);
     if (variant === "tree") drag?.onRowPointerDown(event, thread.id);
   };
-  // A metadata item draws above the row link, so a click on it would otherwise not open the thread.
+  // A metadata item or provider icon draws above the row link, so a click on it would otherwise not open the thread.
   const forwardClick = (event: MouseEvent<HTMLElement>) => {
     event.stopPropagation();
     const { altKey, ctrlKey, metaKey, shiftKey, button } = event;
@@ -108,7 +114,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
   const emphasis = variant === "archived" ? "text-muted-foreground" :
     `${state === "failed" || state === "needs" || state === "unread" ? "font-semibold" : ""} ${state === "idle" ? "text-muted-foreground" : ""}`;
   const title = <>
-    {settings.showProviderIcons && <ProviderMark providerId={thread.providerId} />}
+    {settings.showProviderIcons && <ProviderMark providerId={thread.providerId} onPointerDown={onLinkPointerDown} onClick={forwardClick} />}
     <span className={`relative z-1 min-w-24 flex-1 truncate ${emphasis}`}>
       <ThreadTitle threadId={thread.id} />
     </span>

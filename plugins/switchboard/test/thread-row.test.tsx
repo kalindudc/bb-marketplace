@@ -231,17 +231,27 @@ describe("thread row", () => {
     shelf.slot.unmount();
   });
 
-  it("draws the agent provider icon before the title only when provider icons are on", () => {
+  it("draws the agent provider icon before the title only when provider icons are on, and hands presses on it to the row", () => {
     const providers = { status: "ready", providers: [{ id: "pi", displayName: "Pi" }] };
     const off = mount({}, { providers });
     expect(off.slot.container.querySelector("[data-provider-id]")).toBeNull();
     off.slot.unmount();
-    const on = mount({ settings: { ...DEFAULT_SETTINGS, showProviderIcons: true } }, { providers });
+    const drag = { onRowPointerDown: vi.fn(), consumeClick: vi.fn(() => false) };
+    const onSelect = vi.fn();
+    const on = mount({ drag, onSelect, settings: { ...DEFAULT_SETTINGS, showProviderIcons: true } }, { providers });
     const icon = on.slot.container.querySelector(".switchboard-row-line [data-provider-id='pi']");
     expect(icon?.getAttribute("data-provider-kind")).toBe("agent");
-    expect(screen.getByRole("img", { name: "Pi" })).toBeTruthy();
-    expect(icon?.closest(".switchboard-provider")?.classList.contains("pointer-events-auto")).toBe(true);
-    expect(icon?.closest(".switchboard-provider")?.nextElementSibling?.textContent).toBe("A thread");
+    const mark = screen.getByRole("img", { name: "Pi" });
+    expect(icon?.closest(".switchboard-provider")).toBe(mark);
+    expect(mark.nextElementSibling?.textContent).toBe("A thread");
+    screen.getByRole("link", { name: "A thread" }).addEventListener("click", (event) => event.preventDefault());
+    fireEvent.pointerDown(mark, { pointerType: "mouse", button: 0 });
+    expect(drag.onRowPointerDown).toHaveBeenCalledWith(expect.anything(), "t");
+    fireEvent.click(mark);
+    expect(on.onNavigate).toHaveBeenCalledOnce();
+    fireEvent.click(mark, { altKey: true });
+    expect(onSelect).toHaveBeenCalledWith("t", "toggle");
+    expect(on.onNavigate).toHaveBeenCalledOnce();
     on.slot.unmount();
     const twoLine = mount({ settings: { ...DEFAULT_SETTINGS, showProviderIcons: true, density: "two-line" } }, { providers });
     expect(twoLine.slot.container.querySelector(".switchboard-two-line-title [data-provider-id='pi']")).toBeTruthy();
