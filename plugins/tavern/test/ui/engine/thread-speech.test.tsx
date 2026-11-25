@@ -42,13 +42,14 @@ afterEach(() => {
 });
 
 const signals = { archived: false, released: false, handBack: false, report: null, verdict: null };
+const shortQuest = { ...fixtureBoard, short: "Stone Gate" };
 const says = { working: ["Lantern high.", "Good footing."], verified: ["{checker} set a seal for {waypoint} in {quest}."], wrap: ["{quest} ends by the hearth."], greet: ["The lantern is ready."], reported: ["Road clear."] };
 
 async function widget(patch: Partial<ThreadDecor> = {}, activeThread = "keeper-1") {
   let data: ThreadDecor = {
     ...fixtureDecor,
     member: { ...fixtureMember, role: "member", state: "working", waypointId: "w1" },
-    keeperView: null, boardQuest: fixtureBoard, voice: "full", moodSignals: signals, ...patch,
+    keeperView: null, boardQuest: shortQuest, voice: "full", moodSignals: signals, ...patch,
   };
   const registry = { ...fixtureRegistry, characters: [{ ...fixtureRegistry.characters[0]!, says }] };
   const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { context: { projectId: "project", threadId: activeThread }, rpc: { decor: () => data, registry: () => registry } });
@@ -137,7 +138,7 @@ describe("thread strip speech", () => {
     await tick(999);
     expect(w.speech()).toBeNull();
     await tick(1);
-    expect(w.speech()).toBe("Vex set a seal for Stone Bridge in Vault cutover.");
+    expect(w.speech()).toBe("Vex set a seal for Stone Bridge in Stone Gate.");
     await tick(BUBBLE_MS);
     expect(w.speech()).toBeNull();
   });
@@ -345,12 +346,12 @@ describe("thread strip speech", () => {
     await tick(1_000);
     expect(w.speech()).toBeNull();
     w.click();
-    expect(w.speech()).toBe("Vex set a seal for Stone Bridge in Vault cutover.");
+    expect(w.speech()).toBe("Vex set a seal for Stone Bridge in Stone Gate.");
     reading.unmount();
     await tick(BUBBLE_MS);
-    await w.update({ boardQuest: { ...fixtureBoard, phase: "done", endedAt: Date.now() } });
+    await w.update({ boardQuest: { ...shortQuest, phase: "done", endedAt: Date.now() } });
     await tick(1);
-    expect(w.speech()).toBe("Vault cutover ends by the hearth.");
+    expect(w.speech()).toBe("Stone Gate ends by the hearth.");
     mountReading();
     await act(async () => {});
     expect(w.speech()).toBeNull();
@@ -368,9 +369,9 @@ describe("thread strip speech", () => {
     await tick(1_000);
     expect(w.speech()).toBeNull();
     await tick(60_000 - (Date.now() - now));
-    await w.update({ boardQuest: { ...fixtureBoard, phase: "done", endedAt: Date.now() } });
+    await w.update({ boardQuest: { ...shortQuest, phase: "done", endedAt: Date.now() } });
     await tick(1);
-    expect(w.speech()).toBe("Vault cutover ends by the hearth.");
+    expect(w.speech()).toBe("Stone Gate ends by the hearth.");
   });
 
   it("allows light to speak on click and wrap, not on arrival or a report", async () => {
@@ -388,8 +389,8 @@ describe("thread strip speech", () => {
     expect(w.actor()?.dataset.mood).toBe("reported");
     expect(w.speech()).toBeNull();
     await tick(60_000);
-    await w.update({ boardQuest: { ...fixtureBoard, phase: "done", endedAt: Date.now() } });
+    await w.update({ boardQuest: { ...shortQuest, phase: "done", endedAt: Date.now() } });
     await tick(1);
-    expect(w.speech()).toBe("Vault cutover ends by the hearth.");
+    expect(w.speech()).toBe("Stone Gate ends by the hearth.");
   });
 });

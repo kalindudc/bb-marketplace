@@ -13,7 +13,7 @@ type Stamp = { revision: string; at: number };
 type Commit = Stamp & { from: string | null; to: string; version?: number | null };
 type Input = {
   member: Pick<Member, "classId" | "role" | "state" | "engagement">;
-  quest?: (Pick<BoardQuest, "id" | "phase" | "planVersion" | "greenlitVersion" | "archivedAt" | "deletedAt" | "held"> & { title?: string }) | null;
+  quest?: (Pick<BoardQuest, "id" | "phase" | "planVersion" | "greenlitVersion" | "archivedAt" | "deletedAt" | "held"> & Partial<Pick<BoardQuest, "short" | "title">>) | null;
   waypointId?: string | null;
   waypoints?: readonly RoadWaypoint[];
   route?: Pick<Route, "kind" | "boardQuestId"> & { boardQuestIds: readonly string[] } | null;
@@ -105,7 +105,8 @@ function stripRoad(scene: StripScene, input: Input): StripRoad | undefined {
     return id;
   };
   const status = posture === "held" || current?.state === "blocked" || current?.state === "rejected" ? "held" : "active";
-  const road = (id: string): StripRoad => ({ key, ...(quest?.title === undefined ? {} : { title: quest.title }), current: id, places });
+  const questName = quest?.short || quest?.title;
+  const road = (id: string): StripRoad => ({ key, ...(questName === undefined ? {} : { title: questName }), current: id, places });
   if (stage === "plan") return road(add("plan", "plan", status));
 
   if (quest?.greenlitVersion != null) add("plan", "plan", "done");

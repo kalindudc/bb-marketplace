@@ -118,7 +118,7 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
     quest?.phase === "done" && quest.endedAt != null && (!latest || quest.endedAt > latest.endedAt!) ? quest : latest, null);
   const verdict = mood === "verified" ? data.moodSignals?.verdict : null;
   const facts: LineFacts = {
-    quest: data.boardQuest?.title ?? member.title,
+    quest: data.boardQuest?.short || data.boardQuest?.title || member.title,
     waypoint: verdict?.waypointTitle ?? data.moodSignals?.waypointTitle,
     checker: verdict?.checkerName,
   };
@@ -163,7 +163,7 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
       if (!scheduled || scheduled.at > now) return;
       const decision = speechDecision({ ...input, now, click, typing: holds.typing, held: held || holds.held,
         stuckInView: document.hidden || stuckInView(), ...(click ? {} : reading()) });
-      const lineFacts = decision?.slot === "wrap" ? { ...facts, quest: wrapped?.title } : facts;
+      const lineFacts = decision?.slot === "wrap" ? { ...facts, quest: wrapped?.short || wrapped?.title } : facts;
       const ambient = scheduled.kind === "ambient" && mayWatch && workbench?.posture === "clear";
       const choices = decision ? character.says?.[decision.slot] : undefined;
       const text = decision && (pickLine(choices, decision.key, last?.text ?? null, lineFacts)

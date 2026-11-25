@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PartyStrip } from "../../../src/ui/engine/strip";
 import type { StripRoad } from "../../../src/shared/strip-scene";
+import { stripScene } from "../../../src/server/strip-scene";
 import * as engine from "../../../src/ui/engine/scheduler";
 import * as sprites from "../../../src/ui/engine/sprites";
 import { Actor } from "../../../src/ui/engine/actor";
@@ -109,6 +110,26 @@ it("opens place details and closes them on Escape, outside press and timeout", (
     expect(screen.queryByRole("tooltip")).toBeNull();
     view.unmount();
   } finally { vi.useRealTimers(); }
+});
+
+it("uses the short quest name in both the road tooltip and the button label", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(390);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  const title = "Restore the lanterns, check every hinge and polish each lamp along the village road";
+  const short = "Village lanterns";
+  const { road } = stripScene({
+    member: { role: "member", classId: "smith", state: "working", engagement: "active" },
+    quest: { id: "fixture", phase: "build", planVersion: 1, greenlitVersion: 1, archivedAt: null, title, short },
+    assignment: { revision: "brief", at: 1 }, assigned: true, waypointId: "w1",
+    waypoints: [{ id: "w1", title: "Fit the hinges", kind: "make", state: "doing" }],
+  });
+  render(<PartyStrip {...wanderer} road={road} />);
+  const forge = screen.getByRole("button", { name: /the forge/i });
+  fireEvent.click(forge);
+  expect(screen.getByRole("tooltip").textContent).toContain(`(quest: ${short})`);
+  expect(forge.getAttribute("aria-label")).toContain(`(quest: ${short})`);
+  expect(screen.getByRole("tooltip").textContent).not.toContain(title);
+  expect(forge.getAttribute("aria-label")).not.toContain(title);
 });
 
 it("anchors upward details above both the character and the held ask", () => {
