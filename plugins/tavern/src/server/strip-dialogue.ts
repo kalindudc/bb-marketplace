@@ -41,7 +41,7 @@ export class DialogueWatches {
   private readonly seats = new Map<string, Watch>();
   constructor(private read: (seat: string) => { scene: StripScene; voice: VoiceMode } | null,
     private reserve: (seat: string, at: number | null, now: number) => boolean,
-    private complete: (scene: SpeechContext, signal: AbortSignal, reserve: () => boolean) => Promise<string | null>,
+    private complete: (scene: SpeechContext, signal: AbortSignal, reserve: () => boolean, current: () => boolean) => Promise<string | null>,
     private now = Date.now,
     private watching: (active: boolean) => void = () => {}) {}
 
@@ -118,8 +118,8 @@ export class DialogueWatches {
     const flight = watch.flight = { controller: new AbortController(), panes };
     const signal = flight.controller.signal;
     try {
-      const text = await this.complete({ role: scene.role, stage: scene.stage, moment: kind ?? scene.moment }, signal, () =>
-        !signal.aborted && current() && this.reserve(seat, kind ? null : scene.at, this.now()));
+      const text = await this.complete({ threadId: seat, role: scene.role, stage: scene.stage, moment: kind ?? scene.moment }, signal, () =>
+        !signal.aborted && current() && this.reserve(seat, kind ? null : scene.at, this.now()), current);
       if (text && !signal.aborted && current()) {
         for (const [pane, request] of panes) pane({ revision: scene.revision, text, ...(request ? { request } : {}) });
       }

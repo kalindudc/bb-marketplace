@@ -4,7 +4,7 @@ import { createFakePluginHost, makeThreadResponse } from "./host";
 
 function host() {
   const accepted = vi.fn(async () => makeThreadResponse({ id: "child" }));
-  const sdk = { threads: { spawn: accepted, send: vi.fn(async () => ({ delivery: "sent" })), get: vi.fn(async () => makeThreadResponse()), storageLocation: vi.fn(async () => ({ hostId: "host", storageRootPath: "/tmp/thread" })), getPluginMetadata: accepted, updatePluginMetadata: accepted, events: { list: accepted }, queuedMessages: { delete: accepted } }, environments: { get: accepted, listProviders: accepted }, providers: { models: accepted }, projects: { list: accepted }, plugins: { callRpc: accepted }, files: { write: accepted } };
+  const sdk = { threads: { conversationOutline: vi.fn(async () => ({ items: [], maxSeq: 0 })), spawn: accepted, send: vi.fn(async () => ({ delivery: "sent" })), get: vi.fn(async () => makeThreadResponse()), storageLocation: vi.fn(async () => ({ hostId: "host", storageRootPath: "/tmp/thread" })), getPluginMetadata: accepted, updatePluginMetadata: accepted, events: { list: accepted }, queuedMessages: { delete: accepted } }, environments: { get: accepted, listProviders: accepted }, providers: { models: accepted }, projects: { list: accepted }, plugins: { callRpc: accepted }, files: { write: accepted } };
   return { ...createFakePluginHost({ pluginId: "tavern", sdk }), accepted };
 }
 const spawn = { projectId: "project", environment: { type: "project-default" }, input: [{ type: "text", text: "The task", mentions: [] }] };
@@ -20,6 +20,9 @@ const invalid: [string, unknown][] = [
   ["threads.updatePluginMetadata", { threadId: "child", set: { progress: Infinity } }],
   ["threads.getPluginMetadata", { threadId: "child", pluginId: "NOT_A_PLUGIN" }],
   ["threads.events.list", { threadId: "child", limit: "101" }],
+  ["threads.conversationOutline", { threadId: "" }],
+  ["threads.conversationOutline", { threadId: "child", signal: {} }],
+  ["threads.conversationOutline", { threadId: "child", role: "tool" }],
   ["threads.queuedMessages.delete", { threadId: "child" }],
   ["environments.get", {}],
   ["projects.list", { includePersonal: "true" }],
@@ -56,6 +59,12 @@ describe("SDK request boundaries in the shared host", () => {
     expect(handler).not.toHaveBeenCalled();
     await f.bb.sdk.threads.spawn(spawn as never);
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+  it("accepts an outline request for one thread with a deadline signal", async () => {
+    const f = host();
+    const request = { threadId: "child", signal: new AbortController().signal };
+    await expect(f.bb.sdk.threads.conversationOutline(request)).resolves.toEqual({ items: [], maxSeq: 0 });
+    expect(f.harness.inspection.sdk.callsTo("threads.conversationOutline")).toHaveLength(1);
   });
   it("keeps mock inspection and call recording intact for valid requests", async () => {
     const f = host(), spy = vi.spyOn(f.bb.sdk.threads, "spawn");

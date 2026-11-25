@@ -1,4 +1,4 @@
-import { KNOB_FIELDS, SPEECH_GAP } from "../../shared/settings";
+import { KNOB_FIELDS, SPEECH_GAP, SPEECH_RECENT_MESSAGES } from "../../shared/settings";
 import { knobLabel } from "./insights";
 
 const LABELS: Record<string, string> = {
@@ -6,7 +6,7 @@ const LABELS: Record<string, string> = {
   "tavern.ambientMotion": "Ambient motion", "tavern.repeatSeconds": "Repeat every", "tavern.agentsMayChangeSettings": "Agents may change settings", "tavern.paused": "Pause every Keeper", "tavern.defaultClass": "New threads start as", "tavern.voice": "Speech bubbles", "tavern.widgetRow": "Widget row", "tavern.batchWakeEvents": "Batch wake events", "tavern.levels": "Levels and crest notches", "tavern.characters": "Show characters", "tavern.hearthFlicker": "Hearth flicker while work runs",
   "tavern.lanternLight": "Lantern light", "tavern.lanternStrength": "Strength", "tavern.lanternLightBb": "Light bb's surfaces",
   "tavern.contextualSpeech": "Contextual speech", "tavern.piProgram": "Pi program", "tavern.speechModel": "Speech model", "tavern.speechReasoning": "Speech thinking",
-  "tavern.speechGapMinutes": SPEECH_GAP.label, "tavern.speechExtensions": "Extensions for speech", "tavern.speechInstructions": "Speech instructions",
+  "tavern.speechGapMinutes": SPEECH_GAP.label, "tavern.speechRecentMessages": SPEECH_RECENT_MESSAGES.label, "tavern.speechExtensions": "Extensions for speech", "tavern.speechInstructions": "Speech instructions",
   "tavern.characterQuietUntil": "Character quiet", "tavern.voiceBeforeOff": "Previous speech level",
   "attention.reviewBudget": "Review budget", "attention.notify": "Push to your devices", "attention.quietHours": "Quiet hours",
   "keepers.restMinutes": "Rest before reminder", "keepers.greenlight": "Greenlight", "keepers.decisionTimerMax": "Longest decision timer", "keepers.partyMax": "Party ceiling", "keepers.chainDepth": "Lead chain depth", "keepers.chainMembers": "Lead chain ceiling", "keepers.staleStrikes": "Strikes before release advice", "keepers.restatementBytes": "Keeper restatement limit", "keepers.tickFactChars": "Tick facts limit",

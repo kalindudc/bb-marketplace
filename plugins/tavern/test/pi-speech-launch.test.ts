@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { PiSpeech } from "../src/server/pi-speech";
+import { speechSystemPrompt } from "../src/server/pi-speech-prompt";
 import { DEFAULT_SETTINGS } from "../src/shared/settings";
 
 const cleanup: (() => Promise<void>)[] = [];
@@ -49,15 +50,15 @@ if (mode === 'silent' && args.includes('--version')) {
 `, { mode: 0o700 });
     return file;
   };
-  const settings = { ...DEFAULT_SETTINGS.tavern, contextualSpeech: true, piProgram: pi("pi") };
+  const settings = { ...DEFAULT_SETTINGS.tavern, contextualSpeech: true, speechRecentMessages: 0, piProgram: pi("pi") };
   const invalidate = vi.fn();
   const bb = { sdk: { providers: { models: async () => ({ models: [{ model: settings.speechModel }] }) } },
     rpc: { experimental_invalidate: invalidate } } as unknown as BbPluginApi;
-  const voice = new PiSpeech(bb, data);
+  const voice = new PiSpeech(bb, data, () => ({ working: true, waiting: false }));
   cleanup.push(async () => { await voice.dispose(); rmSync(root, { recursive: true, force: true }); });
   const calls = (): { file: string; args: string[]; cwd: string; agentDir: string }[] =>
     readFileSync(launches, "utf8").trim().split("\n").map(line => JSON.parse(line));
-  const scene = { role: "keeper", stage: "work", moment: "click" } as const;
+  const scene = { threadId: "fixture-keeper", role: "keeper", stage: "work", moment: "click" } as const;
   const say = (config = settings, signal = new AbortController().signal, reserve = () => true) => voice.complete(scene, config, signal, reserve);
   voice.setWatching(true);
   return { voice, root, data, normal, settings, invalidate, say, calls, pi };
@@ -90,7 +91,7 @@ it("on refusal links only auth and models and disables only Pi's built-in extens
   expect(worker).toMatchObject({ file: settings.piProgram, cwd: data });
   expect(worker!.args).not.toContain("--no-extensions");
   expect(worker!.args).toEqual(["--mode", "rpc", "--no-session", "--no-tools", "--no-mcp", "--no-skills", "--no-context-files",
-    "--no-prompt-templates", "--offline", "--system-prompt", settings.speechInstructions, "--model", settings.speechModel,
+    "--no-prompt-templates", "--offline", "--system-prompt", speechSystemPrompt(settings.speechInstructions), "--model", settings.speechModel,
     "--thinking", "low", "-e", extension]);
   expect(worker!.agentDir.startsWith(data + "/")).toBe(true);
   expect(readdirSync(worker!.agentDir).sort()).toEqual(["auth.json", "models.json", "settings.json"]);

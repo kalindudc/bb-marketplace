@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { parse } from "smol-toml";
 import { z } from "zod";
-import { settingsSchema, settingsPatchSchema, sparseTunablesSchema, SPEECH_LAUNCH_KEYS, TUNABLES, type SettingsSnapshot, type SettingsPatch, type SparseTunables,
+import { settingsSchema, settingsPatchSchema, sparseTunablesSchema, USER_ONLY_SPEECH_KEYS, TUNABLES, type SettingsSnapshot, type SettingsPatch, type SparseTunables,
   type SettingsChange } from "../../shared/settings";
 import { displayChanges } from "./store";
 import { LIMITS } from "../limits";
@@ -109,7 +109,7 @@ export function previewToml(source: string, snapshot: Pick<SettingsSnapshot, "us
   const pinned = validate(sparseTunablesSchema, pins, ["tuning", "pinned"]);
   const machine = hasTuned ? validate(sparseTunablesSchema, tuned, ["tuned"]) : undefined;
   if (problems.length || user === undefined || pinned === undefined) return { ...empty, problems };
-  for (const key of SPEECH_LAUNCH_KEYS) {
+  for (const key of USER_ONLY_SPEECH_KEYS) {
     const previous = snapshot.user.tavern?.[key], incoming = user.tavern?.[key];
     if (incoming !== undefined && !isDeepStrictEqual(incoming, previous)) {
       const path = ["tavern", snake(key)];

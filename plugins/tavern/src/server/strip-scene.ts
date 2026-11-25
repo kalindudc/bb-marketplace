@@ -6,6 +6,7 @@ import { askMemberTarget } from "./ask-effects";
 import { askNeedsUser } from "./attention";
 import type { Keeper } from "./keeper/service";
 import type { KeeperStore, Runtime } from "./keeper/store";
+import type { SpeechFacts } from "./pi-speech-prompt";
 import { memberHost } from "./member-engagement";
 
 type Stamp = { revision: string; at: number };
@@ -84,6 +85,10 @@ function roadWaypoints(plan: Plan, entries: readonly JournalEntry[]): RoadWaypoi
   });
 }
 
+function currentRoadWaypoint(waypoints: readonly RoadWaypoint[]) {
+  return waypoints.find(w => ["doing", "reported", "rejected", "blocked"].includes(w.state));
+}
+
 function stripRoad(scene: StripScene, input: Input): StripRoad | undefined {
   const { quest, waypointId, waypoints = [], assignment } = input;
   const { role, stage, moment, posture } = scene;
@@ -91,7 +96,7 @@ function stripRoad(scene: StripScene, input: Input): StripRoad | undefined {
 
   const assigned = waypoints.find(w => w.id === waypointId);
   const current = role === "keeper" && stage === "work"
-    ? waypoints.find(w => ["doing", "reported", "rejected", "blocked"].includes(w.state))
+    ? currentRoadWaypoint(waypoints)
     : assigned;
   const key = quest?.id ?? assignment?.revision ?? role;
   const places: RoadPlace[] = [];
@@ -137,6 +142,24 @@ type SceneFacts = {
   lastReport?: Report; verdict: ReturnType<typeof waypointMoodVerdict>; held: boolean; archived: boolean;
 };
 
+function stripQuest(store: KeeperStore, member: Member, thread: Runtime, boardQuest: BoardQuest | null) {
+  const { threadId } = member;
+  const route = member.role === "keeper" && thread.lastRouteId && !thread.pending.length ? store.get("routes", thread.lastRouteId) : null;
+  const routedQuest = route?.keeperThreadId === threadId && route.boardQuestId && route.boardQuestIds.length <= 1 && (route.kind === "steer" || route.kind === "new-quest") ? store.get("quests", route.boardQuestId) : null;
+  return { quest: routedQuest?.keeperThreadId === threadId ? routedQuest : boardQuest, route };
+}
+
+export function readSpeechFacts(keeper: Keeper, member: Member, stage: StripScene["stage"]): SpeechFacts {
+  const { store } = keeper;
+  const boardQuest = member.boardQuestId ? store.get("quests", member.boardQuestId) : null;
+  const { quest } = stripQuest(store, member, store.runtime(member.threadId), boardQuest);
+  const plan = quest ? store.get("plans", `${quest.id}:${quest.planVersion}`) : null;
+  const waypointId = member.checkerWaypointId ?? member.waypointId;
+  const waypoint = plan && (member.role !== "keeper" ? plan.waypoints.find(w => w.id === waypointId)
+    : stage === "work" || stage === "review" ? currentRoadWaypoint(roadWaypoints(plan, keeper.journal.linkedEntries(plan.boardQuestId))) : undefined);
+  return { questTitle: quest?.title, waypointTitle: waypoint?.title, working: member.state === "working", waiting: member.state === "waiting" };
+}
+
 export function readStripScene(keeper: Keeper, member: Member, known?: SceneFacts): StripScene {
   const { store } = keeper;
   const { threadId, boardQuestId } = member;
@@ -146,9 +169,7 @@ export function readStripScene(keeper: Keeper, member: Member, known?: SceneFact
   const entries = known?.entries ?? (boardQuest ? keeper.journal.linkedEntries(boardQuest.id) : []);
   const lastReport = known ? known.lastReport : store.query("reports", "memberThreadId", threadId, 1)[0];
   const verdict = known ? known.verdict : waypointMoodVerdict(member, entries);
-  const route = member.role === "keeper" && thread.lastRouteId && !thread.pending.length ? store.get("routes", thread.lastRouteId) : null;
-  const routedQuest = route?.keeperThreadId === threadId && route.boardQuestId && route.boardQuestIds.length <= 1 && (route.kind === "steer" || route.kind === "new-quest") ? store.get("quests", route.boardQuestId) : null;
-  const quest = routedQuest?.keeperThreadId === threadId ? routedQuest : boardQuest;
+  const { quest, route } = stripQuest(store, member, thread, boardQuest);
   const waypoint = member.checkerWaypointId ?? member.waypointId;
   const assigned = !!waypoint && !!plan?.waypoints.some(w => w.id === waypoint);
   const sceneVerdict = member.classId === "warden" && boardQuest && assigned && waypoint && plan

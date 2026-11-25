@@ -7,11 +7,12 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { TavernSettings } from "../shared/settings";
 import { SPEECH_REPLY_MS, validateDialogue, type SpeechContext } from "../shared/strip-scene";
 import { PiSpeechExtensionError, PiSpeechRpc, PiSpeechStartupError } from "./pi-speech-rpc";
+import { speechPrompt, speechSystemPrompt, type SpeechFacts } from "./pi-speech-prompt";
 
 type Settings = TavernSettings["tavern"];
 type Remark = {
   scene: SpeechContext; settings: Settings; signal: AbortSignal; deadline: number;
-  reserve: () => boolean; resolve: (text: string | null) => void;
+  reserve: () => boolean; current: () => boolean; resolve: (text: string | null) => void;
 };
 const UNAVAILABLE = "Pi is not executable at that path. Choose an absolute path to Pi or clear the setting to use PATH.";
 const MISSING = "Pi was not found on PATH. Install Pi or enter its absolute path.";
@@ -21,7 +22,7 @@ const EXITED = "Pi stopped unexpectedly. Tavern will try again on a later remark
 const EXTENSION_MISSING = "Tavern could not find a speech extension. Check the paths in Extensions for speech.";
 const INSTRUCTIONS_PATH = "Enter text rather than a file path in Speech instructions.";
 const EXTENSION_FAILED = "Pi could not load a speech extension. Check the entries in Extensions for speech.";
-const key = (s: Settings) => JSON.stringify([s.piProgram, s.speechModel, s.speechReasoning, s.speechExtensions, s.speechInstructions]);
+const key = (s: Settings) => JSON.stringify([s.piProgram, s.speechModel, s.speechReasoning, s.speechExtensions, s.speechInstructions, s.speechRecentMessages]);
 const IDLE_MS = 600_000;
 const RETRY_MS = 2_000;
 const QUEUE_LIMIT = 2;
@@ -63,13 +64,9 @@ function probeExtensions(file: string, cwd: string, agentDir: string, signal: Ab
 function speechArgs({ speechModel, speechReasoning, speechExtensions, speechInstructions }: Settings, isolated: boolean) {
   return ["--mode", "rpc", "--no-session", "--no-tools", "--no-mcp", "--no-skills", "--no-context-files", "--no-prompt-templates",
     ...(isolated ? [] : ["--no-extensions"]), "--offline",
-    "--system-prompt", speechInstructions,
+    "--system-prompt", speechSystemPrompt(speechInstructions),
     "--model", speechModel, "--thinking", !speechReasoning || speechReasoning === "none" ? "off" : speechReasoning,
     ...speechExtensions.flatMap(path => ["-e", path])];
-}
-
-function speechPrompt({ role, stage, moment }: SpeechContext) {
-  return `One cozy medieval remark in five simple words, then a period. Letters and single spaces only. No claims, names, commands or titles. Role: ${role}; stage: ${stage}; change: ${moment}.`;
 }
 
 export class PiSpeech {
@@ -87,7 +84,7 @@ export class PiSpeech {
   private interrupt?: AbortController;
   private queue: Remark[] = [];
 
-  constructor(private readonly bb: BbPluginApi, private readonly cwd: string) {}
+  constructor(private readonly bb: BbPluginApi, private readonly cwd: string, private readonly facts: (scene: SpeechContext) => SpeechFacts | null) {}
 
   problem(settings: Settings): string | null {
     if ((settings.contextualSpeech || settings.piProgram) && !piFile(settings.piProgram)) return settings.piProgram ? UNAVAILABLE : MISSING;
@@ -120,7 +117,7 @@ export class PiSpeech {
     }
   }
 
-  complete(scene: SpeechContext, settings: Settings, signal: AbortSignal, reserve: () => boolean): Promise<string | null> {
+  complete(scene: SpeechContext, settings: Settings, signal: AbortSignal, reserve: () => boolean, current = () => true): Promise<string | null> {
     if (!settings.contextualSpeech || !this.watching || this.disposed || signal.aborted) return Promise.resolve(null);
     const now = Date.now();
     this.queue = this.queue.filter(job => {
@@ -130,7 +127,7 @@ export class PiSpeech {
     });
     if (this.queue.length >= QUEUE_LIMIT) return Promise.resolve(null);
     return new Promise(resolve => {
-      this.queue.push({ scene, settings, signal, reserve, deadline: now + SPEECH_REPLY_MS, resolve });
+      this.queue.push({ scene, settings, signal, reserve, current, deadline: now + SPEECH_REPLY_MS, resolve });
       this.pump();
     });
   }
@@ -184,7 +181,7 @@ export class PiSpeech {
   }
 
   private async run(job: Remark, stop: AbortSignal): Promise<string | null> {
-    const { scene, settings, reserve } = job;
+    const { scene, settings, reserve, current } = job;
     const remaining = job.deadline - Date.now(), configuration = key(settings);
     if (remaining <= 0 || job.signal.aborted || !this.watching) return null;
     if (this.configuration !== configuration) {
@@ -229,7 +226,13 @@ export class PiSpeech {
       await worker.reset(signal);
       signal.throwIfAborted();
       if (!this.watching || !reserve()) return null;
-      const text = await worker.reply(speechPrompt(scene), signal);
+      const facts = this.facts(scene);
+      if (!facts) return null;
+      const count = settings.speechRecentMessages;
+      const messages = count === 0 ? [] : (await this.bb.sdk.threads.conversationOutline({ threadId: scene.threadId, signal })).items.slice(-count);
+      signal.throwIfAborted();
+      if (!this.watching || !current()) return null;
+      const text = await worker.reply(speechPrompt(scene, facts, messages), signal);
       signal.throwIfAborted();
       this.report(settings, null);
       return validateDialogue(text);

@@ -30,6 +30,17 @@ describe("contextual strip dialogue", () => {
     for (const text of [null, "A path. A second path.", "I merged the patch.", "Try https://example.test", "Okay\nNow", "**The path!**", "I verified the work.", "A B C D E F G H I J K.", "A".repeat(57) + "."]) expect(validateDialogue(text)).toBeNull();
   });
 
+  it.each([
+    "The task is done.", "The job is finished.", "The quest is closed.", "The work has ended.",
+    "The task is complete.", "The issue was resolved.", "The change landed.", "The update was released.",
+    "Like a ledger closed, the quest is done.",
+    "The quest is closed, and the ledger still warm.",
+    "The quest is ended, and the switchboard rests too.",
+    "The quest is done, and ale flows sweeter for it.",
+  ])("rejects a completion claim: %s", text => {
+    expect(validateDialogue(text)).toBeNull();
+  });
+
   it("only sends a fresh commit to the same seat's already-watching panes", async () => {
     const baseline = { ...scene, revision: "first", at: 10 };
     const commit = { ...scene, revision: "next", at: 201 };
@@ -148,7 +159,7 @@ describe("contextual strip dialogue", () => {
       await pane.receive(request("ambient"));
       await vi.waitFor(() => expect(pane.sent).toHaveLength(2));
       expect(JSON.parse(String(pane.sent[1]))).toMatchObject({ request: { kind: "ambient", at: ambientAt }, text: "The anvil awaits." });
-      expect(complete.mock.lastCall?.[0]).toEqual({ role: "smith", stage: "work", moment: "ambient" });
+      expect(complete.mock.lastCall?.[0]).toEqual({ threadId: "maker", role: "smith", stage: "work", moment: "ambient" });
       await pane.receive(request("ambient", ambientAt + 1));
       expect(new SpeechAttempts(f.k.store).used(f.time())).toBe(2);
       expect(pane.sent).toHaveLength(2);
@@ -163,7 +174,7 @@ describe("contextual strip dialogue", () => {
       await otherPane.receive(request("click", 2));
       await pane.receive(request("click", 3));
       expect(complete).toHaveBeenCalledTimes(3);
-      expect(complete.mock.lastCall?.[0]).toEqual({ role: "smith", stage: "work", moment: "click" });
+      expect(complete.mock.lastCall?.[0]).toEqual({ threadId: "maker", role: "smith", stage: "work", moment: "click" });
       finish(reply);
       await clicked;
       await vi.waitFor(() => expect(otherPane.sent).toHaveLength(1));

@@ -61,6 +61,8 @@ it("filters across sections by label, help and setting key without saving a sear
  expect(s.getByRole("textbox", { name: "Extensions for speech" }).closest("[hidden]")).toBeNull();
  filter("Speech instructions");
  expect(s.getByRole("textbox", { name: "Speech instructions" }).closest("[hidden]")).toBeNull();
+ filter("Recent messages pi reads");
+ expect(s.getByRole("spinbutton", { name: "Recent messages pi reads" }).closest("[hidden]")).toBeNull();
  filter("no-such-setting");
  expect(s.getByText("No settings match")).toBeTruthy();
  expect(results.querySelectorAll(".tv-settings-group:not([hidden])")).toHaveLength(0);
@@ -87,6 +89,11 @@ it("edits contextual speech using ordinary Atmosphere settings and displays toda
  expect(cadence).toHaveProperty("min", "1");
  expect(cadence).toHaveProperty("max", "120");
  expect(s.queryByRole("spinbutton", { name: /attempts per/ })).toBeNull();
+ const recent = s.getByRole("spinbutton", { name: "Recent messages pi reads" });
+ expect(recent).toHaveProperty("value", "3");
+ expect(recent).toHaveProperty("min", "0");
+ expect(recent).toHaveProperty("max", "10");
+ expect(s.getByText(/Pi reads the quest and step titles and the last N messages/)).toBeTruthy();
  fireEvent.click(toggle);
  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ patch: { tavern: { contextualSpeech: true } } })));
 });

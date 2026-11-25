@@ -33,7 +33,7 @@ export type StripScene = z.infer<typeof stripSceneSchema>;
 export const SPEECH_REPLY_MS = 10_000;
 export const dialogueRequestSchema = z.object({ kind: z.enum(["click", "ambient"]), at: z.number().int().nonnegative() }).strict();
 export type DialogueRequest = z.infer<typeof dialogueRequestSchema>;
-export type SpeechContext = Pick<StripScene, "role" | "stage"> & { moment: StripScene["moment"] | DialogueRequest["kind"] };
+export type SpeechContext = Pick<StripScene, "role" | "stage"> & { threadId: string; moment: StripScene["moment"] | DialogueRequest["kind"] };
 
 export function dialogueSlot(scene: StripScene | undefined, voice: VoiceMode): SpeechKey | null {
   if (!scene || scene.posture !== "clear" || scene.at === null || voice === "off") return null;
@@ -44,6 +44,6 @@ export function dialogueSlot(scene: StripScene | undefined, voice: VoiceMode): S
 
 export function validateDialogue(value: unknown) {
   if (typeof value !== "string" || value.length > 56 || !/^[A-Za-z][A-Za-z ,'’-]*[.!?]$/.test(value) || value.split(/ +/).length > 10) return null;
-  if (/\b(merged|approved|deployed|verified|passed|failed|fixed|completed|shipped|guaranteed|tested|won)\b/i.test(value)) return null;
+  if (/\b(merged|approved|deployed|verified|passed|failed|fixed|completed|shipped|guaranteed|tested|won|done|finished|closed|ended|complete|resolved|landed|released)\b/i.test(value)) return null;
   return value;
 }

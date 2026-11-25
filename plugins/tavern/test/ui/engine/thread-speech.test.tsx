@@ -149,10 +149,12 @@ describe("thread strip speech", () => {
     await tick(30_000);
     expect(w.speech()).toBeNull();
     await w.update({ stripScene: { ...scene, revision: "second", at: Date.now() } });
-    await tick(0);
+    await tick(1_498);
+    expect(w.speech()).toBeNull();
+    await tick(1);
     expect(says.working).toContain(w.speech());
     expect(w.actor()?.closest("section")?.querySelector(".twalk-speech")?.getAttribute("aria-hidden")).toBe("true");
-    await tick(9_500);
+    await tick(8_000);
     expect(says.working).toContain(w.speech());
     await act(async () => socket.onLine?.({ revision: "second", text: "The anvil awaits.", receivedAt: Date.now() }));
     expect(w.speech()).toBe("The anvil awaits.");
@@ -164,6 +166,7 @@ describe("thread strip speech", () => {
     await w.update({ pendingEvents: 3 });
     expect(w.speech()).toBeNull();
     w.click();
+    await tick(1_500);
     expect(says.working).toContain(w.speech());
     expect(w.actor()?.closest("section")?.querySelector(".twalk-speech")?.getAttribute("role")).toBe("status");
   });
@@ -220,13 +223,30 @@ describe("thread strip speech", () => {
     expect(socket.send).not.toHaveBeenCalled();
   });
 
+  it("shows a fast reply directly instead of exposing or announcing the canned line", async () => {
+    const w = await widget({ contextualSpeech: true, stripScene: {
+      revision: "neutral", at: null, role: "smith", stage: "neutral", activity: "unknown", moment: "none", posture: "clear",
+    } });
+    vi.useFakeTimers();
+    w.click();
+    const request = socket.send.mock.lastCall?.[0];
+    expect(request).toEqual({ kind: "click", at: expect.any(Number) });
+    expect(w.speech()).toBeNull();
+    await tick(1_499);
+    expect(w.speech()).toBeNull();
+    await act(async () => socket.onLine?.({ revision: "neutral", text: "The anvil awaits.", receivedAt: Date.now(), request }));
+    expect(w.speech()).toBe("The anvil awaits.");
+    await tick(1);
+    expect(w.speech()).toBe("The anvil awaits.");
+  });
+
   it("replaces the latest clicked bubble with Pi's reply and keeps its status announcement", async () => {
     const w = await widget({ contextualSpeech: true, stripScene: {
       revision: "neutral", at: null, role: "smith", stage: "neutral", activity: "unknown", moment: "none", posture: "clear",
     } });
     vi.useFakeTimers();
     w.click();
-    expect(says.working).toContain(w.speech());
+    expect(w.speech()).toBeNull();
     const first = socket.send.mock.lastCall?.[0];
     expect(first).toEqual({ kind: "click", at: expect.any(Number) });
     await tick(1_000);

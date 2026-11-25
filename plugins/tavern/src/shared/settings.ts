@@ -75,7 +75,7 @@ export type SparseTunables = Partial<Tunables>;
 
 export const GUARDRAIL_SETTING_KEYS = [
   "scopes.*", "away.*", "keepers.alwaysAsk", "keepers.greenlight", "keepers.partyMax", "keepers.decisionTimerMax",
-  "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "tavern.gitProgram", "tavern.piProgram", "tavern.speechExtensions", "tavern.speechInstructions", "attention.reviewBudget", "attention.notify", "attention.quietHours", "tuning.mode",
+  "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "tavern.gitProgram", "tavern.piProgram", "tavern.speechExtensions", "tavern.speechInstructions", "tavern.speechRecentMessages", "attention.reviewBudget", "attention.notify", "attention.quietHours", "tuning.mode",
   "knobs.typingHoldSeconds", "knobs.afterMessageHoldSeconds", "knobs.rangerTimeboxMaxMinutes",
 ] as const;
 export function isGuardrailSetting(key: string) {
@@ -108,7 +108,9 @@ const reasoningSetting = z.string().trim().min(1).max(40);
 export const SPEECH_GAP = { default: 5, min: 1, max: 120, unit: "minutes", label: "Time between remarks" } as const;
 export const speechGapMinutesSchema = z.number().int().min(SPEECH_GAP.min).max(SPEECH_GAP.max);
 export const piSpeechReasoningSchema = z.enum(["none", "off", "minimal", "low", "medium", "high", "xhigh", "max"]).nullable();
-export const SPEECH_LAUNCH_KEYS = ["speechExtensions", "speechInstructions"] as const;
+export const USER_ONLY_SPEECH_KEYS = ["speechExtensions", "speechInstructions", "speechRecentMessages"] as const;
+export const SPEECH_RECENT_MESSAGES = { default: 3, min: 0, max: 10, label: "Recent messages pi reads" } as const;
+const speechRecentMessagesSchema = z.number().int().min(SPEECH_RECENT_MESSAGES.min).max(SPEECH_RECENT_MESSAGES.max);
 export const DEFAULT_SPEECH_INSTRUCTIONS = "Write only a brief in-character remark. Do not use tools.";
 export const speechExtensionsSchema = z.array(z.string().max(1024)
   .refine(path => /^(?:\/|[A-Za-z]:[\\/]|\\\\[^\\]+\\)/.test(path) && !/[\0\r\n]/.test(path), "Use an absolute extension path.")).max(8)
@@ -118,7 +120,7 @@ const speechFields = {
   contextualSpeech: z.boolean(), piProgram: piProgramSettingSchema,
   speechModel: modelSetting.regex(/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:/-]*$/i, "Choose a Pi model as provider/id."),
   speechReasoning: piSpeechReasoningSchema, speechGapMinutes: speechGapMinutesSchema,
-  speechExtensions: speechExtensionsSchema, speechInstructions: speechInstructionsSchema,
+  speechExtensions: speechExtensionsSchema, speechInstructions: speechInstructionsSchema, speechRecentMessages: speechRecentMessagesSchema,
 };
 
 const sections = {
@@ -149,6 +151,7 @@ export const settingsSchema = z.object({
   tavern: sections.tavern.extend({ ...defaultNumbers(KNOB_FIELDS.tavern), characterQuietUntil: characterQuietUntilSchema.default(0), voiceBeforeOff: voiceBeforeOffSchema.default(DEFAULT_VOICE),
     contextualSpeech: speechFields.contextualSpeech.default(false), speechGapMinutes: speechGapMinutesSchema.default(SPEECH_GAP.default),
     speechExtensions: speechExtensionsSchema.default([]), speechInstructions: speechInstructionsSchema.default(DEFAULT_SPEECH_INSTRUCTIONS),
+    speechRecentMessages: speechRecentMessagesSchema.default(SPEECH_RECENT_MESSAGES.default),
     piProgram: piProgramSettingSchema.default(""), speechModel: speechFields.speechModel.default("openai/gpt-5-nano"), speechReasoning: speechFields.speechReasoning.default("low"),
   }).prefault({ paused: false, defaultClass: "none", widgetRow: true, voice: DEFAULT_VOICE, levels: true, characters: true, hearthFlicker: true, agentsMayChangeSettings: true, ambientMotion: "calm", repeatSeconds: 20, batchWakeEvents: false }),
   away: sections.away.extend(defaultNumbers(KNOB_FIELDS.away)).prefault({ neverWhileClosed: [...AWAY_STOP_LIST],

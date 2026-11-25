@@ -24,6 +24,7 @@ import { SettingsFiles } from "./src/server/settings/files";
 import { settingsHandlers } from "./src/server/settings/rpc";
 import { PiSpeech } from "./src/server/pi-speech";
 import { registerDialogueWatch } from "./src/server/strip-dialogue-watch";
+import { readSpeechFacts } from "./src/server/strip-scene";
 import { InsightsReader, insightsHandlers } from "./src/server/insights/index";
 import { BurnCosts } from "./src/server/insights/burn";
 import { LIMITS } from "./src/server/limits";
@@ -126,7 +127,10 @@ export default async function tavern(bb: BbPluginApi) {
   const burn = new BurnCosts(bb);
   const insights = new InsightsReader(db, settings, Date.now, (data, from, to) => burn.read(data, from, to), () => ({ characters: runtime.snapshot().characters.map(character => ({ id: character.id, classIds: character.classes })), serviceRecords: runtime.serviceRecords.read() }));
   runtime.enableSettings(settings, insights);
-  const speech = new PiSpeech(bb, dirname(db.name));
+  const speech = new PiSpeech(bb, dirname(db.name), ({ threadId, stage }) => {
+    const member = keeper.member(threadId);
+    return member ? readSpeechFacts(keeper, member, stage) : null;
+  });
   const refreshDialogue = registerDialogueWatch(bb, runtime, speech);
   applySettings = () => {
     gitProgram = settings.read().tavern.gitProgram;

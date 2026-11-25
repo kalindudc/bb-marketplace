@@ -59,6 +59,8 @@ function watchSpeechHold(surface: Surface, dismiss: () => void, readingHold?: ()
   };
 }
 
+const CANNED_DELAY_MS = 1_500;
+
 type Props = {
   data: ThreadDecor;
   character: CharacterDef;
@@ -85,7 +87,7 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
   const [cueEnd, setCueEnd] = useState<{ transition: typeof transition; at: number } | null>(null);
   const [last, setLast] = useState<{ text: string; at: number } | null>(null);
   const [tried, setTried] = useState<{ event?: number; ambient?: number }>({});
-  const [bubble, setBubble] = useState<{ line: StripSpeech; transition: typeof transition; at: number; automatic: boolean; revision?: string; request?: DialogueRequest } | null>(null);
+  const [bubble, setBubble] = useState<{ line: StripSpeech; transition: typeof transition; at: number; automatic: boolean; revision?: string; request?: DialogueRequest; fallbackShown?: boolean } | null>(null);
   const [speechVisible, setSpeechVisible] = useState(false);
   const [dialogue, setDialogue] = useState<DialogueLine | null>(null);
   const [eventRevision, setEventRevision] = useState<string | null>(null);
@@ -191,10 +193,13 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
     const dismiss = () => setBubble(null);
     const stop = watchSpeechHold(surface, dismiss, visible.automatic ? () => reportSpeechHeld({ now: Date.now(), ...reading() }) : undefined);
     const timer = setTimeout(dismiss, Math.max(0, expiresAt - Date.now()));
-    return () => { stop(); clearTimeout(timer); };
-  }, [bubble, visible, expiresAt, surface, ownReportAt]);
+    const fallback = pending && !reply && !visible.fallbackShown ? setTimeout(() => {
+      setBubble(prior => prior === visible ? { ...visible, fallbackShown: true } : prior);
+    }, Math.max(0, visible.at + CANNED_DELAY_MS - Date.now())) : undefined;
+    return () => { stop(); clearTimeout(timer); clearTimeout(fallback); };
+  }, [bubble, visible, expiresAt, pending, reply, surface, ownReportAt]);
 
-  const line = visible?.line;
+  const line = visible && (!pending || reply || visible.fallbackShown) ? visible.line : null;
   if (mood === "released") return null;
   return <>
     {mayWatch && <DialogueSocket threadId={data.threadId} onLine={setDialogue} request={request} />}

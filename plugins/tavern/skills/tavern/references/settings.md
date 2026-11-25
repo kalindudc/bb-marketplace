@@ -17,6 +17,7 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `tavern.contextual_speech` | Run Pi without tools or sessions to write character remarks on clicks, at watched milestones, and when a timed remark is due. | `false` | User; Granted |
 | `tavern.speech_extensions` | Absolute paths to trusted Pi extensions for speech. Normally only these load. If Pi refuses `--no-extensions`, Tavern uses a separate agent folder so Pi can load required extensions too. Not changed by imports or backup restores. | `[]` | User only |
 | `tavern.speech_instructions` | System instructions for speech, 1–2,000 characters. Not changed by imports. | `"Write only a brief in-character remark. Do not use tools."` | User only |
+| `tavern.speech_recent_messages` | How many recent message previews the speech model reads, 0–10. At 0 it receives no messages, but still gets the quest and step titles when available. Not changed by imports. | `3` | User only |
 | `tavern.pi_program` | Absolute executable path on the machine running Tavern. Empty uses Pi from PATH. | `""` | User only |
 | `tavern.speech_model` | Model for contextual speech. | `"openai/gpt-5-nano"` | User; Granted |
 | `tavern.speech_reasoning` | Thinking level for contextual speech. | `"low"` | User; Granted |

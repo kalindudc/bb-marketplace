@@ -62,14 +62,14 @@ it("restores legacy speech settings without reintroducing the caps", async () =>
 });
 it("refuses incoming speech launch options and preserves local options absent in a backup", async () => {
   const source = setup(), target = setup();
-  const local = { speechExtensions: ["/fixture/local.ts"], speechInstructions: "Keep it quiet." };
+  const local = { speechExtensions: ["/fixture/local.ts"], speechInstructions: "Keep it quiet.", speechRecentMessages: 0 };
   target.settings.update({ revision: 0, patch: { tavern: local }, why: "Direct settings" });
   const plain = { bundle: (await source.backup.export({ parts: ["settings"] })).json! };
-  source.settings.update({ revision: 0, patch: { tavern: { speechExtensions: ["/fixture/imported.ts"], speechInstructions: "Incoming." } }, why: "Direct settings" });
+  source.settings.update({ revision: 0, patch: { tavern: { speechExtensions: ["/fixture/imported.ts"], speechInstructions: "Incoming.", speechRecentMessages: 10 } }, why: "Direct settings" });
   const unsafe = { bundle: (await source.backup.export({ parts: ["settings"] })).json! };
   const blocked = backupContract.backupRestore.output.parse(await target.harness.invokeRpc("backupRestore", { from: unsafe, apply: false }));
   expect(blocked.code).toBe("invalid");
-  expect(blocked.problems.join(" ")).toMatch(/speech_extensions.*speech_instructions/);
+  expect(blocked.problems.join(" ")).toMatch(/speech_extensions.*speech_instructions.*speech_recent_messages/);
   const preview = backupContract.backupRestore.output.parse(await target.harness.invokeRpc("backupRestore", { from: plain, apply: false }));
   const applied = backupContract.backupRestore.output.parse(await target.harness.invokeRpc("backupRestore", { from: plain, apply: true, previewHash: preview.previewHash }));
   expect(applied.code).toBe("applied");

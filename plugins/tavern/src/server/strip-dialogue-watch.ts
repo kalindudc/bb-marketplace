@@ -26,7 +26,7 @@ export function registerDialogueWatch(bb: BbPluginApi, runtime: TavernRuntime, s
     const reserved = attempts.reserve(seat, at, now);
     if (reserved) bb.rpc.experimental_invalidate(["tavern:settings"]);
     return reserved;
-  }, (scene, signal, reserve) => speech.complete(scene, runtime.config().tavern, signal, reserve), () => keeper.now(), active => speech.setWatching(active));
+  }, (scene, signal, reserve, current) => speech.complete(scene, runtime.config().tavern, signal, reserve, current), () => keeper.now(), active => speech.setWatching(active));
   const notice = (threadId: string | null) => {
     if (!threadId || !watches.has(threadId)) return;
     queueMicrotask(() => void watches.changed(threadId).catch(() => {}));

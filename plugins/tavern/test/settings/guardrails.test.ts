@@ -32,16 +32,22 @@ it("lets only the user set speech launch options and preserves them across TOML 
   try {
     const store = new SettingsStore(db as unknown as Database);
     const cli = defineCli({ name: "tavern", summary: "Tavern", commands: settingsCommands({} as BbPluginApi, store) });
-    const options = { speechExtensions: ["/fixture/pi/sign-in.ts"], speechInstructions: "Short and calm." };
+    expect(store.read().tavern.speechRecentMessages).toBe(3);
+    for (const invalid of [-1, 11, 1.5]) {
+      expect((await cli.run(["settings", "set", `tavern.speechRecentMessages=${invalid}`, "--apply"], {})).exitCode).toBe(1);
+    }
+    const options = { speechExtensions: ["/fixture/pi/sign-in.ts"], speechInstructions: "Short and calm.", speechRecentMessages: 0 };
     for (const [key, value] of Object.entries(options)) {
       const args = ["settings", "set", `tavern.${key}=${JSON.stringify(value)}`, "--apply"];
-      expect((await cli.run(args, { threadId: "plain" })).exitCode).toBe(1);
+      const denied = await cli.run(args, { threadId: "plain" });
+      expect(denied.exitCode).toBe(1);
+      expect(denied.stderr).toContain(`Only you can change tavern.${key}`);
       expect((await cli.run(args, {})).exitCode).toBe(0);
     }
-    const toml = '[tavern]\nspeech_extensions=["/fixture/different.ts"]\nspeech_instructions="Different"';
+    const toml = '[tavern]\nspeech_extensions=["/fixture/different.ts"]\nspeech_instructions="Different"\nspeech_recent_messages=10';
     for (const context of [{ threadId: "plain" }, {}])
       expect((await cli.run(["settings", "import", "--toml", toml, "--apply"], context)).exitCode).toBe(1);
-    expect(previewToml(toml, store.snapshot(), "patch").problems.map(p => p.key)).toEqual(["tavern.speech_extensions", "tavern.speech_instructions"]);
+    expect(previewToml(toml, store.snapshot(), "patch").problems.map(p => p.key)).toEqual(["tavern.speech_extensions", "tavern.speech_instructions", "tavern.speech_recent_messages"]);
     expect((await cli.run(["settings", "import", "--toml", "[tavern]\nvoice='light'", "--apply"], {})).exitCode).toBe(0);
     expect(store.read().tavern).toMatchObject({ ...options, voice: "light" });
   } finally { db.close(); }

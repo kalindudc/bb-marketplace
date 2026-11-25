@@ -6,11 +6,11 @@ Contributor reference for Tavern's audited bb SDK usage (`@get-bb/plugin-sdk` 0.
 
 `test/server/sdk-call-inventory.test.ts` parses every TypeScript file in `src/server/`, `src/scope/watch.ts`, and `server.ts` with the TypeScript compiler API and fails if production code calls an SDK method absent from `SDK_CONTRACTS` in `test/server/sdk-contract.ts` or aliases `.sdk` without an explicit audit.
 
-`SDK_CONTRACTS` currently covers **38 backend SDK methods**:
+`SDK_CONTRACTS` currently covers **39 backend SDK methods**:
 
 | Namespace | Audited methods |
 | --- | --- |
-| `threads` | `spawn`, `send`, `get`, `list`, `output`, `update`, `stop`, `delete`, `archive`, `unarchive`, `defaultExecutionOptions`, `storageLocation`, `getPluginMetadata`, `experimental_listPluginMetadata`, `updatePluginMetadata` |
+| `threads` | `spawn`, `send`, `get`, `list`, `output`, `conversationOutline`, `update`, `stop`, `delete`, `archive`, `unarchive`, `defaultExecutionOptions`, `storageLocation`, `getPluginMetadata`, `experimental_listPluginMetadata`, `updatePluginMetadata` |
 | `threads.*` | `queuedMessages.list`, `queuedMessages.delete`, `queuedMessages.update`, `queuedMessages.send`, `interactions.list`, `events.list` |
 | `environments` | `get`, `list`, `listProviders` |
 | `hosts` | `get`, `list`, `experimental_listProviders` |
@@ -27,6 +27,7 @@ The shared test host validates every SDK call's arguments before fixture handler
 - `threads.stop` returns only `{ ok: true }`; Tavern reads thread status afterwards and treats `stopping` as unconfirmed.
 - Thread plugin metadata (capped at 256 KiB JSON) is a mirror, never authority; role, scope, and authorization come strictly from Tavern's SQLite database.
 - The `configure` hook selects `journal` and `quest-management` for every thread while keeping the legacy `quest` tool registered but unselected.
+- `threads.conversationOutline` is read-only. Tavern fetches previews only for the watched thread on screen and only when it asks Pi for a remark. It passes at most the user-set number of previews to Pi (0 to 10); at 0 it does not fetch the outline.
 - `threads.storageLocation` requires an attached environment (returns HTTP 409 otherwise).
 - Every registered RPC schema is tested for strict lossless JSON round-tripping in `test/server/sdk-contract.test.ts`.
 
