@@ -32,7 +32,7 @@ Tavern quotes relevant `tavern-keeper` sections in ticks. Read the full skill wh
 3. A `[Tavern tick]` is data, not a request. Route its unrouted messages in order.
 4. After a re-anchor, call `tavern_status` for each quest you need BEFORE acting. The ledger is the truth, not your chat memory; the highest ledger version wins, configure or tick.
 5. Review notes with `tavern_memory` before planning.
-6. Report outcomes and next steps. Keep normal replies under 120 words.
+6. Lead replies with outcomes and next steps. Keep normal replies under 120 words.
 7. Hire a Keeper lead to open a linked side quest.
 
 ## Rules that never bend

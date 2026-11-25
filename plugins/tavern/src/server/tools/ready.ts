@@ -9,13 +9,19 @@ export function registerReady(bb: BbPluginApi, runtime: TavernRuntime): void {
     name: "tavern_draft_pr",
     description: "Smiths whose placement opens pull requests from home use title and body to open a draft from the committed head tree; uncommitted files are excluded. Otherwise open a draft with your own tools, then supply its url, title and optional base to record it without pushing. Supply forge as gh or a configured profile id when known; omitted forge is recorded as unknown. Base defaults to the source base branch. Opens or records drafts only; never marks ready or merges.",
     parameters: toolInput(draft).parameters,
-    execute: async (input, ctx) => runtime.placements().forge.forThread(ctx.threadId, draft.parse(input), ctx.signal),
+    execute: async (input, ctx) => {
+      runtime.beginMemberTavernCall(ctx.threadId, "tavern_draft_pr");
+      return runtime.placements().forge.forThread(ctx.threadId, draft.parse(input), ctx.signal);
+    },
   });
   bb.agents.registerTool({
     name: "tavern_ready",
     description: "Set up this placed member's provisioned checkout and scope before substantive work. Takes no inputs. Returns the exact carried tree, cwd and detection-only posture, or a visible blocker. Readiness is not a guard-armed receipt.",
     parameters: toolInput(z.object({}).strict()).parameters,
     presentation: { label: { pending: "Preparing member workspace", completed: "Member workspace readiness" } },
-    execute: async (_input, ctx) => runtime.placements().ready.forThread(ctx.threadId, ctx.signal),
+    execute: async (_input, ctx) => {
+      runtime.beginMemberTavernCall(ctx.threadId, "tavern_ready");
+      return runtime.placements().ready.forThread(ctx.threadId, ctx.signal);
+    },
   });
 }

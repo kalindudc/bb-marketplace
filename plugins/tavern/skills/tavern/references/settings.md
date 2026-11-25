@@ -46,6 +46,8 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `attention.review_budget` | Caps reviews unless the user explicitly allows another. | `3` | User; Plain |
 | `attention.notify` | Chooses whether to notify for consequential asks, all asks or none. | `"consequential"` | User; Plain |
 | `attention.quiet_hours` | Suppresses ordinary notifications during a period with `start`, `end` and an IANA `time_zone`. In TOML, use `"none"` to clear it. | `null` | User; Plain |
+| `keepers.unreported_nudges` | Privately nudges a member that ends a turn without a report, at most once per brief. | `true` | User; Granted |
+| `keepers.permanent_quiet_minutes` | Names a quiet permanent member in the Keeper's next tick after this many minutes without a report or journal evidence. Zero turns this check off. | `1440` | User; Granted |
 | `keepers.rest_minutes` | Waits this many minutes before reminding the Keeper about a resting member. | `30` | User; Granted |
 | `keepers.greenlight` | Chooses explicit plan approval or the policy based on size. | `"explicit"` | User; Plain |
 | `keepers.decision_timer_max` | Caps the length of a Keeper decision timer, in minutes. | `10080` | User; Plain |

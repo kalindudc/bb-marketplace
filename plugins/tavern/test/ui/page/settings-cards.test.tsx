@@ -63,6 +63,12 @@ it("filters across sections by label, help and setting key without saving a sear
  expect(s.getByRole("textbox", { name: "Speech instructions" }).closest("[hidden]")).toBeNull();
  filter("Recent messages pi reads");
  expect(s.getByRole("spinbutton", { name: "Recent messages pi reads" }).closest("[hidden]")).toBeNull();
+ filter("private reminder");
+ expect(visible()).toEqual(["keepers.unreportedNudges"]);
+ filter("permanent member quiet window");
+ expect(s.getByRole("spinbutton", { name: "Permanent member quiet window" })).toBeTruthy();
+ filter("keepers.permanentQuietMinutes");
+ expect(visible()).toEqual(["keepers.permanentQuietMinutes"]);
  filter("no-such-setting");
  expect(s.getByText("No settings match")).toBeTruthy();
  expect(results.querySelectorAll(".tv-settings-group:not([hidden])")).toHaveLength(0);
@@ -250,6 +256,21 @@ it("groups Tavern controls in named cards with guardrail hints",async()=>{
  expect(s.container.querySelector(".tv-set-intro")?.textContent).not.toMatch(/characters/i);
  expect(s.container.textContent).toContain("Agents in Tavern threads can't change these; only you can.");
  for(const c of s.container.querySelectorAll(".tv-settings-card")){expect(c.querySelector("h3")).toBeTruthy();expect(c.querySelector("svg")).toBeTruthy();expect(c.querySelector(".tv-settings-hint")?.textContent).toMatch(/\w+/);}
+});
+it("shows and saves the two member check-in settings", async () => {
+ const update=vi.fn(()=>({code:"ok",revision:settingsView.revision+1,settings:settingsView,problems:[]}));
+ const s=await section("keepers",structuredClone(settingsView),{settingsUpdate:update});
+ const nudge=await s.findByRole("switch",{name:"Nudge unreported members"});
+ expect(nudge.getAttribute("aria-checked")).toBe("true");
+ fireEvent.click(nudge);
+ await waitFor(()=>expect(update).toHaveBeenCalledWith(expect.objectContaining({patch:{keepers:{unreportedNudges:false}}})));
+ const fold=s.container.querySelector<HTMLDetailsElement>("details.tv-set-advanced")!;
+ fold.open=true;
+ const quiet=await s.findByRole("spinbutton",{name:"Permanent member quiet window"});
+ fireEvent.change(quiet,{target:{value:"0"}});
+ fireEvent.keyDown(quiet,{key:"Enter"});
+ await waitFor(()=>expect(update).toHaveBeenCalledWith(expect.objectContaining({patch:{keepers:{permanentQuietMinutes:0}}})));
+ expect(s.getByText(/use 0 to turn this check off/i)).toBeTruthy();
 });
 it("sets and clears the Git program through the existing Settings save and reset actions", async () => {
  const view=structuredClone(settingsView);

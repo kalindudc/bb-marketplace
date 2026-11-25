@@ -153,6 +153,7 @@ type Hire = {
 };
 type Thread = PluginThreadEventPayloads["thread.active"]["thread"];
 type QueuedMessage = PluginThreadEventPayloads["message.queued"]["entry"];
+const NUDGE_PREFIX = "[Tavern report reminder] ";
 const briefMessageId = (text: string) => /^\[Tavern brief\] id=([^\r\n]+)\n/.exec(text)?.[1];
 
 import { authorize, commitUserAct, type UserActReceipt } from "./authority";
@@ -194,6 +195,7 @@ export class TavernRuntime {
   private notifiedAsks = new Set<string>();
   private queueResets = new Map<string, Promise<void>>();
   private memberObservations = new Map<string, Promise<void>>();
+  private memberReportAttempts = new Map<string, { refusal?: string }>();
   private wakes = new Map<string, Promise<void>>();
   private maintenance = new Map<string, { work: Promise<void>; startedAt: number }>();
   private placementServices: PlacementServices | null = null;
@@ -1511,18 +1513,34 @@ export class TavernRuntime {
     finally { done(); }
   }
   private async dispatchTracked(ctx: MessageDispatchHookContext) {
+    const [queued] = ctx.queuedMessages;
+    const origin = queued ? queued.originPluginId : ctx.originPluginId;
+    const text = origin === this.bb.pluginId && ctx.queuedMessages.length <= 1 ? (queued ? inputText(queued.content) : ctx.input.text) : "";
+    const nudge = text.startsWith(NUDGE_PREFIX) ? text : null;
+    const droppedNudge = { action: "reject" as const, message: "Tavern dropped a report reminder that no longer applies." };
+    if (nudge && (ctx.attempt !== "start-turn" || !this.memberNudgeBrief(ctx.thread))) return droppedNudge;
     const startedAt = this.keeper.now();
     let protectedThread = true;
     let binding: ReturnType<TavernRuntime["dispatchBinding"]> | undefined;
     try {
       const succession = await this.succession.dispatch(ctx);
-      if (succession) return succession;
+      if (succession) return nudge ? droppedNudge : succession;
       const stopped = this.stopAll.dispatch(ctx);
-      if (stopped) return stopped;
+      if (stopped) return nudge ? droppedNudge : stopped;
       binding = this.dispatchBinding(ctx);
       protectedThread = !!binding.member || !!binding.hireToken || !!binding.classId && binding.classId !== "none";
       const result = await this.dispatchChecked(ctx, binding);
+      if (nudge) {
+        if (result.action !== "proceed") return result.action === "reject" ? result : droppedNudge;
+        const brief = this.memberNudgeBrief(ctx.thread);
+        const ended = brief && await this.latestMemberCompletion(ctx.thread.id);
+        if (!ended || !nudge.startsWith(`${NUDGE_PREFIX}${ended.seq}\n`) ||
+            (await this.pendingMemberWakeups([ctx.thread.id])).has(ctx.thread.id) ||
+            this.memberNudgeBrief(ctx.thread) !== brief) return droppedNudge;
+      }
       if (result.action === "proceed" && ctx.attempt === "start-turn" && binding.member?.role === "member" && binding.member.boardQuestId) {
+        if (this.keeper.store.runtime(ctx.thread.id).scheduledMemberRound && !this.loop.roundInputs(ctx).length)
+          this.keeper.store.patch(ctx.thread.id, { scheduledMemberRound: false });
         const choice = this.keeper.store.runtime(ctx.thread.id).classExecutionChoice, recordedAt = this.keeper.now();
         try {
           if (choice?.providerId !== ctx.requestedExecution.providerId || choice.model !== ctx.requestedExecution.model)
@@ -1538,6 +1556,7 @@ export class TavernRuntime {
       return result;
     } catch (error) {
       this.bb.log.warn(`Tavern dispatch check failed: ${String(error)}`);
+      if (nudge) return droppedNudge;
       if (binding && this.humanThread(ctx, binding)) {
         const since = this.keeper.store.runtime(ctx.thread.id).dispatchFailureSince ?? startedAt;
         this.keeper.store.patch(ctx.thread.id, { dispatchFailureSince: since });
@@ -3083,7 +3102,60 @@ export class TavernRuntime {
       });
     });
   }
+  beginMemberTavernCall(threadId: string, name: string) {
+    this.memberReportAttempts.delete(threadId);
+    if (name !== "tavern_report" || this.keeper.member(threadId)?.role !== "member") return;
+    const attempt: { refusal?: string } = {};
+    this.memberReportAttempts.set(threadId, attempt);
+    return (error: unknown) => { attempt.refusal = error instanceof Error ? error.message : String(error); };
+  }
+  private unreportedBrief(member: Member) {
+    const state = this.keeper.store.runtime(member.threadId);
+    const version = state.briefVersion ?? 0;
+    const began = state.lastBriefAt ?? member.createdAt;
+    const reported = version > 0 ? (state.reportedBriefVersion ?? 0) >= version
+      : member.lastReportAt !== null && member.lastReportAt >= began;
+    return reported ? undefined : `${version}:${began}`;
+  }
+  private memberNudgeBrief(thread: Thread) {
+    if (thread.status !== "idle" || thread.archivedAt != null || thread.deletedAt != null ||
+        this.stopAll.reason() || this.config().tavern.paused || !this.config().keepers.unreportedNudges) return;
+    const k = this.keeper;
+    const member = k.member(thread.id);
+    if (member?.role !== "member" || !member.keeperThreadId || !isLiveMember(k.store, member, "work") ||
+        this.away.blocked(thread.id)) return;
+    const state = k.store.runtime(thread.id);
+    const details = memberDetails(k.store, thread.id);
+    const host = memberHost(k.store, member);
+    if (host.archivedAt != null || host.deletedAt != null || state.manualStopAt != null || state.scheduledMemberRound ||
+        details.delivery || details.archiveAfter || k.memory.openMemberWait(thread.id) ||
+        (member.boardQuestId && k.quest(member.boardQuestId).phase === "held")) return;
+    const brief = this.unreportedBrief(member);
+    if (brief === state.lastUnreportedTurn) return brief;
+  }
+  private async latestMemberCompletion(threadId: string) {
+    const [latest, before] = await loopCall(this.bb.sdk.threads.events.list({ threadId, order: "desc", limit: "2",
+      types: ["turn/started", "turn/completed", "system/thread/interrupted"],
+    }), "member turn ending");
+    if (latest?.type === "turn/completed" && latest.data.status === "completed" && before?.type !== "system/thread/interrupted") return latest;
+  }
+  private async nudgeUnreportedMember(thread: Thread, brief: string, refusal: string | undefined) {
+    const { id: threadId } = thread;
+    try {
+      const ended = await this.latestMemberCompletion(threadId);
+      const state = this.keeper.store.runtime(threadId);
+      if (!ended || ended.createdAt < (state.lastBriefAt ?? 0) || (await this.pendingMemberWakeups([threadId])).has(threadId)) return;
+      if (this.memberNudgeBrief(thread) !== brief) return;
+      const text = `${NUDGE_PREFIX}${ended.seq}\nYour turn ended without a Tavern report. If your Keeper needs anything from that turn, call tavern_report. If you're waiting on something, name it in a report or a declared wait. Otherwise ignore this.` +
+        (refusal ? `\nTavern refused your last tavern_report call (quoted data): ${JSON.stringify(refusal)}` : "");
+      await loopCall(this.bb.sdk.threads.send({ threadId, mode: "queue-if-active",
+        input: [{ type: "text", text, mentions: [], visibility: "agent-only" }],
+      }), "unreported member reminder");
+    } catch (error) { this.bb.log.warn(`Tavern report reminder ${threadId}: ${String(error)}`); }
+  }
   memberEnded(thread: Thread, finalText?: string | null) {
+    const refusal = this.memberReportAttempts.get(thread.id)?.refusal;
+    this.memberReportAttempts.delete(thread.id);
     for (const id of captureTaleDelivery(this.keeper, thread.id, finalText) ?? []) void this.taleRenderer?.ensure(id);
     if (this.stopAll.reason()) return;
     const member = this.keeper.member(thread.id);
@@ -3091,16 +3163,8 @@ export class TavernRuntime {
     if (this.away.blocked(thread.id)) return;
     const state = this.keeper.store.runtime(thread.id);
     if (member.engagement !== "active" || memberDetails(this.keeper.store, thread.id).delivery) return;
-    const version = state.briefVersion ?? 0;
-    if (
-      version > 0
-        ? (state.reportedBriefVersion ?? 0) >= version
-        : member.lastReportAt !== null &&
-          member.lastReportAt >= (state.lastBriefAt ?? member.createdAt)
-    )
-      return;
-    const turn = `${version}:${state.lastBriefAt ?? member.createdAt}`;
-    if (state.lastUnreportedTurn === turn) return;
+    const turn = this.unreportedBrief(member);
+    if (!turn || state.lastUnreportedTurn === turn) return;
     const excerpt = finalText?.slice(0, 500) ?? "";
     this.keeper.store.atomic(() => {
       this.keeper.store.patch(thread.id, { lastUnreportedTurn: turn });
@@ -3119,6 +3183,7 @@ export class TavernRuntime {
       );
     });
     this.keeper.changed(thread.id, member.boardQuestId);
+    if (this.memberNudgeBrief(thread) === turn) return this.nudgeUnreportedMember(thread, turn, refusal);
   }
   private rangerReportForKeeper(keeperId: string, reportId: string) {
     const k = this.keeper;
@@ -4007,6 +4072,7 @@ export class TavernRuntime {
     this.keeper.reanchor(threadId, "failed turn");
   }
   async threadStarted(thread: Thread) {
+    this.memberReportAttempts.delete(thread.id);
     if (this.keeper.store.runtime(thread.id).clusterSessionPending) this.keeper.store.patch(thread.id, { clusterSessionPending: false });
     this.updateThread(thread);
     if (this.keeper.member(thread.id)) this.keeper.store.patch(thread.id, { lastSpendActivityAt: this.keeper.now() });

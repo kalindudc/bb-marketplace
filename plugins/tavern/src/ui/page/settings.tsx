@@ -103,6 +103,7 @@ function Row({ label, help, children, control, setting, managed = false, covered
 }
 
 const NUMBER_HELP: Record<{ [G in keyof typeof KNOB_FIELDS]: keyof typeof KNOB_FIELDS[G] }[keyof typeof KNOB_FIELDS], string> = {
+  permanentQuietMinutes: "After this long without a report or journal evidence, name the permanent member in the Keeper's next tick. Use 0 to turn this check off.",
   reportedPoseSeconds: "How long a character holds its finished pose above the composer.",
   verifiedPoseMinutes: "How long a character holds its verified pose above the composer.",
   productionWakeHours: "How long a production or cluster write ask waits before waking you, if that option is on for the window.",
@@ -502,6 +503,7 @@ export function KeepersSection() {
       </fieldset><SettingDefault setting="keepers.alwaysAsk" />
     </div>
     </SettingsCard><SettingsCard title="Check-ins and memory" hint="Set reminders and open the advanced limits to adjust Keeper pacing and memory." glyph="file">
+    <Row label="Nudge unreported members" setting="keepers.unreportedNudges" help="Send a private reminder to an idle member that ended a turn without reporting. Tavern sends it once per brief and skips members that are waiting or stopped." control={id => <Toggle id={id} checked={k.unreportedNudges} disabled={api.pending} onChange={unreportedNudges => void api.save({ keepers: { unreportedNudges } })} />} />
     <Row label="Rest before reminder" setting="keepers.restMinutes" help="Remind the Keeper once after this much settled rest. The Keeper decides whether to release or keep the member; Tavern never releases on a timer." control={(id) => <NumberField id={id} value={k.restMinutes} min={1} max={10080} unit="min" disabled={api.pending} onSave={(v) => void api.save({ keepers: { restMinutes: v } })} />} />
     <Row label="Strikes before release advice" setting="keepers.staleStrikes" help="Missed check-ins before Tavern advises releasing a quiet member. Yours to set; the tuner never changes this safety threshold." control={(id) => <NumberField id={id} value={k.staleStrikes} min={1} max={4} unit="strikes" disabled={api.pending} onSave={(v) => void api.save({ keepers: { staleStrikes: v } })} />} />
 

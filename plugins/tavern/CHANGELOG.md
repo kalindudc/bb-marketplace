@@ -6,6 +6,8 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Added
 
+- Tavern can privately nudge a member that ends a turn without a report, once per brief. It skips members that are waiting or stopped, and leaves scheduled-round excerpts with the Keeper without nudging the member. You can turn off the nudge or the permanent member quiet window in Settings under Keepers and decisions.
+
 - Permanent members can take daily or weekly rounds after you approve their duties. Tavern wakes them when they are idle and work is allowed. See their next run in the party and Ledger, and pause or remove a schedule from the member’s row.
 
 - Keepers can mark a planned slot or a current member as permanent for ongoing work. Permanent members skip rest reminders and stale alarms but can still be released, stopped or archived when the quest closes. A Keeper can exempt one from an explicit Closing time Pause if its guard can still enforce closing rules. The Closing time sheet and confirmation show how many exempt members keep working. A quest left out still holds. See the reasons and undo the decisions in the Ledger.
@@ -18,6 +20,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Changed
 
+- Ticks ask the Keeper to check on silent members and leave it up to the Keeper whether there is anything the user needs to hear.
 - Act guard holds recognized sensitive acts without changing Keeper authority. Ordinary calls are recorded without waking the Keeper. Closing time, Tavern control files, and Warden access to the maker’s checkout keep their separate protections.
 - Members can link their own journal entries to assigned waypoints. Any active Warden on the quest can check submitted work without a checker-slot change. Known same-family checks still refuse, unknown independence is labelled, and placed checks still use the exact snapshot.
 - Keepers can replace a maker without rewriting the plan or losing accepted work. Name waypoints in a follow-up brief to reopen only their journal entries; otherwise all of the member's linked work on the quest reopens. Reordering the party or retargeting an approved permanent slot leaves its greenlight in place.

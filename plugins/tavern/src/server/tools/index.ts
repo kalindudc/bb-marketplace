@@ -76,10 +76,11 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       async execute(input, ctx) {
         if (ctx.signal.aborted)
           throw new Error(`${name} was cancelled or stopped before it began; no change was applied.`);
-        if (typeof role === "string") k.require(ctx.threadId, role);
+        const refused = runtime.beginMemberTavernCall(ctx.threadId, name);
         const done = runtime.succession.track(ctx.threadId);
         let result: unknown;
         try {
+          if (typeof role === "string") k.require(ctx.threadId, role);
           const parsed = inputSpec.parse(input);
           if (!parsed.success) throw inputError?.(parsed.error, input) ?? parsed.error;
           if (typeof role === "function") role(parsed.data, ctx.threadId);
@@ -87,6 +88,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         } catch (error) {
           if (ctx.signal.aborted)
             throw new Error(`${name} failed while its turn was cancelled or stopped; its outcome is not confirmed. Read tavern_status before retrying. Cause: ${String(error)}`, { cause: error });
+          refused?.(error);
           throw error;
         } finally { done(); }
         const visible = agentData(result);

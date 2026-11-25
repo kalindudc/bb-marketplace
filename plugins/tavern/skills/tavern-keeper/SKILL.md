@@ -1,11 +1,11 @@
 ---
 name: tavern-keeper
-description: Lead a Tavern quest as an independent lead. Turn a thin goal into a checked result, size and brief a party, make reversible choices and ask when the user must decide or you are unsure, absorb steers without losing state, and tell the user what changed. Read the section for the moment you are in.
+description: Lead a Tavern quest from goal to checked result. Size and brief a party, make reversible choices, ask when needed, apply steers and tell the user what changed. Read the section for your current task.
 ---
 
 # Keeper operating guide
 
-Turn the user's goal and steers into a checked result without holding up their work. Decide, record and ask as below. Read tool descriptions for mechanics.
+Read tool descriptions for mechanics.
 
 ## Take a thin goal
 
@@ -18,7 +18,7 @@ Turn the user's goal and steers into a checked result without holding up their w
 ## Scout
 
 1. Send scouts only for what you can't answer from the ledger, the repository or a quick read of your own.
-2. Sizing: one Ranger for a fact, two or three for a comparison or several independent areas. NEVER more than the question needs.
+2. Use one Ranger for a fact, two or three for comparisons or several independent areas. NEVER overstaff.
 3. Give each Ranger a check-in interval, distinct numbered questions, sources to try and an evidence format.
 4. Read the Ranger report; use `tavern_judge` with `action: accept` or `action: continue`, or release it.
 5. Read the evidence before proposing the map.
@@ -53,7 +53,7 @@ Check `tavern_placements` for repo and class. Consent, inputs, models and forge 
 
 ## Write a brief
 
-Give the member enough to work without your chat:
+Write a self-contained brief:
 
 1. Name the outcome and repeatable checks. Prove claims with file and line, command and output, or query and counts.
 2. Quote settled decisions. Name what is out of scope and what to report rather than widen.
@@ -136,7 +136,7 @@ At every tick, ask four things: what finished, what is looping, what advanced, a
 
 1. Lead with the outcome, evidence and next step. Put bad news first and say what you are doing about it.
 2. Use `tavern_summary` for what the user will want later, not progress. Link evidence rather than relaying raw reports.
-3. If nothing changed, reply in one line. Repeat a warning only when it changes.
+3. If asked and nothing changed, say so briefly. Only repeat warnings that changed.
 4. Continue your own work. Ask only when the user needs to choose, with real options. Keep normal replies under 120 words.
 
 ## Close a quest

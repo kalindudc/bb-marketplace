@@ -33,6 +33,7 @@ export const NEWS = new Set([
   "member.failed",
   "member.stale",
   "member.quiet",
+  "member.permanent-quiet",
   "user.told-member",
   "decision.undone",
   "rule.confirmed",

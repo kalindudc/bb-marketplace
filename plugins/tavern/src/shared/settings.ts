@@ -18,6 +18,7 @@ export const KNOB_FIELDS = {
     defaultBackAtHour: { default: 8, min: 0, max: 23, unit: "local hour", label: "Default Back at hour" },
   },
   keepers: {
+    permanentQuietMinutes: { default: 1440, min: 0, max: 43200, unit: "min", label: "Permanent member quiet window" },
     restatementBytes: { default: 28000, min: 8000, max: 32000, unit: "bytes", label: "Keeper memory limit" },
     tickFactChars: { default: 14000, min: 4000, max: 32000, unit: "characters", label: "Tick facts limit" },
     failuresBeforeAsk: { default: 2, min: 1, max: 5, unit: "failures", label: "Failures before the Keeper asks me" },
@@ -136,7 +137,7 @@ const sections = {
     defaultAllowWatched: z.boolean(), defaultWakeBlockers: z.boolean(), defaultWakeProduction: z.boolean(), ...numberFields(KNOB_FIELDS.away) }).strict(),
   attention: z.object({ reviewBudget: z.number().int().min(1).max(30),
     notify: z.enum(["consequential", "all", "none"]), quietHours: quietHoursSchema.nullable() }).strict(),
-  keepers: z.object({ restMinutes: z.number().int().min(1).max(10080).default(30), greenlight: z.enum(["explicit", "by-size"]),
+  keepers: z.object({ unreportedNudges: z.boolean(), restMinutes: z.number().int().min(1).max(10080).default(30), greenlight: z.enum(["explicit", "by-size"]),
     decisionTimerMax: z.number().int().min(1).max(10080), partyMax: z.number().int().min(1).max(1000),
     chainDepth: z.number().int().min(1).max(3), chainMembers: z.number().int().min(1).max(1000),
     staleStrikes: z.number().int().min(1).max(4), alwaysAsk: alwaysAskSchema, ...numberFields(KNOB_FIELDS.keepers) }).strict(),
@@ -158,7 +159,7 @@ export const settingsSchema = z.object({
   away: sections.away.extend(defaultNumbers(KNOB_FIELDS.away)).prefault({ neverWhileClosed: [...AWAY_STOP_LIST],
     defaultEndState: "drafts-ready", defaultAllowWatched: false, defaultWakeBlockers: true, defaultWakeProduction: false }),
   attention: sections.attention.default({ reviewBudget: 3, notify: "consequential", quietHours: null }),
-  keepers: sections.keepers.extend({ ...defaultNumbers(KNOB_FIELDS.keepers), alwaysAsk: alwaysAskSchema.default([...ALWAYS_ASK_KINDS]), chainDepth: sections.keepers.shape.chainDepth.default(1), chainMembers: sections.keepers.shape.chainMembers.default(12) })
+  keepers: sections.keepers.extend({ ...defaultNumbers(KNOB_FIELDS.keepers), unreportedNudges: z.boolean().default(true), alwaysAsk: alwaysAskSchema.default([...ALWAYS_ASK_KINDS]), chainDepth: sections.keepers.shape.chainDepth.default(1), chainMembers: sections.keepers.shape.chainMembers.default(12) })
     .prefault({ greenlight: "explicit", decisionTimerMax: 10080, partyMax: 5, staleStrikes: 2, restMinutes: 30 }),
   classes: sections.classes.default({}), scopes: sections.scopes.extend({ sendTools: sendToolsSchema.default([]) }).prefault({ mode: "enforce" }),
   machines: placementSettingsSchema.default({ maxMakers: 2, maxCheckers: 2, rules: [], forges: [] }),

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { setup } from "./runtime-fixture";
 import { registerTools } from "../../src/server/tools";
-import { briefSteerFact } from "../../src/server/tick";
+import { briefSteerFact, MEMBER_CHECK_IN, TICK_REPLY_GUIDANCE } from "../../src/server/tick";
 import { MOMENT_CARD_BYTES, parseKeeperCards, renderKeeperCards } from "../../src/server/keeper/cards";
 
 const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
@@ -72,8 +72,9 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   expect(permanent).toBeDefined();
   const permanentSlotDelta = Buffer.byteLength(JSON.stringify(slotProperties)) - Buffer.byteLength(JSON.stringify(previousSlot));
   const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + mergeAskSchemaDelta + waypointAskDelta + judgeBytes + checkpointDelta + permanentSlotDelta + tellDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
-  if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${bytes}\nMERGE_TARGET_SCHEMA_BYTES=${mergeTargetDelta}\n`);
-  expect(bytes).toBeLessThanOrEqual(34754);
+  const withTickGuidance = bytes + Buffer.byteLength(`\n${MEMBER_CHECK_IN}\n${TICK_REPLY_GUIDANCE}`);
+  if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${withTickGuidance}\nMERGE_TARGET_SCHEMA_BYTES=${mergeTargetDelta}\n`);
+  expect(withTickGuidance).toBeLessThanOrEqual(34754);
 });
 it("keeps the normal-reply limit and per-quest re-anchor instructions", () => {
   expect(body).toContain("Keep normal replies under 120 words.");

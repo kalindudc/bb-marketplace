@@ -268,6 +268,8 @@ export interface Runtime {
   rangerBox?: { startedAt: number; priorBudgetMinutes: number; priorElapsedMinutes: number; priorOverrun: boolean };
   rangerAcceptedReportId?: string;
   lastUnreportedTurn?: string;
+  scheduledMemberRound?: boolean;
+  permanentQuietSince?: number;
   scopePending?: string | null;
   scopeProblems?: string[];
   executionNotes?: string[];
