@@ -40,11 +40,14 @@ export function partyCounts(plan: Plan): Map<string, number> {
   for (const slot of plan.party) counts.set(slot.classId, (counts.get(slot.classId) ?? 0) + 1);
   return counts;
 }
+export const isScoutClass = (classId: string) => classId === "ranger" || classId === "wanderer";
+export const workingSeats = (plan: Plan) => plan.party.filter(slot => !isScoutClass(slot.classId)).length;
+
 export function partyFits(plan: Plan, approved: Plan) {
-  const capacity = partyCounts(approved);
-  return [...partyCounts(plan)].every(([classId, count]) => count <= (capacity.get(classId) ?? 0)) &&
+  const classes = partyCounts(approved);
+  return plan.party.length <= approved.party.length && workingSeats(plan) <= workingSeats(approved) &&
     plan.party.every(({ permanent, leadEnvelope, classId, waypointIds }) =>
-      (!permanent || !!permanent.decisionId && approved.party.some(slot => slot.permanent?.decisionId === permanent.decisionId)) &&
+      classes.has(classId) && (!permanent || !!permanent.decisionId && approved.party.some(slot => slot.permanent?.decisionId === permanent.decisionId)) &&
       (!leadEnvelope || approved.party.some(previous =>
         previous.classId === classId && previous.waypointIds[0] === waypointIds[0] &&
         previous.leadEnvelope && previous.leadEnvelope.members >= leadEnvelope.members &&

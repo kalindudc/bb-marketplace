@@ -196,6 +196,7 @@ export interface TickBatch {
 export type RangerContinuation = { reportId: string; minutes: number; questions: string[] };
 export interface PendingBrief {
   rangerContinuation?: RangerContinuation;
+  waypointIds?: string[];
   id: string;
   text: string;
   assignmentText?: string;

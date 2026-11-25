@@ -33,7 +33,7 @@ import { tags } from "../shared/contract";
 import { Keeper, partyCounts, type PlanInput } from "./keeper/service";
 import { KeeperSuccessionCoordinator, SUCCESSION_METADATA } from "./keeper/succession";
 import { fenceMessage } from "./keeper/succession-store";
-import { checkerAssignments, validatePartyCharacters, validateCheckerMakers, makerForWaypoint } from "./assignments";
+import { checkerAssignments, validatePartyCharacters } from "./assignments";
 import { Registry, type RegistrySnapshot } from "./registry";
 import { TickLoop } from "./tick";
 import { isNotFound } from "./host-errors";
@@ -155,7 +155,7 @@ type QueuedMessage = PluginThreadEventPayloads["message.queued"]["entry"];
 const briefMessageId = (text: string) => /^\[Tavern brief\] id=([^\r\n]+)\n/.exec(text)?.[1];
 
 import { authorize, commitUserAct, type UserActReceipt } from "./authority";
-import { storedPhase, transitionQuest } from "./keeper/quest-lifecycle";
+import { isScoutClass, storedPhase, transitionQuest, workingSeats } from "./keeper/quest-lifecycle";
 import { TavernMemory } from "./memory";
 
 export class TavernRuntime {
@@ -440,7 +440,7 @@ export class TavernRuntime {
     }
     return member;
   }
-  async sendRebrief(threadId: string, text: string, supersedeBriefId?: string, continuation?: { keeperId: string; role: ClassDef; input: RangerContinuation }): Promise<{ briefPending: boolean }> {
+  async sendRebrief(threadId: string, text: string, supersedeBriefId?: string, continuation?: { keeperId: string; role: ClassDef; input: RangerContinuation }, waypointIds?: string[]): Promise<{ briefPending: boolean }> {
     this.stopAll.assertRunning();
     let member = this.requireBriefableMember(threadId);
     if (member.boardQuestId) {
@@ -451,6 +451,7 @@ export class TavernRuntime {
     if (this.config().tavern.paused) throw new Error("Tavern is paused; no new brief was queued. Resume it before sending new work.");
     if (this.scopes?.pending(threadId)) throw new Error("The member is waiting for a scope decision; no new brief was queued.");
     if (!text.trim()) throw new Error("A brief cannot be empty");
+    const targets = this.rebriefWaypoints(member, text, waypointIds);
     const current = () => memberDetails(this.keeper.store, threadId).delivery;
     let delivery = current();
     if (continuation) {
@@ -466,7 +467,7 @@ export class TavernRuntime {
       const budget = classLimits(role, config).rangerMinutes;
       if (committed + input.minutes > budget)
         throw new Error(`This Ranger has used ${committed} of its ${budget} class-budget minutes in check-in boxes. Another ${input.minutes} would exceed that budget. Use the remaining minutes, accept the report, release the Ranger, or ask the user to lift the budget.`);
-      return this.sendInitialBrief(threadId, this.queueRebrief(member, text, undefined, input).text);
+      return this.sendInitialBrief(threadId, this.queueRebrief(member, text, targets, undefined, input).text);
     }
     if (member.rangerCheckpointReportId)
       throw new Error(`The Ranger is waiting on ${member.rangerCheckpointReportId}. Use tavern_judge to continue or accept, or tavern_release.`);
@@ -500,23 +501,40 @@ export class TavernRuntime {
         if (current()?.id !== delivery.id || this.away.blocked(threadId) || this.scopes?.pending(threadId) || this.config().tavern.paused)
           throw new Error("The pending brief or its work gates changed. No replacement was queued.");
         if (member.boardQuestId) this.keeper.assertQuestNotHeld(member.boardQuestId);
-        delivery = this.queueRebrief(member, text, { old: delivery, receipt: receipt?.state ?? "not-attempted", removedQueueIds });
+        delivery = this.queueRebrief(member, text, targets, { old: delivery, receipt: receipt?.state ?? "not-attempted", removedQueueIds });
       } finally { this.replacingBriefs.delete(threadId); }
-    } else if (delivery && (delivery.assignmentText ?? delivery.text) !== text) {
+    } else if (delivery && ((delivery.assignmentText ?? delivery.text) !== text || waypointIds && !isDeepStrictEqual(delivery.waypointIds, targets))) {
       const brief = briefProgress(this.keeper.store, delivery, this.keeper.now());
       const next = this.initialBriefs.has(threadId)
         ? "Wait for this delivery attempt to settle, then read tavern_status section=pending."
         : `To replace it, call tavern_tell for ${threadId} with supersedeBriefId: "${brief.id}".`;
       throw new Error(`A different brief is already pending for ${this.keeper.name(member)}: ${brief.id} (${brief.state}, ${Math.floor(brief.ageMs / 1000)}s old). ${next}`);
     }
-    return this.sendInitialBrief(threadId, (delivery ?? this.queueRebrief(member, text)).text);
+    return this.sendInitialBrief(threadId, (delivery ?? this.queueRebrief(member, text, targets)).text);
   }
 
-  private queueRebrief(member: Member, text: string, superseded?: { old: PendingBrief; receipt: string; removedQueueIds: string[] }, rangerContinuation?: RangerContinuation): PendingBrief {
+  private rebriefWaypoints(member: Member, text: string, requested?: string[]): string[] {
+    const quest = member.boardQuestId ? this.keeper.quest(member.boardQuestId) : null;
+    const plan = quest && this.keeper.store.get("plans", `${quest.id}:${quest.planVersion}`);
+    const ids = plan?.waypoints.map(w => w.id) ?? [];
+    if (requested?.length) {
+      if (requested.some(id => !ids.includes(id))) throw new Error("Brief waypointIds must name waypoints in this member's current quest plan.");
+      return [...new Set(requested)].sort();
+    }
+    if (!quest) return [];
+    const linked = new Set(this.keeper.journal.get(member.threadId).entries
+      .flatMap(entry => entry.link?.boardQuestId === quest.id ? [entry.link.waypointId] : []));
+    if (member.waypointId) linked.add(member.waypointId);
+    const mentions = new Set(text.match(/\bw[0-9]+\b/g));
+    const named = ids.filter(id => mentions.has(id) && linked.has(id));
+    return named.length ? named : [...linked];
+  }
+
+  private queueRebrief(member: Member, text: string, waypointIds: string[], superseded?: { old: PendingBrief; receipt: string; removedQueueIds: string[] }, rangerContinuation?: RangerContinuation): PendingBrief {
     const k = this.keeper, { threadId, keeperThreadId, boardQuestId } = member, at = k.now();
     const requestSources = captureRequestSources(k, keeperThreadId!, boardQuestId);
     const actor = { kind: "agent" as const, threadId: keeperThreadId! };
-    const delivery: PendingBrief = { id: `brief_${randomUUID()}`, text: `${text}\n\n${requestSourcePacket(k, requestSources)}`, assignmentText: text, requestSources, ...(rangerContinuation ? { rangerContinuation } : {}), createdAt: at, state: "queued", attempts: 0, nextAttemptAt: at, attemptedAt: null, hostAfterSeq: null, error: null };
+    const delivery: PendingBrief = { id: `brief_${randomUUID()}`, text: `${text}\n\n${requestSourcePacket(k, requestSources)}`, assignmentText: text, requestSources, waypointIds, ...(rangerContinuation ? { rangerContinuation } : {}), createdAt: at, state: "queued", attempts: 0, nextAttemptAt: at, attemptedAt: null, hostAfterSeq: null, error: null };
     k.store.atomic(() => {
       if (member.engagement === "resting")
         transitionMember(k.store, member, "briefing", "rebrief", actor, { kind: "brief", id: delivery.id }, at, { details: { delivery } });
@@ -594,7 +612,8 @@ export class TavernRuntime {
           { memberThreadId: threadId, briefId: id, briefPending: false, delivery: "delivered", attempts: pending.attempts },
           { kind: "agent", threadId: member.keeperThreadId! });
         // Acceptance, the new brief version and the journal's reopen and supersession share this transaction.
-        if (member.boardQuestId) this.keeper.journal.rebriefed(threadId, member.boardQuestId, this.keeper.store.runtime(threadId).briefVersion ?? 0);
+        if (member.boardQuestId) this.keeper.journal.rebriefed(threadId, member.boardQuestId,
+          this.keeper.store.runtime(threadId).briefVersion ?? 0, pending.waypointIds ?? this.rebriefWaypoints(member, pending.assignmentText ?? pending.text));
       }
 
     });
@@ -1346,6 +1365,29 @@ export class TavernRuntime {
       };
     }
   }
+  private wardenInstructions(member: Member) {
+    const waypointIds = new Set(this.keeper.checkerWaypoints(member.threadId));
+    const reviewTarget = this.keeper.store.runtime(member.threadId).reviewTarget ?? null;
+    const targets = new Map<string, { makerThreadId: string; waypointId: string; entryIds: string[] }>();
+    if (member.boardQuestId && waypointIds.size && !reviewTarget?.snapshotId) {
+      for (const entry of this.keeper.journal.linkedEntries(member.boardQuestId)) {
+        if (!entry.link || !waypointIds.has(entry.link.waypointId) || entry.owner === "You" || entry.threadId === member.threadId ||
+            !["done", "rejected"].includes(entry.status)) continue;
+        const { waypointId } = entry.link;
+        const key = `${waypointId}:${entry.threadId}`;
+        const target = targets.get(key) ?? { makerThreadId: entry.threadId, waypointId, entryIds: [] };
+        target.entryIds.push(entry.id);
+        targets.set(key, target);
+      }
+    }
+    return {
+      checkerWaypointIds: [...waypointIds], reviewTarget,
+      assignedJournalTargets: [...targets.values()],
+      guardPosture: member.guardPosture ?? null,
+      reviewPosture: member.checkIndependence === "independent" ? "known different-family check for the first review target"
+        : reviewLimitation(member.checkIndependence ?? "not-established"),
+    };
+  }
   private configureChecked(ctx: PluginAgentConfigurationContext, fallback?: RegistrySnapshot) {
     const m = this.keeper.member(ctx.thread.id);
     const common = {
@@ -1371,15 +1413,7 @@ export class TavernRuntime {
               ? this.keeper.summary(m.boardQuestId).plan?.doneWhen
               : null,
             openEntries: this.keeper.journal.openSummary(m.threadId, 12),
-            ...(m.classId === "warden"
-              ? {
-                  checkerWaypointIds: this.keeper.checkerWaypoints(m.threadId),
-                  reviewTarget: this.keeper.store.runtime(m.threadId).reviewTarget ?? null,
-                  guardPosture: m.guardPosture ?? null,
-                  reviewPosture: m.checkIndependence === "same-family" ? "same-family check (not independent)"
-                    : m.checkIndependence === "independent" ? "known different-family check" : "independence not established",
-                }
-              : {}),
+            ...(m.classId === "warden" ? this.wardenInstructions(m) : {}),
             rules: this.keeper
               .rules(m.threadId, m.boardQuestId)
               .slice(0, 30)
@@ -1725,14 +1759,44 @@ export class TavernRuntime {
       throw new Error(`classId "${classId}" is not in the "${keeperClassId}" Keeper's hire policy for hireable classes. Allowed there: ${policy?.hires.join(", ") || "none"}.`);
     return { role, policy };
   }
+  journalRole(threadId: string): ReturnType<import("./ports").JournalDeps["roleOf"]> {
+    const member = this.keeper.member(threadId);
+    if (member?.classId !== "warden") return member;
+    return {
+      ...member,
+      checkerWaypointIds: this.keeper.checkerWaypoints(threadId),
+      checkerEntryReview: entry => {
+        const link = entry.link!;
+        const maker = this.keeper.member(entry.threadId);
+        const q = this.keeper.quest(link.boardQuestId);
+        const waypoint = this.keeper.store.get("plans", `${q.id}:${q.planVersion}`)?.waypoints.find(w => w.id === link.waypointId);
+        const target = this.keeper.store.runtime(threadId).reviewTarget;
+        if (target?.snapshotId && (entry.threadId !== target.makerThreadId || link.waypointId !== target.waypointId || !target.entryIds.includes(entry.id)))
+          return { problem: "This machine-placed Warden can only check its exact submitted journal targets." };
+        const leadResult = this.keeper.store.leadLinksBy("parentQuestId", q.id).some(link =>
+          link.parentWaypointId === entry.link!.waypointId && link.result?.makerThreadId === entry.threadId && link.result.entryId === entry.id);
+        const subject = waypoint && keeperSubject(waypoint, q.keeperThreadId);
+        if (!maker || maker.classId === "warden" || (subject
+          ? maker.threadId !== q.keeperThreadId || entry.owner !== q.keeperThreadId
+          : !leadResult && (maker.boardQuestId !== q.id || maker.role !== "member" || maker.errand)))
+          return { problem: "This entry is not evidence from the maker or recorded subject of the assigned waypoint." };
+        const posture = this.serviceRecords.reviewPosture(maker, member);
+        if (posture === "same-family") return { problem: "A same-family Warden cannot verify or reject this maker's work." };
+        return { note: reviewLimitation(posture) };
+      },
+    };
+  }
   async plan(threadId: string, input: PlanInput) {
     const q = this.keeper.owned(threadId, input.boardQuestId);
     this.keeper.guard(threadId, q.id);
     const waypoints = input.waypoints.map(waypoint => keeperSubject(waypoint, threadId)
       ? { ...waypoint, owner: KEEPER_SUBJECT_OWNER } : waypoint);
+    const prior = this.keeper.store.get("plans", `${q.id}:${q.planVersion}`);
+    const settledIds = new Set(prior ? this.keeper.summary(q.id).waypoints.filter(settled).map(w => w.id) : []);
     const links = waypoints.flatMap((waypoint, index) => {
       if (waypoint.actor !== "agent" || !waypoint.owner) return [];
       const recordsSubject = keeperSubject(waypoint);
+      const previous = prior?.waypoints.find(w => w.id === waypoint.id);
       const member = this.keeper.member(recordsSubject ? threadId : waypoint.owner);
       if (!member) {
         if (waypoint.owner.startsWith("thr_"))
@@ -1744,11 +1808,13 @@ export class TavernRuntime {
         member.boardQuestId !== q.id ||
         member.errand ||
         member.classId === "warden" ||
-        wasReleased(member)
+        wasReleased(member) && previous?.owner !== member.threadId
       ))
         throw new Error(
           `waypoints.${index}.owner must be an unreleased maker in this board quest, not its checker.`,
         );
+      if (wasReleased(member) || previous && settledIds.has(waypoint.id) && !recordsSubject && !keeperSubject(previous, threadId) &&
+          isDeepStrictEqual({ ...previous, owner: null }, { ...waypoint, owner: null })) return [];
       return [{ waypoint, member }];
     });
     const registry = await this.prepareRegistry(this.keeper.store.runtime(threadId).projectId ?? "");
@@ -1760,7 +1826,6 @@ export class TavernRuntime {
     }
     validatePartyCharacters(input, registry);
     const draft = { ...input, waypoints };
-    validateCheckerMakers(draft, this.keeper.store.all("members").filter(member => member.boardQuestId === q.id), threadId);
     const ids = new Set(input.waypoints.map((waypoint) => waypoint.id));
     if (input.party.some((slot) => slot.waypointIds.some((id) => !ids.has(id))))
       throw new Error("Party assignments must name waypoints in this plan");
@@ -1787,7 +1852,7 @@ export class TavernRuntime {
         .filter(
           (member) => !wasReleased(member),
         );
-      const assignments = checkerAssignments(plan, members, threadId);
+      const assignments = checkerAssignments(plan, members);
       for (const member of members.filter(
         (member) => member.classId === "warden",
       )) {
@@ -1796,8 +1861,8 @@ export class TavernRuntime {
         );
         this.keeper.store.put("members", member.threadId, {
           ...member,
-          checkerWaypointId: assignment?.waypointIds[0] ?? null,
-          checkerMakerThreadId: member.checkerMakerThreadId ?? (assignment?.waypointIds[0] ? makerForWaypoint(plan, members, assignment.waypointIds[0], threadId) : null),
+          checkerWaypointId: member.checkerWaypointId && assignment?.waypointIds.includes(member.checkerWaypointId)
+            ? member.checkerWaypointId : assignment?.waypointIds[0] ?? null,
         });
       }
       this.keeper.changed(threadId, q.id);
@@ -1928,7 +1993,7 @@ export class TavernRuntime {
       throw new Error("A human or outside gate cannot be assigned to an agent");
     let reviewTarget: ReviewTarget | null = null;
     const recordsSubject = !!waypoint && keeperSubject(waypoint, threadId);
-    if (role.id === "warden" && !waypoint) throw new Error("A Warden hire needs exactly one planned waypoint to pin its maker and review posture.");
+    if (role.id === "warden" && !waypoint) throw new Error("A Warden hire needs a planned waypoint to establish its first review target.");
     if (role.id === "warden" && q && waypoint) {
       const currentMaker = this.keeper.summary(q.id).waypoints.find(item => item.id === waypoint.id)?.ownerMember;
       const lead = recordsSubject ? null : currentMaker ? currentLead(this.keeper.store, currentMaker) : this.keeper.store.leadLinksBy("parentQuestId", q.id).reverse()
@@ -1949,27 +2014,25 @@ export class TavernRuntime {
           : `Cannot hire a Warden for ${waypoint.id}: maker ${makerThreadId} has no known journal entry for this waypoint. Link the maker entry first.`);
       reviewTarget = { boardQuestId: q.id, waypointId: waypoint.id, makerThreadId, entryIds: entries.map(entry => entry.id) };
     }
-    let staffingCapacity: number | null = null;
-    const scouting =
-      q?.greenlitVersion != null && ["ranger", "wanderer"].includes(role.id);
-    if (
-      q?.greenlitVersion !== null &&
-      q?.greenlitVersion !== undefined &&
-      !scouting
-    ) {
-      const approved = this.keeper.store.get(
-        "plans",
-        `${q.id}:${q.greenlitVersion}`,
-      );
+    const scouting = q?.greenlitVersion != null && isScoutClass(role.id);
+    const checkApprovedStaffing = (quest: BoardQuest, { party, reserved }: Pick<ReturnType<typeof checkStaffing>, "party" | "reserved">) => {
+      if (quest.greenlitVersion === null || isScoutClass(role.id)) return null;
+      const approved = this.keeper.store.get("plans", `${quest.id}:${quest.greenlitVersion}`);
       if (!approved) throw new Error("The greenlit plan is missing");
-      const capacity = partyCounts(approved).get(role.id) ?? 0;
-      staffingCapacity = capacity;
-      const allocated = this.keeper.store.allocated(q.id, role.id);
-      const pending = reserved.filter(
-        (i) => i.owner.boardQuestId === q.id && i.classId === role.id,
-      ).length;
-      if (allocated + pending >= capacity) {
-        const members = party.filter(member => member.boardQuestId === q.id && member.classId === role.id);
+      const current = quest.phase !== "greenlight" && this.keeper.store.get("plans", `${quest.id}:${quest.planVersion}`);
+      const approvedCounts = partyCounts(approved);
+      const currentCounts = current && current.version !== approved.version ? partyCounts(current) : approvedCounts;
+      const capacity = approvedCounts.has(role.id) ? currentCounts.get(role.id) ?? 0 : 0;
+      const live = party.filter(member => member.boardQuestId === quest.id);
+      const pending = reserved.filter(intent => intent.owner.boardQuestId === quest.id);
+      const occupied = new Map<string, number>();
+      for (const { classId } of [...live, ...pending]) {
+        if (approvedCounts.has(classId) && !isScoutClass(classId)) occupied.set(classId, (occupied.get(classId) ?? 0) + 1);
+      }
+      const rebalanced = [...currentCounts, ...occupied].some(([id, count]) => !isScoutClass(id) && count > (approvedCounts.get(id) ?? 0));
+      const full = rebalanced && [...occupied.values()].reduce((sum, count) => sum + count, 0) >= workingSeats(approved);
+      if (full || (occupied.get(role.id) ?? 0) >= capacity) {
+        const members = live.filter(member => member.classId === role.id);
         const pendingBrief = members.find(member => member.engagement === "briefing" || memberDetails(this.keeper.store, member.threadId).delivery != null);
         if (pendingBrief) {
           const message = this.keeper.store.runtime(pendingBrief.threadId).initialBriefAt === undefined
@@ -1979,9 +2042,11 @@ export class TavernRuntime {
         }
         const failed = this.failedCapacity(members);
         if (failed) throw new Error(`The greenlit party allocates all ${capacity} ${role.id} member(s). ${failed}`);
-        throw new Error(`The greenlit party already allocates all ${capacity} ${role.id} member(s). Propose and greenlight a new plan version before hiring beyond it.`);
+        throw new Error(`The greenlit party has no free seat for another ${role.id}. Release a member or greenlight a larger party.`);
       }
-    }
+      return capacity;
+    };
+    if (q) checkApprovedStaffing(q, { party, reserved });
     if (
       input.waypointId &&
       (party.some(
@@ -2056,7 +2121,7 @@ export class TavernRuntime {
       }
     }
     const hirePlan = q ? this.keeper.summary(q.id).plan : null;
-    if (hirePlan) { validatePartyCharacters(hirePlan, snapshot); validateCheckerMakers(hirePlan, this.keeper.store.all("members").filter(member => member.boardQuestId === q?.id), threadId); }
+    if (hirePlan) validatePartyCharacters(hirePlan, snapshot);
     const occupied = [...party.filter(member => member.boardQuestId === questId), ...reserved.filter(intent => intent.owner.boardQuestId === questId).map(intent => ({ classId: intent.classId, characterId: intent.characterId, waypointId: intent.owner.waypointId }))];
     const greenlitParty = (quest: BoardQuest) => quest.greenlitVersion === null
       ? undefined : this.keeper.store.get("plans", `${quest.id}:${quest.greenlitVersion}`)?.party;
@@ -2074,9 +2139,6 @@ export class TavernRuntime {
       (!slot.permanent?.decisionId || !greenlitPermanent.has(slot.permanent.decisionId) || !permanentSeats.has(slot.permanent.decisionId)) &&
       (!input.waypointId || slot.waypointIds.includes(input.waypointId) || role.id === "warden" && slot.waypointIds.length === 0) &&
       !occupied.some(member => member.classId === slot.classId && (slot.characterId ? member.characterId === slot.characterId : !!member.waypointId && slot.waypointIds.includes(member.waypointId))));
-    const reviewMaker = reviewTarget?.makerThreadId;
-    if (role.id === "warden" && slot && reviewMaker !== undefined && hirePlan && slot.waypointIds.some(id => makerForWaypoint(hirePlan, this.keeper.store.all("members").filter(member => member.boardQuestId === q?.id), id, threadId) !== reviewMaker))
-      throw new Error("Every waypoint in this Warden slot must name the same maker as its review target. Assign those maker threads first; a different maker needs its own Warden.");
     if (slot?.characterId && input.characterId && slot.characterId !== input.characterId)
       throw new Error(`This plan slot requires character ${slot.characterId}; propose a new plan to change it.`);
     const modelRule = providerPlacement && placementRoute?.match.state === "matched" ? placementRoute.match.rule : null;
@@ -2091,7 +2153,7 @@ export class TavernRuntime {
         member.role === "member" && member.engagement === "resting" && member.classId === role.id &&
         member.boardQuestId === questId && member.errand === errand &&
         (!requestedCharacter || member.characterId === requestedCharacter) &&
-        (reviewTarget ? member.checkerMakerThreadId === reviewTarget.makerThreadId : member.waypointId === (input.waypointId ?? null)),
+        (reviewTarget ? k.checkerWaypoints(member.threadId).includes(reviewTarget.waypointId) : member.waypointId === (input.waypointId ?? null)),
       );
       if (candidates.length) {
         const context = restingContext(k);
@@ -2106,8 +2168,7 @@ export class TavernRuntime {
           } else if (placement || state.placementExecution) return false;
           const rest = restingEngagement(k, member, context);
           if (!rest || !reuseRule(member.classId, rest, "this quest")) return false;
-          return !reviewTarget || rest.rejectedWaypoints.includes(reviewTarget.waypointId) &&
-            k.checkerWaypoints(member.threadId).includes(reviewTarget.waypointId);
+          return !reviewTarget || rest.rejectedWaypoints.includes(reviewTarget.waypointId);
         });
         if (resting) throw new Error(`${k.name(resting)} (${resting.threadId}) is resting. Re-brief with tavern_tell, or release it first with tavern_release if it can't do the job.`);
       }
@@ -2184,15 +2245,13 @@ export class TavernRuntime {
       limitDecisionIds.push(...staffing.permits);
       if (reviewAllowance && questId) limits.claimReview(questId, token);
       for (const id of limitDecisionIds) limits.claimSoft(id, token);
-      if (q && staffingCapacity !== null) {
-        intent.staffing = reserveStaffing(
-          this.keeper,
-          q,
-          role.id,
-          staffingCapacity,
-          token,
-          replacesThreadId,
-        );
+      if (q) {
+        const current = this.keeper.quest(q.id);
+        if (current.planVersion !== q.planVersion || current.greenlitVersion !== q.greenlitVersion)
+          throw new Error("The plan or greenlight changed before this hire was reserved; retry.");
+        const capacity = checkApprovedStaffing(current, staffing);
+        if (capacity !== null)
+          intent.staffing = reserveStaffing(this.keeper, current, role.id, capacity, token, replacesThreadId);
       }
       if (questId) this.keeper.assertQuestNotHeld(questId);
       if (leadHire) {
@@ -2260,6 +2319,7 @@ export class TavernRuntime {
           maker,
         },
       );
+      if (checkIndependence === "same-family") throw new Error("Cannot hire a same-family Warden for this maker. Choose a different model family.");
       if (ruleModel) notes.unshift(...(["provider", "model", "reasoning"] as const)
         .filter(field => ruleModel[field] !== undefined)
         .map(field => `${field} ${beforeRuleRole[field] ?? (field === "provider" ? parent.providerId : "provider default")} -> ${ruleModel[field]} (rule ${modelRule!.id})`));
@@ -2399,7 +2459,8 @@ export class TavernRuntime {
           ...reviewTarget, waypointFingerprint: reviewWaypointFingerprint(this.keeper.store, reviewTarget),
         } });
       }
-      if (waypoint && q && role.id !== "warden") {
+      if (waypoint && q && role.id !== "warden" &&
+          !this.keeper.summary(q.id).waypoints.some(w => w.id === waypoint.id && settled(w))) {
         await this.keeper.journal.prepare(member.threadId);
         this.keeper.journal.linkWaypoint(
           member.threadId,
@@ -3087,7 +3148,7 @@ export class TavernRuntime {
     const text = `Continue scouting for ${minutes} minutes, then file a checkpoint and wait. Reason: ${reason}\nQuestions for this box:\n${questions.map((question, index) => `${index + 1}. ${question.replace(/^\s*\d+[.)]\s+/, "")}`).join("\n")}`;
     return this.tell(keeperId, member.threadId, text, undefined, { keeperId, role, input: { reportId, minutes, questions } });
   }
-  async tell(threadId: string, memberThreadId: string, text: string, supersedeBriefId?: string, continuation?: { keeperId: string; role: ClassDef; input: RangerContinuation }) {
+  async tell(threadId: string, memberThreadId: string, text: string, supersedeBriefId?: string, continuation?: { keeperId: string; role: ClassDef; input: RangerContinuation }, waypointIds?: string[]) {
     memberThreadId = this.keeper.resolvePartyMember(threadId, memberThreadId).threadId;
     this.keeper.require(threadId, "keeper");
     const member = this.keeper.member(memberThreadId);
@@ -3116,7 +3177,7 @@ export class TavernRuntime {
     }
     await this.away.beforeTell(memberThreadId);
     this.keeper.assertCheckerHandoff(member.classId, member.boardQuestId);
-    const delivery = await this.sendRebrief(memberThreadId, text, supersedeBriefId, continuation);
+    const delivery = await this.sendRebrief(memberThreadId, text, supersedeBriefId, continuation, waypointIds);
     const pending = memberDetails(this.keeper.store, memberThreadId).delivery;
     const status = !delivery.briefPending ? "delivered" : !pending ? "cancelled"
       : openBriefBlocker(this.keeper.store, pending) ? "blocked"

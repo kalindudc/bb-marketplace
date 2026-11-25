@@ -509,6 +509,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       syncBoardQuests(threadId);
       const actor: Actor = { kind: "agent", threadId: callerThreadId };
       const entries = localEntries(threadId);
+      const verdictNotes = new Set<string>();
       if (threadId !== callerThreadId) {
         if (!["verify", "reject", "reopen", "list", "get"].includes(action.action)) throw new Error("Only Warden read and verdict actions can target another thread.");
         const role = deps.roleOf(callerThreadId);
@@ -517,7 +518,8 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
         if (!targets.length) throw new Error("No linked entries found in the target thread.");
         for (const entry of targets) {
           if (action.action === "reopen" && entry.link && canManageLinks(actor, deps.roleOf)) continue;
-          requireWarden(entry, actor, deps.roleOf);
+          const note = requireWarden(entry, actor, deps.roleOf, action.action === "list" || action.action === "get");
+          if (note && (action.action === "verify" || action.action === "reject")) verdictNotes.add(note);
         }
       }
       unseen = callerThreadId === threadId ? pending(threadId) : [];
@@ -538,7 +540,8 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
           const ids = action.ids ?? (action.id ? [action.id] : []);
           text = localEntries(threadId).filter(e => ids.includes(e.id)).map(e => `[${e.id}] ${JSON.stringify(e.description)} ${e.status}${e.note ? `; ${JSON.stringify(e.note)}` : ""}`).join("\n");
         }
-        if (verdictNote) text += `\n${verdictNote}`;
+        if (verdictNote) verdictNotes.add(verdictNote);
+        if (verdictNotes.size) text += `\n${[...verdictNotes].join("\n")}`;
       }
       acknowledge(threadId, unseen);
       return { text: clip(`${describeChanges(unseen)}${text}`, 28000), isError: false };
@@ -559,18 +562,18 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     return withThreadLock(input.threadId ?? callerThreadId, () => executeTool(callerThreadId, input, assertVerdict ?? undefined));
   }
   /**
-   * A follow-up brief reached this member (runtime.finishInitialBrief): its finished entries linked to the quest reopen, as one Tavern
+   * A follow-up brief reached this member (runtime.finishInitialBrief): its finished entries on the named waypoints reopen, as one Tavern
    * history step that the member's or the user's undo can't reverse. A verified entry's receipt is marked superseded first, in the same
    * transaction. It never throws, so accepting the brief can't fail on the journal; a failure is logged.
    */
-  function rebriefed(threadId: string, boardQuestId: string, version: number) {
+  function rebriefed(threadId: string, boardQuestId: string, version: number, waypointIds: readonly string[]) {
     const actor = { kind: "tavern" as const };
     try {
-      if (!journalRow(threadId) || deleted.has(threadId)) return;
+      if (!waypointIds.length || !journalRow(threadId) || deleted.has(threadId)) return;
       let changed: { ids: string[]; entries: JournalEntry[] } | null = null;
       db.transaction(() => {
         const before = localEntries(threadId), at = Date.now();
-        const r = rebriefEntries(before, { boardQuestId, version, at, name: ownerLabel });
+        const r = rebriefEntries(before, { boardQuestId, version, waypointIds, at, name: ownerLabel });
         if (!r.ids.length) return;
         for (const entry of r.verified) deps.superseded?.({ entry, version, at });
         saveEntries(threadId, r.entries);

@@ -36,7 +36,7 @@ Turn the user's goal and steers into a checked result without holding up their w
 
 1. Start with the smallest party that covers the critical path. Add a member only for work that can truly run in parallel.
 2. Parallelise reads and serialise writes. Give each Smith its own area of files, and NEVER let two builders make overlapping decisions.
-3. Each Warden checks one maker's work, in a fresh context.
+3. Wardens can check many makers, but not known same-family ones.
 4. Reuse eligible resting members before hiring; release those you won't reuse unless permanent.
 5. A user's standing duty (watch, digest, upkeep) goes to a permanent member with a schedule, not an automation or outside job. Plan `permanent: { why, schedules }` or ask via `tavern_keep` (`permanent:true`). `closingExempt:true` needs a guard and exempts only Pause.
 6. Start with at most three builders. Add one only when nobody is waiting on the user.
@@ -48,7 +48,7 @@ Check `tavern_placements` for repo and class. Consent, inputs, models and forge 
 
 1. After any required greenlight, staff the critical path first.
 2. Tell the user this turn about any provider, model, permission or reasoning substitution.
-3. Re-plan within the party; a bigger party needs greenlight. Explain replacements.
+3. Reuse approved seats. Ask for more seats, a new class, weaker checks or a new permanent slot.
 4. Only the user's Allow one more review control lifts the review budget.
 
 ## Write a brief
@@ -61,7 +61,7 @@ Give the member enough to work without your chat:
 4. Ask for a one-sentence headline and evidence paths. For work over 20 minutes, ask for a journal note within 20 minutes; a report ends the turn.
 7. If the work changes something the user already uses, name what must survive and show before and after. Keep it local until they approve.
 
-Use `tavern_tell` for a bounded follow-up; otherwise hire fresh.
+Narrow follow-ups with changed `waypointIds`. If none resolve, all linked work on the quest reopens.
 
 ## Decide or ask
 
@@ -98,8 +98,8 @@ A scope block is yours to handle, not an ask to pass on.
 ## Check the work
 
 1. Read the report's evidence and rerun the key check when cheap. Check the waypoint and the user's goal.
-2. Brief a Warden with the claim and done-when, NEVER your conclusion. An independent check uses another model, fresh context and its own evidence. Preserve same-family or unknown-family limitations.
-3. Reject only work that fails its done-when. Re-brief its maker with the evidence, or replace a stuck maker. Re-check corrections against the same plan.
+2. Brief the claim, done-when and journal entries, NEVER your conclusion. Wardens use their own evidence and report unknown independence.
+3. Re-brief or replace a stuck maker without revising the plan for staffing alone. Use `tavern_settle` on Keeper-checked journal evidence.
 4. For an existing branch, PR or path, set owner to your thread ID. Attach the exact subject to the linked journal entry, mark it done, then hire a Warden. Use a fresh waypoint for a different subject.
 6. When you read a report and plan no follow-up, release a non-permanent member that turn. If you expect one, use `tavern_keep`. A pending Warden check is a follow-up.
 

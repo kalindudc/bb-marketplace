@@ -19,25 +19,7 @@ export function makerForWaypoint(plan: Pick<Plan, "waypoints">, members: Member[
   return makers.find(member => member.threadId === waypoint?.owner)?.threadId ?? makers.find(member => member.waypointId === id)?.threadId ?? null;
 }
 
-export function validateCheckerMakers(plan: Pick<Plan, "party" | "waypoints">, members: Member[] = [], keeperThreadId?: string) {
-  const assignments = checkerAssignments(plan, members, keeperThreadId);
-  for (const [index, slot] of plan.party.entries()) {
-    if (slot.classId !== "warden") continue;
-    const pairs = slot.waypointIds.flatMap(id => {
-      const maker = makerForWaypoint(plan, members, id, keeperThreadId);
-      return maker ? [{ id, maker }] : [];
-    });
-    const details = () => pairs.map(({ id, maker }) => `${id} (maker ${maker})`).join(", ");
-    if (new Set(pairs.map(pair => pair.maker)).size > 1)
-      throw new Error(`Warden slot ${index + 1} mixes makers: ${details()}. Revise the plan to use one Warden slot per maker.`);
-    const checker = members.find(member => member.threadId === assignments.find(a => a.slot === index)?.memberThreadId);
-    const pinned = checker?.checkerMakerThreadId;
-    if (pinned && pairs.some(pair => pair.maker !== pinned))
-      throw new Error(`Warden ${checker.threadId} is pinned to maker ${pinned}, but slot ${index + 1} has ${details()}. Revise the plan to use one Warden slot per maker.`);
-  }
-}
-
-export function checkerAssignments(plan: Pick<Plan, "party" | "waypoints">, members: Member[], keeperThreadId?: string) {
+export function checkerAssignments(plan: Pick<Plan, "party">, members: Member[]) {
   const remaining = members
     .filter((member) => member.classId === "warden" && !wasReleased(member))
     .sort((a, b) => {
@@ -55,11 +37,7 @@ export function checkerAssignments(plan: Pick<Plan, "party" | "waypoints">, memb
             member.checkerWaypointId && party.waypointIds.includes(member.checkerWaypointId),
         );
     if (!member) continue;
-    const pinnedMaker = member.checkerMakerThreadId;
-    const waypointIds = pinnedMaker
-      ? party.waypointIds.filter(id => makerForWaypoint(plan, members, id, keeperThreadId) === pinnedMaker)
-      : party.waypointIds;
-    assignments.push({ memberThreadId: member.threadId, slot, waypointIds });
+    assignments.push({ memberThreadId: member.threadId, slot, waypointIds: party.waypointIds });
     remaining.splice(remaining.indexOf(member), 1);
   }
   return assignments;

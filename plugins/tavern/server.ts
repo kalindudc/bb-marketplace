@@ -91,17 +91,7 @@ export default async function tavern(bb: BbPluginApi) {
       runtime.serviceRecords.superseded(input);
     },
     settings: () => settings.read().journal,
-    roleOf: (threadId) => {
-      const member = store.get("members", threadId);
-      return member
-        ? {
-            ...member,
-            ...(member.classId === "warden"
-              ? { checkerWaypointIds: keeper?.checkerWaypoints(threadId) ?? [] }
-              : {}),
-          }
-        : null;
-    },
+    roleOf: threadId => runtime?.journalRole(threadId) ?? store.get("members", threadId),
     boardQuestsOf: (threadId) =>
       store.query("quests", "keeperThreadId", threadId, 5000),
     invalidate: (tags) => bb.rpc.experimental_invalidate(tags),

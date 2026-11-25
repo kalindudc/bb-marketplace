@@ -25,8 +25,8 @@ export interface JournalPort {
   openSummary(threadId: string, limit: number): string;
   /** The journal as Markdown, grouped as the panel's tracker; read-only, so a thread without a journal gets none. */
   exportMarkdown(threadId: string): Promise<string>;
-  /** A follow-up brief (version) reached this member: reopen its finished entries linked to the quest, and move their evidence to the note. */
-  rebriefed(memberThreadId: string, boardQuestId: string, version: number): void;
+  /** Reopen finished entries on the named waypoints when a follow-up brief arrives. */
+  rebriefed(memberThreadId: string, boardQuestId: string, version: number, waypointIds: readonly string[]): void;
   /** Instructions block for configure: the tool's rules, plus a snapshot of open entries. */
   instructions(threadId: string): string;
   /** Called first in the plugin's single message.dispatch handler: a reject message for a Tavern note that would start a turn, else null. */
@@ -51,7 +51,7 @@ export interface JournalDeps {
   boardQuestsOf?(threadId: string): readonly BoardQuestMirror[];
   /** The caller's Tavern role, from the members table (never from metadata). */
   // added by Builder A: a present checker list is the current-plan assignment; an empty list grants no review permission.
-  roleOf(threadId: string): { classId: string; role: "keeper" | "member" | "solo"; waypointId: string | null; boardQuestId: string | null; checkerWaypointIds?: readonly string[] } | null;
+  roleOf(threadId: string): { classId: string; role: "keeper" | "member" | "solo"; waypointId: string | null; boardQuestId: string | null; checkerWaypointIds?: readonly string[]; checkerEntryReview?: (entry: JournalEntry) => { problem?: string; note?: string | null } } | null;
   invalidate(tags: string[]): void;
   /** A Tavern member's character name for a thread, so delegated entries name their owner; null for other threads. */
   nameOf?(threadId: string): string | null;

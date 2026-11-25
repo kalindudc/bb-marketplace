@@ -86,17 +86,20 @@ function appendNote(existing: string | null, line: string): string {
   return lines.join("\n");
 }
 /**
- * A follow-up brief reached a member: its linked entries on that quest were finished against the earlier brief, so they reopen.
- * Done and verified entries go back to doing, and a Warden's verdict is cleared, because a verdict proves only the brief it checked.
+ * A follow-up brief reached a member: finished entries linked to its named waypoints reopen.
+ * Done and verified entries reopen, and a Warden's verdict is cleared because it proves only the brief it checked.
  * Rejected entries stay rejected with their reason. In every case the member's evidence moves into the note, labelled with its brief,
  * so a done report needs fresh evidence. Unfinished entries are left alone.
  */
-export function rebriefEntries(original: JournalEntry[], { boardQuestId, version, at, name }: { boardQuestId: string; version: number; at: number; name: (threadId: string) => string }) {
+export function rebriefEntries(original: JournalEntry[], { boardQuestId, version, waypointIds, at, name }: { boardQuestId: string; version: number; waypointIds: readonly string[]; at: number; name: (threadId: string) => string }) {
   const entries = copy(original);
+  const targets = new Set(waypointIds);
   const was = version - 1;
   const ids: string[] = [], verified: JournalEntry[] = [], lines: string[] = [];
+  const byId = new Map(entries.map(entry => [entry.id, entry]));
+  let doingOwn = entries.some(e => e.status === "doing" && !delegated(e));
   for (const e of entries) {
-    if (e.link?.boardQuestId !== boardQuestId || !(closed(e) || e.status === "rejected")) continue;
+    if (e.link?.boardQuestId !== boardQuestId || !targets.has(e.link.waypointId) || !(closed(e) || e.status === "rejected")) continue;
     const parts: string[] = [];
     if (e.evidence.length) parts.push(`v${was} evidence kept for reference: ${e.evidence.map(x => x.detail ? `${x.ref} (${x.detail})` : x.ref).join(", ")}.`);
     const review = e.status === "verified" ? e.review : null;
@@ -113,14 +116,26 @@ export function rebriefEntries(original: JournalEntry[], { boardQuestId, version
     const kept = [...(e.rebrief?.evidence ?? []), ...e.evidence];
     e.rebrief = { version, evidence: kept.filter((v, i) => kept.findIndex(x => JSON.stringify(x) === JSON.stringify(v)) === i).slice(-30) };
     if (e.status !== "rejected") {
-      e.status = "doing"; e.doneAt = null; e.doneBy = null; e.report = null; e.rewrites = 0;
-      const parent = e.parentId ? entries.find(p => p.id === e.parentId) : undefined;
-      if (parent && closed(parent)) { parent.status = "todo"; parent.doneAt = null; parent.doneBy = null; parent.updatedAt = at; parent.updatedBy = { kind: "tavern" }; }
+      const own = !delegated(e);
+      e.status = own && doingOwn ? "todo" : "doing";
+      doingOwn ||= own;
+      e.doneAt = null; e.doneBy = null; e.report = null; e.rewrites = 0;
     }
     e.evidence = [];
     e.note = appendNote(e.note, noteLine(at, `Brief v${version} arrived; ${parts.join(" ")}`));
     e.updatedAt = at; e.updatedBy = { kind: "tavern" };
     ids.push(e.id);
+  }
+  for (const id of ids) {
+    const e = byId.get(id)!;
+    const parent = e.parentId ? byId.get(e.parentId) : undefined;
+    if (!parent || !closed(parent)) continue;
+    if (parent.link) {
+      e.parentId = null;
+      lines.push(`Moved [${e.id}] out of the completed [${parent.id}] checklist so its separate waypoint stays closed.`);
+    } else {
+      parent.status = "todo"; parent.doneAt = null; parent.doneBy = null; parent.updatedAt = at; parent.updatedBy = { kind: "tavern" };
+    }
   }
   return { entries, ids, verified, text: lines.join("\n") };
 }
@@ -163,11 +178,14 @@ export function wardenCanReview(entry: JournalEntry, role: ReturnType<JournalDep
   if (!entry.link || role?.classId !== "warden" || role.boardQuestId !== entry.link.boardQuestId) return false;
   return role.checkerWaypointIds !== undefined ? role.checkerWaypointIds.includes(entry.link.waypointId) : role.waypointId === null || role.waypointId === entry.link.waypointId;
 }
-export function requireWarden(entry: JournalEntry, actor: Actor, roleOf: JournalDeps["roleOf"]): void {
+export function requireWarden(entry: JournalEntry, actor: Actor, roleOf: JournalDeps["roleOf"], readOnly = false): string | null | undefined {
   const role = actor.kind === "agent" ? roleOf(actor.threadId) : null;
   if (!wardenCanReview(entry, role)) {
     throw new Error("Only a Warden assigned to this board quest and waypoint can verify or reject this entry.");
   }
+  const review = readOnly ? null : role?.checkerEntryReview?.(entry);
+  if (review?.problem) throw new Error(review.problem);
+  return review?.note;
 }
 export function canManageLinks(actor: Actor, roleOf: JournalDeps["roleOf"]): boolean {
   return actor.kind === "tavern" || (actor.kind === "agent" && roleOf(actor.threadId)?.classId === "keeper");

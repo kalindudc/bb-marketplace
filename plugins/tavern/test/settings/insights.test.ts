@@ -71,7 +71,7 @@ describe("Warden quality", () => {
         expect(await journal.runTool("checker", { action: "verify", threadId: maker, id, evidence: proof })).toMatchObject({ isError: false });
         clock.mockReturnValue(maker === "future-reopen" ? f.now + 1 : at + 1);
         if (maker === "earlier-reported") continue;
-        if (maker === "new-brief") { journal.rebriefed(maker, "quest", 2); continue; }
+        if (maker === "new-brief") { journal.rebriefed(maker, "quest", 2, ["w1"]); continue; }
         const move = maker === "toggled" ? await journal.runTool(maker, { action: "toggle", id })
           : await journal.runTool("checker", { action: "reopen", threadId: maker, id });
         expect(move.isError, move.text).toBe(false);

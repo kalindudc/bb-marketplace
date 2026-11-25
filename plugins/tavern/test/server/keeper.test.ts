@@ -374,7 +374,7 @@ describe("host boundaries", () => {
     expect(spawn).toContain('"hireToken"');
     expect(spawn).toContain('"environmentProviderId":"git-worktree"');
     expect(spawn).toContain('"name":"main"');
-    await expect(runtime.hire("lead", "project", input)).rejects.toThrow(/already/);
+    await expect(runtime.hire("lead", "project", input)).rejects.toThrow(/greenlit party has no free seat for another smith/);
   });
   it("drops voice on bad news and refuses done linked entries with no evidence", async () => {
     const { k, port } = setup();

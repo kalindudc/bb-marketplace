@@ -94,7 +94,7 @@ describe("class character and quality policy", () => {
     expect(readStatus(f.runtime, "lead", statusInput.parse({ section: "errands" }))).toMatchObject({ inFlight: [{ owner: { name: "Smith" } }] });
   });
 
-  it("allows several checker waypoints from one maker and refuses a mixed-maker slot", async () => {
+  it("keeps a Warden assigned across makers and slot order changes", async () => {
     const f = setup();
     const q = await seedQuest(f.k,"lead", "Build", "Build");
     const brief = { outcome: "Make", mode: "make-it-work" as const, outOfScope: "Other work", doneWhen: "Done", context: [], questions: [], timeboxMinutes: null };
@@ -105,6 +105,8 @@ describe("class character and quality policy", () => {
     const member = f.k.bind("check", "warden", "vex", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: "w1", title: "Check", errand: false, brief, reviewTarget: { boardQuestId: q.id, waypointId: "w1", makerThreadId: "maker", entryIds: ["a1"] } });
     expect(checkerAssignments(plan, f.k.store.all("members"))[0]!.waypointIds).toEqual(["w1", "w2"]);
     const mixed = { ...input, waypoints: input.waypoints.map(waypoint => waypoint.id === "w2" ? { ...waypoint, owner: "other" } : waypoint) };
-    await expect(f.runtime.plan("lead", mixed)).rejects.toThrow(/w1.*maker.*w2.*other.*one Warden slot per maker/i);
+    const revised = await f.runtime.plan("lead", { ...mixed, party: [{ ...mixed.party[0]!, waypointIds: ["w2", "w1"] }] });
+    expect(checkerAssignments(revised, f.k.store.all("members"))[0]!.waypointIds).toEqual(["w2", "w1"]);
+    expect(f.k.checkerWaypoints(member.threadId)).toEqual(["w2", "w1"]);
   });
 });

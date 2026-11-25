@@ -55,7 +55,7 @@ it("uses the parent environment, accounts for the seat, and opens just one verif
   expect(f.k.store.all("leadLinks")).toEqual([expect.objectContaining({ parentQuestId: f.q.id, parentWaypointId: "w1", childQuestId: a.id, childKeeperThreadId: member.threadId, parentPlan: expect.objectContaining({ version: 1, receipt: expect.objectContaining({ kind: "ask-answer" }) }), state: "linked" })]);
   expect(f.k.store.query("routes", "keeperThreadId", member.threadId)).toEqual([]);
   await expect(f.k.openQuest("lead", "Not authorized", "No")).rejects.toThrow(/new-quest route/);
-  await expect(f.runtime.hire("lead", "project", request(f.q.id))).rejects.toThrow(/already|allocates/);
+  await expect(f.runtime.hire("lead", "project", request(f.q.id))).rejects.toThrow(/greenlit party has no free seat for another keeper/);
 });
 
 it("uses the global Keeper roster for an automatically assigned child lead", async () => {
@@ -148,7 +148,7 @@ it("keeps an unresolved lead holder and recovers it only with its own hire nonce
   const f = await fixture();
   f.bb.sdk.threads.spawn = vi.fn(async () => { throw new Error("Lost reply"); });
   await expect(f.runtime.hire("lead", "project", request(f.q.id))).rejects.toThrow("Lost reply");
-  await expect(f.runtime.hire("lead", "project", request(f.q.id))).rejects.toThrow(/already|allocates/);
+  await expect(f.runtime.hire("lead", "project", request(f.q.id))).rejects.toThrow(/greenlit party has no free seat for another keeper/);
   const reservation = f.k.store.all("leadLinks")[0]!;
   const child = (id: string) => ({ ...makeThreadResponse({ id, parentThreadId: "lead", projectId: "project" }),
     activity: { activeBackgroundAgentCount: 0, activeBackgroundCommandCount: 0, activePlanModeCount: 0, activeWorkflowCount: 0 },

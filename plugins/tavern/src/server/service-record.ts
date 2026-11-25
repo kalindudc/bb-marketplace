@@ -53,6 +53,18 @@ export class ServiceRecords {
     const value = pair?.providerId && pair.model ? modelFamily(pair.providerId, pair.model) : null;
     return { value, uncertain: current !== null && value === null };
   }
+  private reviewFamilies(maker: Member, checker: Member, at: number) {
+    const makerFamily = this.family(maker, at), checkerFamily = this.family(checker, at);
+    const firstMaker = this.k.store.runtime(checker.threadId).reviewTarget?.makerThreadId ?? checker.checkerMakerThreadId;
+    const independence: ServiceVerdict["independence"] = makerFamily.value && checkerFamily.value
+      ? makerFamily.value === checkerFamily.value ? "same-family" : "independent"
+      : makerFamily.uncertain || checkerFamily.uncertain || firstMaker && firstMaker !== maker.threadId
+        ? "not-established" : checker.checkIndependence ?? "not-established";
+    return { makerFamily: makerFamily.value, checkerFamily: checkerFamily.value, independence };
+  }
+  reviewPosture(maker: Member, checker: Member) {
+    return this.reviewFamilies(maker, checker, this.k.now()).independence;
+  }
   private subject(member: Member, family: string | null = null): ServiceVerdict["maker"] {
     const runtime = this.k.store.runtime(member.threadId);
     return { key: key(member.threadId), threadId: memberHost(this.k.store, member).deletedAt != null ? null : member.threadId, characterId: member.characterId, family };
@@ -62,8 +74,8 @@ export class ServiceRecords {
     if (!after.link || !review || review.actor.kind !== "agent" || !["verified", "rejected"].includes(after.status)) return null;
     const maker = this.k.member(after.threadId), checker = this.k.member(review.actor.threadId);
     if (!maker || maker.classId === "warden" || !checker || checker.classId !== "warden" || checker.boardQuestId !== after.link.boardQuestId || maker.boardQuestId !== after.link.boardQuestId) return null;
-    const makerFamily = this.family(maker, review.at), checkerFamily = this.family(checker, review.at);
-    const makerSubject = this.subject(maker, makerFamily.value), checkerSubject = this.subject(checker, checkerFamily.value);
+    const { makerFamily, checkerFamily, independence } = this.reviewFamilies(maker, checker, review.at);
+    const makerSubject = this.subject(maker, makerFamily), checkerSubject = this.subject(checker, checkerFamily);
     let fixesRejectionId: string | null = null;
     const previous = before.review;
     if (after.status === "verified" && before.status === "done" && before.doneBy?.kind === "agent" && before.doneBy.threadId === before.threadId
@@ -75,7 +87,7 @@ export class ServiceRecords {
     return serviceVerdictSchema.parse({ version: 1, id, questId: after.link.boardQuestId, waypointId: after.link.waypointId, entryId: after.id,
       entryKey: key([after.threadId, after.id]), sequence, at: review.at, verdict: after.status,
       maker: makerSubject, checker: checkerSubject,
-      independence: makerSubject.family !== null && makerSubject.family === checkerSubject.family ? "same-family" : makerFamily.uncertain || checkerFamily.uncertain ? "not-established" : checker.checkIndependence ?? "not-established",
+      independence,
       makerEvidence: after.evidence, checkerEvidence: review.evidence, reason: review.reason, fixesRejectionId });
   }
   reviewed(input: JournalReview): void {

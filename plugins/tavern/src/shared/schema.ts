@@ -647,7 +647,10 @@ export const decisionSchema = z.object({
   pullRequestGrant: z.object({ digest: z.string().regex(/^[a-f0-9]{64}$/) }).optional(),
   askId: id.optional(), optionId: z.string().optional(), kind: delegationKindSchema.optional(),
   exceeds: z.enum(["party", "rangers"]).optional(),
-  waypointCall: settleWaypointSchema.pick({ waypointId: true, as: true }).extend({ planVersion: z.number().int().positive() }).optional(),
+  waypointCall: settleWaypointSchema.pick({ waypointId: true, as: true }).extend({
+    planVersion: z.number().int().positive(),
+    acceptedEntries: z.array(z.object({ threadId: id, id })).optional(),
+  }).optional(),
   checkChange: z.object({ planVersion: z.number().int().positive(), previousVersion: z.number().int().positive(), steer: z.object({ at: epochMs, text: z.string() }) }).optional(),
   usedBy: z.string().nullable().optional(),
   // added by Builder B: acknowledgement is cross-device display state; missing means unseen.

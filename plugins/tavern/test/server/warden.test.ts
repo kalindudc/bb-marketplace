@@ -195,6 +195,84 @@ describe("Warden target briefing", () => {
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
   });
 
+  it("checks another maker and its replacement from one approved slot, but refuses the Warden's own family", async () => {
+    const f = setup();
+    f.bb.sdk.threads.getPluginMetadata = async () => ({});
+    const journal = createJournalStore(f.bb, f.k.store.db, {
+      invalidate: () => {},
+      roleOf: id => f.runtime.journalRole(id),
+    });
+    Object.assign(f.port, journal);
+    const q = await seedQuest(f.k, "lead", "Build two parts", "Build");
+    const bind = (id: string, waypointId: string, family: string) => {
+      f.k.bind(id, "smith", "bram", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId, errand: false, title: "Build", brief });
+      f.k.store.patch(id, { classExecutionChoice: { providerId: "pi", model: family, recordedAt: f.time(), reasoningLevel: null, modelSource: null, reasoningSource: null } });
+    };
+    bind("maker", "w1", anthropic);
+    bind("other", "w2", openai);
+    const base = planInput(q.id);
+    const one = { ...base.waypoints[0]!, owner: "maker", check: "warden" as const };
+    await f.runtime.plan("lead", { ...base, waypoints: [one, { ...one, id: "w2", owner: "other" }], party: [
+      { classId: "warden", characterId: null, model: null, purpose: "Check both", waypointIds: ["w1", "w2"] },
+    ] });
+    f.k.answerAsk(f.k.store.openAsks("lead", q.id)[0]!.id, "approve", null, "page", "user");
+    f.bb.sdk.threads.defaultExecutionOptions = async () => ({ model: anthropic, permissionMode: "full", reasoningLevel: "high", serviceTier: "standard", source: "client/turn/start" });
+    const input = { classId: "warden", boardQuestId: q.id, waypointId: "w1", title: "Check", brief };
+    f.bb.sdk.providers.models = async () => catalog([model(anthropic)]);
+    await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(/same.family/i);
+    expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
+
+    f.bb.sdk.providers.models = async () => catalog([model(anthropic), model(openai, ["high"], false)]);
+    const checker = await f.runtime.hire("lead", "project", input);
+    expect(checker.checkIndependence).toBe("independent");
+    const evidence = [{ kind: "command" as const, ref: "npm test", detail: "All tests pass", exitCode: 0 }];
+    const verify = async (makerId: string) => {
+      const entry = journal.get(makerId).entries[0]!;
+      expect(await journal.runTool(makerId, { action: "done", id: entry.id, evidence })).toMatchObject({ isError: false });
+      return journal.runTool(checker.threadId, { action: "verify", id: entry.id, threadId: makerId, evidence });
+    };
+    expect(await verify("maker")).toMatchObject({ isError: false });
+    expect(await verify("other")).toMatchObject({ isError: true, text: expect.stringMatching(/independent|same.family/i) });
+    f.bb.sdk.threads.stop = async () => ({ ok: true });
+    expect(await f.runtime.release("lead", "other", "Replace the maker")).toBe(true);
+    bind("replacement", "w2", anthropic);
+    await journal.prepare("replacement");
+    journal.linkWaypoint("replacement", { boardQuestId: q.id, waypointId: "w2" }, one.title, "replacement", { kind: "tavern" });
+    expect(await verify("replacement")).toMatchObject({ isError: false });
+    expect(f.k.quest(q.id).planVersion).toBe(1);
+    expect(f.k.summary(q.id).waypoints.map(w => w.state)).toEqual(["verified", "verified"]);
+  });
+
+  it.each(["verify", "reject"] as const)("lets a Warden with unknown independence file a labelled %s verdict", async action => {
+    const f = setup();
+    f.bb.sdk.threads.getPluginMetadata = async () => ({});
+    const journal = createJournalStore(f.bb, f.k.store.db, {
+      invalidate: () => {},
+      roleOf: id => f.runtime.journalRole(id),
+      reviewed: review => f.runtime.serviceRecords.reviewed(review),
+    });
+    Object.assign(f.port, journal);
+    const q = await seedQuest(f.k, "lead", "Build", "Build");
+    f.k.bind("maker", "smith", "bram", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: "w1", errand: false, title: "Build", brief });
+    f.k.store.patch("maker", { classExecutionChoice: { providerId: "pi", model: "custom/dev", recordedAt: f.time(), reasoningLevel: null, modelSource: null, reasoningSource: null } });
+    const base = planInput(q.id);
+    await f.runtime.plan("lead", { ...base, waypoints: [{ ...base.waypoints[0]!, owner: "maker", check: "warden" }], party: [
+      { classId: "warden", characterId: null, model: null, purpose: "Check", waypointIds: ["w1"] },
+    ] });
+    f.k.answerAsk(f.k.store.openAsks("lead", q.id)[0]!.id, "approve", null, "page", "user");
+    f.bb.sdk.threads.defaultExecutionOptions = async ({ threadId }) => ({ model: threadId === "maker" ? "custom/dev" : anthropic, permissionMode: "full", reasoningLevel: "high", serviceTier: "standard", source: "client/turn/start" });
+    f.bb.sdk.providers.models = async () => catalog([model(anthropic)]);
+    const checker = await f.runtime.hire("lead", "project", { classId: "warden", boardQuestId: q.id, waypointId: "w1", title: "Check", brief });
+    expect(checker.checkIndependence).toBe("not-established");
+    const evidence = [{ kind: "command" as const, ref: "npm test", detail: "All tests pass", exitCode: 0 }];
+    const entry = journal.get("maker").entries[0]!;
+    expect(await journal.runTool("maker", { action: "done", id: entry.id, evidence })).toMatchObject({ isError: false });
+    const verdict = await journal.runTool(checker.threadId, { action, id: entry.id, threadId: "maker", evidence,
+      ...(action === "reject" ? { reason: "The evidence does not show the required behavior" } : {}) });
+    expect(verdict).toMatchObject({ isError: false, text: expect.stringContaining("check independence not established") });
+    expect(f.k.store.all("serviceVerdicts")).toMatchObject([{ verdict: action === "verify" ? "verified" : "rejected", independence: "not-established" }]);
+  });
+
   it("refuses a waypoint whose maker entry is unknown before reserving or spawning", async () => {
     const f = await review();
     const get = f.port.get;

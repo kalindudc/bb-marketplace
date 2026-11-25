@@ -122,6 +122,67 @@ describe("Closing time local scope integration", () => {
     expect(f.k.member("child")?.permanent).toBeUndefined();
   });
 
+  it("keeps an approved permanent decision on a waypoint and slot reorder, but asks when the party grows", async () => {
+    const f = await fixture();
+    const initial = f.k.summary(f.q.id).plan!;
+    const w2 = { ...initial.waypoints[0]!, id: "w2" };
+    const normal = { classId: "warden", characterId: null, model: null, purpose: "Check", waypointIds: ["w1"] };
+    const permanent = { ...initial.party[0]!, permanent: { why: "Daily checks" } };
+    const input = { ...initial, fromSteer: null, waypoints: [...initial.waypoints, w2] };
+    const approved = f.k.plan("lead", { ...input, party: [permanent, normal] });
+    f.k.answerAsk(f.k.store.openAsks("lead", f.q.id)[0]!.id, "approve", null, "page", "user");
+    const reused = f.k.plan("lead", { ...input, party: [normal, { ...permanent, waypointIds: ["w1", "w2"] }] });
+    expect(reused.party[1]?.permanent).toEqual(approved.party[0]?.permanent);
+    expect(f.k.quest(f.q.id).greenlitVersion).toBe(approved.version);
+    expect(f.k.store.openAsks("lead", f.q.id)).toHaveLength(0);
+
+    const rebalanced = f.k.plan("lead", { ...input, party: [normal, { ...normal, waypointIds: ["w2"] }] });
+    expect(f.k.quest(f.q.id).greenlitVersion).toBe(approved.version);
+    expect(f.k.store.openAsks("lead", f.q.id)).toHaveLength(0);
+
+    f.k.plan("lead", { ...input, party: [...rebalanced.party, permanent] });
+    expect(f.k.quest(f.q.id).phase).toBe("greenlight");
+    expect(f.k.store.openAsks("lead", f.q.id)).toContainEqual(expect.objectContaining({ kind: "greenlight" }));
+  });
+
+  it.each(["ranger", "wanderer"])("does not trade an approved %s scout seat for a Smith without greenlight", async classId => {
+    const f = await fixture();
+    const base = f.k.summary(f.q.id).plan!;
+    const smith = base.party[0]!;
+    const w2 = { ...base.waypoints[0]!, id: "w2" };
+    const input = { ...base, fromSteer: null, waypoints: [...base.waypoints, w2] };
+    const approved = f.k.plan("lead", { ...input, party: [smith, { ...smith, classId, waypointIds: ["w2"] }] });
+    f.k.answerAsk(f.k.store.openAsks("lead", f.q.id)[0]!.id, "approve", null, "page", "user");
+    expect(f.k.quest(f.q.id).greenlitVersion).toBe(approved.version);
+    const proposed = f.k.plan("lead", { ...input, party: [smith, { ...smith, waypointIds: ["w2"] }] });
+    expect(f.k.store.openAsks("lead", f.q.id)).toContainEqual(expect.objectContaining({ kind: "greenlight", effect: expect.objectContaining({ planVersion: proposed.version }) }));
+    await f.runtime.hire("lead", "project", f.input);
+    await expect(f.runtime.hire("lead", "project", { ...f.input, waypointId: "w2" })).rejects.toThrow(/greenlit party/i);
+  });
+
+  it("moves capacity between approved working classes without spending a scout seat twice", async () => {
+    const f = await fixture();
+    const base = f.k.summary(f.q.id).plan!;
+    const smith = base.party[0]!;
+    const warden = { classId: "warden", characterId: null, model: null, purpose: "Review", waypointIds: ["w1"] };
+    const ranger = { ...warden, classId: "ranger", purpose: "Scout" };
+    const proposed = f.k.plan("lead", { ...base, fromSteer: null, party: [smith, warden, ranger] });
+    f.k.answerAsk(f.k.store.openAsks("lead", f.q.id)[0]!.id, "approve", null, "page", "user");
+    f.k.bind("watcher", "warden", "rook", "project", { keeperThreadId: "lead", boardQuestId: f.q.id,
+      waypointId: "w1", errand: false, title: "Review", brief: f.input.brief });
+    const w2 = { ...base.waypoints[0]!, id: "w2" };
+    const waypoints = [...base.waypoints, w2];
+    const party = [smith, { ...smith, waypointIds: ["w2"] }, ranger];
+    f.k.plan("lead", { ...base, fromSteer: null, waypoints, party });
+    expect(f.k.quest(f.q.id).greenlitVersion).toBe(proposed.version);
+    expect(f.k.store.openAsks("lead", f.q.id)).toHaveLength(0);
+    await f.runtime.hire("lead", "project", f.input);
+    await expect(f.runtime.hire("lead", "project", { ...f.input, waypointId: "w2" })).rejects.toThrow(/greenlit party/i);
+
+    f.k.plan("lead", { ...base, fromSteer: null, waypoints, party: [smith, { ...warden, classId: "wanderer" }] });
+    expect(f.k.store.openAsks("lead", f.q.id)).toContainEqual(expect.objectContaining({ kind: "greenlight" }));
+  });
+
   it("rechecks the permanent mark inside the reservation after a concurrent Undo", async () => {
     const f = await fixture();
     const initial = f.k.summary(f.q.id).plan!;

@@ -20,7 +20,8 @@ async function fixture() {
   vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(2026, 10, 15, 4, 10));
   const h = makeHost(); cleanup.push(h.dispose); h.bb.storage.migrate(h.db, MIGRATIONS);
   const superseded = vi.fn();
-  const store = createJournalStore(h.bb, h.db, { roleOf: id => id === "m" ? { classId: "smith", role: "member", waypointId: "w1", boardQuestId: "q" } : null, invalidate: () => {}, superseded, nameOf: id => id === "thr_vex" ? "Vex" : null });
+  const store = createJournalStore(h.bb, h.db, { roleOf: id => id === "m" ? { classId: "smith", role: "member", waypointId: "w1", boardQuestId: "q" } : id === "thr_vex"
+    ? { classId: "warden", role: "member", waypointId: "w2", boardQuestId: "q" } : null, invalidate: () => {}, superseded, nameOf: id => id === "thr_vex" ? "Vex" : null });
   await store.prepare("m");
   store.linkWaypoint("m", { boardQuestId: "q", waypointId: "w1" }, "Implement labelCount with tests", "m", tavern);
   store.linkWaypoint("m", { boardQuestId: "other", waypointId: "w9" }, "Another quest's waypoint", "m", tavern);
@@ -37,7 +38,7 @@ describe("a follow-up brief reopens the member's linked work", () => {
     const f = await fixture();
     const doneAt = f.entry("00").doneAt;
     expect(doneAt).not.toBeNull();
-    f.store.rebriefed("m", "q", 2);
+    f.store.rebriefed("m", "q", 2, ["w1"]);
     const e = f.entry("00");
     expect(e).toMatchObject({ status: "doing", doneAt: null, doneBy: null, evidence: [] });
     expect(e.note).toBe("04:10 Brief v2 arrived; v1 evidence kept for reference: npm test (9 tests pass (4 existing + 5 new), fail 0), git status --short (only the two new untracked files shown).");
@@ -49,21 +50,47 @@ describe("a follow-up brief reopens the member's linked work", () => {
     const f = await fixture();
     await f.store.runTool("m", { action: "done", id: "01", evidence: nineTests } as never);
     const before = { other: f.entry("01"), own: f.entry("02") };
-    f.store.rebriefed("m", "q", 2);
+    f.store.rebriefed("m", "q", 2, ["w1"]);
     expect(f.entry("01")).toEqual(before.other);
     expect(f.entry("02")).toEqual(before.own);
     const g = await fixture();
     await g.store.runTool("m", { action: "reopen", id: "00" });
     const open = g.entry("00");
-    g.store.rebriefed("m", "q", 2);
+    g.store.rebriefed("m", "q", 2, ["w1"]);
     expect(g.entry("00")).toEqual(open);
+  });
+  it("keeps an unrelated closed entry and its verdict on the same quest", async () => {
+    const f = await fixture();
+    const id = f.store.linkWaypoint("m", { boardQuestId: "q", waypointId: "w2" }, "Keep the prior check", "m", tavern);
+    await f.store.runTool("m", { action: "done", id, evidence: nineTests });
+    expect(await f.store.runTool("thr_vex", { action: "verify", threadId: "m", id, evidence: nineTests })).toMatchObject({ isError: false });
+    const verified = f.entry(id);
+    const third = f.store.linkWaypoint("m", { boardQuestId: "q", waypointId: "w3" }, "Update this too", "m", tavern);
+    await f.store.runTool("m", { action: "done", id: third, evidence: nineTests });
+    f.store.rebriefed("m", "q", 2, ["w1", "w3"]);
+    expect(f.entry("00").status).toBe("doing");
+    expect(f.entry(third)).toMatchObject({ status: "todo", evidence: [] });
+    expect(f.entry(id)).toEqual(verified);
+    expect(f.superseded).not.toHaveBeenCalled();
+  });
+  it("opens a separately linked step without undoing its completed parent's verdict", async () => {
+    const f = await fixture();
+    const parentId = f.store.linkWaypoint("m", { boardQuestId: "q", waypointId: "w2" }, "Keep the prior check", "m", tavern);
+    expect(await f.store.runTool("m", { action: "reopen", id: "00" })).toMatchObject({ isError: false });
+    expect(await f.store.runTool("m", { action: "reparent", id: "00", parentId })).toMatchObject({ isError: false });
+    expect(await f.store.runTool("m", { action: "done", ids: ["00", parentId], evidence: nineTests })).toMatchObject({ isError: false });
+    expect(await f.store.runTool("thr_vex", { action: "verify", threadId: "m", id: parentId, evidence: nineTests })).toMatchObject({ isError: false });
+    const verdict = f.entry(parentId);
+    f.store.rebriefed("m", "q", 2, ["w1"]);
+    expect(f.entry("00")).toMatchObject({ parentId: null, status: "doing" });
+    expect(f.entry(parentId)).toEqual(verdict);
   });
   it("keeps a rejected entry rejected with its reason, and moves only the member's evidence", async () => {
     const f = await fixture();
     // The member had answered the rejection under v1; that answer no longer counts after v2.
     const review = { actor: { kind: "agent" as const, threadId: "thr_vex" }, at: Date.now() - 60_000, evidence: [{ kind: "file" as const, ref: "src/a.js:2", detail: "wrong value", exitCode: null }], reason: "Outputs are wrong.", previousNote: null, memberEvidenceAt: Date.now() - 30_000 };
     f.put({ ...f.entry("00"), status: "rejected", doneAt: null, doneBy: null, review });
-    f.store.rebriefed("m", "q", 2);
+    f.store.rebriefed("m", "q", 2, ["w1"]);
     const e = f.entry("00");
     expect(e).toMatchObject({ status: "rejected", review: { ...review, memberEvidenceAt: null }, evidence: [] });
     expect(e.note).toMatch(/v1 evidence kept for reference: npm test/);
@@ -74,7 +101,7 @@ describe("a follow-up brief reopens the member's linked work", () => {
     const review = { actor: { kind: "agent" as const, threadId: "thr_vex" }, at: Date.now() - 60_000, evidence: [], reason: null, previousNote: null, memberEvidenceAt: null };
     const verified = { ...f.entry("00"), status: "verified" as const, review };
     f.put(verified);
-    f.store.rebriefed("m", "q", 2);
+    f.store.rebriefed("m", "q", 2, ["w1"]);
     const e = f.entry("00");
     expect(e).toMatchObject({ status: "doing", review: null, evidence: [], doneAt: null });
     expect(e.note).toMatch(/Verified for brief v1 by Vex \(Warden\)\./);
@@ -83,7 +110,7 @@ describe("a follow-up brief reopens the member's linked work", () => {
   });
   it("refuses a done that re-attaches only the earlier brief's evidence, and accepts fresh evidence beside it", async () => {
     const f = await fixture();
-    f.store.rebriefed("m", "q", 2);
+    f.store.rebriefed("m", "q", 2, ["w1"]);
     expect(f.entry("00").rebrief).toEqual({ version: 2, evidence: nineTests });
     const stale = await f.store.runTool("m", { action: "done", id: "00", evidence: [nineTests[0]!] } as never);
     expect(stale.isError).toBe(true);
@@ -95,7 +122,7 @@ describe("a follow-up brief reopens the member's linked work", () => {
   });
   it("can't be undone by the member or the user, so the stale done never comes back", async () => {
     const f = await fixture();
-    f.store.rebriefed("m", "q", 2);
+    f.store.rebriefed("m", "q", 2, ["w1"]);
     const undo = await f.store.runTool("m", { action: "undo" });
     expect(undo.isError).toBe(true);
     expect(undo.text).toMatch(/Brief v2 reopened this entry; mark it done with fresh evidence instead/);
@@ -110,7 +137,7 @@ describe("a follow-up brief reopens the member's linked work", () => {
   });
   it("does nothing for a thread with no journal, and never throws", async () => {
     const f = await fixture();
-    expect(() => f.store.rebriefed("nobody", "q", 2)).not.toThrow();
+    expect(() => f.store.rebriefed("nobody", "q", 2, ["w1"])).not.toThrow();
   });
 });
 
@@ -129,7 +156,7 @@ it("replays live run 4: done with 9 tests, brief v2, a note only, and the second
   const report = { status: "done" as const, outcome: "labelCount built", evidence: [], artifacts: [], confidence: null, voice: null };
   expect(await run({ action: "done", id: "00", evidence: nineTests })).not.toMatch(/^Error/);
   expect(() => keeper.report("m", report)).not.toThrow();
-  journal.rebriefed("m", q.id, 2);
+  journal.rebriefed("m", q.id, 2, ["w1"]);
   expect(await run({ action: "note", id: "00", note: "pass 10, fail 0" })).not.toMatch(/^Error/);
   const evidence = [{ kind: "command" as const, ref: "npm test", detail: "10 tests pass, fail 0", exitCode: 0 }];
   expect(() => keeper.report("m", { ...report, evidence })).toThrow(/done with evidence first/);

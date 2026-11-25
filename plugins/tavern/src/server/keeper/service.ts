@@ -965,19 +965,21 @@ export class Keeper {
     };
     for (const id of ids) visit(id);
     const previous = q.planVersion > 0 ? this.store.get("plans", `${q.id}:${q.planVersion}`) : null;
-    const priorSlots = new Set(previous?.party.filter(slot => slot.permanent?.decisionId));
+    const approved = q.greenlitVersion === null ? null : this.store.get("plans", `${q.id}:${q.greenlitVersion}`);
+    const priorSlots = new Map([...approved?.party ?? [], ...previous?.party ?? []].flatMap(slot => {
+      const id = slot.permanent?.decisionId;
+      return id && !this.store.get("decisions", id)?.undone ? [[id, slot] as const] : [];
+    }));
     for (const slot of plan.party) {
       if (!slot.permanent) continue;
-      const prior = [...priorSlots].find(candidate => candidate.classId === slot.classId && candidate.characterId === slot.characterId &&
-        candidate.permanent!.why === slot.permanent!.why && isDeepStrictEqual(candidate.permanent!.schedules, slot.permanent!.schedules) &&
-        isDeepStrictEqual([...candidate.waypointIds].sort(), [...slot.waypointIds].sort()));
-      slot.permanent = { ...slot.permanent, decisionId: prior?.permanent?.decisionId };
-      if (prior) priorSlots.delete(prior);
+      const candidates = [...priorSlots].filter(([, candidate]) => candidate.classId === slot.classId &&
+        candidate.characterId === slot.characterId && candidate.permanent!.why === slot.permanent!.why &&
+        isDeepStrictEqual(candidate.permanent!.schedules, slot.permanent!.schedules));
+      const prior = candidates.find(([, candidate]) => isDeepStrictEqual([...candidate.waypointIds].sort(), [...slot.waypointIds].sort())) ??
+        (candidates.length === 1 ? candidates[0] : undefined);
+      slot.permanent = { ...slot.permanent, decisionId: prior?.[0] };
+      if (prior) priorSlots.delete(prior[0]);
     }
-    const approved =
-      q.greenlitVersion === null
-        ? null
-        : this.store.get("plans", `${q.id}:${q.greenlitVersion}`);
     const checkPlan = this.store.get("plans", `${q.id}:${q.checkPlanVersion ?? q.greenlitVersion}`);
     let previousWaypoints: BoardQuestSummary["waypoints"] | undefined;
     const weakensChecks = !!checkPlan && !checksFit(plan, checkPlan, approved, waypointId => {
@@ -1055,7 +1057,7 @@ export class Keeper {
         this.decide(threadId, {
           boardQuestId: q.id,
           text: steer ? `Changed checks in plan v${plan.version} from your steer` : `Replanned to v${plan.version} within the greenlit party`,
-          why: steer ? "You steered the checks for this quest. Undo requires a fresh greenlight for the weaker checks." : "The checks and class counts fit the approvals for this quest.",
+          why: steer ? "You steered the checks for this quest. Undo requires a fresh greenlight for the weaker checks." : "The party size, classes and checks fit the approvals for this quest.",
           reversible: true,
           source: steer ? "steer" : "keeper",
           sourceRef: steer ? r!.id : null,
@@ -1068,7 +1070,12 @@ export class Keeper {
   private carryWaypointAcceptances(q: BoardQuest, plan: Plan, diff: ReturnType<typeof planDiff>) {
     const calls = this.waypointCalls(q.id, q.planVersion);
     if (![...calls.values()].some(call => call.waypointCall?.as === "accepted")) return;
-    const changed = new Set([...diff.waypoints.changed, ...diff.waypoints.removed].map(w => w.id));
+    const changed = new Set([
+      ...diff.waypoints.removed.map(w => w.id),
+      ...diff.waypoints.changed.filter(w =>
+        plan.waypoints.find(waypoint => waypoint.id === w.id)?.actor !== "agent" ||
+        Object.keys(w.fields).some(field => field !== "owner")).map(w => w.id),
+    ]);
     const acceptances = this.summary(q.id).waypoints.flatMap(w => w.state === "accepted" && !changed.has(w.id)
       ? [{ waypointId: w.id, decisionId: calls.get(w.id)!.id }] : []);
     if (acceptances.length) this.store.event(this.now(), q.keeperThreadId, q.id, "waypoint.acceptance-carried",
@@ -1109,7 +1116,8 @@ export class Keeper {
   }
   settle(threadId: string, input: Parameters<typeof settleWaypointSchema.parse>[0], legacySkipAskId?: string): Decision | Ask {
     const call = settleWaypointSchema.parse(input);
-    const { q, w } = this.waypointForSettlement(threadId, call);
+    const target = this.waypointForSettlement(threadId, call);
+    const { q, w } = target;
     const shift = !legacySkipAskId && this.keeperCallShift(threadId, call.as);
     if (shift) {
       const { boardQuestId, ...effect } = call;
@@ -1117,13 +1125,14 @@ export class Keeper {
       return this.askForKeeperCall(threadId, boardQuestId, { ...effect, type: "settle-waypoint", planVersion: q.planVersion },
         `${verb} ${w.id}: ${w.title}?`, verb, `${verb} this waypoint.`, "Leave the waypoint unchanged.", "The Keeper waits for your answer on this waypoint.");
     }
-    return this.recordSettlement(threadId, call, q, w.title, legacySkipAskId);
+    return this.recordSettlement(threadId, call, target, legacySkipAskId);
   }
   private waypointForSettlement(threadId: string, { boardQuestId, waypointId, as }: ReturnType<typeof settleWaypointSchema.parse>) {
     const q = this.liveQuest(threadId, boardQuestId);
     this.assertQuestNotHeld(q.id);
     this.guard(threadId, q.id);
-    const w = this.summary(q.id).waypoints.find(w => w.id === waypointId);
+    const submission = { waypointId, entries: [] as JournalEntry[] };
+    const w = this.readQuestSummary(q.id, undefined, submission).waypoints.find(w => w.id === waypointId);
     if (!w) throw new Error("Settlement must name a waypoint in the current plan");
     if (as === "accepted") {
       if (w.actor === "outside" && (w.gate?.answer == null || w.gate.answeredAt === null))
@@ -1135,14 +1144,16 @@ export class Keeper {
       throw new Error("Only an unsettled optional waypoint can be skipped");
     if (as === "open" && !(w.state === "skipped" || w.state === "accepted"))
       throw new Error("Only a waypoint the Keeper accepted or skipped can be reopened");
-    return { q, w };
+    const acceptedEntries = as === "accepted" && w.actor === "agent"
+      ? submission.entries.map(({ threadId, id }) => ({ threadId, id })) : undefined;
+    return { q, w, acceptedEntries };
   }
-  private recordSettlement(threadId: string, { boardQuestId, waypointId, as, reason }: ReturnType<typeof settleWaypointSchema.parse>, q: BoardQuest, title: string, askId?: string, answerReceipt?: string) {
+  private recordSettlement(threadId: string, { boardQuestId, waypointId, as, reason }: ReturnType<typeof settleWaypointSchema.parse>, { q, w, acceptedEntries }: ReturnType<Keeper["waypointForSettlement"]>, askId?: string, answerReceipt?: string) {
     const words = as === "open" ? "Reopened" : as === "accepted" ? "Accepted" : "Skipped";
     return this.store.atomic(() => {
-      const decision = this.decide(threadId, { boardQuestId, text: `${words} ${waypointId}: ${title}`, why: reason, reversible: true,
+      const decision = this.decide(threadId, { boardQuestId, text: `${words} ${waypointId}: ${w.title}`, why: reason, reversible: true,
         ...(askId ? { source: "ask", sourceRef: askId } : { source: "keeper" }),
-      }, undefined, { waypointCall: { planVersion: q.planVersion, waypointId, as }, answerReceipt });
+      }, undefined, { waypointCall: { planVersion: q.planVersion, waypointId, as, acceptedEntries }, answerReceipt });
       if (!askId) authorize(as === "accepted" ? "acceptWaypoint" : as === "skipped" ? "skipWaypoint" : "reopenWaypoint", { level: "keeper", receipt: decision.id });
       if (!askId || answerReceipt) this.withdrawClosingForWaypointChange(q);
       return decision;
@@ -1723,9 +1734,9 @@ export class Keeper {
           if (effect.type !== "settle-waypoint" || optionId !== "approve") return;
           if (by !== "user" || receipt?.act !== "answerAsk" || !ask.boardQuestId) throw new Error("This waypoint needs your explicit answer.");
           const call = { boardQuestId: ask.boardQuestId, waypointId: effect.waypointId, as: effect.as, reason: effect.reason };
-          const { q, w } = this.waypointForSettlement(ask.keeperThreadId, call);
-          if (q.planVersion !== effect.planVersion) throw new Error("This waypoint ask belongs to an old plan.");
-          this.recordSettlement(ask.keeperThreadId, call, q, w.title, ask.id, ask.id);
+          const target = this.waypointForSettlement(ask.keeperThreadId, call);
+          if (target.q.planVersion !== effect.planVersion) throw new Error("This waypoint ask belongs to an old plan.");
+          this.recordSettlement(ask.keeperThreadId, call, target, ask.id, ask.id);
         },
         "user-waypoint": effect => {
           if (effect.type !== "user-waypoint" || !ask.boardQuestId) throw new Error("A user waypoint ask needs its quest.");
@@ -2384,7 +2395,7 @@ export class Keeper {
       .filter((member) => !wasReleased(member));
     const waitingLeads = new Set(this.store.leadLinksBy("parentQuestId", quest.id)
       .filter(link => link.state === "linked" && !link.result).map(link => link.parentWaypointId));
-    return checkerAssignments(plan, members, quest.keeperThreadId).find(assignment => assignment.memberThreadId === threadId)
+    return checkerAssignments(plan, members).find(assignment => assignment.memberThreadId === threadId)
       ?.waypointIds.filter(id => !waitingLeads.has(id)) ?? [];
   }
   private waypointCalls(questId: string, version: number) {
@@ -2405,6 +2416,9 @@ export class Keeper {
     return calls;
   }
   summary(id: string, planVersion?: number): BoardQuestSummary {
+    return this.readQuestSummary(id, planVersion);
+  }
+  private readQuestSummary(id: string, planVersion?: number, submission?: { waypointId: string; entries: JournalEntry[] }): BoardQuestSummary {
     const current = this.quest(id);
     const q = planVersion === undefined ? current : { ...current, planVersion };
     const storedPlan = this.store.get("plans", `${id}:${q.planVersion}`),
@@ -2463,28 +2477,31 @@ export class Keeper {
       const waiver = q.waivers?.find(waiver => waiver.waypointId === w.id && waiver.planVersion === q.planVersion);
       const recordsSubject = keeperSubject(w, q.keeperThreadId);
       const isLeadResult = (e: JournalEntry) => leadSeats.some(link => link.parentWaypointId === w.id && link.result?.entryId === e.id && link.result.makerThreadId === e.threadId);
-      const linked = entries.filter(e =>
+      const candidates = entries.filter(e =>
         e.link?.boardQuestId === id && e.link.waypointId === w.id &&
         (w.actor === "user" ? e.threadId === q.keeperThreadId : w.actor === "agent" && e.owner !== "You" &&
           (recordsSubject ? e.threadId === q.keeperThreadId : e.threadId !== q.keeperThreadId)) &&
         memberOf(e.threadId)?.classId !== "warden" &&
-        (recordsSubject || !memberOf(e.threadId)?.leadLinkId || isLeadResult(e)) &&
-        (isLeadResult(e) || !released.has(e.threadId) || e.status === "verified" || e.status === "done" && (w.check === "none" || call?.waypointCall?.as === "accepted")),
+        (recordsSubject || !memberOf(e.threadId)?.leadLinkId || isLeadResult(e)),
       );
-      const ownerMember =
-        (!recordsSubject && w.actor === "agent" && members.find(
-          (m) =>
-            m.classId !== "warden" &&
-            (m.threadId === w.owner || m.waypointId === w.id) &&
-            (!released.has(m.threadId) ||
-              linked.some(
-                (entry) =>
-                  entry.threadId === m.threadId && entry.status === "verified",
-              ) || leadSeats.some(link => link.parentWaypointId === w.id && link.result?.makerThreadId === m.threadId)),
-        )) || null;
+      const currentWork = candidates.some(e => !released.has(e.threadId));
+      let linked = candidates.filter(e =>
+        isLeadResult(e) || !released.has(e.threadId) || e.status === "verified" ||
+        e.status === "done" && (w.check === "none" || w.check === "keeper" && !currentWork || call?.waypointCall?.as === "accepted"));
+      const journalMakers = new Set(linked.map(entry => entry.threadId));
+      const owners = !recordsSubject && w.actor === "agent" ? members.filter(m =>
+        m.classId !== "warden" && (m.threadId === w.owner || m.waypointId === w.id)).reverse() : [];
+      const ownerMember = owners.find(m => m.threadId === w.owner && !released.has(m.threadId)) ??
+        owners.find(m => !released.has(m.threadId)) ??
+        owners.find(m => journalMakers.has(m.threadId)) ?? null;
       const legacySkip = w.optional && !call && this.store.get("skips", `${id}:${q.planVersion}:${w.id}`);
       const gate = this.memory.gateFor(q.id, q.planVersion, w.id);
-      const reported = linked.length > 0 && linked.every(e => e.status === "verified" || e.status === "done" && (w.check === "warden" || e.evidence.length > 0));
+      const hasReport = (rows: JournalEntry[]) => rows.length > 0 && rows.every(e =>
+        e.status === "verified" || e.status === "done" && (w.check === "warden" || e.evidence.length > 0));
+      const reported = hasReport(linked);
+      const acceptedRefs = call?.waypointCall?.acceptedEntries;
+      const acceptedKeys = acceptedRefs && new Set(acceptedRefs.map(ref => `${ref.threadId}:${ref.id}`));
+      const acceptedWork = acceptedKeys ? linked.filter(e => acceptedKeys.has(`${e.threadId}:${e.id}`)) : linked;
       const rejected = linked.find(e => e.status === "rejected");
       const userAnswer = userAnswers.get(w.id);
       let state: WaypointState;
@@ -2501,8 +2518,10 @@ export class Keeper {
         resolutionReason = call?.why ?? (receipt ? receipt.reason : null);
       } else if (w.check === "keeper" && call?.waypointCall?.as === "accepted" &&
         (w.actor === "outside" ? gate?.answer != null && gate.answeredAt !== null && gate.answeredAt <= call.createdAt
-          : w.actor === "agent" && reported && linked.every(e => (e.doneAt ?? e.createdAt) <= call.createdAt))) {
+          : w.actor === "agent" && (!acceptedRefs || acceptedWork.length === acceptedRefs.length) &&
+            hasReport(acceptedWork) && acceptedWork.every(e => (e.doneAt ?? e.createdAt) <= call.createdAt))) {
         state = "accepted";
+        linked = acceptedWork;
         resolutionReason = call.why;
         const keeper = this.member(q.keeperThreadId);
         acceptedBy = call.answerReceipt ? "you" : keeper ? this.name(keeper) : "the Keeper";
@@ -2516,6 +2535,7 @@ export class Keeper {
       else if (linked.some(e => e.status === "doing")) state = "doing";
       else if (reported && w.actor === "agent") state = "reported";
       else state = linked.length ? "todo" : "planned";
+      if (submission?.waypointId === w.id) submission.entries = linked;
       const madeBy = !recordsSubject && (state === "reported" || state === "verified" || (state === "accepted" || state === "done") && w.actor === "agent")
         ? [...new Set(linked.map(e => e.threadId))] : [];
       const checkedBy = state === "verified" ? [...new Set(linked.flatMap(entry => {

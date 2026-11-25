@@ -240,6 +240,55 @@ describe("planned waypoint checks", () => {
     expect(f.k.member("maker")?.verifiedWins).toBe(0);
   });
 
+  it("settles released work from the journal and keeps the acceptance when only the owner changes", async () => {
+    const f = await fixture();
+    f.bind("maker", "ranger");
+    const waypoint = { ...baseWaypoint, check: "keeper", owner: "maker" };
+    await f.propose([waypoint]);
+    await f.approve();
+    const proof = waypointEntry("maker", f.q.id);
+    const open = { ...waypointEntry("maker", f.q.id, "w1", "a2"), status: "doing" as const, doneAt: null };
+    f.entries([proof, open]);
+
+    f.bb.sdk.threads.stop = async () => ({ ok: true });
+    expect(await f.runtime.release("lead", "maker", "Done with the assignment")).toBe(true);
+    await f.settle("accepted", "w1", "The linked journal evidence was checked");
+    expect(f.k.quest(f.q.id).planVersion).toBe(1);
+    expect(f.summary().waypoints[0]?.state).toBe("accepted");
+    expect(f.k.store.all("decisions").find(decision => decision.waypointCall?.as === "accepted")?.waypointCall?.acceptedEntries)
+      .toEqual([{ threadId: "maker", id: proof.id }]);
+
+    f.bind("successor", "ranger");
+    expect(f.summary().waypoints[0]).toMatchObject({ state: "accepted", ownerMember: { threadId: "successor" } });
+    expect(f.k.quest(f.q.id).planVersion).toBe(1);
+    await f.propose([{ ...waypoint, owner: "successor" }]);
+    f.entries([proof, { ...waypointEntry("successor", f.q.id), status: "todo" }]);
+    expect(f.ask("greenlight")).toBeUndefined();
+    expect(f.summary().waypoints[0]).toMatchObject({ state: "accepted", ownerMember: { threadId: "successor" } });
+    f.entries([{ ...proof, status: "doing", doneAt: null }]);
+    expect(f.summary().waypoints[0]?.state).not.toBe("accepted");
+  });
+
+  it("captures exactly the submitted entries the Keeper saw, not other done work from a released maker", async () => {
+    const f = await fixture();
+    f.bind("maker", "ranger");
+    await f.propose([{ ...baseWaypoint, check: "keeper", owner: "maker" }]);
+    await f.approve();
+    f.bb.sdk.threads.stop = async () => ({ ok: true });
+    expect(await f.runtime.release("lead", "maker", "Hand off remaining work")).toBe(true);
+    f.bind("successor", "ranger");
+    f.entries([
+      { ...waypointEntry("maker", f.q.id), status: "verified" },
+      waypointEntry("maker", f.q.id, "w1", "a2"),
+      waypointEntry("successor", f.q.id),
+    ]);
+    expect(f.summary().waypoints[0]).toMatchObject({ state: "reported", evidenceCount: 2 });
+    await f.settle("accepted");
+    expect(f.k.store.all("decisions").find(decision => decision.waypointCall?.as === "accepted")?.waypointCall?.acceptedEntries)
+      .toEqual([{ threadId: "maker", id: "a1" }, { threadId: "successor", id: "a1" }]);
+    expect(f.summary().waypoints[0]).toMatchObject({ state: "accepted", evidenceCount: 2 });
+  });
+
   it("explains required checks in new plans while preserving a stored plan and old skip", async () => {
     const f = await fixture();
     await expect(f.propose([baseWaypoint])).rejects.toThrow(/warden.*keeper.*none/i);

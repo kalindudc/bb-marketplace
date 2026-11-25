@@ -179,7 +179,7 @@ describe("live Keeper flow regressions", () => {
       0,
     );
   });
-  it("reuses a resting Warden only for its rejected waypoint and pinned maker", async () => {
+  it("reuses a resting Warden for its assigned rejected waypoint", async () => {
     const f = setup();
     const q = await seedQuest(f.k, "lead", "Two makers", "Check");
     const first = bind(f, "maker-one", "ranger", q.id);
@@ -477,7 +477,7 @@ describe("live Keeper flow regressions", () => {
     });
     expect(hired.executionNotes.join(" ")).toContain("different family");
   });
-  it("falls back to the Warden class model if the catalog has no independent family", async () => {
+  it("does not spawn a known same-family Warden when no independent model is offered", async () => {
     const f = setup();
     const q = await seedQuest(f.k,"lead", "Build", "Build");
     bind(f, "maker", "smith", q.id, "bram");
@@ -507,19 +507,14 @@ describe("live Keeper flow regressions", () => {
       source: "client/turn/start",
     });
     f.bb.sdk.providers.models = async () => catalog([model()]);
-    const hired = await f.runtime.hire("lead", "project", {
+    await expect(f.runtime.hire("lead", "project", {
       classId: "warden",
       boardQuestId: q.id,
       waypointId: "w1",
       title: "Check",
       brief,
-    });
-    expect(
-      f.harness.inspection.sdk.callsTo("threads.spawn").at(-1)?.args[0],
-    ).toMatchObject({
-      model: "anthropic/claude-sonnet-5-5",
-    });
-    expect(hired.executionNotes.join(" ")).toContain("class model");
+    })).rejects.toThrow(/same.family/i);
+    expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
   });
   it("keeps active party display names unique even for an explicitly reused character", async () => {
     const f = setup();

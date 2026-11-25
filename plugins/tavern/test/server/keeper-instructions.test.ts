@@ -61,12 +61,17 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
     + Buffer.byteLength(JSON.stringify(refresh)) - Buffer.byteLength(refresh.name + refresh.description + "Requested Keeper refresh");
   const briefWarning = briefSteerFact("Wren XVIII", { at: 0, excerpt: "x".repeat(160), memberThreadId: "thr_abcdefghij" });
   const questSchemaDelta = Buffer.byteLength(JSON.stringify(quest.parameters)) - Buffer.byteLength(JSON.stringify(opening));
+  const tell = registered.mock.calls.find(([tool]) => tool.name === "tavern_tell")![0];
+  const tellProperties = (tell.parameters as { properties: Record<string, unknown> }).properties;
+  const { waypointIds, ...previousTell } = tellProperties;
+  expect(waypointIds).toBeDefined();
+  const tellDelta = Buffer.byteLength(JSON.stringify(tellProperties)) - Buffer.byteLength(JSON.stringify(previousTell));
   const planTool = registered.mock.calls.find(([tool]) => tool.name === "tavern_plan")![0];
   const slotProperties = (planTool.parameters as { properties: { party: { items: { properties: Record<string, unknown> } } } }).properties.party.items.properties;
   const { permanent, ...previousSlot } = slotProperties;
   expect(permanent).toBeDefined();
   const permanentSlotDelta = Buffer.byteLength(JSON.stringify(slotProperties)) - Buffer.byteLength(JSON.stringify(previousSlot));
-  const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + mergeAskSchemaDelta + waypointAskDelta + judgeBytes + checkpointDelta + permanentSlotDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
+  const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + mergeAskSchemaDelta + waypointAskDelta + judgeBytes + checkpointDelta + permanentSlotDelta + tellDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
   if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${bytes}\nMERGE_TARGET_SCHEMA_BYTES=${mergeTargetDelta}\n`);
   expect(bytes).toBeLessThanOrEqual(34754);
 });

@@ -41,7 +41,7 @@ it("keeps a replacement waiting while the previous member's release is unconfirm
   const member = await f.runtime.hire("lead", "project", f.input);
   f.bb.sdk.threads.get = vi.fn(async ({ threadId }) => makeThreadResponse({ id: threadId, status: threadId === member.threadId ? "stopping" : "idle" }));
   expect(await f.runtime.release("lead", member.threadId, "Replace")).toBe(false);
-  await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow(/allocates|live|pending/);
+  await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow(/greenlit party has no free seat for another smith/);
   expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1);
 });
 it("recovery never delivers a late child brief into an ended quest", async () => {
