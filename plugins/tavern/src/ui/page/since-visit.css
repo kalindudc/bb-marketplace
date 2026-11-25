@@ -9,7 +9,7 @@
 .tavern .tv-since-summaries { display: flex; gap: 0 8px; align-items: baseline; flex-wrap: wrap; padding-inline-start: 8px; }
 .tavern .tv-since-summaries ul { display: flex; flex-wrap: wrap; }
 .tavern .tv-since-summaries .lnk-btn { white-space: normal; text-align: start; min-width: 0; }
-.tavern .tv-since-fold > summary { display: flex; align-items: center; gap: 5px; padding: 4px 7px; min-height: 44px; border: 1px solid var(--tavern-line); background: var(--card); font-size: 11px; cursor: pointer; }
+.tavern .tv-since-fold > summary { display: flex; align-items: center; gap: 5px; padding: 4px 7px; min-height: var(--tavern-control-standard); border: 1px solid var(--tavern-line); background: var(--card); font-size: 11px; cursor: pointer; }
 .tavern .tv-since-fold > summary::-webkit-details-marker { display: none; }
 .tavern .tv-since-fold > summary .act-i { flex: none; }
 .tavern .tv-since-fold[open] > summary .act-i.down { transform: rotate(-90deg); }

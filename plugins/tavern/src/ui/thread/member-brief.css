@@ -27,8 +27,7 @@
 }
 .tavern .tw-glance-waypoint { margin: 0 0 4px; }
 .tavern .tw-member-fold { border-bottom: 1px solid var(--tavern-line); }
-.tavern .tw-fold-trigger { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 36px; padding: 7px 4px; border: 0; background: none; color: var(--foreground); text-align: left; font: inherit; cursor: pointer; }
-@container tavern-widget (max-width: 420px) { .tavern .tw-fold-trigger[aria-controls$="-scope"] { min-height: 44px; } }
+.tavern .tw-fold-trigger { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: var(--tavern-control-standard); padding: 7px 4px; border: 0; background: none; color: var(--foreground); text-align: left; font: inherit; cursor: pointer; }
 .tavern .tw-fold-trigger > .act-i { margin-left: auto; flex: none; }
 .tavern .tw-fold-trigger > .num { color: var(--tavern-muted); }
 .tavern .tw-fold-body { min-width: 0; overflow: hidden; }
@@ -47,5 +46,4 @@
 .tavern .tw-shell-grants li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-block: 6px; }
 .tavern .tw-shell-grants li > :is(code, .tw-grant-target) { flex: 1 0 100%; min-width: 0; overflow-wrap: anywhere; }
 .tavern .tw-grant-target code { display: block; }
-@container tavern-widget (max-width: 420px) { .tavern .tw-shell-grants .btn { min-height: 44px; } }
 .tavern .tw-brief-fields .m { color: var(--tavern-muted); }

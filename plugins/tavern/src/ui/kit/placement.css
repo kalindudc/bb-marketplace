@@ -4,7 +4,5 @@
 .tavern .placement-facts .pf-where { color: var(--tavern-ink); }
 .tavern .placement-facts .pf-state { margin-top: 3px; }
 .tavern .placement-facts :is(p, .pf-posture) { margin-top: 3px; margin-bottom: 0; }
-.tavern .placement-facts .btn { min-height: 32px; }
-.tavern .placement-facts .tv-ilink { display: inline-flex; align-items: center; min-height: 24px; }
+.tavern .placement-facts .tv-ilink { display: inline-flex; align-items: center; min-height: var(--tavern-control-compact); }
 .tavern .tv-item > .placement-facts { grid-column: 2 / -1; }
-@media (pointer: coarse) { .tavern .placement-facts :is(.btn, .tv-ilink) { min-height: 44px; } }

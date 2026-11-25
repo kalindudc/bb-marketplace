@@ -51,7 +51,7 @@
 .tavern.tv-page .mx-rh { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .tavern.tv-page .mx-n { position: absolute; left: 12px; top: 12px; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--tavern-line); font-size: 12px; font-weight: 700; background: var(--tavern-elev-raised-bg); }
 .tavern.tv-page .mx-rt { flex: 1; min-width: 0; margin: 0; font-size: 13px; }
-.tavern.tv-page .mx-rt-b { display: block; max-width: 100%; padding: 2px 0; border: 0; background: none; font: inherit; font-weight: 700; color: var(--foreground); text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern.tv-page .mx-rt-b { display: block; min-height: var(--tavern-control-compact); max-width: 100%; padding: 2px 0; border: 0; background: none; font: inherit; font-weight: 700; color: var(--foreground); text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tavern.tv-page .mx-rt-b:hover, .tavern.tv-page .mx-rt-b:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
 .tavern.tv-page .mx-ra { display: flex; align-items: center; gap: 2px; }
 .tavern.tv-page .mx-ra .tv-switch { margin-right: 6px; }
@@ -70,7 +70,6 @@
 .tavern.tv-page .mx-flags { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
 .tavern.tv-page .mx-flags:empty { display: none; }
 .tavern.tv-page .mx-rf { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin-top: 4px; font-size: 12px; }
-.tavern.tv-page .mx-rf .lnk-btn { min-height: 24px; }
 .tavern.tv-page .mx-rf .mx-del { margin-left: auto; color: var(--tavern-muted); }
 .tavern.tv-page .mx-fall { display: flex; gap: 8px; align-items: baseline; margin: -1px 0 0; padding: 8px 12px 8px 20px; border: 1px solid var(--tavern-line); font-size: 12px; color: var(--tavern-muted); background: var(--tavern-elev-recessed-bg); }
 .tavern.tv-page .mx-fall.hit { color: var(--foreground); font-weight: 600; box-shadow: inset 3px 0 0 var(--primary); }
@@ -110,7 +109,7 @@
 .tavern.tv-page .mx-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
 .tavern.tv-page .mx-chip { display: inline-flex; align-items: center; gap: 2px; padding-left: 8px; border: 1px solid var(--tavern-line); background: var(--tavern-elev-raised-bg); font-size: 12px; max-width: 100%; }
 .tavern.tv-page .mx-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tavern.tv-page .mx-chip-x { flex: none; width: 24px; height: 24px; display: grid; place-items: center; border: 0; background: none; color: var(--foreground); cursor: pointer; }
+.tavern.tv-page .mx-chip-x { flex: none; width: var(--tavern-control-compact); height: var(--tavern-control-compact); display: grid; place-items: center; border: 0; background: none; color: var(--foreground); cursor: pointer; }
 .tavern.tv-page .mx-chip-x:hover { background: var(--tavern-hover); }
 .tavern.tv-page .mx-add { display: grid; gap: 6px; justify-items: start; }
 .tavern.tv-page .mx-rm { font-size: 12px; color: var(--tavern-muted); }
@@ -147,12 +146,11 @@
 
 /* Touch and phones: 44 px targets, rows stack, and editing text at bb's 16 px so iOS doesn't zoom on focus. Desktop stays dense. */
 @media (pointer: coarse), (max-width: 560px) {
-  .tavern.tv-page .mx :is(.tv-switch, .btn, .btn.sm, .tv-text, .tv-select, .lnk-btn, .seg, .tv-num input) { min-height: 44px; }
+  .tavern.tv-page .mx :is(.tv-text, .tv-select, .tv-num input) { min-height: 44px; }
   .tavern.tv-page .mx :is(input, select, textarea) { font-size: 16px; }
-  .tavern.tv-page .mx :is(.ibtn, .mx-chip-x) { min-width: 44px; min-height: 44px; }
-  .tavern.tv-page .mx-rt-b { min-height: 44px; white-space: normal; }
+  .tavern.tv-page .mx-rt-b { white-space: normal; }
   .tavern.tv-page .mx-rf .lnk-btn { min-width: 44px; justify-content: center; }
-  .tavern.tv-page .mx-sum-l .tv-ilink { min-height: 44px; min-width: 44px; }
+  .tavern.tv-page .mx-sum-l .tv-ilink { min-width: 44px; }
   .tavern.tv-page .mx-rule { padding-left: 12px; }
   .tavern.tv-page .mx-n { position: static; flex: none; }
   .tavern.tv-page .mx-rd > div { grid-template-columns: minmax(0, 1fr); gap: 0; }

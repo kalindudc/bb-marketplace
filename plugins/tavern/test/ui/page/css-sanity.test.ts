@@ -8,9 +8,9 @@ describe("the page's stylesheets", () => {
     const css = readFileSync(`src/ui/page/${file}`, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     expect(css.match(/:(?:is|where)\([^)]*[{}]/g) ?? []).toEqual([]);
   });
-  it("gives the room's status-line jumps 44 px on a phone", () => {
+  it("uses the shared responsive sizes for the room's status-line jumps", () => {
     const css = readFileSync("src/ui/page/page.css", "utf8");
-    const block = css.slice(css.indexOf("@media (pointer: coarse), (max-width: 560px) {"));
-    expect(block).toMatch(/:is\([^)]*button\.tv-hero[^)]*\)\s*\{\s*min-height: 44px;/);
+    expect(css).toMatch(/button\.tv-hero\s*\{[^{}]*min-height: var\(--tavern-control-standard\);/);
+    expect(css).toMatch(/\.rm-jump\s*\{[^{}]*min-height: var\(--tavern-control-compact\);/);
   });
 });

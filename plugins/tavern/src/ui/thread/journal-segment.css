@@ -1,6 +1,6 @@
 /* The journal's segment in bb's thread context row and its section in the thread context card (one of the two at a time).
    The summary sits among bb's own segments, so it takes their size (24 px, 12 px text) and its steps follow bb's promptbox-shell container. */
-.tavern.jseg-sum { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; min-width: 0; max-width: max-content; flex: 1 1 auto; padding: 4px 6px; border: 0; border-radius: var(--radius); background: transparent; color: var(--tavern-muted); font-size: 12px; line-height: 1; white-space: nowrap; overflow: hidden; cursor: pointer; }
+.tavern.jseg-sum { display: inline-flex; align-items: center; gap: 5px; min-height: var(--tavern-control-compact); min-width: 0; max-width: max-content; flex: 1 1 auto; padding: 4px 6px; border: 0; border-radius: var(--radius); background: transparent; color: var(--tavern-muted); font-size: 12px; line-height: 1; white-space: nowrap; overflow: hidden; cursor: pointer; }
 .tavern.jseg-sum:not(.jseg-skel) { flex: none; min-width: max-content; }
 .tavern.jseg-sum:hover { background: var(--tavern-hover); color: var(--foreground); }
 .tavern.jseg-sum:focus-visible { outline: 1px solid var(--ring, var(--primary)); outline-offset: 0; }
@@ -27,9 +27,7 @@
 /* The thread card's section: the summary's bar, then a quiet tick per open entry. The segment itself opens the journal. */
 .tavern.jseg-card-bar { display: inline-flex; align-items: center; }
 .tavern.jseg-lead { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; }
-.tavern .jseg-tick { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 24px; min-height: 24px; border: 0; border-radius: var(--radius); background: transparent; color: var(--foreground); cursor: pointer; }
+.tavern .jseg-tick { display: inline-flex; align-items: center; justify-content: center; flex: none; width: var(--tavern-control-compact); min-height: var(--tavern-control-compact); border: 0; border-radius: var(--radius); background: transparent; color: var(--foreground); cursor: pointer; }
 .tavern .jseg-tick:hover:not(:disabled) { background: var(--tavern-hover); }
 .tavern .jseg-tick:disabled { cursor: default; opacity: .6; }
 /* Phone-sized targets on touch and at phone widths, as the widget row does. */
-@media (pointer: coarse) { .tavern .jseg-tick { width: 44px; min-height: 44px; } }
-@container promptbox-shell (max-width: 34rem) { .tavern .jseg-tick { width: 44px; min-height: 44px; } }

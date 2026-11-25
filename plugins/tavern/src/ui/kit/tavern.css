@@ -9,6 +9,8 @@
   --tavern-ink: color-mix(in oklab, var(--foreground) 90%, var(--timeline-accent));
   --tavern-muted: color-mix(in oklab, var(--muted-foreground) 78%, var(--foreground));
   --tavern-line: var(--border-seam, var(--border));
+  --tavern-control-compact: 24px;
+  --tavern-control-standard: 30px;
   --tavern-raised: var(--card);
   --tavern-recessed: color-mix(in oklab, var(--background) 60%, var(--surface-recessed-solid, var(--muted)));
   --tavern-ease: cubic-bezier(.2, .8, .2, 1);
@@ -71,13 +73,13 @@ html.dark .tavern { --tavern-lantern: color-mix(in oklab, var(--attention) 13%, 
 .tavern label { font-size: 12px; }
 .tavern summary { cursor: pointer; list-style: none; }
 .tavern summary::-webkit-details-marker { display: none; }
-.tavern .fold-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 44px; overflow-wrap: anywhere; }
+.tavern .fold-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: var(--tavern-control-standard); overflow-wrap: anywhere; }
 .tavern .fold-summary > .act-i { width: 16px; height: 16px; color: inherit; }
 .tavern details[open] > .fold-summary > .act-i { transform: rotate(-90deg); }
 
 /* Buttons: native-weight chrome; .pri is the one main action, .seal the greenlight */
-.tavern .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--foreground); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; text-decoration: none; }
-.tavern .btn.sm { min-height: 24px; padding: 0 8px; font-weight: 500; }
+.tavern .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: var(--tavern-control-standard); padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--foreground); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; text-decoration: none; }
+.tavern .btn.sm { min-height: var(--tavern-control-compact); padding: 0 8px; font-weight: 500; }
 .tavern .btn:hover:not(:disabled) { background: var(--tavern-hover); }
 .tavern .btn.pri { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
 .tavern .btn.pri:hover:not(:disabled) { background: color-mix(in oklab, var(--primary) 88%, var(--foreground)); }
@@ -86,7 +88,7 @@ html.dark .tavern { --tavern-lantern: color-mix(in oklab, var(--attention) 13%, 
 .tavern .btn:disabled { opacity: .5; cursor: not-allowed; }
 .tavern .lnk { border: 0; background: none; padding: 0; color: var(--tavern-muted); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .tavern .lnk:hover { color: var(--foreground); }
-.tavern .ibtn { position: relative; display: inline-grid; place-items: center; flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius); background: transparent; color: var(--tavern-muted); cursor: pointer; }
+.tavern .ibtn { position: relative; display: inline-grid; place-items: center; flex: none; width: var(--tavern-control-compact); height: var(--tavern-control-compact); padding: 0; border: 0; border-radius: var(--radius); background: transparent; color: var(--tavern-muted); cursor: pointer; }
 .tavern .ibtn:hover:not(:disabled), .tavern .ibtn[aria-expanded="true"] { background: var(--tavern-hover); color: var(--foreground); }
 .tavern .ibtn[aria-pressed="true"] { color: var(--tavern-blocked); }
 .tavern .ibtn:disabled { opacity: .35; cursor: not-allowed; }
@@ -96,14 +98,13 @@ html.dark .tavern { --tavern-lantern: color-mix(in oklab, var(--attention) 13%, 
 /* Overflow menu */
 .tavern .menu-anchor { position: relative; display: inline-flex; }
 /* A text menu trigger (Export ▾) is a target like any button: 24 px, 44 on touch. Icon triggers use .ibtn, sized there. */
-.tavern .menu-trigger { display: inline-flex; align-items: center; min-height: 24px; border: 0; background: none; padding: 0; cursor: pointer; }
-@media (pointer: coarse), (max-width: 560px) { .tavern .menu-trigger { min-height: 44px; } }
+.tavern .menu-trigger { display: inline-flex; align-items: center; min-height: var(--tavern-control-compact); border: 0; background: none; padding: 0; cursor: pointer; }
 .tavern .tavern-menu { position: absolute; top: calc(100% + 4px); z-index: 60; min-width: 190px; padding: 4px; background: var(--popover); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); box-shadow: 0 12px 28px -14px var(--tavern-shadow); display: flex; flex-direction: column; }
 .tavern .tavern-menu.end { right: 0; } .tavern .tavern-menu.start { left: 0; }
 .tavern .tavern-menu { max-width: min(340px, calc(100vw - 24px)); }
 .tavern .tavern-menu [role=menuitem].rich { white-space: normal; min-width: 0; width: 100%; padding: 6px 8px; }
 .tavern .tavern-menu .menu-sep { height: 1px; margin: 4px 0; background: var(--tavern-line); }
-.tavern .tavern-menu [role^=menuitem] { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 8px; border: 0; background: none; text-align: left; font-size: 12px; cursor: pointer; color: inherit; white-space: nowrap; }
+.tavern .tavern-menu [role^=menuitem] { display: flex; align-items: center; gap: 8px; min-height: var(--tavern-control-standard); padding: 0 8px; border: 0; background: none; text-align: left; font-size: 12px; cursor: pointer; color: inherit; white-space: nowrap; }
 .tavern .tavern-menu [role=menuitem] .gap { width: 14px; }
 .tavern .tavern-menu [role^=menuitem]:is(:hover, :focus-visible) { background: var(--tavern-hover); outline: none; }
 .tavern .tavern-menu [role=menuitem].danger { color: var(--tavern-bad); }
@@ -178,7 +179,7 @@ html.dark .tavern { --tavern-lantern: color-mix(in oklab, var(--attention) 13%, 
 /* A decision row: the title (13 px, two lines closed, whole when open), its time under it, the actions top right, the reason under all three when open. */
 .tavern .decided .di { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "t a" "m a" "w w"; column-gap: 10px; row-gap: 2px; align-items: start; padding: 8px 8px 8px 10px; font-size: 13px; }
 .tavern .decided .di + .di { border-top: 1px dashed var(--tavern-line); }
-.tavern .decided .di .dt { grid-area: t; display: flex; align-items: flex-start; gap: 6px; min-width: 0; min-height: 24px; padding: 2px 4px; margin: -2px 0 0 -4px; border: 0; background: none; color: inherit; font: inherit; line-height: 1.4; text-align: left; cursor: pointer; }
+.tavern .decided .di .dt { grid-area: t; display: flex; align-items: flex-start; gap: 6px; min-width: 0; min-height: var(--tavern-control-compact); padding: 2px 4px; margin: -2px 0 0 -4px; border: 0; background: none; color: inherit; font: inherit; line-height: 1.4; text-align: left; cursor: pointer; }
 .tavern .decided .di .dt:hover { background: var(--tavern-hover); }
 .tavern .decided .di .dt b.clamp { flex: 0 1 auto; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .tavern .decided .di.open .dt b.clamp { display: block; -webkit-line-clamp: unset; overflow: visible; }
@@ -204,10 +205,9 @@ html.dark .tavern { --tavern-lantern: color-mix(in oklab, var(--attention) 13%, 
 .tavern .loading { padding: 8px 12px; font-size: 12px; }
 
 @media (pointer: coarse), (max-width: 560px) {
-  .tavern .ibtn { width: 44px; height: 44px; }
-  .tavern .btn, .tavern .btn.sm { min-height: 44px; }
+  .tavern { --tavern-control-compact: 44px; --tavern-control-standard: 44px; }
   .tavern :is(input, select) { min-height: 44px; font-size: 16px; }
-  .tavern .tavern-menu [role^=menuitem] { min-height: 44px; font-size: 14px; }
+  .tavern .tavern-menu [role^=menuitem] { font-size: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { .tavern, .tavern::before, .tavern::after, .tavern *, .tavern *::before, .tavern *::after { animation: none !important; transition: none !important; } }
 /* bb follows the OS setting only; data-motion="reduced" is the harness's and the mock's switch, kept so the reduced state can be checked without emulation. */
@@ -290,7 +290,7 @@ html[data-motion="reduced"] .tavern, html[data-motion="reduced"] .tavern::before
 .tavern .ask-note-in { width: 100%; min-height: 30px; padding: 5px 8px; border: 1px solid var(--input, var(--border)); background: var(--background); color: var(--foreground); font: inherit; font-size: 12px; }
 .tavern .ask-note-in::placeholder { color: var(--tavern-muted); }
 .tavern .ask-f { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-@media (pointer: coarse), (max-width: 560px) { .tavern.k-cluster-write :is(.ask-f .btn, .ask-note-in), .tavern.k-greenlight .ask-note-in { min-height: 44px; } }
+@media (pointer: coarse), (max-width: 560px) { .tavern:is(.k-cluster-write, .k-greenlight) .ask-note-in { min-height: 44px; } }
 .tavern.receipt, .tavern .receipt { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; padding: 5px 10px; border: 1px solid color-mix(in oklab, var(--success) 55%, var(--tavern-line)); background: var(--card); box-shadow: inset 3px 0 0 var(--success); }
 .tavern.receipt .tavern-glyph, .tavern .receipt .tavern-glyph { color: var(--success); }
 .tavern .receipt-note { font-style: italic; }

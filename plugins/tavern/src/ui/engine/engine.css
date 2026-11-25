@@ -164,7 +164,7 @@
 .tavern.twalk-receipt { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 4px; }
 .tavern.twalk-receipt .receipt-inline { display: flex; margin: 0; font-size: 11px; min-height: 18px; min-width: 0; }
 .tavern.twalk-receipt .twalk-receipt-text { min-width: 0; font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tavern .twalk-show-receipt { flex: none; min-height: 24px; font-size: 11px; text-decoration: underline; }
-@media (pointer: coarse), (max-width: 560px) { .tavern .twalk-show-receipt { min-height: 44px; min-width: 44px; } }
+.tavern .twalk-show-receipt { flex: none; min-height: var(--tavern-control-compact); font-size: 11px; text-decoration: underline; }
+@media (pointer: coarse), (max-width: 560px) { .tavern .twalk-show-receipt { min-width: 44px; } }
 .tavern .mo-character-receipt { animation: tavern-character-receipt 120ms var(--tavern-ease) both; }
 @keyframes tavern-character-receipt { to { opacity: 0; } }

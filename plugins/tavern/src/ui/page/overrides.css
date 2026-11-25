@@ -10,7 +10,6 @@
 .tavern .tv-override-row small{ display:block; color:var(--muted-foreground); }
 .tavern .tv-override-entry.btn{ display:flex; text-align:start; justify-content:flex-start; white-space:normal; min-width:0; }
 .tavern .tv-override-entry .tv-g{ flex:none; color:var(--primary); }
-.tavern.tv-page :is(.tv-overrides,.tv-override-panel) .btn{ min-height:36px; }
 .tavern .tv-override-fields canvas{ width:44px; height:51px; }
 .tavern .tv-override-scope{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:12px; border-bottom:1px solid var(--border); }
 .tavern .tv-override-scope [aria-pressed="true"]{ border-color:var(--primary); background:color-mix(in oklab,var(--primary) 10%,var(--card)); }
@@ -34,7 +33,6 @@
   .tavern .tv-override-row{ grid-template-columns:minmax(0,1fr) auto; gap:0 8px; padding:6px 8px; }
   .tavern .tv-override-row > div{ grid-column:1; padding:0 4px 4px 24px; }
   .tavern .tv-override-row > button:last-child{ grid-column:2; grid-row:1/3; }
-  .tavern.tv-page :is(.tv-overrides,.tv-override-panel,.tv-override-dialog) .btn{ min-height:44px; }
   .tavern :is(.tv-override-fields,.tv-override-fields tbody){ display:block; }
   .tavern .tv-override-fields caption{ display:block; }
   .tavern .tv-override-fields thead{ position:absolute; clip-path:inset(50%); width:1px; height:1px; overflow:hidden; }

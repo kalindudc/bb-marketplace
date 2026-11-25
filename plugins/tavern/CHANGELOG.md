@@ -65,6 +65,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 - Keepers and party members can start on Gemini 4 Neon. Tavern shows the model one input shape per tool and still checks which arguments belong to each action.
 - A Keeper keeps their road while a message waits to be routed. An ask appears by the character without moving them to the left edge.
 - Road tooltips, their accessible labels, and canned character remarks use the quest's short name instead of its full title.
+- Tavern buttons use the same compact and standard sizes across the widget, Ledger, cards, pages, and Settings. Page and Settings buttons follow the kit’s 12 px type instead of 13 px, and Seal has a double border to distinguish it from Send. Buttons get taller on touch screens or in narrow windows, while the composer row stays compact.
 - The widget’s Close button matches the other small buttons on desktop. It still has a 44 px touch target on touch screens and in narrow windows, as do the quest rename fields and buttons and the alert test buttons.
 - Contextual remarks now work when Pi refuses to disable extensions. Tavern uses a separate Pi folder that keeps Pi's required extensions and your selected speech extensions without loading your ordinary Pi setup. If Pi still cannot start, Settings can show its startup error.
 - The Ledger’s Guardrails highlight fills the row all the way to the card border on hover.

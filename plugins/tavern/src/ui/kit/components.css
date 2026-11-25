@@ -9,7 +9,7 @@
 @media (max-width: 760px) { .tavern .narrow-only { display: inline-flex; } }
 /* Segmented control: one bordered group (.segc, role group) of .seg buttons split by hairlines; the current one is filled, bold and underlined. "More" (.seg-more) sits outside the group as a quiet link. */
 .tavern .segc { display: inline-flex; flex-wrap: wrap; max-width: 100%; border: 1px solid var(--tavern-line); background: var(--tavern-elev-raised-bg); }
-.tavern .seg { display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 0 9px; border: 0; background: transparent; font: inherit; font-size: 12px; color: var(--tavern-muted); cursor: pointer; white-space: nowrap; }
+.tavern .seg { display: inline-flex; align-items: center; gap: 5px; min-height: var(--tavern-control-compact); padding: 0 9px; border: 0; background: transparent; font: inherit; font-size: 12px; color: var(--tavern-muted); cursor: pointer; white-space: nowrap; }
 .tavern .seg + .seg { box-shadow: inset 1px 0 0 var(--tavern-line); }
 .tavern .seg .num { font-size: 11px; color: var(--tavern-muted); }
 .tavern .seg:hover { background: var(--tavern-hover); color: var(--foreground); }
@@ -21,13 +21,13 @@
 .tavern :is(.seg[aria-pressed="true"], [aria-selected="true"], [aria-current]:not([aria-current="false"])) { --tavern-muted: color-mix(in oklab, var(--muted-foreground) 47%, var(--foreground)); --tv-text-2: var(--tavern-muted); }
 .tavern .seg + .seg[aria-pressed="true"] { box-shadow: inset 1px 0 0 var(--tavern-line), inset 0 -2px 0 var(--primary); }
 .tavern .seg[aria-pressed="true"] .num { color: var(--foreground); }
-.tavern .seg-more { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 0 4px; font-size: 12px; color: var(--tavern-muted); cursor: pointer; white-space: nowrap; }
+.tavern .seg-more { display: inline-flex; align-items: center; gap: 4px; min-height: var(--tavern-control-compact); padding: 0 4px; font-size: 12px; color: var(--tavern-muted); cursor: pointer; white-space: nowrap; }
 .tavern .seg-more:hover { color: var(--foreground); text-decoration: underline; }
 
 .tavern .chip-link { display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 5px; border: 1px solid color-mix(in oklab, var(--tavern-teal) 60%, var(--tavern-line)); color: var(--foreground); font-size: 11px; }
 .tavern .chip-link .tavern-glyph { color: var(--tavern-teal); }
 
-.tavern .fold { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 0 6px; border: 0; background: none; color: var(--tavern-muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; }
+.tavern .fold { display: inline-flex; align-items: center; gap: 4px; min-height: var(--tavern-control-compact); padding: 0 6px; border: 0; background: none; color: var(--tavern-muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; }
 .tavern .fold:hover { color: var(--foreground); }
 .tavern .lg-anchor[open] summary .tavern-glyph { transform: rotate(90deg); }
 
@@ -56,7 +56,7 @@
 .tavern .route-chip.k-steer { border-color: var(--primary); }
 .tavern .route-chip.k-aside { border-style: dashed; }
 .tavern .route-chip.k-new-quest { border-color: var(--tavern-teal); }
-.tavern .lg-anchor summary { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; font-size: 12px; color: var(--tavern-muted); }
+.tavern .lg-anchor summary { display: inline-flex; align-items: center; gap: 4px; min-height: var(--tavern-control-compact); font-size: 12px; color: var(--tavern-muted); }
 .tavern .lg-anchor pre { padding: 8px 10px; background: var(--tavern-recessed); border: 1px solid var(--tavern-line); }
 
 /* ---- The widget row: a Flare-weight composer banner, one line by default ---- */
@@ -87,7 +87,7 @@
 .tavern .tw-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tavern-muted); }
 .tavern .tw-sp { flex: 1 1 0; min-width: 0; }
 .tavern .tw-hide { margin-left: auto; }
-.tavern .tw-chip, .tavern .tw-asks, .tavern .tw-quest { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 7px; border: 1px solid transparent; background: transparent; color: var(--foreground); font-size: 12px; white-space: nowrap; cursor: pointer; flex: none; }
+.tavern .tw-chip, .tavern .tw-asks, .tavern .tw-quest { display: inline-flex; align-items: center; gap: 5px; height: var(--tavern-control-compact); padding: 0 7px; border: 1px solid transparent; background: transparent; color: var(--foreground); font-size: 12px; white-space: nowrap; cursor: pointer; flex: none; }
 .tavern :is(.tw-chip, .tw-asks, .tw-quest):hover { background: var(--tavern-hover); }
 .tavern :is(.tw-chip, .tw-asks, .tw-quest)[aria-expanded="true"] { background: var(--tavern-hover); border-color: var(--tavern-line); }
 /* On the hover fill, muted words fall under 4.5:1 in gruvbox dark: an open chip reads in the foreground colour. */
@@ -126,9 +126,8 @@
 .tavern .tv-guard-alert { display: grid; gap: 4px; margin: 4px 0; min-width: 0; overflow-wrap: anywhere; }
 .tavern .tv-alert-msg { font-weight: 600; }
 .tavern .tv-alert-action { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; overflow-wrap: anywhere; }
-.tavern .tv-alert-action .lnk-btn { min-height: 24px; }
 .tavern .tw-ask + .tw-ask { border-top: 1px solid var(--tavern-line); }
-.tavern .tw-ask-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center; width: 100%; min-height: 32px; padding: 0 10px; border: 0; background: transparent; text-align: left; font-size: 12px; cursor: pointer; }
+.tavern .tw-ask-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center; width: 100%; min-height: var(--tavern-control-standard); padding: 0 10px; border: 0; background: transparent; text-align: left; font-size: 12px; cursor: pointer; }
 .tavern .tw-ask-row:hover { background: var(--tavern-hover); }
 .tavern .tw-ak { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--tavern-muted); white-space: nowrap; }
 .tavern .tw-ask:is(.k-sends-as-you, .k-production, .k-cluster-write, .k-destructive, .k-merge, .k-credential, .k-scope) .tw-ak { color: var(--foreground); }
@@ -161,7 +160,7 @@
 @container tavern-widget (max-width: 420px) { .tavern .tw-row:has(.tw-asks) .tw-dec { display: none; } }
 /* On a narrow row the events bubble yields to the asks; the Ledger keeps the count readable. */
 @container tavern-widget (max-width: 420px) { .tavern .tw-row:has(.tw-asks) .tw-events { display: none; } }
-@media (pointer: coarse), (max-width: 560px) { .tavern .tw-chip, .tavern .tw-asks, .tavern .tw-quest { height: 44px; } .tavern .tw-ledger { min-width: 44px; justify-content: center; } .tavern .tw-ask-row { min-height: 44px; } .tavern .lnk-btn { min-height: 44px; } .tavern.readas .ra-fix { height: 44px; } }
+@media (pointer: coarse), (max-width: 560px) { .tavern .tw-ledger { min-width: 44px; justify-content: center; } }
 
 /* ---- The crest toggle in bb's composer actions: same 32 px box as bb's own icon buttons ---- */
 .tavern .crest-toggle { position: relative; display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--radius); background: transparent; color: var(--muted-foreground); cursor: pointer; }
@@ -173,7 +172,7 @@
 .tavern.class-pop { width: min(460px, 100%); padding: 4px; background: var(--popover); color: var(--popover-foreground, var(--foreground)); }
 .tavern .cp-h { padding: 6px 8px 4px; font-size: 12px; }
 .tavern .class-picker { display: flex; flex-direction: column; }
-.tavern .class-picker [role=option] { display: flex; align-items: flex-start; gap: 10px; width: 100%; min-height: 44px; padding: 8px; text-align: left; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.tavern .class-picker [role=option] { display: flex; align-items: flex-start; gap: 10px; width: 100%; min-height: var(--tavern-control-standard); padding: 8px; text-align: left; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .tavern .class-picker [role=option] .tavern-crest { margin-top: 1px; }
 .tavern .class-picker [role=option]:hover, .tavern .class-picker [aria-selected=true] { background: var(--tavern-hover); }
 .tavern .class-picker [role=option]:focus-visible { outline: 2px solid var(--ring, var(--primary)); outline-offset: -2px; }
@@ -204,18 +203,17 @@
 .tavern.readas .ra-l { font-size: 11px; color: var(--tavern-muted); }
 .tavern.readas .ra-goal { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border: 1px solid var(--tavern-line); background: var(--card); color: var(--foreground); font-size: 11px; font-weight: 600; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tavern.readas .route-chip { color: var(--foreground); }
-.tavern.readas .ra-fix { height: 20px; padding: 0 4px; border: 0; background: none; font-size: 11px; color: var(--tavern-muted); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.tavern.readas .ra-fix { min-height: var(--tavern-control-compact); padding: 0 4px; border: 0; background: none; font-size: 11px; color: var(--tavern-muted); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .tavern.readas .ra-fix:hover { color: var(--foreground); }
 .tavern.readas .ra-sum { flex-basis: 100%; text-align: right; font-size: 11px; color: var(--tavern-muted); overflow-wrap: anywhere; }
 .tavern.readas.member { gap: 5px; }
-@media (pointer: coarse) { .tavern.readas .ra-fix { height: 32px; } }
 
 /* ---- Chat cards: one card language; the quest map card is the signature ---- */
 .tavern.tcard { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--tavern-line); background: var(--card); font-size: 13px; max-width: 100%; }
 .tavern .tc-h, .tavern .qm-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; font-size: 12px; }
 .tavern .tc-sp { flex: 1 1 0; }
 .tavern .tc-out { overflow-wrap: anywhere; }
-.tavern .lnk-btn { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 0 6px; border: 0; background: transparent; color: var(--foreground); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.tavern .lnk-btn { display: inline-flex; align-items: center; gap: 4px; min-height: var(--tavern-control-compact); padding: 0 6px; border: 0; background: transparent; color: var(--foreground); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .tavern .voice { font-size: 12px; color: var(--tavern-muted); font-style: italic; }
 .tavern .voice::before { content: "“"; } .tavern .voice::after { content: "”"; }
 .tavern .conf { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 10px; align-items: center; font-size: 12px; padding-top: 2px; }
@@ -245,7 +243,7 @@ html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--atten
 .tavern .plan-changes ul { display: grid; gap: 2px; padding: 0; list-style: none; }
 .tavern .plan-changes li + li { border-top: 1px dotted var(--tavern-line); padding-top: 3px; }
 .tavern .plan-changes ins { text-decoration: none; font-weight: 600; }
-.tavern .qm-mapfold > .btn { display: flex; width: 100%; min-height: 32px; background: var(--tavern-recessed); }
+.tavern .qm-mapfold > .btn { display: flex; width: 100%; background: var(--tavern-recessed); }
 .tavern .qm-mapfold > .btn .act-i { margin-left: auto; }
 .tavern .qm-mapfold > div:not([hidden]) { margin-top: 8px; }
 .tavern .qm-mapfold .qmap.drawn { overflow-x: auto; }
@@ -266,7 +264,7 @@ html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--atten
 .tavern .qm-goal .lg-clamp { padding-inline: 0; font-size: inherit; }
 .tavern .qm-done, .tavern .qm-charter-row { border-top: 1px solid var(--tavern-paper-rule); }
 .tavern .qm-done { padding-bottom: 8px; }
-.tavern .qm-charter-line { display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; min-height: 36px; padding: 4px; font-size: 12px; }
+.tavern .qm-charter-line { display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; min-height: var(--tavern-control-standard); padding: 4px; font-size: 12px; }
 .tavern button.qm-charter-line, .tavern .qm-step-toggle { width: 100%; border: 0; background: none; color: inherit; cursor: pointer; text-align: left; }
 .tavern .qm-charter-line > :first-child { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--tavern-muted); }
 .tavern :is(button.qm-charter-line, .qm-step-toggle):hover { background: var(--tavern-hover); }
@@ -290,13 +288,13 @@ html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--atten
 .tavern .qm-lines > li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 6px; align-items: start; }
 .tavern .qm-lines li > .tavern-glyph { margin-top: 2px; }
 .tavern .qm-jumps { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.tavern .qm-jump { min-width: 24px; min-height: 24px; padding-inline: 4px; }
+.tavern .qm-jump { min-width: var(--tavern-control-compact); min-height: var(--tavern-control-compact); padding-inline: 4px; }
 .tavern .qm-running { border: 1px dashed var(--tavern-paper-spine); padding: 8px; }
 .tavern .qm-road, .tavern .qm-stage-steps { display: grid; list-style: none; padding: 0; }
 .tavern .qm-road { position: relative; gap: 4px; }
 .tavern .qm-road::before { content: ""; position: absolute; left: 11px; top: 10px; bottom: 10px; border-left: 2px dashed var(--tavern-road); }
 .tavern .qm-stage { display: block; margin-left: 30px; font-size: 11px; }
-.tavern .qm-step-toggle { display: grid; grid-template-columns: 24px auto minmax(0, 1fr) auto; align-items: start; gap: 6px; min-height: 30px; padding: 4px 4px 4px 0; font: inherit; }
+.tavern .qm-step-toggle { display: grid; grid-template-columns: 24px auto minmax(0, 1fr) auto; align-items: start; gap: 6px; min-height: var(--tavern-control-standard); padding: 4px 4px 4px 0; font: inherit; }
 .tavern .qm-step-mark { position: relative; justify-self: center; margin-top: 2px; background: var(--tavern-paper); box-shadow: 0 0 0 2px var(--tavern-paper); }
 .tavern .qm-step-num, .tavern .qm-step-main > .m { font-size: 12px; }
 .tavern .qm-step-main { display: grid; gap: 1px; }
@@ -305,7 +303,7 @@ html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--atten
 .tavern .qm-step-change { padding-inline: 4px; background: var(--tavern-recessed); border-left: 2px solid var(--tavern-paper-spine); }
 .tavern .qm-step.owner-you > .qm-step-toggle { background: var(--tavern-you-fill); --tavern-muted: color-mix(in oklab, var(--muted-foreground) 45%, var(--foreground)); }
 .tavern .qm-step.owner-you > .qm-step-toggle:hover { background: color-mix(in oklab, var(--tavern-you) 20%, var(--tavern-paper)); }
-.tavern .qm-step.is-done .qm-step-toggle { min-height: 26px; }
+.tavern .qm-step.is-done .qm-step-toggle { min-height: var(--tavern-control-compact); }
 .tavern .qm-step.is-done .qm-step-main > b { font-weight: 400; }
 .tavern .qm-step-detail, .tavern .qm-step-ask { margin: 1px 0 4px 30px; font-size: 12px; }
 .tavern .qm-step-detail { padding: 5px 8px; border-left: 2px solid var(--tavern-paper-spine); background: var(--tavern-recessed); }
@@ -345,11 +343,10 @@ html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--atten
 .tavern.qmcard .plan-changes ins { background: color-mix(in oklab, var(--success) 14%, transparent); text-decoration: underline; text-decoration-color: var(--success); text-underline-offset: 2px; }
 .tavern.qmcard .plan-changes del { background: color-mix(in oklab, var(--destructive) 10%, transparent); }
 .tavern .qm-old { padding-bottom: 10px; }
-.tavern .btn.seal { background: var(--tavern-wax); border-color: var(--tavern-wax); color: var(--primary-foreground); min-height: 32px; padding: 0 12px; }
+.tavern .btn.seal { background: var(--tavern-wax); border: 3px double var(--primary-foreground); color: var(--primary-foreground); }
 .tavern .btn.seal:hover:not(:disabled) { background: color-mix(in oklab, var(--tavern-wax) 86%, var(--foreground)); }
 html.dark .tavern .btn.seal { box-shadow: 0 0 18px -6px color-mix(in oklab, var(--attention) 70%, transparent); }
 /* The seal's own 32 px outranks tavern.css's touch rule, so the touch size is restated here, after it. */
-@media (pointer: coarse), (max-width: 560px) { .tavern .btn.seal { min-height: 44px; } }
 .tavern .sealmark { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px 0 4px; border: 1px solid color-mix(in oklab, var(--tavern-wax) 60%, var(--tavern-line)); font-size: 12px; font-weight: 700; }
 .tavern.qmcard.mo-seal .sealmark { animation: tavern-stamp .5s var(--tavern-ease) both; }
 .tavern .sealmark .tavern-glyph { color: var(--tavern-wax); }
@@ -398,15 +395,9 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
   .tavern .qm-charter-line > :not(.act-i) { grid-column: 1; }
   .tavern .qm-charter-line > .act-i { grid-area: 1 / 2 / span 2; }
   .tavern .qm-charter-body, .tavern .qm-done > :not(.qm-charter-line) { margin-inline: 4px; }
-  .tavern.qmcard :is(.btn, .lnk-btn, .lg-clamp.act, button.qm-charter-line, .qm-step .qm-step-toggle), .tavern .qm-step.is-done .qm-step-toggle { min-height: 44px; }
-  .tavern .qm-jump { min-width: 44px; }
   .tavern .qm-f .qm-full { display: none; }
   .tavern .qm-f .qm-short { display: inline; }
   .tavern .qm-f .qm-scope { flex-basis: 92px; }
-}
-@media (pointer: coarse) {
-  .tavern.qmcard :is(button.qm-charter-line, .qm-step .qm-step-toggle, .qm-step.is-done .qm-step-toggle, .qm-jump) { min-height: 44px; }
-  .tavern .qm-jump { min-width: 44px; }
 }
 @container page (max-width: 560px) { .tavern .roll li { grid-template-columns: auto minmax(0, 1fr); } .tavern .roll .rl-w { grid-column: 2; } }
 
@@ -426,11 +417,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 /* On the "your move" tint, muted text moves closer to the foreground so it keeps 4.5:1 in every theme. */
 .tavern :is(.lg-move.who-you, .lg-list li.proposed, .tale-left, .qm-wait, .tw-asks.has, .opt:has(input:checked), .class-picker [role=option][aria-selected=true], .class-picker [role=option]:hover) { --tavern-muted: color-mix(in oklab, var(--muted-foreground) 45%, var(--foreground)); }
 
-/* Narrow and touch overrides last, so they win over the base rules above. */
 .tavern .journal-title h2 { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; }
-@media (pointer: coarse), (max-width: 560px) {
-  .tavern .lnk-btn, .tavern .fold, .tavern .lg-anchor summary, .tavern .seg, .tavern .seg-more { min-height: 44px; }
-}
 .tavern .journal-title h2 .anc { white-space: normal; }
 /* ---- Re-route and rule tabs ---- */
 .tavern.rtab { display: flex; flex-direction: column; min-height: 100%; }
@@ -478,7 +465,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .tw-section-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .tavern .tw-section-actions { flex: none; justify-content: flex-end; }
 .tavern .tw-panel-ledger { display: none; margin-inline-end: auto; }
-.tavern .tw-ask-keeper { margin-inline-end: auto; min-height: 24px; }
+.tavern .tw-ask-keeper { margin-inline-end: auto; }
 .tavern .tw-section-actions :is(.tw-show-characters, .tw-guard) { display: none; }
 .tavern .tw-guard[data-warning] { color: var(--tavern-blocked); }
 .tavern .lg-keeper-state { margin: 0 12px 8px; }
@@ -500,7 +487,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 @container tavern-widget (max-width: 565px) {
   .tavern.v-keeper .tw-ledger > :not(svg:first-child), .tavern.v-keeper .tw-quest .num { display: none; }
   .tavern.v-keeper .tw-row > .tw-show-characters { display: none; }
-  .tavern.v-keeper .tw-section-actions .tw-show-characters { display: inline-grid; width: 44px; height: 44px; }
+  .tavern.v-keeper .tw-section-actions .tw-show-characters { display: inline-grid; }
 }
 @container tavern-widget (max-width: 520px) {
   .tavern.v-keeper .tw-id { max-width: 70px; }
@@ -515,11 +502,11 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
   .tavern.v-keeper .tw-id:has(.tw-crest) .tw-dot { inset-inline-start: 12px; }
   .tavern.v-keeper .tw-row > .tw-ledger, .tavern.v-keeper:has(.tw-row > .tw-keeper-resume) .tw-row > .tw-guard { display: none; }
   .tavern.v-keeper .tw-panel-ledger { display: inline-flex; }
-  .tavern.v-keeper:has(.tw-row > .tw-keeper-resume) .tw-section-actions .tw-guard { display: inline-grid; width: 44px; height: 44px; }
+  .tavern.v-keeper:has(.tw-row > .tw-keeper-resume) .tw-section-actions .tw-guard { display: inline-grid; }
 }
 @container tavern-widget (max-width: 345px) {
   .tavern.v-keeper .tw-row > .tw-guard { display: none; }
-  .tavern.v-keeper .tw-section-actions .tw-guard { display: inline-grid; width: 44px; height: 44px; }
+  .tavern.v-keeper .tw-section-actions .tw-guard { display: inline-grid; }
 }
 @container tavern-widget (max-width: 330px) {
   .tavern.twidget.v-keeper .tw-row { gap: 0; padding-inline: 2px; }
@@ -565,7 +552,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .lg-undo-lanes span { min-width: 0; overflow-wrap: anywhere; }
 .tavern .lg-undo-lanes button { flex: none; font-size: 11px; }
 .tavern .lg-qh { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.tavern .lg-qt { display: inline-flex; align-items: center; gap: 3px; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.tavern .lg-qt { display: inline-flex; align-items: center; gap: 3px; min-width: 0; min-height: var(--tavern-control-compact); padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .tavern .lg-qt b.clamp { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; text-overflow: ellipsis; white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .tavern .lg-qt > svg { flex: none; }
 @container tavern-ledger (max-width: 420px) { .tavern .lg-qt { flex: 1 0 100%; } }
@@ -579,7 +566,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .lg-briefs p { margin: 0; }
 .tavern .lg-rows > li + li { border-top: 1px dashed var(--tavern-line); }
 .tavern .lg-rows > li:has(> .lg-row) { display: block; }
-.tavern .lg-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 28px; padding: 0 4px; border: 0; background: none; color: inherit; font: inherit; text-align: left; }
+.tavern .lg-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: var(--tavern-control-standard); padding: 0 4px; border: 0; background: none; color: inherit; font: inherit; text-align: left; }
 .tavern button.lg-row { cursor: pointer; }
 .tavern button.lg-row:hover { background: var(--tavern-hover); }
 .tavern .lg-row .t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -587,7 +574,6 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .lg-chain .lg-row { padding-block: 5px; }
 .tavern .lg-chain .lg-row > span:first-child { flex: 1; min-width: 0; }
 .tavern .lg-chain .lg-chain-detail { margin: 0 4px 6px; color: var(--tavern-muted); }
-@media (max-width: 560px) { .tavern .lg-chain button.lg-row { min-height: 44px; } }
 .tavern .lg-row .lg-q { flex: none; font-size: 11px; padding: 1px 5px; background: var(--tavern-recessed); }
 .tavern .lg-row .lg-go { flex: none; display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--tavern-muted); }
 .tavern .lg-rows .src { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--tavern-muted); white-space: nowrap; }
@@ -607,7 +593,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .lg-clamp.still { cursor: auto; }
 .tavern .lg-clamp.lg-steer { color: var(--tavern-muted); font-size: 11px; }
 .tavern .lg-history { margin: 4px 12px 0; padding-top: 8px; border-top: 1px solid var(--tavern-line); display: flex; flex-direction: column; gap: 2px; }
-.tavern .lg-fold > summary { display: flex; align-items: center; gap: 6px; min-height: 28px; font-size: 12px; cursor: pointer; list-style: none; color: var(--tavern-muted); }
+.tavern .lg-fold > summary { display: flex; align-items: center; gap: 6px; min-height: var(--tavern-control-standard); font-size: 12px; cursor: pointer; list-style: none; color: var(--tavern-muted); }
 .tavern .lg-fold > summary::-webkit-details-marker { display: none; }
 .tavern .lg-fold > summary:hover { color: var(--foreground); }
 .tavern .lg-fold[open] > summary .tavern-glyph { transform: rotate(90deg); }
@@ -615,14 +601,14 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .lg-fold > summary .anc { margin-left: auto; }
 .tavern .lg-fold > .lg-rows { padding: 0 0 6px 18px; }
 .tavern .lg-fold > pre { margin: 0 0 8px; padding: 8px; background: var(--tavern-recessed); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
-@media (pointer: coarse), (max-width: 560px) { .tavern :is(.lg-row, .lg-fold > summary, .lg-clamp.act) { min-height: 44px; } .tavern .lg-qt { min-height: 44px; } }
+.tavern .lg-clamp.act { min-height: var(--tavern-control-compact); }
 @container (max-width: 360px) { .tavern .lg-rows > li { grid-template-columns: minmax(0, 1fr) auto; } .tavern .lg-rows > li > .src { grid-column: 1 / -1; } }
 /* The compact party picture (ledger, notices) drops its plain anchors; the full labels stay on the full picture. */
 .tavern .party.mini .zh .anc { display: none; }
 /* WCAG 2.5.8: every crest button in the party is at least 24 px each way on desktop, 44 px on touch. */
-.tavern .party .who-btn { display: inline-flex; align-items: center; min-height: 24px; }
+.tavern .party .who-btn { display: inline-flex; align-items: center; min-height: var(--tavern-control-compact); }
 .tavern .party.mini .who-btn { min-width: 24px; justify-content: center; }
-@media (pointer: coarse), (max-width: 560px) { .tavern .party .who-btn { min-height: 44px; } .tavern .party.mini .who-btn { min-width: 44px; justify-content: center; } }
+@media (pointer: coarse), (max-width: 560px) { .tavern .party.mini .who-btn { min-width: 44px; justify-content: center; } }
 /* Keeper memory: promises, facts, hand-backs and outside gates. The text leads; the due time or answer and the quest tag follow. Read-only rows, so only clamped text is a control. */
 .tavern .mem-rows { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; }
 .tavern .mem-rows > li { grid-column: 1 / -1; grid-template-columns: subgrid; column-gap: 8px; }
@@ -700,7 +686,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .lg-rules > li.rule.off > .t { color: var(--tavern-muted); }
 .tavern .lg-rules > li.rule.proposed > .rr-h > .src { color: var(--foreground); font-weight: 700; }
 /* Widen: a quiet link on the scope line; its confirm expands under the rule and says exactly who the rule will reach. */
-.tavern .rs-widen { min-height: 20px; padding: 0 2px; font-size: 11px; font-weight: 600; color: var(--tavern-muted); }
+.tavern .rs-widen { padding: 0 2px; font-size: 11px; font-weight: 600; color: var(--tavern-muted); }
 .tavern .rs-widen:hover, .tavern .rs-widen[aria-expanded="true"] { color: var(--foreground); text-decoration: underline; }
 .tavern .rs-confirm { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; padding: 8px 10px; background: var(--tavern-elev-recessed-bg); box-shadow: var(--tavern-elev-recessed-shadow); font-size: 12px; }
 .tavern .rs-confirm p { margin: 0; }
@@ -708,7 +694,6 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .rs-err { color: var(--destructive-text, var(--destructive)); font-size: 11px; }
 .tavern .rs-done { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--tavern-muted); }
 .tavern .rs-done .tavern-glyph { color: var(--success); }
-@media (pointer: coarse), (max-width: 560px) { .tavern .rs-widen { min-height: 44px; } }
 /* Returned quests: the title is the clipped box itself, and on a narrow Ledger the meta moves under it (touch rows are 44 px tall anyway). */
 .tavern .lg-done .lg-row .t { font-weight: 700; }
 @container tavern-ledger (max-width: 420px) {
@@ -723,7 +708,6 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 @container tavern-ledger (max-width: 420px) { .tavern .lg-fold > summary .anc { flex: 1 0 100%; margin-left: 0; padding-left: 18px; box-sizing: border-box; text-align: left; } }
 /* A stated rule's reach on the read-as line; its widen confirm takes the full width under the receipt, right-aligned like the receipt. */
 .tavern.readas .ra-scope { color: var(--foreground); }
-.tavern.readas .rs-widen { min-height: 20px; }
 .tavern.readas .rs-confirm { order: 1; flex-basis: 100%; max-width: 46ch; margin-left: auto; text-align: left; }
 .tavern.readas .ra-sum { order: 2; }
 .tavern.readas .rs-acts { justify-content: flex-end; }
@@ -750,7 +734,6 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .decided .di-receipt, .tavern .decided .di-err { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; padding: 4px 6px 4px 10px; font-size: 12px; border-bottom: 1px dashed var(--tavern-line); }
 .tavern .decided .di-receipt > .tavern-glyph { color: var(--success); }
 .tavern .decided .di-err { color: var(--destructive-text, var(--destructive)); }
-@media (pointer: coarse) { .tavern .decided :is(.di-ok, .di-all, .di-receipt .btn) { min-height: 44px; } }
 
 /* Tale path: credit words take the second line whole; stretched labels wrap at word boundaries, never mid-word. */
 .tavern .map-label .o.o-credit { font-weight: 400; color: var(--tavern-muted); }
@@ -769,9 +752,8 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern.k-tavern-tale .tale-foot { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 16px; padding-top: 8px; border-top: 1px solid var(--tavern-line); }
 .tavern .tale-lvls { margin: 8px 0 0; padding: 0; list-style: none; font-size: 12px; line-height: 1.45; color: var(--tavern-muted); overflow-wrap: anywhere; }
 .tavern .tale-crests { display: flex; flex-wrap: wrap; gap: 2px; margin: 0; padding: 0; list-style: none; }
-.tavern .tc-crest { display: inline-grid; place-items: center; min-width: 30px; min-height: 30px; padding: 2px; border: 0; background: none; cursor: pointer; }
+.tavern .tc-crest { display: inline-grid; place-items: center; min-width: var(--tavern-control-standard); min-height: var(--tavern-control-standard); padding: 2px; border: 0; background: none; cursor: pointer; }
 .tavern .tc-crest:hover { background: var(--tavern-hover); }
-@media (pointer: coarse) { .tavern .tc-crest { min-width: 44px; min-height: 44px; } }
 
 /* ---- Journal tally and ribbon (README "Journal tally and ribbon") ---- */
 .tavern .tally-slot { display: inline-flex; align-items: center; gap: 6px; flex: none; min-width: 0; }
@@ -824,7 +806,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern.qrow { position: relative; display: grid; align-items: center; gap: 4px 12px; min-width: 0; border-top: 1px solid var(--tavern-line); container: qrow / inline-size; }
 /* A control inside a clickable row has its own hover and never shares the row's: while one is hovered or focused the row stays unlit. */
 .tavern.qrow:hover:not(:has(:is(.qrow-tale, .qrow-x):is(:hover, :focus-visible))) { background: var(--tavern-hover); }
-.tavern .qrow-name { min-width: 0; min-height: 24px; border: 0; background: transparent; padding: 0; text-align: left; font-size: 13px; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.tavern .qrow-name { min-width: 0; min-height: var(--tavern-control-compact); border: 0; background: transparent; padding: 0; text-align: left; font-size: 13px; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .tavern .qrow-name::after { content: ""; position: absolute; inset: 0; }
 /* The row carries the hover, so the name button inside it adds none of its own (a translucent hover would stack into a second box). */
 /* Specific enough (6 classes) to beat the page's `.tavern.tv-page .act:hover` (5), whatever the stylesheet order. */
@@ -861,8 +843,8 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern.qrow-done.stopped .qrow-g { color: var(--tavern-muted); }
 .tavern .qrow-f { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--tavern-muted); font-size: 11px; white-space: nowrap; }
 .tavern :is(.qrow-tale, .qrow-x) { position: relative; z-index: 1; }
-.tavern .qrow-tale { min-height: 24px; font-size: 12px; }
-.tavern .qrow-x { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 24px; min-height: 24px; padding: 0 6px; border: 0; background: transparent; color: var(--tavern-muted); font: inherit; font-size: 11px; cursor: pointer; }
+.tavern .qrow-tale { min-height: var(--tavern-control-compact); font-size: 12px; }
+.tavern .qrow-x { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: var(--tavern-control-compact); min-height: var(--tavern-control-compact); padding: 0 6px; border: 0; background: transparent; color: var(--tavern-muted); font: inherit; font-size: 11px; cursor: pointer; }
 /* Its own box on hover: an inset edge in the muted text colour (3:1 or more on the row in every theme) and a fill stronger than the row's hover. */
 .tavern.qrow :is(.qrow-tale, .qrow-x).act:is(:hover, :focus-visible):not(:disabled) { color: var(--foreground); background: var(--tavern-inner-hover); box-shadow: inset 0 0 0 1px var(--tavern-muted); cursor: pointer; }
 @container qrow (max-width: 420px) {
@@ -878,7 +860,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 
 /* ---- KeeperRow: one line; crest, name and thread title open the thread. Its own container. ---- */
 .tavern.krow { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 36px; padding: 2px 8px 2px 4px; border: 1px solid var(--tavern-line); background: var(--card); font-size: 12px; container: krow / inline-size; }
-.tavern .krow-who { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; overflow: hidden; min-height: 30px; border: 0; background: transparent; padding: 2px 4px; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.tavern .krow-who { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; overflow: hidden; min-height: var(--tavern-control-standard); border: 0; background: transparent; padding: 2px 4px; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 /* The whole row opens the thread: the button's overlay covers it, and the › ends the row (README "At most two bordered controls"). */
 .tavern .krow-who::after { content: ""; position: absolute; inset: 0; }
 .tavern .krow-who:focus-visible { outline: none; }
@@ -911,12 +893,10 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
   .tavern .krow-s .tv-st { white-space: normal; align-items: flex-start; }
   .tavern .krow-dec { grid-area: dec; justify-self: end; }
 }
-@media (pointer: coarse), (max-width: 560px) { .tavern :is(.krow, .krow-who, .qrow-done, .qrow-tale) { min-height: 44px; } .tavern .qrow-x { min-width: 44px; min-height: 44px; } .tavern .qrow-xl { display: none; } }
+@media (pointer: coarse), (max-width: 560px) { .tavern :is(.krow, .qrow-done) { min-height: 44px; } .tavern .qrow-xl { display: none; } }
 
 /* ---- Reports tab (thread side panel): padding around the kit's MemberReports, which draws the reports themselves ---- */
 .tavern.tv-reports { padding: 12px; min-width: 0; }
-.tavern .rv-foot .lnk-btn { min-height: 24px; }
-@media (pointer: coarse), (max-width: 560px) { .tavern .rv-foot .lnk-btn, .tavern .rv-reps-h .lnk-btn { min-height: 44px; } }
 
 /* The hearth (hearth.tsx): the tavern's state in one glyph with its words. */
 .tavern .tavern-hearth { display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; }
@@ -972,7 +952,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern.gl-blocks input[type="number"] { width: 5em; }
 .tavern.gl-blocks input[type="datetime-local"] { max-width: 100%; }
 @media (max-width: 520px) {
-  .tavern.gl-blocks .btn, .tavern.gl-blocks summary, .tavern.gl-blocks .opt { min-height: 44px; }
+  .tavern.gl-blocks summary, .tavern.gl-blocks .opt { min-height: 44px; }
   .tavern.gl-blocks .grants .btn { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
   .tavern.gl-blocks .sendbox { grid-template-columns: minmax(0, 1fr); }
 }

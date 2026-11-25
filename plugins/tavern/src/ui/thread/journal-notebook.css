@@ -27,7 +27,7 @@
 .tavern .journal-cur { margin: 0; font-size: 12px; color: var(--tavern-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tavern .journal-cur.stale { color: var(--tavern-blocked); }
 /* The now line: where the pen is, always in the header, so a long journal never hides it below the fold. A mark and a tint, no glow. */
-.tavern .journal-now { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 26px; margin: 0 calc(-1 * var(--jn-pad)) 0 -4px; padding: 0 var(--jn-pad) 0 4px; border: 0; background: color-mix(in oklab, var(--primary) 8%, var(--background)); color: var(--foreground); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.tavern .journal-now { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: var(--tavern-control-compact); margin: 0 calc(-1 * var(--jn-pad)) 0 -4px; padding: 0 var(--jn-pad) 0 4px; border: 0; background: color-mix(in oklab, var(--primary) 8%, var(--background)); color: var(--foreground); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .tavern .journal-now:hover { background: color-mix(in oklab, var(--primary) 14%, var(--background)); }
 .tavern .journal-now .lbl { flex: none; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .tavern .journal-now .id { flex: none; font-family: var(--font-mono); font-size: 11px; color: var(--tavern-muted); font-variant-numeric: tabular-nums; }
@@ -141,7 +141,7 @@
 .tavern .journal-done { padding: 4px var(--jn-pad) 0 8px; }
 .tavern .journal-done .fold .tally-slot { margin-left: 4px; }
 .tavern .journal-history { margin-top: auto; padding: 6px 12px 12px; border-top: 1px solid var(--tavern-line); }
-.tavern .journal-history summary { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--tavern-muted); cursor: pointer; }
+.tavern .journal-history summary { display: inline-flex; align-items: center; gap: 4px; min-height: var(--tavern-control-compact); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--tavern-muted); cursor: pointer; }
 .tavern .journal-history[open] summary .tavern-glyph { transform: rotate(90deg); }
 .tavern .journal-history ol { display: flex; flex-direction: column; gap: 3px; padding-top: 4px; }
 .tavern .journal-history li { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr) auto; gap: 8px; font-size: 11px; color: var(--tavern-muted); align-items: baseline; }
@@ -160,12 +160,11 @@
   .tavern.journal { --jn-row: 44px; --jn-hit: 44px; }
   /* The open entry's detail carries them, so the row never shows them twice; this must outrank the hover and open rules above. */
   .tavern .journal-row .journal-ctl, .tavern .journal-row:is(:hover, :focus-within) .journal-ctl, .tavern .journal-entry.open > .journal-row .journal-ctl { display: none; }
-  .tavern .journal-now { min-height: 44px; }
   .tavern .journal-row .tick { margin-right: 0; }
   .tavern .journal-title h2 .anc { display: none; }
-  .tavern.journal .btn.sm { min-height: 44px; min-width: 44px; }
+  .tavern.journal .btn.sm { min-width: 44px; }
   .tavern :is(.journal-dacts, .journal-note) .lnk { min-width: 44px; }
-  .tavern .journal-history summary, .tavern.journal .journal-owner-link { min-height: 44px; min-width: 44px; }
+  .tavern .journal-history summary, .tavern.journal .journal-owner-link { min-width: 44px; }
   .tavern :is(.journal-add, .journal-stepadd, .journal-ask, .journal-edit, .journal-note-edit, .journal-parent) :is(input, select, textarea) { font-size: 16px; min-height: 44px; }
   .tavern .journal-row .meta .wide { display: none; }
 }

@@ -15,10 +15,10 @@
 .tsu-diff { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .tsu-diff > div { min-width: 0; padding: 4px 8px; background: var(--muted); border-radius: var(--radius); }
 .tsu-diff dt { font-size: 11px; font-weight: 600; }
-.tsu-card summary { cursor: pointer; min-height: 24px; align-content: center; }
+.tsu-card summary { cursor: pointer; min-height: var(--tavern-control-compact); align-content: center; }
 .tsu-key { color: var(--tavern-muted); }
 .tsu-by, .tsu-line-head { display: flex; gap: 0 6px; flex-wrap: wrap; align-items: center; }
-.tsu-thread { min-width: 44px; min-height: 24px; text-decoration: underline; }
+.tsu-thread { min-width: 44px; min-height: var(--tavern-control-compact); text-decoration: underline; }
 .tsu-tag { display: inline-block; font-size: 11px; border: 1px solid var(--tavern-line); border-radius: var(--radius); padding: 0 5px; }
 .tsu-guardrail { font-weight: 700; color: var(--destructive-text, var(--foreground)); }
 .tsu-placement > li { background: var(--muted); margin-top: 6px; padding: 8px; border-radius: var(--radius); }
@@ -27,7 +27,7 @@
 .tsu-facts dt { font-weight: 600; }
 .tsu-facts dd { min-width: 0; }
 .tsu-entry { min-width: 0; }
-.tsu-expand { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; min-height: 44px; gap: 0 8px; padding: 6px 8px; text-align: start; border: 1px solid var(--tavern-line); border-radius: var(--radius); overflow-wrap: anywhere; }
+.tsu-expand { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; min-height: var(--tavern-control-standard); gap: 0 8px; padding: 6px 8px; text-align: start; border: 1px solid var(--tavern-line); border-radius: var(--radius); overflow-wrap: anywhere; }
 .tsu-expand > span:nth-child(2) { grid-column: 1; color: var(--tavern-muted); }
 .tsu-expand > span:last-child { grid-area: 1 / 2 / span 2; align-self: center; }
 .tsu-entry .tsu-card { margin-top: 6px; }
@@ -45,5 +45,5 @@
 @media (max-width: 520px) {
   .tsu-head, .tsu-body { padding: 10px 12px; }
   .tsu-diff, .tsu-facts > div { grid-template-columns: minmax(0, 1fr); }
-  .tavern :is(.tsu-form button, .tsu-form select, .tsu-form textarea, .tsu-actions button, .tsu-card summary, .tsu-thread) { min-height: 44px; }
+  .tavern :is(.tsu-form select, .tsu-form textarea) { min-height: 44px; }
 }

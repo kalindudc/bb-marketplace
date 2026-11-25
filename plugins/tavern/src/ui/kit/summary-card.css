@@ -32,7 +32,7 @@
 .tavern .tv-answer-quotes .tv-sums { gap: 4px; }
 :is(.tavern.tv-sum.tcard, .tavern .tv-answer-results) q.ct { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .tavern .tv-unanswered q { flex: 1 1 16ch; min-width: 0; }
-.tavern :where(.tv-sum-fold, .tv-sum .tale-visual details) > summary { cursor: pointer; min-height: 28px; }
+.tavern :where(.tv-sum-fold, .tv-sum .tale-visual details) > summary { cursor: pointer; min-height: var(--tavern-control-compact); }
 .tavern .tv-sum-fold > summary { display: flex; gap: 6px; align-items: center; list-style: none; font-size: 12px; }
 .tavern .tv-sum-fold > summary::-webkit-details-marker { display: none; }
 .tavern .tv-sum-fold > summary :is(.tavern-glyph, .m) { flex: none; white-space: nowrap; }
@@ -47,6 +47,7 @@
 .tavern.qrow-done .qrow-unread { display: block; white-space: normal; }
 @media (max-width: 560px), (pointer: coarse) {
   .tavern :is(.tv-answer-search input, .tv-answer-search button, .tv-answer-result button, .tv-answer-results .tv-sum-actions button, .tv-unanswered button, .lg-summary-rows button) { min-height: 44px; min-width: 44px; }
-  .tavern .tv-sum-fold > summary, .tavern .tv-sum-more, :is(.tavern.tv-sum, .tavern .tv-sum) :is(button, .tale-visual summary, .evidence-list a), .tavern .tw-quest-popover button, .tavern.twidget:has(.tw-unread) .tw-ledger { min-height: 44px; min-width: 44px; }
+  .tavern .tv-sum-fold > summary, :is(.tavern.tv-sum, .tavern .tv-sum) :is(button, .tale-visual summary, .evidence-list a), .tavern .tw-quest-popover button, .tavern.twidget:has(.tw-unread) .tw-ledger { min-width: 44px; }
+  :is(.tavern.tv-sum, .tavern .tv-sum) :is(.tale-visual summary, .evidence-list a) { min-height: var(--tavern-control-compact); }
   :is(.tavern.tv-sum, .tavern .tv-sum) .evidence-list a { display: block; width: fit-content; max-width: 100%; padding-block: 6px; }
 }
