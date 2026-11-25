@@ -57,7 +57,7 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   expect(merge).toMatchObject({ required: ["repository", "targetBranch"] });
   const mergeTargetDelta = Buffer.byteLength(JSON.stringify(targetProperties)) - Buffer.byteLength(JSON.stringify(priorTarget));
   const mergeAskSchemaDelta = 1 + Buffer.byteLength(JSON.stringify({ operation, mergeAskId, action, reason })) + mergeTargetDelta;
-  const structure = Buffer.byteLength(JSON.stringify(keep)) - Buffer.byteLength(keep.name + keep.description + "Kept a resting member")
+  const structure = Buffer.byteLength(JSON.stringify(keep)) - Buffer.byteLength(keep.name + keep.description + "Kept a party member")
     + Buffer.byteLength(JSON.stringify(refresh)) - Buffer.byteLength(refresh.name + refresh.description + "Requested Keeper refresh");
   const briefWarning = briefSteerFact("Wren XVIII", { at: 0, excerpt: "x".repeat(160), memberThreadId: "thr_abcdefghij" });
   const questSchemaDelta = Buffer.byteLength(JSON.stringify(quest.parameters)) - Buffer.byteLength(JSON.stringify(opening));

@@ -110,7 +110,7 @@ export function runtimeFixture(store: KeeperStore, id: string) {
   return { ...runtime, ...memberHost(store, member),
     pendingBrief: details.delivery, released: details.release ?? undefined, releasePending: member.engagement === "releasing" ? details.operation?.reason ?? null : null,
     archivePending: member.engagement === "archiving" || details.archiveAfter != null, archiveError: details.operation?.error ?? null,
-    restSince: details.rest?.since ?? null, restReminderFor: details.rest?.reminded ? details.rest.since : null, kept: details.rest?.keep ?? null,
+    restSince: details.rest?.since ?? null, restReminderFor: details.rest?.reminded ? details.rest.since : null, kept: details.keep ?? details.rest?.keep ?? null,
     stopAttempts: details.operation?.attempts, stopNextAttemptAt: details.operation?.nextAttemptAt, stopAskId: details.operation?.askId,
     placementModelFailureRelease: details.operation?.modelFailure ? details.operation.reason : undefined };
 }

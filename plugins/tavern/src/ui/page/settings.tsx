@@ -115,7 +115,7 @@ const NUMBER_HELP: Record<{ [G in keyof typeof KNOB_FIELDS]: keyof typeof KNOB_F
   briefRetryAttempts: "How many times Tavern tries to deliver a member's brief before asking you.",
   replacementsPerSlot: "How many fresh members may take the same party slot on one version of the plan.",
   rangerMax: "The fallback limit when the Keeper's class file has no Ranger budget.",
-  keepMaxHours: "How far ahead a Keeper may reserve a resting member for follow-up.",
+  keepMaxHours: "How far ahead a Keeper may reserve a party member for follow-up.",
   registryWaitSeconds: "How long Tavern waits for class files before letting your message through with the built-in Keeper.",
   clusterGrantMinutes: "How long a confirmed cluster command can wait to run once before it needs a new ask.",
   successionRecoverySeconds: "How long Tavern checks an uncertain refresh before returning control to the current Keeper.",

@@ -201,7 +201,12 @@ export function createFakePluginHost(options: {
       behavior: {
         resolveAgentConfiguration: async (ctx: PluginAgentConfigurationContext) => {
           const config = configure(ctx);
-          return { ...config, tools: tools.filter((t) => config.tools.includes(t.name)) };
+          const choices = new Map(config.tools.map(tool => typeof tool === "string" ? [tool, undefined] : [tool.name, tool.parameters]));
+          return { ...config, tools: tools.flatMap(tool => {
+            if (!choices.has(tool.name)) return [];
+            const parameters = choices.get(tool.name);
+            return [parameters ? { ...tool, parameters } : tool];
+          }) };
         },
         invokeAgentTool: async (name: string, input: unknown, ctx: { threadId: string }) =>
           tools

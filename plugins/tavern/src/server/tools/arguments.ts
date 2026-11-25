@@ -1,5 +1,37 @@
 import { z } from "zod";
-import { decisionSchema } from "../../shared/schema";
+import { askOptionSchema, askSchema, decisionSchema, reportSchema } from "../../shared/schema";
+
+export const reportInput = reportSchema
+  .pick({ status: true, outcome: true, headline: true, evidence: true, artifacts: true, wait: true, checkpoint: true })
+  .extend({ confidence: reportSchema.shape.confidence.default(null) });
+const memberReportParameters = z.toJSONSchema(reportInput.omit({ checkpoint: true })
+  .extend({ status: reportInput.shape.status.exclude(["checkpoint"]) }), { io: "input" });
+
+export function reportTool(classId: string) {
+  return classId === "ranger" ? "tavern_report" : { name: "tavern_report", parameters: memberReportParameters };
+}
+
+const optionShape = "Use a string label or an object with id and label.";
+export const askOptionsInput = z.array(z.union([askOptionSchema.shape.label, askOptionSchema], { error: optionShape }),
+  { error: "Use an array of string labels or option objects with id and label." })
+  .transform((options): z.input<typeof askSchema.shape.options> => {
+    const ids = new Set(options.flatMap(option => typeof option === "string" ? [] : [option.id]));
+    let next = 0;
+    return options.map(option => {
+      if (typeof option !== "string") return option;
+      let id: string;
+      do { id = `option-${++next}`; } while (ids.has(id));
+      return { id, label: option, detail: "", recommended: false };
+    });
+  }).pipe(askSchema.shape.options);
+
+export function askArgumentError(error: z.ZodError) {
+  const root = error.issues[0];
+  const optionIssue = root?.code === "invalid_union" && !root.path.length
+    ? root.errors[0]?.find(issue => issue.path[0] === "options")
+    : undefined;
+  return optionIssue ? argumentError({ issues: [optionIssue] }) : error;
+}
 
 const id = z.string().min(1).max(120);
 const reason = z.string().trim().min(1).max(500);
@@ -95,6 +127,6 @@ export const decideInput = decisionSchema.pick({ why: true, reversible: true, so
   return { ...result, coveredBy: coverage, options: options.map(option => typeof option === "string" ? option : option.label) };
 });
 
-export function argumentError(error: z.ZodError) {
+export function argumentError(error: Pick<z.ZodError, "issues">) {
   return new Error(error.issues.map(issue => `${issue.path.join(".") || "arguments"}: ${issue.message}`).join("\n"));
 }

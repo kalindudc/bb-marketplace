@@ -25,7 +25,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 - A Keeper can record an existing branch, pull request or path for a Warden to check without hiring a maker. The tale credits the Warden for the check and says the Keeper recorded the subject.
 - Keeper guidance explains how a lead can open a linked side quest, even for one job.
 - Plan cards put the goal, done-when and party alongside the route and what comes back to you. Open Exact commands to see the checks, or Quest map to see the drawn route. Revisions show every change and repeat only the done-when sentences that changed.
-- Keepers can keep a resting member for up to seven days by default. Your explicit Keep limit stays as set.
+- Keepers can reserve a working or resting member for follow-up. The Keep limit in Settings is the only deadline cap.
 - Wardens can re-check corrected work after any number of rejections without a plan revision. A plan cannot ask for approval of a party outside the Keeper’s hire policy.
 - Keeper acceptances stay in place when a new plan leaves the waypoint unchanged. The quest history records what carried forward.
 - Tavern’s tests reuse starting Git repositories while keeping each test’s checkout and assertions independent. Transport tests prepare only the endpoints they use, and tests without a browser no longer load the browser test library.
@@ -34,6 +34,9 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- Only Rangers see checkpoint fields when filing a report.
+- Tavern keeps checking briefs still queued in bb without asking for help. A refusal to replace a pending brief includes its ID.
+- Keepers can write ask options as plain labels or as objects. A malformed option names the field and shows the expected shape once.
 - Blocked waypoints show their suggested message and buttons across the row instead of squeezing them into the icon column.
 - Keepers and party members can start on Gemini 4 Neon. Tavern shows the model one input shape per tool and still checks which arguments belong to each action.
 - A Keeper keeps their road while a message waits to be routed. An ask appears by the character without moving them to the left edge.
@@ -44,7 +47,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 - Keeper cards on the board show the Keeper’s name once, keep quest badges inside the card, and put Refresh Keeper below the quests. Long titles and next steps show an ellipsis with the full text on hover.
 - UI tests no longer leave query notification timers running after the test browser closes.
 - Keeper tools use the same member field, accept old field names, and show the field that needs fixing. Decisions take flat fields without changing who can approve them.
-- A member accepting a brief no longer wakes the Keeper on its own. The next update includes the acceptance, and members with a pending wake-up or an active keep no longer trigger stale alerts.
+- A member accepting a brief no longer wakes the Keeper on its own. The next update includes the acceptance, and members with a pending wake-up no longer trigger stale alerts.
 - Released Wardens free their checker slots. A newly hired Warden can check its assigned waypoint without the Keeper reordering the slots or making a new plan.
 - Releasing a party member now archives its thread after preserving its work. Ask your Keeper to archive members released before this version.
 - Keepers must reuse a resting party member before hiring if it can take the same work. The next check-in flags resting members when the quest work is done or their rest has gone stale.

@@ -64,7 +64,7 @@ describe("class configuration across restart", () => {
     expect(configured.instructions).toContain("Project source unavailable");
     expect(configured.instructions).toContain("Do no work");
     expect(configured.instructions).toContain("tavern_report");
-    expect(configured.tools).toEqual(["tavern_report"]);
+    expect(configured.tools).toEqual([expect.objectContaining({ name: "tavern_report", parameters: expect.any(Object) })]);
   });
 
   it("bounds dispatch root lookup to twenty seconds while configure itself remains synchronous", async () => {

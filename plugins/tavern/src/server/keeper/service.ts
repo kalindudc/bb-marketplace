@@ -2654,8 +2654,6 @@ export class Keeper {
       : this.store.all("members");
     for (const m of members.filter((m) => m.role === "member" && !m.permanent && !m.rangerCheckpointReportId && isLiveMember(this.store, m, "work") && m.state !== "failed" && isLiveKeeper(this.store, this.member(m.keeperThreadId!)) && !held(m.threadId))) {
       const now = this.now();
-      const keep = memberDetails(this.store, m.threadId).rest?.keep;
-      if (keep && keep.until > now && this.store.get("decisions", keep.decisionId)?.undone === false) continue;
       const wait = this.memory.openMemberWait(m.threadId);
       if (wait?.dueAt != null && wait.dueAt > now) continue;
       const rt = this.store.runtime(m.threadId);

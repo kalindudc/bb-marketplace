@@ -12,6 +12,7 @@ import { AwayRuntime } from "./away/runtime";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { restingEngagement, restingMember, restingParty, restingContext, reuseRule } from "./resting";
+import { reportTool } from "./tools/arguments";
 import { localClock } from "./clock";
 import { startSchedules, updateMemberSchedule } from "./member-schedules";
 import type { ScheduleControl, ScheduleInput } from "../shared/schema";
@@ -469,9 +470,10 @@ export class TavernRuntime {
     }
     if (member.rangerCheckpointReportId)
       throw new Error(`The Ranger is waiting on ${member.rangerCheckpointReportId}. Use tavern_judge to continue or accept, or tavern_release.`);
-    if (this.replacingBriefs.has(threadId)) throw new Error("The pending brief is already being replaced.");
+    if (this.replacingBriefs.has(threadId)) throw new Error(`A replacement is already in progress${delivery ? ` for brief ${delivery.id}` : ""}.`);
     if (supersedeBriefId) {
-      if (delivery?.id !== supersedeBriefId) throw new Error("Name the current pending brief to replace it; read tavern_status first.");
+      if (!delivery) throw new Error(`There is no pending brief to replace. Send the follow-up without supersedeBriefId.`);
+      if (delivery.id !== supersedeBriefId) throw new Error(`Name the current pending brief to replace it: supersedeBriefId: "${delivery.id}".`);
       if (this.initialBriefs.has(threadId)) throw new Error("The old brief delivery is still in flight; retry after it settles. No fresh brief was queued.");
       if (this.away.blocked(threadId)) throw new Error("Return from Closing time and send fresh instructions.");
       this.replacingBriefs.add(threadId);
@@ -652,22 +654,22 @@ export class TavernRuntime {
     if (!currentDelivery && state.lastBriefAt !== undefined) return { briefPending: false };
     if (!currentDelivery && details.cancelledInitialBrief) return pendingResult;
     let pending: PendingBrief = currentDelivery ?? { id: `brief_${randomUUID()}`, text, ...(state.initialBriefAt === undefined && state.requestSources ? { assignmentText: state.assignmentText ?? state.brief?.outcome ?? text, requestSources: state.requestSources } : {}), createdAt: at, state: "queued", attempts: 0, nextAttemptAt: at, attemptedAt: null, hostAfterSeq: null, error: null };
-    if (pending.text !== text) throw new Error("A different initial brief is already pending; do not overwrite an uncertain delivery.");
+    if (pending.text !== text) throw new Error(`Initial brief ${pending.id} is already pending; do not overwrite an uncertain delivery.`);
     if (!currentDelivery) patchMemberDetails(k.store, threadId, { delivery: pending });
     const current = () => memberDetails(k.store, threadId).delivery;
     const unchanged = () => current()?.id === pending.id && current()?.cancelledQueueId === pending.cancelledQueueId;
     if (blocked() || at < pending.nextAttemptAt || openBriefBlocker(k.store, pending)) return pendingResult;
     const limit = this.config().keepers.briefRetryAttempts;
-    const waitForReceipt = (receiptState: "queued" | "unconfirmed", error: string | null, queuedOnHost: boolean) => {
+    const waitForReceipt = (receiptState: "queued" | "unconfirmed", error: string | null, queuedOnHost: boolean, failed: boolean) => {
       if (!unchanged() || blocked()) return pendingResult;
-      const receiptChecks = (pending.receiptChecks ?? 0) + 1;
+      const receiptChecks = failed ? (pending.receiptChecks ?? 0) + 1 : 0;
       k.store.atomic(() => {
         patchMemberDetails(k.store, threadId, { delivery: { ...pending, state: receiptState, queuedOnHost, receiptChecks, error, nextAttemptAt: k.now() + LIMITS.briefRetryMs } });
         if (receiptState === "unconfirmed" && pending.state !== receiptState) {
           k.store.event(k.now(), member.keeperThreadId, member.boardQuestId, "member.brief-unconfirmed", "bb did not confirm the brief.", { memberThreadId: threadId, briefId: pending.id, receiptChecks });
         }
       });
-      this.ensureBriefBlocker(threadId);
+      if (failed) this.ensureBriefBlocker(threadId);
       k.changed(threadId, member.boardQuestId);
       return pendingResult;
     };
@@ -690,13 +692,14 @@ export class TavernRuntime {
         if (receipt.state === "accepted") { this.finishInitialBrief(threadId, pending.id); return { briefPending: false }; }
         if (receipt.state === "queued") {
           pending = { ...pending, hostQueueId: receipt.rows.length === 1 ? receipt.rows[0]!.id : undefined };
-          return waitForReceipt("queued", receipt.rows.find(row => row.failureReason)?.failureReason ?? null, true);
+          const failed = receipt.rows.every(row => row.failureReason);
+          return waitForReceipt("queued", failed ? receipt.rows[0]!.failureReason ?? null : null, true, failed);
         }
         const wasQueued = pending.queuedOnHost ?? (pending.state === undefined && pending.error === null);
         if (!pending.retryRequested && (wasQueued || pending.state === "delivering"))
-          return waitForReceipt("unconfirmed", "bb has neither the queued brief nor an acceptance receipt.", true);
+          return waitForReceipt("unconfirmed", "bb has neither the queued brief nor an acceptance receipt.", true, true);
       } catch (error) {
-        return waitForReceipt("unconfirmed", String(error).slice(0, 1000), pending.queuedOnHost ?? (pending.state === undefined && pending.error === null));
+        return waitForReceipt("unconfirmed", String(error).slice(0, 1000), pending.queuedOnHost ?? (pending.state === undefined && pending.error === null), true);
       }
     }
     if (pending.cancelledQueueId || pending.attempts >= limit) {
@@ -1300,7 +1303,7 @@ export class TavernRuntime {
       return this.configureChecked(ctx, snapshot);
     }
     const reporter = member.role === "member" && !member.leadLinkId;
-    return { tools: reporter ? ["tavern_report"] : [], skills: [] as string[], instructions: `${problem} Do no work. ${reporter ? "Use tavern_report with status blocked, naming this problem and the affected project. Resume only after its class files load." : "Explain the problem plainly to the user; class-specific work is unavailable until its files load."}` };
+    return { tools: reporter ? [reportTool(member.classId)] : [], skills: [] as string[], instructions: `${problem} Do no work. ${reporter ? "Use tavern_report with status blocked, naming this problem and the affected project. Resume only after its class files load." : "Explain the problem plainly to the user; class-specific work is unavailable until its files load."}` };
   }
   configure(ctx: PluginAgentConfigurationContext) {
     const fence = this.succession.state.fence(ctx.thread.id);
@@ -1329,7 +1332,7 @@ export class TavernRuntime {
           ...(isKeeperIdentity(this.keeper.store, member)
             ? KEEPER_TOOLS
             : member?.role === "member" && !member.leadLinkId
-              ? ["tavern_report"]
+              ? [reportTool(member.classId)]
               : []),
         ],
         skills: [
@@ -1389,7 +1392,7 @@ export class TavernRuntime {
         ...(keeper
           ? KEEPER_TOOLS
           : m.role === "member" && !m.leadLinkId
-            ? ["tavern_report", "tavern_request_sources", ...(m.classId === "warden" ? ["tavern_act_verdict"] : [])]
+            ? [reportTool(m.classId), "tavern_request_sources", ...(m.classId === "warden" ? ["tavern_act_verdict"] : [])]
             : []),
       ],
       skills: [
@@ -2537,14 +2540,13 @@ export class TavernRuntime {
       });
     }
     if (closingExempt) throw new Error("Only a permanent member can be exempt from the Closing time pause");
-    if (!restingEngagement(this.keeper, member)) throw new Error("Only a resting member can be kept");
-    const maxHours = this.config().keepers.keepMaxHours;
-    if (until === undefined || !Number.isSafeInteger(until) || until <= this.keeper.now() || until > this.keeper.now() + maxHours * 60 * 60_000) throw new Error(`Keep needs a future time within ${maxHours} hours`);
+    if (!isLiveMember(this.keeper.store, member, "brief")) throw new Error("Only a live party member can be kept");
+    const maxHours = this.config(member.boardQuestId).keepers.keepMaxHours, now = this.keeper.now();
+    if (until === undefined || !Number.isSafeInteger(until) || until <= now || until > now + maxHours * 60 * 60_000) throw new Error(`Keep needs a future time within ${maxHours} hours`);
     return this.keeper.store.atomic(() => {
       const decision = this.keeper.decide(threadId, { boardQuestId: member.boardQuestId, text: `Keep ${this.keeper.name(member)} until ${localClock(until)}`, why, reversible: true, source: "keeper" });
       authorize("keepMember", { level: "keeper", receipt: decision.id });
-      const rest = memberDetails(this.keeper.store, member.threadId).rest!;
-      patchMemberDetails(this.keeper.store, member.threadId, { rest: { ...rest, keep: { until, why, decisionId: decision.id } } });
+      patchMemberDetails(this.keeper.store, member.threadId, { keep: { until, why, decisionId: decision.id } });
       this.keeper.changed(member.threadId, member.boardQuestId);
       return decision;
     });
@@ -3129,7 +3131,7 @@ export class TavernRuntime {
       );
     }
     this.keeper.changed(memberThreadId, member.boardQuestId);
-    return { ...delivery, status, attempts: pending?.attempts ?? null, memberName: this.keeper.name(member) };
+    return { ...delivery, status, attempts: pending?.attempts ?? null, pendingBriefId: pending?.id ?? null, memberName: this.keeper.name(member) };
   }
   review(purpose: "present" | "automatic" = "present", summaryOf?: (id: string) => BoardQuestSummary): import("../shared/contract").Room["review"] {
     return purpose === "present" ? this.reviewCache ?? this.readReview(purpose, summaryOf) : this.readReview(purpose);

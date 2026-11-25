@@ -118,7 +118,7 @@ it("opens only matching folds, including profile fields, then restores open and 
  expect(profile.open).toBe(false);
  fireEvent.change(search, { target: { value: "keepers.keepMaxHours" } });
  expect(details.open).toBe(true);
- expect(s.getByRole("spinbutton", { name: "Longest keep for a resting member" })).toBeTruthy();
+ expect(s.getByRole("spinbutton", { name: "Longest keep for a party member" })).toBeTruthy();
  expect(s.queryByRole("heading", { name: /^Tuning$/ })).toBeNull();
  fireEvent.change(search, { target: { value: "find executable" } });
  expect(profile.open).toBe(true);

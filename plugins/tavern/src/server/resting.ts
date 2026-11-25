@@ -57,7 +57,8 @@ export function restingMember(k: Keeper, member: Member, context = restingContex
       const waypoint = member.boardQuestId && context.waypoints(member.boardQuestId).find(w => w.id === e.link?.waypointId);
       return waypoint ? settled(waypoint) : e.status === "verified";
     });
-  const keep = memberDetails(k.store, member.threadId).rest?.keep;
+  const details = memberDetails(k.store, member.threadId);
+  const keep = details.keep ?? details.rest?.keep;
   const kept = keep && keep.until > k.now() && member.boardQuestId && !k.store.get("decisions", keep.decisionId)?.undone ? keep : null;
   const quest = member.boardQuestId ? k.quest(member.boardQuestId).short : "its errand";
   const placement = context.placements.byMember(member.threadId);

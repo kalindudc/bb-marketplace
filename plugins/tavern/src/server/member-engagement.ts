@@ -11,10 +11,12 @@ export type MemberOperation = {
   error?: string | null; attempts?: number; nextAttemptAt?: number; askId?: string | null;
   stopConfirmed?: boolean; skipStopIfQuiet?: boolean; placementRequired?: boolean; modelFailure?: boolean;
 };
+type MemberKeep = { until: number; why: string; decisionId: string };
 export type MemberEngagementData = {
   delivery?: PendingBrief | null;
   cancelledInitialBrief?: boolean;
-  rest?: { since: number; reminded?: boolean; keep?: { until: number; why: string; decisionId: string } | null } | null;
+  keep?: MemberKeep | null;
+  rest?: { since: number; reminded?: boolean; keep?: MemberKeep | null } | null;
   operation?: MemberOperation | null;
   release?: { reason: string; decisionId?: string; at?: number; operationId?: string } | null;
   replacement?: { reason: string; brief: Brief; threadId?: string };
@@ -282,7 +284,11 @@ export function transitionMember(store: KeeperStore, member: Member, to: Engagem
       if (cause !== "brief-accepted" && store.runtime(bound.threadId).initialBriefAt === undefined) details.cancelledInitialBrief = true;
       withdrawBriefBlocker(store, cleared, at);
     }
-    if (["archived", "released", "stopped"].includes(to)) details.operation = null;
+    if (["archived", "released", "stopped"].includes(to)) {
+      details.operation = null;
+      if (details.keep) details.keep = null;
+      if (details.rest?.keep) details.rest = { ...details.rest, keep: null };
+    }
     if (cause === "unarchived") { details.archive = null; details.host = null; }
     const updated: Member = { ...bound, ...options.patch, engagement: to };
     if (cause === "ranger-accepted" || to !== "active" && to !== "briefing") delete updated.rangerCheckpointReportId;

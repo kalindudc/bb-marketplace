@@ -162,6 +162,45 @@ it("caps a keep at 168 hours by default and records Keeper authority", async () 
   f.runtime.keep("lead", f.m.threadId, f.time() + 168 * 60 * 60_000, "Wait");
   expect(AUTHORITY).toHaveProperty("keepMember.level", "keeper");
 });
+it("keeps a working quest member within the configured window, including after its report", async () => {
+  const f = await fixture("smith");
+  await f.runtime.tell("lead", f.m.threadId, "Check the follow-up");
+  expect(f.k.member(f.m.threadId)?.engagement).toBe("active");
+  const config = f.runtime.config();
+  vi.spyOn(f.runtime, "config").mockReturnValue({ ...config, keepers: { ...config.keepers, keepMaxHours: 48 } });
+  const until = f.time() + 48 * 60 * 60_000;
+  expect(() => f.runtime.keep("lead", f.m.threadId, until + 1, "Follow-up")).toThrow(/48 hours/);
+  const decision = f.runtime.keep("lead", f.m.threadId, until, "Follow-up");
+  expect(f.k.member(f.m.threadId)?.engagement).toBe("active");
+
+  fixtureActivity(f.k, f.m.threadId, "done");
+  const member = f.k.member(f.m.threadId)!;
+  expect(f.runtime.restNote(member)).toContain("kept until");
+  f.k.undoDecision(decision.id);
+  expect(f.runtime.restNote(member)).not.toContain("kept until");
+});
+it("still gives quiet hints and stale strikes after a kept member takes work", async () => {
+  const f = await fixture("smith");
+  const until = f.time() + 48 * 60 * 60_000;
+  f.runtime.keep("lead", f.m.threadId, until, "Follow-up");
+  await f.runtime.tell("lead", f.m.threadId, "Check the follow-up");
+  f.k.activity(f.m.threadId, "working");
+  const interval = f.runtime.config().knobs.staleMinutes * 60_000;
+
+  f.advance(interval);
+  f.k.touch(f.m.threadId);
+  f.k.stale("lead");
+  const own = () => f.k.store.events("lead").filter(e => e.data.memberThreadId === f.m.threadId);
+  expect.soft(own().filter(e => e.type === "member.quiet")).toHaveLength(1);
+  expect(f.k.member(f.m.threadId)?.strikes).toBe(0);
+
+  f.k.activity(f.m.threadId, "idle");
+  f.advance(interval);
+  f.k.stale("lead");
+  expect.soft(own().filter(e => e.type === "member.stale")).toHaveLength(1);
+  expect(f.k.member(f.m.threadId)?.strikes).toBe(1);
+  expect(runtimeFixture(f.k.store, f.m.threadId).kept?.until).toBe(until);
+});
 it("ends a keep when the quest ends", async () => {
   const f = await fixture();
   f.runtime.keep("lead", f.m.threadId, f.time() + 60 * 60_000, "Follow-up");

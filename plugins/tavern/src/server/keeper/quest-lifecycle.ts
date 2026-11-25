@@ -148,8 +148,9 @@ export function transitionQuest(store: KeeperStore, quest: BoardQuest, to: Phase
         }) as never;
       }
       for (const member of store.query("members", "boardQuestId", quest.id, 500)) {
-        const rt = store.runtime(member.threadId), rest = rt.memberEngagement?.rest;
-        if (rest?.keep) store.patch(member.threadId, { memberEngagement: { ...rt.memberEngagement, rest: { ...rest, keep: null } } });
+        const details = store.runtime(member.threadId).memberEngagement;
+        if (details?.keep || details?.rest?.keep)
+          store.patch(member.threadId, { memberEngagement: { ...details, keep: null, ...(details.rest?.keep ? { rest: { ...details.rest, keep: null } } : {}) } });
       }
     }
     authorised.add(result);

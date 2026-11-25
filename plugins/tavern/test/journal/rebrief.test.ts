@@ -131,8 +131,11 @@ it("replays live run 4: done with 9 tests, brief v2, a note only, and the second
   expect(() => keeper.report("m", report)).not.toThrow();
   journal.rebriefed("m", q.id, 2);
   expect(await run({ action: "note", id: "00", note: "pass 10, fail 0" })).not.toMatch(/^Error/);
+  const evidence = [{ kind: "command" as const, ref: "npm test", detail: "10 tests pass, fail 0", exitCode: 0 }];
+  expect(() => keeper.report("m", { ...report, evidence })).toThrow(/done with evidence first/);
+  expect(journal.get("m").entries[0]).toMatchObject({ status: "doing", evidence: [] });
   expect(() => keeper.report("m", report)).toThrow(/done with evidence first/);
-  expect(await run({ action: "done", id: "00", evidence: [{ kind: "command", ref: "npm test", detail: "10 tests pass, fail 0", exitCode: 0 }] })).not.toMatch(/^Error/);
+  expect(await run({ action: "done", id: "00", evidence })).not.toMatch(/^Error/);
   expect(() => keeper.report("m", report)).not.toThrow();
   expect(journal.get("m").entries[0]!.note).toMatch(/v1 evidence kept for reference: npm test \(9 tests pass/);
 });

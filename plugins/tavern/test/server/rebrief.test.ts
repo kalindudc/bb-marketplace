@@ -183,7 +183,7 @@ describe("member re-brief delivery through the strict host", () => {
     expect(f.k.store.events("lead", 0, 200)).toContainEqual(expect.objectContaining({ type: "member.brief-retried", data: expect.objectContaining({ briefId: old.id, askId: ask!.id }) }));
   });
 
-  it("bounds queued receipt checks without resending, then explicitly supersedes the exact unconfirmed brief", async () => {
+  it("keeps checking a healthy queue without resending, then explicitly supersedes the named brief", async () => {
     const f = party();
     const send = vi.spyOn(f.bb.sdk.threads, "send").mockResolvedValueOnce({ delivery: "queued" } as never);
     const oldDoing = f.k.member("child")!.doing;
@@ -192,7 +192,7 @@ describe("member re-brief delivery through the strict host", () => {
     const row = makeQueueEntry({ id: "old-row", threadId: "child", originPluginId: "tavern", content: send.mock.calls[0]![0].input as never });
     const other = makeQueueEntry({ id: "user-row", threadId: "child", originPluginId: null });
     let rows = [row, other];
-    vi.spyOn(f.bb.sdk.threads.queuedMessages, "list").mockImplementation(async () => rows);
+    const list = vi.spyOn(f.bb.sdk.threads.queuedMessages, "list").mockImplementation(async () => rows);
     const remove = f.bb.sdk.threads.queuedMessages.delete = vi.fn(async ({ queuedMessageId }: { queuedMessageId: string }) => {
       rows = rows.filter(row => row.id !== queuedMessageId);
       return { ok: true as const };
@@ -200,12 +200,13 @@ describe("member re-brief delivery through the strict host", () => {
     for (let n = 0; n < 6; n++) { f.advance(3_600_000); await f.runtime.retryInitialBriefs("lead"); }
     expect(briefSends(send)).toHaveLength(1);
     expect(f.k.member("child")).toMatchObject({ engagement: "active", doing: oldDoing });
-    expect(f.k.store.openAsks("lead")).toHaveLength(1);
     const corrected = (supersedeBriefId?: string) => f.harness.behavior.invokeAgentTool("tavern_tell", {
       memberThreadId: "child", text: "Only check the corrected criterion", ...(supersedeBriefId ? { supersedeBriefId } : {}),
     }, { threadId: "lead" });
     await expect(corrected()).rejects.toThrow(/A different brief is already pending/);
-    await expect(corrected("obsolete-id")).rejects.toThrow(/current pending brief/);
+    await expect(corrected("obsolete-id")).rejects.toThrow(`supersedeBriefId: "${old.id}"`);
+    expect(f.k.store.openAsks("lead")).toHaveLength(0);
+    expect(list).toHaveBeenCalledTimes(6);
     expect(remove).not.toHaveBeenCalled();
     expect(await corrected(old.id)).toContain("Brief delivered to Pip");
     expect(rows).toEqual([other]);
@@ -267,7 +268,7 @@ describe("member re-brief delivery through the strict host", () => {
     expect(runtimeFixture(f.k.store, "child").pendingBrief).toMatchObject({ attempts: 1, receiptChecks: 5 });
   });
 
-  it("keeps the prior assignment and an existing healthy queue row intact when the user retries a receipt check", async () => {
+  it("keeps the prior assignment while waiting for a queued brief to dispatch", async () => {
     const f = party();
     const config = f.runtime.config();
     vi.spyOn(f.runtime, "config").mockReturnValue({ ...config, keepers: { ...config.keepers, briefRetryAttempts: 2 } });
@@ -284,15 +285,47 @@ describe("member re-brief delivery through the strict host", () => {
     expect(f.k.store.openAsks("lead")).toHaveLength(0);
     f.advance(3_600_000);
     await f.runtime.retryInitialBriefs("lead");
-    const [ask] = f.k.store.openAsks("lead");
-    await f.runtime.answerAsk(ask!.id, "retry", null, "page", true);
     expect(briefSends(send)).toHaveLength(1);
-    expect(runtimeFixture(f.k.store, "child").pendingBrief).toMatchObject({ id: old.id, attempts: 0, receiptChecks: 1 });
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toMatchObject({ id: old.id, attempts: 1, receiptChecks: 0 });
     expect(f.k.store.openAsks("lead")).toHaveLength(0);
     f.runtime.dispatched(row);
     expect(runtimeFixture(f.k.store, "child").pendingBrief).toBeNull();
     expect(rpcHandlers(f.runtime).ledger({ threadId: "lead" })).toMatchObject({ memberBriefs: [] });
     expect(f.k.member("child")).toMatchObject({ doing: instruction, engagement: "active" });
+  });
+
+  it("recovers from a failed receipt lookup without a blocker when the queued row is healthy", async () => {
+    const f = party();
+    const send = vi.spyOn(f.bb.sdk.threads, "send").mockResolvedValueOnce({ delivery: "queued" } as never);
+    await f.tell();
+    const row = makeQueueEntry({ id: "healthy", threadId: "child", originPluginId: "tavern", content: send.mock.calls[0]![0].input as never });
+    vi.spyOn(f.bb.sdk.threads.queuedMessages, "list").mockResolvedValue([row]);
+    vi.spyOn(f.bb.sdk.threads.events, "list").mockRejectedValueOnce(new Error("Receipt lookup unavailable"));
+    for (let n = 0; n < 2; n++) { f.advance(3_600_000); await f.runtime.retryInitialBriefs("lead"); }
+    expect(briefSends(send)).toHaveLength(1);
+    expect(f.k.store.openAsks("lead")).toEqual([]);
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toMatchObject({ state: "queued", receiptChecks: 0 });
+  });
+
+  it("raises one blocker when receipt lookups keep failing without resending the brief", async () => {
+    const f = party();
+    const attempts = f.runtime.config().keepers.briefRetryAttempts;
+    const send = vi.spyOn(f.bb.sdk.threads, "send").mockResolvedValueOnce({ delivery: "queued" } as never);
+    await f.tell();
+    const pending = runtimeFixture(f.k.store, "child").pendingBrief!;
+    vi.spyOn(f.bb.sdk.threads.queuedMessages, "list").mockRejectedValue(new Error("Receipt lookup unavailable"));
+    for (let n = 0; n < attempts; n++) {
+      expect(f.k.store.openAsks("lead")).toHaveLength(0);
+      f.advance(3_600_000);
+      await f.runtime.retryInitialBriefs("lead");
+    }
+    expect(f.k.store.openAsks("lead")).toMatchObject([
+      { question: expect.stringContaining("brief needs help"), effect: { type: "retry-brief", briefId: pending.id } },
+    ]);
+    f.advance(3_600_000);
+    await f.runtime.retryInitialBriefs("lead");
+    expect(f.k.store.openAsks("lead")).toHaveLength(1);
+    expect(briefSends(send)).toHaveLength(1);
   });
 
   it("retries a host-cancelled row, without leaving it in the way of corrected work", async () => {

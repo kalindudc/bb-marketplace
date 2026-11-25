@@ -12,7 +12,6 @@ import {
   briefSchema,
   planInputSchema,
   settleWaypointSchema,
-  reportSchema,
   ROUTE_KINDS,
   noteDraftSchema,
   summaryDraftSchema,
@@ -36,7 +35,7 @@ import { registerReady } from "./ready";
 import { managePullRequest, pullRequestActionSchema } from "../pull-request-rules";
 import { refreshQuestPullRequests } from "../conclude-pull-requests";
 import { memoryToolInput } from "../../shared/memory";
-import { argumentError, decideInput, judgeInput, memberInput } from "./arguments";
+import { argumentError, askArgumentError, askOptionsInput, decideInput, judgeInput, memberInput, reportInput } from "./arguments";
 import { toolInput } from "./parameters";
 
 const id = z.string().min(1).max(120);
@@ -272,8 +271,8 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   );
   register(
     "tavern_keep",
-    "Kept a resting member",
-    "Keep until Unix ms or mark permanent:true. closingExempt needs a guard. For an active permanent member, schedules asks for approval (server time; weekly uses 0=Sun). Pause or remove by schedule id.",
+    "Kept a party member",
+    "Keep a quest member by name or id until Unix ms within the Keep limit in Settings, or mark permanent:true. closingExempt needs a guard. For an active permanent member, schedules asks for approval (server time; weekly uses 0=Sun). Pause or remove by schedule id.",
     memberInput({ until: z.number().int().nonnegative().optional(), why: z.string().trim().min(1).max(500), permanent: z.literal(true).optional(), closingExempt: z.literal(true).optional(),
       schedules: schedulesInputSchema.optional(), schedule: scheduleControlSchema.optional() })
       .refine(input => input.schedule ? !input.schedules && !input.permanent && !input.closingExempt && input.until === undefined
@@ -375,7 +374,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         case "retrying":
           return `Brief delivery to ${delivery.memberName} failed on attempt ${delivery.attempts} of ${runtime.config().keepers.briefRetryAttempts}; Tavern will reconcile and retry it. Do not send it again.`;
         case "blocked":
-          return `Brief delivery to ${delivery.memberName} is blocked. Automatic retries have stopped; answer the brief blocker to retry or release the member, or explicitly replace the pending brief.`;
+          return `Brief delivery to ${delivery.memberName} is blocked. Automatic retries have stopped; answer the brief blocker to retry or release the member, or replace it with supersedeBriefId: "${delivery.pendingBriefId}".`;
         case "unconfirmed":
           return `bb has not confirmed the brief for ${delivery.memberName}; Tavern will check for a receipt. Do not send it again.`;
         case "pending":
@@ -432,17 +431,17 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_ask",
     "Opened an ask",
-    "Ask for a user choice or move. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. Cluster writes need target.command, change, known undo and runThreadId for a member. Approve and confirm each run on its card. Use shellGrant.heldEventId for held shell acts or heldCommunicationAskId for held messages (dismiss:true to discard). Give the full sends-as-you draft and recipient. For checker handoff use blocker, boardQuestId and releaseCheckerHandoff:true. Include options, recommendation, what continues and held waypoints. For an existing merge, give mergeAskId, action ask-user or withdraw, and reason. Chat and timers give no approval. Never use native question tools. Answers do not execute acts or supply credentials.",
+    "Ask for a user choice or move. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. Cluster writes need target.command, change, known undo and runThreadId for a member. Approve and confirm each run on its card. Use shellGrant.heldEventId for held shell acts or heldCommunicationAskId for held messages (dismiss:true to discard). Give the full sends-as-you draft and recipient. For checker handoff use blocker, boardQuestId and releaseCheckerHandoff:true. Give options as labels or objects (use objects for ids and recommendations), what continues and held waypoints. For an existing merge, give mergeAskId, action ask-user or withdraw, and reason. Chat and timers give no approval. Never use native question tools. Answers do not execute acts or supply credentials.",
     z.union([askSchema
       .pick({
         question: true,
         why: true,
         kind: true,
-        options: true,
         meanwhile: true,
         holds: true,
       })
       .extend({
+        options: askOptionsInput,
         boardQuestId: optionalQuest,
         releaseCheckerHandoff: z.literal(true).optional(),
         waypointId: id.optional(),
@@ -495,7 +494,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         return `Merge ask ${ask.id} is in the Keeper lane, not shown to the user. Use tavern_decide with source keeper after the Warden verdict, or hand it to the user with tavern_ask: mergeAskId "${ask.id}", action "ask-user", and reason.`;
       return `Ask recorded. Continue the work that does not depend on it. Write on its own line:\n::tavern-ask{id="${ask.id}"}`;
     },
-    "keeper", undefined, ["open", "held-message", "merge"],
+    "keeper", askArgumentError, ["open", "held-message", "merge"],
   );
   register(
     "tavern_decide",
@@ -632,12 +631,8 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_report",
     "Filed a report",
-    "Write a report to the Keeper's mailbox and end your turn. Give a headline of at most 160 characters. A Warden headline states the result, never a claim of independence; keep the same-family check (not independent) label. Before done, mark every linked entry done with evidence or have it verified. Use wait with condition and dueAt for a reminder. Ranger: at check-in, report checkpoint with numbered answers, evidence and checkpoint {left, moreMinutes}. Checkpoint and done wait for your Keeper.",
-    reportSchema
-      .pick({ status: true, outcome: true, headline: true, evidence: true, artifacts: true, wait: true, checkpoint: true })
-      .extend({
-        confidence: reportSchema.shape.confidence.default(null),
-      }),
+    "File a report and end your turn. Give a headline of at most 160 characters. A Warden headline states the result, never a claim of independence; retain the review limitation. Before done, mark every linked entry done with evidence or have it verified. Use wait with condition and dueAt for a reminder.",
+    reportInput,
     async (input, threadId) => {
       const report = k.report(threadId, input);
       const member = k.member(threadId)!;

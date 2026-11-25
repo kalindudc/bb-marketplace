@@ -31,7 +31,7 @@ it.each(["member", "memberThreadId"])("uses %s for member tools", async field =>
   f.k.bind("member-1", "smith", null, "project", { keeperThreadId: "lead", boardQuestId: null, waypointId: null, title: "Build", errand: true,
     brief: { outcome: "Build", mode: "make-it-work", outOfScope: "", doneWhen: "Done", context: [], questions: [], timeboxMinutes: null } });
   const release = vi.spyOn(f.runtime, "release").mockResolvedValue(true);
-  const tell = vi.spyOn(f.runtime, "tell").mockResolvedValue({ status: "delivered", memberName: "Mira", attempts: 1, briefPending: false });
+  const tell = vi.spyOn(f.runtime, "tell").mockResolvedValue({ status: "delivered", memberName: "Mira", attempts: 1, briefPending: false, pendingBriefId: null });
   await expect(f.call("tavern_tell", { [field]: "member-1", text: "Read the plan" })).resolves.toContain("delivered");
   expect(tell).toHaveBeenCalledWith("lead", "member-1", "Read the plan", undefined);
   await expect(f.call("tavern_status", { [field]: "member-1", section: "pending" })).resolves.toContain("pending");

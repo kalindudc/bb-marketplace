@@ -35,7 +35,7 @@ When a Keeper hires or re-briefs a member, Tavern attaches your exact opening re
 
 Only a Warden verdict counts as verified work; Keeper reviews, outside gates, and report-only waypoints are labelled distinctly on the quest page, Ledger, and tale. A Keeper can also record an existing branch, pull request, or path for a Warden to check without hiring a builder. After a rejection, the Keeper re-briefs the builder with the Warden's evidence, and the Warden can re-check corrected work across multiple rounds without a new plan version.
 
-Finished members rest rather than being released on a timer. Keepers must reuse an eligible resting member before hiring a new one, can keep a resting member for expected follow-ups (up to seven days by default), and archive a member's thread once it is released and its work is preserved.
+Finished members rest rather than being released on a timer. Keepers must reuse an eligible resting member before hiring a new one, can keep a working or resting member for expected follow-ups (up to seven days by default), and archive a member's thread once it is released and its work is preserved.
 
 For ongoing duties, a Keeper can mark a planned slot or active member as permanent with a recorded reason. Permanent members skip rest reminders and stale alarms while staying subject to release, Stop all, and quest cleanup. A Keeper can also exempt a locally guarded permanent member from an explicit Closing time Pause so it keeps running under the window's stop list.
 
