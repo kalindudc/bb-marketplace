@@ -135,7 +135,10 @@ export async function deliverGate() {
 }
 export async function readyGate() {
   const f = await readyFixture(), ready = f.make();
-  registerReady(f.bb, { placements: () => ({ ready }) } as never);
+  registerReady(f.bb, {
+    placements: () => ({ ready }), study: { tool: (_name: string, _thread: string, _input: unknown, call: (refused: (id: string) => void) => unknown) => call(() => {}) },
+    beginMemberTavernCall: () => {},
+  } as never);
   const result = await f.harness.behavior.callAgentTool("tavern_ready", {}, { threadId: "member", projectId: "project" });
   expect(result).toContain(f.member); expect(result).toContain(f.tree); expect(result).toContain("not a guard-armed receipt");
   expect(f.placements.get("placement")).toMatchObject({ phase: "ready", hostId: "member-host", environmentId: "member-env", root: f.member });

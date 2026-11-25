@@ -68,6 +68,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       projectId: string,
       signal: AbortSignal,
       limit: IntakeLimits,
+      refused: (ruleId: string) => void,
     ) => unknown | Promise<unknown>,
     role: "keeper" | "member" | ((input: z.output<S>, threadId: string) => void) = "keeper",
     inputError?: (error: z.ZodError, input: unknown) => Error,
@@ -79,25 +80,33 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       description,
       parameters: inputSpec.parameters,
       presentation: { label: { pending: label, completed: label } },
-      async execute(input, ctx) {
-        if (ctx.signal.aborted)
+      execute: (input, ctx) => runtime.study.tool(name, ctx.threadId, input, async refused => {
+        if (ctx.signal.aborted) {
+          refused("tool.cancelled");
           throw new Error(`${name} was cancelled or stopped before it began; no change was applied.`);
-        const refused = runtime.beginMemberTavernCall(ctx.threadId, name);
+        }
+        const recordReportRefusal = runtime.beginMemberTavernCall(ctx.threadId, name);
         const done = runtime.succession.track(ctx.threadId);
         let result: unknown;
         const notices = new Set<string>();
         const values = runtime.config().limits;
         try {
-          if (typeof role === "string") k.require(ctx.threadId, role);
+          if (typeof role === "string") {
+            try { k.require(ctx.threadId, role); }
+            catch (error) { refused("tool.role"); throw error; }
+          }
           const limit = new IntakeLimits(values, notices);
           const parsed = inputSpec.parse(input, typeof parameters === "function" ? parameters(limit) : parameters);
-          if (!parsed.success) throw inputError?.(parsed.error, input) ?? parsed.error;
+          if (!parsed.success) {
+            refused("tool.arguments");
+            throw inputError?.(parsed.error, input) ?? parsed.error;
+          }
           if (typeof role === "function") role(parsed.data, ctx.threadId);
-          result = await action(parsed.data, ctx.threadId, ctx.projectId, ctx.signal, limit);
+          result = await action(parsed.data, ctx.threadId, ctx.projectId, ctx.signal, limit, refused);
         } catch (error) {
           if (ctx.signal.aborted)
             throw new Error(`${name} failed while its turn was cancelled or stopped; its outcome is not confirmed. Read tavern_status before retrying. Cause: ${String(error)}`, { cause: error });
-          refused?.(error);
+          recordReportRefusal?.(error);
           throw error;
         } finally { done(); }
         const visible = agentData(result);
@@ -108,7 +117,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         if (output.length <= max) return output;
         const end = `\nOutput truncated. Call tavern_status with a narrower section, reportId or page. ${limitMessage("limits.transport.toolResultChars", max)}`;
         return output.slice(0, max - end.length).replace(/[\uD800-\uDBFF]$/, "") + end;
-      },
+      }),
     });
   };
   register(
@@ -260,12 +269,14 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       repo: id.optional(),
       placement: placementPickSchema.optional(),
     }),
-    async (input, threadId, projectId) => {
+    async (input, threadId, projectId, _signal, _limit, refused) => {
       let m: Awaited<ReturnType<TavernRuntime["hire"]>>;
       try {
         m = await runtime.hire(threadId, projectId, input);
       } catch (error) {
         if (error instanceof SpawnedHireNeedsRecovery) return error.message;
+        if (error instanceof PlacementHireBlocked) refused("hire.placement-blocked");
+        if (error instanceof DetectionApprovalRequired) refused("hire.detection-approval");
         if (error instanceof PlacementHireBlocked && error.outcome === "unknown") return error.message;
         if (error instanceof PlacementHireBlocked && input.boardQuestId) {
           const ask = k.ask(threadId, { boardQuestId: input.boardQuestId, kind: "blocker", effect: { type: "placement-blocker" }, question: "Placement blocked this hire", why: error.message.slice(0, 200), options: [{ id: "retry", label: "Retry once", detail: "Repeat this exact hire without changing its placement.", recommended: false }, { id: "stop", label: "Stop the quest", detail: "Stop rather than bypass placement.", recommended: false }], meanwhile: "No alternate placement is approved.", holds: input.waypointId ? [input.waypointId] : [] }, {}, true);
@@ -418,7 +429,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_plan",
     "Wrote the quest map",
-    "Map owners, done-when, dependencies, lead times, review load, party and questions. Set reversible:true only for fully reversible work. List acts for pre-approval: read/workspace-write need relative paths; check needs a recognised command. Check: warden, keeper or none (agent), you (user mark), keeper (outside, tavern_gate). Warden slots name waypoints, not makers. Use explicit greenlight, the Ranger exception or by-size approval for one party slot. Ask for more seats, new classes, weaker checks or a new permanent slot. Schedules use server time; weekdays 0=Sun to 6=Sat. For a reversible check change, fromSteer cites the user's routed steer. Limit waypoint titles to 200 and changeNote to 500 characters. Emit the returned quest-map directive verbatim.",
+    "Map owners, done-when, dependencies, lead times, review load, party and questions. Set reversible:true only for fully reversible work. List acts for pre-approval: read/workspace-write need relative paths; check needs a recognised command. Check: warden, keeper or none (agent), you (user mark), keeper (outside, tavern_gate). Warden slots name waypoints, not makers. Use explicit greenlight, the Ranger exception or by-size approval for one party slot. Ask for more seats, new classes, weaker checks or a new permanent slot. Schedules use server time; weekdays 0=Sun to 6=Sat. For a reversible check change, fromSteer cites the user's routed steer. Limit waypoint titles to 200 and changeNote to 500 characters. Give cause on revisions. Emit the returned quest-map directive verbatim.",
     planInputFields,
     async (input, threadId) => {
       const plan = await runtime.plan(threadId, input);
@@ -610,14 +621,14 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     "Read the party\'s status",
     "Read bounded board state. section=pending shows unrouted messages and pending member briefs. Page reports, asks, events or rules. Use reportId and character offset for the full report and brief. Use section=brief with offset for your saved brief or a member's brief if you are their Keeper. The summary lists released threads you can archive with tavern_release. member accepts a unique live name or thread ID. section=requests shows that member's frozen sources; page by sourceIndex and offset. section=placement shows machine rules and slots. Fetch omitted facts and re-read affected quests after a re-anchor.",
     statusInput,
-    ({ member, memberThreadId, ...input }, threadId) => {
+    ({ member, memberThreadId, ...input }, threadId, _project, _signal, _limit, refused) => {
       const reference = member ?? memberThreadId;
-      if (input.section === "brief" && (!reference || reference === threadId)) {
-        if (!k.member(threadId)) k.require(threadId, "member");
-        return readStatus(runtime, threadId, { ...input, memberThreadId: threadId });
-      }
-      k.require(threadId, "keeper");
-      return readStatus(runtime, threadId, { ...input, memberThreadId: reference ? k.resolvePartyMember(threadId, reference).threadId : null });
+      const ownBrief = input.section === "brief" && (!reference || reference === threadId);
+      try {
+        if (!ownBrief) k.require(threadId, "keeper");
+        else if (!k.member(threadId)) k.require(threadId, "member");
+      } catch (error) { refused("tool.role"); throw error; }
+      return readStatus(runtime, threadId, { ...input, memberThreadId: ownBrief ? threadId : reference ? k.resolvePartyMember(threadId, reference).threadId : null });
     },
     () => {}, argumentError,
   );

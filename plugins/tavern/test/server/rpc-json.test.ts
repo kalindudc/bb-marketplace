@@ -170,6 +170,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     },
     awayReturn: () => call("awayReturn", { windowId: awayWindowId! }),
     reports: () => call("reports", {}),
+    recordCardSignals: () => call("recordCardSignals", [{ threadId: "lead", messageId: "message", cardId: "v1", cardType: "questmap", questId: f.q.id, action: "first-seen" }]),
     releaseCheckerHandoff: async () => {
       f.k.receiveUser("lead", "Hold the checker handoff for my explicit signal");
       f.k.route("lead", { kind: "steer", boardQuestId: f.q.id, summary: "Hold checking", notes: [], checkerHandoffHold: { reason: "Wait for my signal" } });

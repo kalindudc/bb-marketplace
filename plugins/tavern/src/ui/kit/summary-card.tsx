@@ -1,5 +1,5 @@
 import { Markdown, experimental_FileLink as FileLink, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import type { ReactNode, ComponentProps } from "react";
+import type { ReactNode, ComponentProps, Ref } from "react";
 import type { Ask, KeeperNote, SummaryView } from "../../shared/schema";
 import { FoldSummary } from "./glyphs";
 import { EvidenceList, TimeAgo } from "./primitives";
@@ -22,12 +22,12 @@ export function AnswerQuotes({ messages }: { messages: SummaryView["answerMessag
   </ul></div> : null;
 }
 
-export function SummaryCard({ summary, ask, handBack, chat = false, history = false, document, children }: {
-  summary: SummaryView; ask?: Ask | null; handBack?: KeeperNote | null; chat?: boolean; history?: boolean; document?: ComponentProps<typeof Markdown>["experimental_document"]; children?: ReactNode;
+export function SummaryCard({ summary, ask, handBack, chat = false, history = false, document, children, cardRef }: {
+  summary: SummaryView; ask?: Ask | null; handBack?: KeeperNote | null; chat?: boolean; history?: boolean; document?: ComponentProps<typeof Markdown>["experimental_document"]; children?: ReactNode; cardRef?: Ref<HTMLElement>;
 }) {
   const navigate = useBbNavigate();
   const { id, title, createdAt, body, links, next, results, request, correctedBy, seen, keeperThreadId } = summary;
-  return <article id={chat || history ? undefined : `tavern-summary-${id}`} tabIndex={chat || history ? undefined : -1} className={`tv-sum ${chat ? "tavern tcard k-tavern-summary" : "nested"}`} data-summary={id}>
+  return <article ref={cardRef} id={chat || history ? undefined : `tavern-summary-${id}`} tabIndex={chat || history ? undefined : -1} className={`tv-sum ${chat ? "tavern tcard k-tavern-summary" : "nested"}`} data-summary={id}>
     <header className="tv-sum-h"><h3 data-content>{title}</h3><span className="tv-sum-meta">
       <span className="tag">{answerKind(summary)}</span>
       {correctedBy ? <span className="m">Replaced</span> : !seen && !history && <span className="arrival-mark"><i aria-hidden="true" />new</span>}

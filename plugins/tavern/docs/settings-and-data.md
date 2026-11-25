@@ -18,7 +18,7 @@ Configure Tavern on the **Settings** page or with `bb tavern` commands. Search S
 | **Closing time** | Default end state, stop list, Back at hour, watched-work toggle, and wake rules. |
 | **Journal** | Reminder toggle, quiet delay, reminder interval, and report grace window. |
 | **Tuning** | Deterministic pacing tuning (`off`, `suggest`, or `apply`), sample thresholds, and user pins. |
-| **Data and backups** | Insights retention, auto-archive age, TOML import and export, and private backups (default retention 14). |
+| **Data and backups** | Insights and local study retention, the tool refusal follow-up window, auto-archive age, TOML import and export, and private backups (default retention 14). |
 | **Settings history** | Audit log of settings changes with Undo. |
 
 ## Guided setup and tuning
@@ -69,6 +69,14 @@ bb automation create --project PROJECT_ID \
   --script 'set -euo pipefail; bb tavern backup save --with-data --json'
 ```
 
+## Local study measurements
+
+Run `bb tavern study-events` from an ordinary terminal. The JSON contains `events` and `next`. Pass `--after <next>` to read the next page, stopping when `next` is `null`.
+
+Tavern records the model and reasoning requested when a Keeper starts a turn, and changes observed on later starts. Turn rows use the provider's BB usage events and the first accepted input. A missing usage report is `null`, not zero. Report batches carried by a Tavern tick count as ticks. Card rows record the first visible impression, expansion and action click for each card in chat, not whether the action succeeded. Scope rows distinguish an agent-visible tool refusal from a hit that the scope watcher only observed.
+
+The separate study log stays in Tavern's local database and out of backup exports. It contains IDs and counts, not prompts, arguments or card text. The plan cause and scope visibility also remain with their original records. **Keep local study measurements** defaults to 30 days. **Tool refusal follow-up window** defaults to 60 seconds. You can change both in **Data and backups** without changing the ledger or the guard.
+
 ## Command-line reference (`bb tavern`)
 
 Run `bb tavern <command> --help` for full options. User-only controls refuse execution inside agent threads.
@@ -77,6 +85,7 @@ Run `bb tavern <command> --help` for full options. User-only controls refuse exe
 | --- | --- |
 | `bb tavern status [--thread ID]` | Print the party, review queue, and Needs you queue as JSON. |
 | `bb tavern quests` | List board quests. |
+| `bb tavern study-events [--after ID]` | Read a private JSON page of local study measurements. |
 | `bb tavern ask <id> <option>` | Answer an ask from a user terminal. |
 | `bb tavern journal export [thread] [--markdown]` | Print a thread's journal as Markdown. |
 | `bb tavern stop-all` / `stop-all status` | Pull Stop all or read the last receipt. |

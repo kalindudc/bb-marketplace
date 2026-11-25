@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, cleanup, waitFor } from "@testing-library/react";
+import { fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { afterEach } from "vitest";
 import { fixtureAsk, fixtureDecor, fixtureQuest, fixtureRegistry, fixtureReport } from "../../../src/ui/thread/fixtures";
 import { AskCard, layoutWaypoints } from "../../../src/ui/kit";
@@ -60,11 +60,11 @@ describe("thread UI", () => {
     });
     it("puts long report headlines in the compact card's display clamp", () => {
         const headline = "The named output and the replayed output match. ".repeat(30).trim();
-        const view = render(<ReportCard report={{ ...fixtureReport, headline }} />);
+        const view = renderSlot({ component: () => <ReportCard report={{ ...fixtureReport, headline }} /> } as never, {}, {});
         expect(view.getByText(headline).closest(".lg-clamp")).not.toBeNull();
     });
     it("suppresses voice on bad news even if the backend includes it", () => {
-        const view = render(<ReportCard report={{ ...fixtureReport, status: "blocked", voice: "Should not appear" }}/>);
+        const view = renderSlot({ component: () => <ReportCard report={{ ...fixtureReport, status: "blocked", voice: "Should not appear" }} /> } as never, {}, {});
         expect(view.queryByText("Should not appear")).toBeNull();
         expect(view.getByText(/safe to ship/)).toBeTruthy();
     });

@@ -13,7 +13,7 @@ const LABELS: Record<string, string> = {
   "keepers.unreportedNudges": "Nudge unreported members",
   "keepers.restMinutes": "Rest before reminder", "keepers.greenlight": "Greenlight", "keepers.decisionTimerMax": "Longest decision timer", "keepers.partyMax": "Party ceiling", "keepers.chainDepth": "Lead chain depth", "keepers.chainMembers": "Lead chain ceiling", "keepers.staleStrikes": "Strikes before release advice", "keepers.restatementBytes": "Keeper restatement limit", "keepers.tickFactChars": "Tick facts limit",
   "scopes.mode": "Scopes", "scopes.sendTools": "Sending and drafting", "journal.journalReminders": "Journal reminders", "journal.journalQuietMinutes": "Quiet before a reminder",
-  "data.historyDays": "Keep history", "data.autoArchiveDays": "Send returned quests to the cellar after", "tuning.mode": "Tuning",
+  "data.historyDays": "Keep history", "data.studyRetentionDays": "Keep local study measurements", "data.studyFollowupSeconds": "Tool refusal follow-up window", "data.autoArchiveDays": "Send returned quests to the cellar after", "tuning.mode": "Tuning",
 };
 /** A settings path in words: TOML's snake_case and the RPC's camelCase both map to the label the row uses. */
 export function settingLabel(key: string) {

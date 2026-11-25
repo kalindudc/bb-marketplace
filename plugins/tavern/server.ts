@@ -41,7 +41,8 @@ import { memoryContract } from "./src/shared/memory";
 import { memoryHandlers } from "./src/server/memory-rpc";
 import { installHostGitProgram } from "./src/host/client";
 import { installServerGitProgram } from "./src/shared/git-safety";
-export const rpcContract = { ...coreContract, ...settingsContract, ...setupContract, ...insightsContract, ...backupContract, ...memoryContract };
+import { studyContract } from "./src/shared/study-events";
+export const rpcContract = { ...coreContract, ...settingsContract, ...setupContract, ...insightsContract, ...backupContract, ...memoryContract, ...studyContract };
 
 export function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -78,6 +79,7 @@ export default async function tavern(bb: BbPluginApi) {
   let runtime: TavernRuntime | undefined;
   const register: RegisterJournal = registerJournal;
   const journal = register(bb, db, {
+    studyTool: (tool, threadId, input, call) => runtime ? runtime.study.tool(tool, threadId, input, call) : Promise.resolve(call(() => {})),
     verdictSubmitted: (actor, entries) => keeper.recordWardenRound(actor, entries),
     assertWritable: threadId => keeper.succession.assertMutable(threadId),
     isRetired: threadId => keeper.succession.fence(threadId)?.kind === "retired",
@@ -139,7 +141,9 @@ export default async function tavern(bb: BbPluginApi) {
     (projectId === null ? runtime.snapshot() : await runtime.prepareRegistry(projectId)).classes.find(role => role.id === id)));
   const handlers = rpcHandlers(runtime);
   bb.rpc.register(rpcContract, { ...handlers, ...settingsHandlers(settings, new SettingsFiles(settings), undefined, t => speech.problem(t)), ...setup.handlers(), ...backupHandlers(backups),
-    ...insightsHandlers(insights), ...memoryHandlers(runtime) });
+    ...insightsHandlers(insights), ...memoryHandlers(runtime),
+    recordCardSignals: entries => { runtime.study.cards(entries); return null; },
+  });
   registerCli(bb, runtime, backups, setup);
   bb.agents.configure((ctx) => runtime.configure(ctx));
   bb.ui.registerMentionProvider({
@@ -238,7 +242,9 @@ export default async function tavern(bb: BbPluginApi) {
         bb.log.warn(`Tavern lifecycle ${type}: ${String(error)}`),
       );
     });
+  bb.onDispose(() => runtime.studyTurns.dispose());
   bb.events.on("experimental_thread.events", ({ thread, sequence }) => {
+    void runtime.studyTurns.observe(thread.id, sequence)?.catch(() => bb.log.warn("Tavern could not read local turn measurements."));
     void runtime
       .observe(thread, sequence)
       .catch((error) =>

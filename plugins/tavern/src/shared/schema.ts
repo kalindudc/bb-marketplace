@@ -14,6 +14,8 @@ export const SHAPES = ["shield", "pennant", "tower", "lozenge", "roundel", "squa
 export const HUES = ["teal", "plum", "violet", "blue", "rose", "ink"] as const;
 export const CHARGES = ["chevron", "fess", "cross", "bend", "star", "pale", "saltire", "chief", "dots"] as const;
 
+import { planCauseSchema } from "./study-events";
+
 const id = z.string().min(1).max(120);
 const threadId = z.string().min(1).max(100);
 const epochMs = z.number().int().nonnegative();
@@ -463,6 +465,7 @@ export type Plan = z.infer<typeof planSchema>;
 export function planInputFields(limit: IntakeLimits) {
   return planFields(limit).extend({
     fromSteer: id.nullish(),
+    cause: planCauseSchema.optional(),
     party: z.array(partySlotFields(limit).extend({ permanent: plannedPermanent.optional() })),
     waypoints: z.array(waypointFields(limit).extend({ check: waypointCheckSchema }).refine(w =>
       w.actor === "user" ? w.check === "you" : w.actor === "outside" ? w.check === "keeper" : w.check !== "you",

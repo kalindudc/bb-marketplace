@@ -21,6 +21,7 @@ export type RemoteScopeObservation = { kind: "unavailable"; reason: string } | {
 };
 export interface WatchDeps {
   onViolation(violation: Violation, binding?: ScopeObservationBinding): void | Promise<void>;
+  onScopeHit?(violation: Violation): void;
   onActObservation?(observation: ActObservation): void;
   onCallObservation?(observation: CallObservation): void;
   onShellGrantUsed?(threadId: string, grantId: string): void;
@@ -132,6 +133,8 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
   };
   const notify = async (violation: Violation, binding?: ScopeObservationBinding) => {
     store.record(violation);
+    try { deps.onScopeHit?.(violation); }
+    catch { bb.log.warn("Tavern could not record a local scope measurement."); }
     if (violation.mode !== "enforce") return;
     try { await deps.onViolation(violation, binding); }
     catch (error) { bb.log.warn("Tavern scope notification failed: " + String(error)); }
@@ -149,7 +152,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
     const at = Date.now();
     const ask = decision.act && actAskKind(decision.act);
     const reason = decision.act && ask ? `${decision.act} needed a ${ask} ask; detected after dispatch.` : decision.reason;
-    const violation: Violation = { policy: "act-list", threadId, providerId, at, eventId, seq, ruleId: decision.ruleId, reason, ...(decision.act ? { act: decision.act } : {}), call, mode, stopped: mode === "enforce" && !stopError, stopError, latencyMs: Math.max(0, at - createdAt) };
+    const violation: Violation = { policy: "act-list", threadId, providerId, at, eventId, seq, ruleId: decision.ruleId, reason, ...(decision.act ? { act: decision.act } : {}), call, mode, stopped: mode === "enforce" && !stopError, shownToAgent: false, stopError, latencyMs: Math.max(0, at - createdAt) };
     await notify(violation, binding);
     if (mode === "watch" && decision.act) deps.onActObservation?.({ threadId, eventId, at, mode, act: decision.act });
     return violation;
@@ -242,7 +245,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
                 : deps.cwdForThread?.(threadId) || worktrees.get(threadId)?.root || record.scope?.expectedWorktree || record.scope?.checks?.worktree || "");
               const rule = /\nTavern scope rule: ([\w:.-]{1,120})$/.exec(reason);
               await notify({ ...(!remote && !record.binding && store.isArmed(threadId) ? { policy: "act-list" as const } : {}), threadId, providerId, eventId: row.id, seq: row.seq, at, ruleId: rule?.[1] ?? "guard-preflight", reason: reason.slice(0, rule?.index ?? 2000).slice(0, 2000),
-                ...(call ? { call: { ...call, cwd, input: {} } } : {}), mode: "enforce", prevented: true, stopped: false, latencyMs: Math.max(0, at - row.createdAt) });
+                ...(call ? { call: { ...call, cwd, input: {} } } : {}), mode: "enforce", prevented: true, stopped: false, shownToAgent: true, latencyMs: Math.max(0, at - row.createdAt) });
             }
           }
           observe(threadId, providerId, row, rawCalls[0], "prevented");

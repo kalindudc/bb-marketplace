@@ -123,6 +123,10 @@ export class BackendScopes {
           .snapshot(this.resolvingProject)
           .classes.find((role) => role.id === classId)?.scope,
       onViolation: (violation) => this.violation(violation),
+      onScopeHit: ({ threadId, ruleId, mode, eventId, shownToAgent, stopped, prevented, at }) => {
+        runtime.study.attempt(() => runtime.study.record("scope.violation", threadId, runtime.keeper.member(threadId)?.boardQuestId ?? null,
+          { ruleId, mode, eventId, shownToAgent, stopped, prevented: !!prevented }, at, JSON.stringify(["scope", threadId, eventId])));
+      },
       communicationPolicy: threadId => communicationPolicy(runtime.keeper, threadId, runtime.config().scopes.sendTools, this.api?.localScopeRecord(threadId)?.file, runtime.away.store.snapshot().status.closed),
       drainCommunication: (threadId, idle) => this.drainCommunication(threadId, idle),
       onActObservation: (observation) => this.observeAct(observation),

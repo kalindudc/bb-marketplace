@@ -26,8 +26,11 @@ describe("journal rename compatibility", () => {
     cleanup.push(() => harness.lifecycle.dispose());
     const db = bb.storage.database();
     bb.storage.migrate(db, MIGRATIONS);
-    const registrations = vi.spyOn(bb.agents, "registerTool");
-    const port = registerJournal(bb, db, { roleOf: () => null, invalidate: () => {} });
+    const observed: string[] = [];
+    const port = registerJournal(bb, db, { roleOf: () => null, invalidate: () => {}, async studyTool(name, _threadId, _input, call) {
+      observed.push(name);
+      return call(() => {});
+    } });
     const oldDescriptor = harness.inspection.registrations.agentTools.find(t => t.name === "quest");
     expect(oldDescriptor).toBeDefined();
     bb.agents.configure(() => ({ tools: ["journal"], skills: ["journal", "quest-management"] }));
@@ -36,10 +39,10 @@ describe("journal rename compatibility", () => {
     expect(selected.skills).toEqual(["journal", "quest-management"]);
     expect(selected.tools[0]?.instructions).toBe(JOURNAL_INSTRUCTIONS);
     expect(selected.tools[0]?.inputSchema).toEqual(oldDescriptor?.inputSchema);
-    expect(registrations.mock.calls[0]?.[0].execute).toBe(registrations.mock.calls[1]?.[0].execute);
     const legacy = await harness.behavior.callAgentTool("quest", { action: "add", descriptions: ["Retained session work"] }, { threadId: "t" });
     expect(legacy).toContain("New ids: 00");
     expect(await harness.behavior.callAgentTool("journal", { action: "list" }, { threadId: "t" })).toContain("Retained session work");
+    expect(observed).toEqual(["quest", "journal"]);
     expect(port.progress("t").total).toBe(1);
     expect(port.instructions("t")).toMatch(/^Journal snapshot/);
     expect(port.instructions("t")).toContain("Retained session work");

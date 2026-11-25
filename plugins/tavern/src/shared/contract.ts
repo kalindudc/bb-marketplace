@@ -167,7 +167,7 @@ export const memberScopeSchema = z.object({
 });
 export const scopeViolationSchema = z.object({
   threadId, providerId: z.string(), at: z.number(), eventId: z.string(), seq: z.number(), ruleId: z.string(), reason: z.string(),
-  stopped: z.boolean(), prevented: z.literal(true).optional(), stopError: z.string().optional(), latencyMs: z.number(), call: z.unknown().optional(),
+  stopped: z.boolean(), prevented: z.literal(true).optional(), shownToAgent: z.boolean().optional(), stopError: z.string().optional(), latencyMs: z.number(), call: z.unknown().optional(),
   // added by Builder B: watch observations are not enforced violations or blocker asks.
   mode: z.enum(["enforce", "watch"]).optional(), act: z.enum(ACT_KINDS).optional(), policy: z.literal("act-list").optional(),
 });

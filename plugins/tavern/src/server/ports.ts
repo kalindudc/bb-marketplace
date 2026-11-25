@@ -39,6 +39,7 @@ export interface JournalPort {
 export type JournalReview = { before: JournalEntry; after: JournalEntry; sequence: number; undone?: boolean };
 
 export interface JournalDeps {
+  studyTool?<T>(tool: string, threadId: string, input: unknown, call: (refused: (ruleId: string) => void) => T | Promise<T>): Promise<T>;
   assertWritable?(threadId: string): void;
   isRetired?(threadId: string): boolean;
   beforeVerdict?(callerThreadId: string, targetThreadId: string, entryIds: string[]): Promise<(() => string | void) | void>;

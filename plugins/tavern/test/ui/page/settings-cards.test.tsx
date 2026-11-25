@@ -471,6 +471,10 @@ it("limits guardrail hints to protected cards and keeps file and backup guidance
  const keepers=await section("keepers");await keepers.findByLabelText("Strikes before release advice");
  const tuning=await section("tuning");await tuning.findByRole("heading",{name:"Tuned by Tavern"});
  const data=await section("data");await data.findByRole("heading",{name:"Import and export"});
+ const retention = await data.findByLabelText("Keep local study measurements");
+ const followup = await data.findByLabelText("Tool refusal follow-up window");
+ expect(retention.closest("[data-setting-keys]")?.getAttribute("data-setting-keys")).toBe("data.studyRetentionDays");
+ expect(followup.closest("[data-setting-keys]")?.textContent).toContain("Count the next call from the same thread");
  for(const [slot,title] of [[keepers,"Check-ins and memory"],[tuning,"Tuned by Tavern"],[data,"Import and export"]] as const){
   const card=slot.getByRole("heading",{name:title}).closest(".tv-settings-card")!;
   expect(card.querySelector(".tv-settings-hint")!.textContent).not.toMatch(/Only you|only you|guardrails from a Tavern thread/);

@@ -367,10 +367,12 @@ describe("thread strip speech", () => {
 
   it.each(["report", "evidence"] as const)("suppresses and clears automatic speech beside visible %s, but lets a click speak", async kind => {
     const w = await widget({ voice: "light" });
-    const mountReading = () => kind === "report"
-      ? render(<ReportCard report={{ ...fixtureReport, createdAt: Date.now() - 120_000 }} />)
-      : render(<EvidenceList evidence={fixtureReport.evidence} />);
-    const reading = mountReading();
+    const mountReading = () => {
+      if (kind === "evidence") return render(<EvidenceList evidence={fixtureReport.evidence} />).unmount;
+      const slot = renderSlot({ component: () => <ReportCard report={{ ...fixtureReport, createdAt: Date.now() - 120_000 }} /> }, {}, {});
+      return () => slot.lifecycle.unmount();
+    };
+    const unmountReading = mountReading();
     vi.useFakeTimers();
     await w.verify();
     await act(async () => { fx.all.at(-1)?.finish(); });
@@ -378,21 +380,22 @@ describe("thread strip speech", () => {
     expect(w.speech()).toBeNull();
     w.click();
     expect(w.speech()).toBe("Vex set a seal for Stone Bridge in Stone Gate.");
-    reading.unmount();
+    unmountReading();
     await tick(BUBBLE_MS);
     await w.update({ boardQuest: { ...shortQuest, phase: "done", endedAt: Date.now() } });
     await tick(1);
     expect(w.speech()).toBe("Stone Gate ends by the hearth.");
-    mountReading();
+    const unmountNextReading = mountReading();
     await act(async () => {});
     expect(w.speech()).toBeNull();
+    unmountNextReading();
   });
 
   it("uses report delivery time for the one-minute hold even offscreen", async () => {
     const w = await widget({ voice: "light" });
     vi.useFakeTimers();
     const now = Date.now();
-    const reading = render(<div data-tavern-report-thread="keeper-1"><ReportCard report={{ ...fixtureReport, createdAt: now - 120_000, deliveredAt: now }} /></div>);
+    const reading = renderSlot({ component: () => <div data-tavern-report-thread="keeper-1"><ReportCard report={{ ...fixtureReport, createdAt: now - 120_000, deliveredAt: now }} /></div> }, {}, {});
     const card = reading.container.querySelector("article")!;
     vi.spyOn(card, "getBoundingClientRect").mockReturnValue(new DOMRect(0, -280, 360, 64));
     await w.verify();
@@ -403,6 +406,7 @@ describe("thread strip speech", () => {
     await w.update({ boardQuest: { ...shortQuest, phase: "done", endedAt: Date.now() } });
     await tick(1);
     expect(w.speech()).toBe("Stone Gate ends by the hearth.");
+    reading.lifecycle.unmount();
   });
 
   it("allows light to speak on click and wrap, not on arrival or a report", async () => {

@@ -76,7 +76,7 @@ function LeadPlanBounds({ request }: { request: LeadPlanReview }) {
 }
 
 /** One ask, answered in place. Consequential kinds start with nothing selected; sends-as-you shows sender, recipient and the full draft. */
-export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, headless = false, describeEffects = false }: { ask: Ask; via?: "banner" | "page" | "phone" | "chat"; onFold?: () => void; onAnswered?: (answered: Ask) => void; headless?: boolean; describeEffects?: boolean }) {
+export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, headless = false, describeEffects = false, cardRef }: { ask: Ask; via?: "banner" | "page" | "phone" | "chat"; onFold?: () => void; onAnswered?: (answered: Ask) => void; headless?: boolean; describeEffects?: boolean; cardRef?: import("react").RefCallback<HTMLElement> }) {
   const name = useId();
   const [approvedAsk, setApprovedAsk] = useState<Ask>();
   const ask = originalAsk.state === "open" && approvedAsk?.id === originalAsk.id && !originalAsk.clusterApproval ? approvedAsk : originalAsk;
@@ -100,7 +100,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
     const at = receipt?.at ?? ask.answer?.at ?? null;
     const receiptNote = receipt?.note ?? ask.answer?.note ?? null;
     return (
-      <div className="tavern receipt" role="status" aria-label={`Ask answered: ${ask.question}`}>
+      <div ref={cardRef} className="tavern receipt" role="status" aria-label={`Ask answered: ${ask.question}`}>
         <Glyph name="check" />
         <b>{ask.state === "withdrawn" ? "Withdrawn" : ask.state === "defaulted" ? "Default applied" : "Answered"}</b>
         {label && <span>“{label}”</span>}
@@ -136,7 +136,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
   }
   const why = ask.why ? `Yours because ${ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}` : "";
   return (
-    <section className={`tavern ask k-${ask.kind}`} aria-label={`Ask: ${ask.question}`} data-ask>
+    <section ref={cardRef} className={`tavern ask k-${ask.kind}`} aria-label={`Ask: ${ask.question}`} data-ask>
       {headless ? why && <Clamp text={why} className="ask-why" /> : <><div className="ask-h"><span className="kind">{early ? "Close early" : KIND[ask.kind]}</span>{ask.createdAt > 0 && <span>asked <TimeAgo at={ask.createdAt} /></span>}{why && <Clamp text={`· ${why.charAt(0).toLowerCase() + why.slice(1)}`} className="ask-why" />}</div><h3 className="ask-q"><Clamp text={ask.question} /></h3></>}
       {ask.kind === "greenlight" && <p className="m small">Cluster writes always ask you, even after you approve the quest map.</p>}
       {ask.effect?.type === "member-schedules" && <dl className="sendbox" aria-label="Schedules to approve">

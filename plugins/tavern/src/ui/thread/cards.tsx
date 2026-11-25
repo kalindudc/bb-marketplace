@@ -21,6 +21,7 @@ import { glowVars } from "../kit";
 import { useMoment } from "../kit/moment";
 import { LEDGER_TAB } from "./tabs";
 import { revealAsk } from "./state";
+import { useStudyCard, type StudyCard } from "./study-cards";
 import "./skeletons.css";
 
 type Identity = { cls: ClassDef; character: CharacterDef };
@@ -29,10 +30,11 @@ const REPORT_WORD = { done: "done", "needs-decision": "needs your decision", blo
 import { MemberEstimate } from "../kit/member-estimate";
 
 /** A member's report in short: the headline, two lines of outcome, the evidence count with "View report ›", and the two-part confidence. Voice appears only on good news. */
-export function ReportCard({ report, who, onOpen, names, onView, voice = true, pullRequests }: { pullRequests?: import("../../shared/pull-request").PullRequest[]; report: Report; who?: Identity | null; onOpen?: (threadId: string) => void; names?: ReportHeadlineNames; onView?: () => void; voice?: boolean }) {
+export function ReportCard({ report, who, onOpen, names, onView, voice = true, pullRequests, measurement }: { pullRequests?: import("../../shared/pull-request").PullRequest[]; report: Report; who?: Identity | null; onOpen?: (threadId: string) => void; names?: ReportHeadlineNames; onView?: () => void; voice?: boolean; measurement?: StudyCard }) {
+  const probe = useStudyCard(measurement);
   const name = who ? `${who.character.name}` : "A member";
   return (
-    <article className={`tavern tcard report r-${report.status}`} data-tavern-report-at={report.deliveredAt ?? report.createdAt} aria-label={`Report from ${name}: ${REPORT_WORD[report.status]}`}>
+    <article ref={probe} className={`tavern tcard report r-${report.status}`} data-tavern-report-at={report.deliveredAt ?? report.createdAt} aria-label={`Report from ${name}: ${REPORT_WORD[report.status]}`}>
       <header className="tc-h">
         {who && onOpen ? <button type="button" className="who who-btn act" title={`Open ${name}’s thread`} onClick={() => onOpen(report.memberThreadId)}><Crest {...who} size={18} /><span className="who-t"><b>{name}</b><span className="anc">{who.cls.label} · {who.cls.plain}</span></span><OpensMark /></button>
           : who ? <span className="who"><Crest {...who} size={18} /><span className="who-t"><b>{name}</b><span className="anc">{who.cls.label} · {who.cls.plain}</span></span></span> : <b>Report</b>}
@@ -76,7 +78,7 @@ function PlanDoneWhen({ text }: { text: string }) {
   </section>;
 }
 
-export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; version: number | null }) {
+export function QuestMapCard({ detail, version, measurement }: { detail: BoardQuestDetail; version: number | null; measurement?: StudyCard }) {
   const undo = experimental_useRpcMutation({ contract: rpcContract, method: "undoDecision" });
   const answer = experimental_useRpcMutation({ contract: rpcContract, method: "answerAsk" });
   const registry = useRegistry();
@@ -85,6 +87,7 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
   const [more, setMore] = useState<null | "findings" | "decided">(null);
   const plan = version === null ? detail.quest.plan : detail.plans.find(p => p.version === version);
   const card = useRef<HTMLElement>(null);
+  const probe = useStudyCard(plan ? measurement : undefined, card);
   const currentChecks = !!plan && detail.quest.checkPlanVersion === plan.version && detail.quest.planVersion === plan.version && detail.quest.phase !== "greenlight";
   const noStaffingGreenlight = currentChecks && detail.quest.greenlitVersion === null;
   const isSealed = !!plan && !noStaffingGreenlight && ((detail.quest.greenlitVersion ?? 0) >= plan.version || currentChecks);
@@ -106,7 +109,7 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
   const forecast = plan.eta ?? (unknownLead ? `pending ${unknownLead} unknown lead time${unknownLead === 1 ? "" : "s"}` : "no ETA given");
   const openAsk = (id: string) => revealAsk(quest.keeperThreadId, id);
   return (
-    <article ref={card} {...moment} className={`tavern tcard qmcard ${sealed ? "sealed" : ""}`} style={glowVars(`map:${detail.quest.id}`) as CSSProperties} aria-label={`Quest map${noStaffingGreenlight ? "" : " (greenlight)"}: ${detail.quest.title}, plan v${plan.version}`} data-part="QuestMapCard">
+    <article ref={probe} {...moment} className={`tavern tcard qmcard ${sealed ? "sealed" : ""}`} style={glowVars(`map:${detail.quest.id}`) as CSSProperties} aria-label={`Quest map${noStaffingGreenlight ? "" : " (greenlight)"}: ${detail.quest.title}, plan v${plan.version}`} data-part="QuestMapCard">
       <header className="qm-h">
         <span className="qm-t"><b>{noStaffingGreenlight ? VOCABULARY.map[0] : <Vocabulary word="map" />}</b><span className="qm-q">{detail.quest.title} · plan v{plan.version}</span></span>
         {plan.fromSteer && <span className="qm-steer" title={`From your steer: ${plan.fromSteer.text}`}><Glyph name="route" size={12} /><span>from your steer, {clockTime(plan.fromSteer.at)}</span></span>}
@@ -176,22 +179,26 @@ export function directiveAttributes(kind: DirectiveKind, attributes: Readonly<Re
 export function DirectiveCard({ kind, ...props }: PluginMessageDirectiveProps & { kind: DirectiveKind }) {
   const parsed = directiveAttributes(kind, props.attributes);
   if (!parsed.success) return <code>{props.source}</code>;
-  if (kind === "tavern-summary") return <SummaryDirective threadId={props.message.threadId} id={props.attributes.id!} />;
-  if (kind === "tavern-ask") return <AskPointer threadId={props.message.threadId} askId={props.attributes.id!} />;
-  if (kind === "tavern-reports" || kind === "tavern-errand") return <ReportDigest threadId={props.message.threadId} ids={kind === "tavern-reports" ? props.attributes.ids!.split(",").map(s => s.trim()) : []} memberThreadId={kind === "tavern-errand" ? props.attributes.member! : null} />;
-  return <QuestDirective kind={kind} questId={props.attributes.quest!} version={props.attributes.version ? Number(props.attributes.version) : null} />;
+  const source = { threadId: props.message.threadId, messageId: props.message.id };
+  if (kind === "tavern-summary") return <SummaryDirective {...source} id={props.attributes.id!} />;
+  if (kind === "tavern-ask") return <AskPointer {...source} askId={props.attributes.id!} />;
+  if (kind === "tavern-reports" || kind === "tavern-errand") return <ReportDigest {...source} ids={kind === "tavern-reports" ? props.attributes.ids!.split(",").map(s => s.trim()) : []} memberThreadId={kind === "tavern-errand" ? props.attributes.member! : null} />;
+  return <QuestDirective {...source} kind={kind} questId={props.attributes.quest!} version={props.attributes.version ? Number(props.attributes.version) : null} />;
 }
 
-function SummaryDirective({ threadId, id }: { threadId: string; id: string }) {
+type CardSource = Pick<StudyCard, "threadId" | "messageId">;
+
+function SummaryDirective({ threadId, messageId, id }: CardSource & { id: string }) {
   const query = experimental_useRpcQuery({ contract: rpcContract, method: "summary", input: { id, threadId } });
   const navigate = useBbNavigate();
   const mark = experimental_useRpcMutation({ contract: rpcContract, method: "markSummariesSeen" });
   const [acknowledged, setAcknowledged] = useState<string>();
+  const probe = useStudyCard(query.data?.summary ? { threadId, messageId, cardId: id, cardType: "summary", questId: query.data.summary.boardQuestId } : undefined);
   if (!query.data) return <div className="tavern tcard"><QueryState error={query.error} loading={query.isLoading} label="the Keeper’s answer" retry={() => void query.refetch()} /></div>;
   const { summary, ask, handBack } = query.data;
   if (!summary) return <p className="tavern m">This answer is not available in this thread.</p>;
   const seen = summary.seen || acknowledged === summary.id;
-  return <SummaryCard summary={{ ...summary, seen }} ask={ask} handBack={handBack} chat>
+  return <SummaryCard summary={{ ...summary, seen }} ask={ask} handBack={handBack} chat cardRef={probe}>
     <footer className="tv-sum-actions"><button type="button" className="lnk-btn act" onClick={() => navigate.toPluginPanel("tavern", { subPath: summaryPath(summary.boardQuestId, summary.id) })}>Open on the quest page<OpensMark /></button>
       {!seen && summary.correctedBy === null && <button type="button" className="btn sm" disabled={mark.isPending} onClick={() => void mark.mutate({ boardQuestId: summary.boardQuestId, ids: [summary.id] }).then(() => setAcknowledged(summary.id)).catch(() => { /* The refusal is shown below. */ })}>OK</button>}
       {acknowledged === summary.id && <span className="m" role="status">Seen</span>}
@@ -248,17 +255,18 @@ function SkReceipt() {
   return <div className="tavern receipt"><SkGlyph size={16} /><SkLine w="8ch" /><SkLine w="14ch" /><span className="m"><SkLine w="20ch" /></span></div>;
 }
 
-function AskPointer({ threadId, askId }: { threadId: string; askId: string }) {
+function AskPointer({ threadId, messageId, askId }: CardSource & { askId: string }) {
   const ledger = experimental_useRpcQuery({ contract: rpcContract, method: "ledger", input: { threadId } });
   const hide = experimental_useRpcMutation({ contract: rpcContract, method: "setHidden" });
   const [error, setError] = useState<unknown>(null);
   const ask = ledger.data?.asks.find(a => a.id === askId);
+  const probe = useStudyCard(ask ? { threadId, messageId, cardId: askId, cardType: "ask", questId: ask.boardQuestId } : undefined);
   // One ask, drawn as this device last saw it: the open pointer (1) or the answered receipt (2).
   const shape = useSkeletonCount(cardKey("ask", askId), ask ? (ask.state === "open" ? 1 : 2) : undefined, 1);
   if (!ask) return <div className="tavern"><QueryState error={ledger.error} loading={ledger.isLoading} retry={() => void ledger.refetch()} label="the ask" skeleton={shape === 2 ? <SkReceipt /> : <SkPointer />} />{ledger.data && <p className="m small">This ask is no longer on the ledger.</p>}</div>;
-  if (ask.state !== "open") return <AskCard ask={ask} />;
+  if (ask.state !== "open") return <AskCard ask={ask} cardRef={probe} />;
   return (
-    <div className="tavern pointer" role="group" aria-label={`Needs you: ${ask.question}`} data-ask>
+    <div ref={probe} className="tavern pointer" role="group" aria-label={`Needs you: ${ask.question}`} data-ask>
       <Glyph name="ask" size={13} />
       <span className="pk">Needs you</span>
       <span className="pq" title={ask.question}>{ask.question}</span>
@@ -274,7 +282,7 @@ function useIdentities(threadIds: string[]) {
   return (threadId: string): Identity | null => { const c = crests.data?.crests.find(x => x.threadId === threadId); return c && registry.data ? memberIdentity(registry.data, c) : null; };
 }
 
-function ReportDigest({ threadId, ids, memberThreadId }: { threadId: string; ids: string[]; memberThreadId: string | null }) {
+function ReportDigest({ threadId, messageId, ids, memberThreadId }: CardSource & { ids: string[]; memberThreadId: string | null }) {
   const query = experimental_useRpcQuery({ contract: rpcContract, method: "reports", input: { ids, memberThreadId } });
   const navigate = useBbNavigate();
   const reports = query.data?.reports ?? [];
@@ -291,31 +299,33 @@ function ReportDigest({ threadId, ids, memberThreadId }: { threadId: string; ids
     <section className="tavern digest" data-tavern-report-thread={threadId} aria-label={memberThreadId ? "Side quest result (errand)" : `${count} report${count === 1 ? "" : "s"} from the party`}>
       <h3 className="dg-h">{memberThreadId ? <><Vocabulary word="errand" /> · result</> : <>{count} report{count === 1 ? "" : "s"} from the party</>}</h3>
       <QueryState error={query.error} loading={query.isLoading} retry={() => void query.refetch()} label={memberThreadId ? "the errand result" : "the reports"} skeleton={<>{Array.from({ length: Math.min(8, rows) }, (_, i) => <SkReportCard key={i} confidence={i < confident} />)}</>} />
-      {questIds.map(qid => <QuestReports pullRequests={query.data?.pullRequests} key={qid ?? "errand"} questId={qid} reports={reports.filter(r => r.boardQuestId === qid)} who={who} onOpen={tid => navigate.toThread(tid)} onView={r => panel.openTab({ tab: REPORTS_TAB, params: { memberThreadId: r.memberThreadId, questId: r.boardQuestId, reportId: r.id } })} />)}
+      {questIds.map(qid => <QuestReports source={{ threadId, messageId }} cardType={memberThreadId ? "errand" : "reports"} pullRequests={query.data?.pullRequests} key={qid ?? "errand"} questId={qid} reports={reports.filter(r => r.boardQuestId === qid)} who={who} onOpen={tid => navigate.toThread(tid)} onView={r => panel.openTab({ tab: REPORTS_TAB, params: { memberThreadId: r.memberThreadId, questId: r.boardQuestId, reportId: r.id } })} />)}
       {query.data && reports.length === 0 && <p className="m small">0 reports are available yet.</p>}
     </section>
   );
 }
 
 /** Reports about one board quest (or errands, with no quest), named from that quest's party so no raw id shows. */
-function QuestReports({ questId, reports, who, onOpen, onView, pullRequests }: { pullRequests?: import("../../shared/pull-request").PullRequest[]; questId: string | null; reports: Report[]; who: (threadId: string) => Identity | null; onOpen: (threadId: string) => void; onView: (report: Report) => void }) {
+function QuestReports({ questId, source, cardType, reports, who, onOpen, onView, pullRequests }: { source: CardSource; cardType: "errand" | "reports"; pullRequests?: import("../../shared/pull-request").PullRequest[]; questId: string | null; reports: Report[]; who: (threadId: string) => Identity | null; onOpen: (threadId: string) => void; onView: (report: Report) => void }) {
   const detail = experimental_useRpcQuery({ contract: rpcContract, method: "boardQuest", input: { id: questId ?? "" }, enabled: questId !== null });
   const registry = useRegistry();
   const quest = detail.data?.quest ?? null;
-  return <>{reports.map(r => <ReportCard key={r.id} report={r} pullRequests={pullRequests} who={who(r.memberThreadId)} onOpen={onOpen} onView={() => onView(r)} voice={voiceShown(registry.data)} names={registry.data ? summaryNames({ threadId: r.memberThreadId }, quest?.members ?? [], registry.data, quest ? [quest] : [], detail.data?.reports ?? reports) : {}} />)}</>;
+  return <>{reports.map(r => <ReportCard key={r.id} report={r} measurement={{ ...source, cardType, cardId: r.id, questId }} pullRequests={pullRequests} who={who(r.memberThreadId)} onOpen={onOpen} onView={() => onView(r)} voice={voiceShown(registry.data)} names={registry.data ? summaryNames({ threadId: r.memberThreadId }, quest?.members ?? [], registry.data, quest ? [quest] : [], detail.data?.reports ?? reports) : {}} />)}</>;
 }
 
-function QuestDirective({ kind, questId, version }: { kind: DirectiveKind; questId: string; version: number | null }) {
+function QuestDirective({ kind, questId, version, ...source }: CardSource & { kind: DirectiveKind; questId: string; version: number | null }) {
   const query = experimental_useRpcQuery({ contract: rpcContract, method: "boardQuest", input: { id: questId } });
   const registry = useRegistry();
   const navigate = useBbNavigate();
   const panel = experimental_useAppPanel();
   const card = useRef<HTMLElement>(null);
+  const measurement = { ...source, cardType: kind.replace(/^tavern-/, "") as StudyCard["cardType"], cardId: kind === "tavern-questmap" || kind === "tavern-ledger" ? String(version ?? query.data?.quest.planVersion ?? "current") : questId, questId };
+  const probe = useStudyCard(query.data && kind !== "tavern-questmap" ? measurement : undefined, card);
   const deal = useMoment(card, { surface: `thread:${query.data?.quest.keeperThreadId ?? "chat"}`, kind: "party forms", rememberKey: `moment:deal:${questId}`, active: kind === "tavern-party" && !!query.data, className: "mo-deal", ms: 1200 });
   const rows = useSkeletonCount(cardKey(kind, questId), query.data ? cardRows(kind, query.data, version) : undefined, kind === "tavern-ledger" ? 1 : 3);
   if (!query.data) return <div className="tavern"><QueryState error={query.error} loading={query.isLoading} retry={() => void query.refetch()} label={CARD_LABEL[kind]} skeleton={<SkQuestCard kind={kind} rows={rows} />} /></div>;
   const detail = query.data;
-  if (kind === "tavern-questmap") return <QuestMapCard detail={detail} version={version} />;
+  if (kind === "tavern-questmap") return <QuestMapCard detail={detail} version={version} measurement={measurement} />;
   const openQuest = <button type="button" className="lnk-btn act" onClick={() => navigate.toPluginPanel("tavern", { subPath: `${detail.quest.phase === "done" ? "tale" : "quest"}/${detail.quest.id}` })}>Open the quest page<OpensMark /></button>;
   let content: ReactNode;
   if (kind === "tavern-party") {
@@ -355,5 +365,5 @@ function QuestDirective({ kind, questId, version }: { kind: DirectiveKind; quest
       {plan?.fromSteer && <p className="m small">You said: “{plan.fromSteer.text}”</p>}
     </>;
   }
-  return <article ref={card} {...(kind === "tavern-party" ? deal : {})} className={`tavern tcard k-${kind}`} style={glowVars(`${kind}:${questId}`) as CSSProperties}>{content}</article>;
+  return <article ref={probe} {...(kind === "tavern-party" ? deal : {})} className={`tavern tcard k-${kind}`} style={glowVars(`${kind}:${questId}`) as CSSProperties}>{content}</article>;
 }

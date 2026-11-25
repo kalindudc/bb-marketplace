@@ -8,6 +8,7 @@ import { placementSettingsSchema, placementSettingsPatchSchema, placementPolicyR
 
 import { AWAY_STOP_LIST, PRODUCTION_WAKE_HOURS, awayQuestSchema, awayStopListSchema } from "./away";
 import { ALWAYS_ASK_KINDS } from "./quest-authority";
+import { DAY_MS } from "./study-events";
 
 export const KNOB_FIELDS = {
   tavern: {
@@ -37,6 +38,10 @@ export const KNOB_FIELDS = {
   journal: {
     remindEveryMinutes: { default: 15, min: 5, max: 240, unit: "minutes", label: "Remind at most every" },
     reportGraceMinutes: { default: 10, min: 1, max: 120, unit: "minutes", label: "Report may wait unchecked for" },
+  },
+  data: {
+    studyRetentionDays: { default: 30, min: 0, max: Math.floor(Number.MAX_SAFE_INTEGER / DAY_MS), unit: "days", label: "Keep local study measurements" },
+    studyFollowupSeconds: { default: 60, min: 0, max: Math.floor(Number.MAX_SAFE_INTEGER / 1000), unit: "seconds", label: "Tool refusal follow-up window" },
   },
   tuning: {
     minSamples: { default: 20, min: 5, max: 200, unit: "samples", label: "Tuner minimum samples" },
@@ -79,6 +84,7 @@ export type SparseTunables = Partial<Tunables>;
 export const GUARDRAIL_SETTING_KEYS = [
   "scopes.*", "away.*", "limits.*", "keepers.alwaysAsk", "keepers.greenlight", "keepers.partyMax", "keepers.decisionTimerMax",
   "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "tavern.gitProgram", "tavern.piProgram", "tavern.speechExtensions", "tavern.speechInstructions", "tavern.speechRecentMessages", "attention.reviewBudget", "attention.notify", "attention.pushAnswers", "attention.quietHours", "tuning.mode",
+  "data.studyRetentionDays", "data.studyFollowupSeconds",
   "knobs.typingHoldSeconds", "knobs.afterMessageHoldSeconds", "knobs.rangerTimeboxMaxMinutes",
 ] as const;
 export function isGuardrailSetting(key: string) {
@@ -149,7 +155,7 @@ const sections = {
     reasoning: reasoningSetting.nullable().optional() }).strict()),
   scopes: z.object({ mode: scopeModeSchema, sendTools: sendToolsSchema }).strict(),
   journal: z.object({ journalReminders: z.boolean(), journalQuietMinutes: z.number().int().min(1).max(120), ...numberFields(KNOB_FIELDS.journal) }).strict(),
-  data: z.object({ historyDays: z.number().int().min(0).max(3650).describe("Retains optional Insights samples only. Zero keeps them forever; orchestration records are never pruned."), autoArchiveDays: z.number().int().min(0).max(3650), backupKeep: z.number().int().min(0).max(365).describe("Saved backups to keep. Zero keeps every backup; this never prunes live Tavern records.") }).strict(),
+  data: z.object({ historyDays: z.number().int().min(0).max(3650).describe("Retains optional Insights samples only. Zero keeps them forever; orchestration records are never pruned."), autoArchiveDays: z.number().int().min(0).max(3650), backupKeep: z.number().int().min(0).max(365).describe("Saved backups to keep. Zero keeps every backup; this never prunes live Tavern records."), ...numberFields(KNOB_FIELDS.data) }).strict(),
   tuning: z.object({ mode: z.enum(["apply", "suggest", "off"]), ...numberFields(KNOB_FIELDS.tuning) }).strict(),
   knobs: tunablesSchema.extend({ rangerTimeboxMaxMinutes: z.number().int().min(3).max(30), ...numberFields(KNOB_FIELDS.knobs) }),
 };
@@ -170,7 +176,7 @@ export const settingsSchema = z.object({
   classes: sections.classes.default({}), scopes: sections.scopes.extend({ sendTools: sendToolsSchema.default([]) }).prefault({ mode: "enforce" }),
   machines: placementSettingsSchema.default({ maxMakers: 2, maxCheckers: 2, rules: [], forges: [] }),
   journal: sections.journal.extend(defaultNumbers(KNOB_FIELDS.journal)).prefault({ journalReminders: true, journalQuietMinutes: 10 }),
-  data: sections.data.default({ historyDays: 0, autoArchiveDays: 0, backupKeep: 14 }),
+  data: sections.data.extend(defaultNumbers(KNOB_FIELDS.data)).prefault({ historyDays: 0, autoArchiveDays: 0, backupKeep: 14 }),
   tuning: sections.tuning.extend(defaultNumbers(KNOB_FIELDS.tuning)).prefault({ mode: "off" }),
   knobs: sections.knobs.extend(defaultNumbers(KNOB_FIELDS.knobs)).prefault({ ...Object.fromEntries(TUNABLE_KEYS.map(key => [key, TUNABLES[key].default])), rangerTimeboxMaxMinutes: 30 } as Tunables & { rangerTimeboxMaxMinutes: number }),
 }).strict();

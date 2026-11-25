@@ -85,6 +85,8 @@ The main table uses snake_case paths for TOML. The Limits table uses the camelCa
 | `journal.remind_every_minutes` | Sets the shortest time between Journal reminders. | `15` | User; Granted |
 | `journal.report_grace_minutes` | Gives a reported entry this long before reminding its assigned checker. | `10` | User; Granted |
 | `data.history_days` | Retains optional Insights samples for this many days. Zero never prunes samples. It does not prune work records. | `0` | User; Granted |
+| `data.study_retention_days` | Keeps private study measurements for this many days. Zero keeps them indefinitely. Run `bb tavern study-events` from a user terminal to read them. | `30` | User; Plain |
+| `data.study_followup_seconds` | Records the next same-thread Tavern call within this window after a refusal. Zero disables follow-up tracking. | `60` | User; Plain |
 | `data.auto_archive_days` | Sets the age in days before eligible old work can be archived. Zero disables this. | `0` | User; Granted |
 | `data.backup_keep` | Keeps this many saved backups. Zero keeps them all. It does not prune work records. | `14` | User; Granted |
 | `tuning.mode` | Chooses automatic measured tuning, suggestions for review, or off. | `"off"` | User; Plain |

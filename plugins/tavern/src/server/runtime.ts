@@ -4,6 +4,8 @@ import { homeRebaseMatches } from "./act-patch";
 import { LimitPolicy } from "./limit-policy";
 import { approvedDrafts, invalidateDrafts } from "./communication";
 import { hasLiveName, isKeeperIdentity, isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
+import { StudyEvents, StudyRefusal } from "./study-events";
+import { StudyTurns } from "./study-turns";
 import { assertChainHire, assertLeadPathOpen, currentLead, holdsLeadSeat, leadAuthorization, recordLeadOutcome, reserveLead } from "./keeper/leads";
 import { assertLeadRetirementReady, confirmLeadRetirement, finishLeadRetirement, recordForcedLeadPullRequestOwners, requestForcedLeadStop, requestLeadRetirement } from "./keeper/lead-retirement";
 import { archiveDisposition, assertMemberMachineForBrief, briefProgress, isMemberMachineGone, MACHINE_RELEASED, memberDetails, memberHost, openBriefBlocker, outstandingArchivedPlacement, patchMemberDetails, releasedThreadOpen, transitionMember, withdrawBriefBlocker, type EngagementReceipt, type MemberOperation } from "./member-engagement";
@@ -1054,12 +1056,16 @@ export class TavernRuntime {
     }
   }
   taleRenderer?: TaleCompanions;
+  readonly study: StudyEvents;
+  readonly studyTurns: StudyTurns;
   constructor(
     readonly bb: BbPluginApi,
     readonly keeper: Keeper,
     readonly registry: Registry,
     readonly keeperCards?: import("./keeper/cards").KeeperCards,
   ) {
+    this.study = new StudyEvents(keeper.store, keeper.now, () => this.config().data.studyFollowupSeconds, message => bb.log.warn(message));
+    this.studyTurns = new StudyTurns(bb, keeper, this.study);
     this.alerts = new AlertRoute(bb, keeper);
     keeper.memoryReviewPending = threadId => this.memory.unreviewedFor(threadId, 0, 1).length > 0;
     keeper.routineAskOpened = async ask => { if (ask.boardQuestId) await this.applyStandingAnswers(ask.boardQuestId); };
@@ -1069,6 +1075,10 @@ export class TavernRuntime {
     keeper.store.log = (level, message) => this.bb.log[level](message);
     // Actionable news wakes the Keeper it belongs to through the same gates as the sweep.
     keeper.store.onEvent = ({ keeperThreadId, boardQuestId, type, data, actor }) => {
+      if (type === "plan.revised" && typeof data.cause === "string") {
+        const { fromVersion, toVersion, cause, causeSource } = data;
+        this.study.attempt(() => this.study.record(type, keeperThreadId, boardQuestId, { fromVersion, toVersion, cause, causeSource }));
+      }
       if (!keeperThreadId) return;
       if (this.scopes && /^(?:ask\.(?:opened|answered|withdrawn|lane-changed)|quest\.|plan\.|delegation\.|authority\.revoked|decision\.undone|lane\.reset|journal\.changed|act\.verified|member\.(?:released|replaced))/.test(type)) {
         queueMicrotask(() => {
@@ -1545,6 +1555,12 @@ export class TavernRuntime {
             (await this.pendingMemberWakeups([ctx.thread.id])).has(ctx.thread.id) ||
             this.memberNudgeBrief(ctx.thread) !== brief) return droppedNudge;
       }
+      if (result.action === "proceed" && ctx.attempt === "start-turn") {
+        this.study.attempt(() => {
+          const member = this.keeper.member(ctx.thread.id);
+          if (member) this.study.execution(member, ctx.requestedExecution, isKeeperIdentity(this.keeper.store, member));
+        });
+      }
       if (result.action === "proceed" && ctx.attempt === "start-turn" && binding.member?.role === "member" && binding.member.boardQuestId) {
         if (this.keeper.store.runtime(ctx.thread.id).scheduledMemberRound && !this.loop.roundInputs(ctx).length)
           this.keeper.store.patch(ctx.thread.id, { scheduledMemberRound: false });
@@ -1857,7 +1873,7 @@ export class TavernRuntime {
         member.classId === "warden" ||
         wasReleased(member) && previous?.owner !== member.threadId
       ))
-        throw new Error(
+        throw new StudyRefusal("plan.unreleased-maker",
           `waypoints.${index}.owner must be an unreleased maker in this board quest, not its checker.`,
         );
       if (wasReleased(member) || previous && settledIds.has(waypoint.id) && !recordsSubject && !keeperSubject(previous, threadId) &&
@@ -3437,6 +3453,7 @@ export class TavernRuntime {
     return pending;
   }
   async sweep() {
+    this.study.prune(this.config().data.studyRetentionDays);
     if (this.stopAll.reason()) return;
     try { this.settingsMaintenance(); }
     catch (error) { this.bb.log.warn(`Tavern settings maintenance: ${String(error)}`); }

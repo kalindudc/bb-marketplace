@@ -83,6 +83,14 @@ export function registerCli(bb: BbPluginApi, runtime: TavernRuntime, backups?: B
           options: { thread: { type: "string", description: "Show one thread and its party" } },
           run: input => statusOutput(runtime, input.options.thread),
         }),
+        "study-events": cliCommand({
+          summary: "Export private local study events as JSON",
+          options: { after: { type: "integer", min: 0, max: Number.MAX_SAFE_INTEGER, default: 0, description: "Continue from the preceding JSON page's next cursor" } },
+          run: ({ options }, ctx) => {
+            if (ctx.threadId) throw new PluginCliError("Run study-events from your terminal, outside a thread.");
+            return { exitCode: 0, stdout: JSON.stringify(runtime.study.page(options.after ?? 0)) };
+          },
+        }),
         quests: cliCommand({
           summary: "List board quests",
           run: () => ({

@@ -202,7 +202,7 @@ describe("provider-neutral watcher", () => {
     ] } } } });
     registerWatcher(bb, store, { onViolation });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1", providerId: "pi" }), sequence: 1 });
-    expect(onViolation).toHaveBeenCalledWith(expect.objectContaining({ prevented: true, stopped: false, ruleId: "tavern-control-files", reason: expect.stringContaining("guard files are protected") }), undefined);
+    expect(onViolation).toHaveBeenCalledWith(expect.objectContaining({ prevented: true, stopped: false, shownToAgent: true, ruleId: "tavern-control-files", reason: expect.stringContaining("guard files are protected") }), undefined);
     expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
     await harness.lifecycle.dispose();
   });
@@ -248,7 +248,7 @@ describe("provider-neutral watcher", () => {
     registerWatcher(bb, store, { onViolation });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1", providerId: "pi" }), sequence: 1 });
     expect(store.violations()).toHaveLength(1);
-    expect(store.violations()[0]).toMatchObject({ mode: "watch", stopped: false });
+    expect(store.violations()[0]).toMatchObject({ mode: "watch", stopped: false, shownToAgent: false });
     expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
     expect(onViolation).not.toHaveBeenCalled();
     await harness.lifecycle.dispose();

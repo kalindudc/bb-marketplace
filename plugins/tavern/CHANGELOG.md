@@ -6,6 +6,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Added
 
+- Tavern keeps local study measurements for Keeper model changes, turn usage, tool refusals, plan revisions, chat cards and scope hits. Export them from your terminal with `bb tavern study-events`. Set how long they stay in Settings under Data and backups.
 - Find the Keeper’s answers on each quest and search across Tavern by the answer or your original words. Quest pages flag unanswered questions and steers. New answers leave a quiet Ledger link; device pushes are off unless you turn them on in Settings.
 - Plans, briefs, asks and reports no longer have separate quotas for each field. Cards fold long labels and headlines without changing the saved text. Search Tavern Settings for the limits that still protect staffing, review time, storage and delivery. When Tavern shortens prose or the copy of a brief sent to a member, the tool names the setting. The full saved brief stays readable, and exact commands and drafts stay intact.
 - Tavern can privately nudge a member that ends a turn without a report, once per brief. It skips members that are waiting or stopped, and leaves scheduled-round excerpts with the Keeper without nudging the member. You can turn off the nudge or the permanent member quiet window in Settings under Keepers and decisions.

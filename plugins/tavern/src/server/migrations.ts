@@ -2,6 +2,7 @@ import { SEED_QUEST_CHANGE_SEEN } from "./quest-change-attention";
 import { KEEPER_MIGRATIONS } from "./keeper/migrations";
 import { QUESTLOG_MIGRATIONS as JOURNAL_MIGRATIONS } from "./journal/migrations";
 import { JOURNAL_ACTION_PHRASES } from "./journal/action-phrases";
+import { studyMigration } from "./study-events";
 
 // Installed live on 2026-11-14: bb.storage.migrate applies statements by position, so the two frozen lists below must
 // never change. New statements from either subsystem go ONLY at the end of APPENDED, with a one-line comment.
@@ -151,6 +152,8 @@ const APPENDED: string[] = [
   `CREATE TABLE tavern_answer_tracking (
      id INTEGER PRIMARY KEY CHECK(id=1), started_at INTEGER NOT NULL
    );`,
+  // Keep optional study observations separate from the orchestration ledger and backups.
+  studyMigration,
 ];
 
 export const MIGRATIONS: string[] = [

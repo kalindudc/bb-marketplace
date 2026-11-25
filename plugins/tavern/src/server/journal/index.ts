@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { PluginAgentToolContext, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import type { RegisterJournal } from "../ports";
 import { actionSchema, openSummary, planLine } from "./engine";
@@ -25,24 +26,30 @@ export const registerJournal: RegisterJournal = (bb, db, deps) => {
     return () => [assertPlacement?.(), assertCaller?.()].filter(Boolean).join("\n");
   } });
   const review = new PlacementReview(bb, db, store, deps);
+  const execute = (name: string) => async (params: unknown, { threadId }: PluginAgentToolContext): Promise<PluginAgentToolResult> => {
+    const call = async (refused: (id: string) => void) => {
+      try {
+        const action = actionSchema.parse(params);
+        const result = await store.runTool(threadId, action);
+        const text = result.text.length > 28000 ? `${result.text.slice(0, 20000)}\n[Output shortened; use get for an entry or list with a filter.]\n${result.text.slice(-7000)}` : result.text;
+        if (result.isError) refused(`journal.${action.action}.refused`);
+        return result.isError ? { content: [{ type: "text" as const, text }], isError: true } : text;
+      } catch (error) {
+        refused(error instanceof z.ZodError ? "tool.arguments" : "journal.action");
+        return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      }
+    };
+    return deps.studyTool ? deps.studyTool(name, threadId, params, call) : call(() => {});
+  };
   const tool = {
     description: "Manage this thread's journal: checklist entries, steps, progress, evidence, blockers, undo and redo. Use skill or rules for the complete journal guide. Active same-quest Wardens can verify or reject linked submissions, subject to independence and snapshot checks. Use threadId for Warden reads, verdicts and authorized reopening.",
     instructions: JOURNAL_INSTRUCTIONS,
     presentation: { label: { pending: "Updating the journal", completed: "Updated the journal" } },
     // JSON Schema is the public SDK escape hatch when its bundled Zod differs from the package's Zod.
     parameters: toolInput(actionSchema).parameters,
-    async execute(params: unknown, { threadId }: PluginAgentToolContext): Promise<PluginAgentToolResult> {
-      try {
-        const result = await store.runTool(threadId, actionSchema.parse(params));
-        const text = result.text.length > 28000 ? `${result.text.slice(0, 20000)}\n[Output shortened; use get for an entry or list with a filter.]\n${result.text.slice(-7000)}` : result.text;
-        return result.isError ? { content: [{ type: "text", text }], isError: true } : text;
-      } catch (error) {
-        return { content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
-      }
-    },
   };
-  bb.agents.registerTool({ ...tool, name: "journal" });
-  bb.agents.registerTool({ ...tool, name: "quest", description: "Deprecated alias for journal, retained for existing sessions. " + tool.description });
+  bb.agents.registerTool({ ...tool, name: "journal", execute: execute("journal") });
+  bb.agents.registerTool({ ...tool, name: "quest", execute: execute("quest"), description: "Deprecated alias for journal, retained for existing sessions. " + tool.description });
   watchRequests(bb, store);
   watchOwners(bb, store);
   bb.events.on("thread.created", async ({ thread }) => {

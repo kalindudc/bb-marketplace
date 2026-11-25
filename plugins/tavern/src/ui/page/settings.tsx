@@ -23,6 +23,7 @@ import { MemorySettings } from "./memory-settings";
 import { gitProgramSettingSchema, piProgramSettingSchema } from "../../shared/git-program";
 import { SettingsSearch } from "./settings-search";
 import { LIMIT_FIELDS, limitMessage, limitRule, type LimitGroup, type LimitSettingKey } from "../../shared/limits";
+import { STUDY_FOLLOWUP_HELP, STUDY_RETENTION_HELP } from "../../shared/study-events";
 
 const WHY = "Changed on the settings page";
 export const ATMOSPHERE_ANCHOR = "tavern-settings-atmosphere";
@@ -100,6 +101,8 @@ function Row({ label, help, children, control, setting, managed = false, covered
 
 const NUMBER_HELP: Record<{ [G in keyof typeof KNOB_FIELDS]: keyof typeof KNOB_FIELDS[G] }[keyof typeof KNOB_FIELDS], string> = {
   permanentQuietMinutes: "After this long without a report or journal evidence, name the permanent member in the Keeper's next tick. Use 0 to turn this check off.",
+  studyRetentionDays: STUDY_RETENTION_HELP,
+  studyFollowupSeconds: STUDY_FOLLOWUP_HELP,
   reportedPoseSeconds: "How long a character holds its finished pose above the composer.",
   verifiedPoseMinutes: "How long a character holds its verified pose above the composer.",
   productionWakeHours: "How long a production or cluster write ask waits before waking you, if that option is on for the window.",
@@ -146,7 +149,7 @@ function NumberKnobRows({ group, managed = false }: { group: keyof typeof KNOB_F
     const value = settingsValue(api.data!.effective, setting) as number;
     const help = NUMBER_HELP[key as keyof typeof NUMBER_HELP];
     return <Row key={setting} setting={setting} label={rule.label} managed={managed} help={help}
-      control={id => <NumberField id={id} value={value} min={rule.min} max={rule.max} unit={rule.unit} disabled={api.pending} onSave={v => void api.save(settingsPatch(setting, v))} />} />;
+      control={id => <NumberField id={id} value={value} min={rule.min} max={rule.max} showMax={group !== "data"} unit={rule.unit} disabled={api.pending} onSave={v => void api.save(settingsPatch(setting, v))} />} />;
   });
 }
 
@@ -155,7 +158,7 @@ function Toggle({ id, checked, onChange, disabled }: { id: string; checked: bool
 }
 
 /** A whole number that saves on Enter or when focus leaves, refusing values outside its bounds. */
-export function NumberField({ id, value, min, max, unit, onSave, disabled }: { id: string; value: number; min: number; max: number; unit?: string; onSave: (v: number) => void; disabled?: boolean }) {
+export function NumberField({ id, value, min, max, showMax = true, unit, onSave, disabled }: { id: string; value: number; min: number; max: number; showMax?: boolean; unit?: string; onSave: (v: number) => void; disabled?: boolean }) {
   const [text, setText] = useState(String(value));
   useEffect(() => setText(String(value)), [value]);
   const n = Number(text), valid = text.trim() !== "" && Number.isInteger(n) && n >= min && n <= max;
@@ -164,7 +167,7 @@ export function NumberField({ id, value, min, max, unit, onSave, disabled }: { i
     <input id={id} type="number" inputMode="numeric" min={min} max={max} step={1} value={text} disabled={disabled} aria-invalid={!valid} aria-describedby={`${id}-b`}
       onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") setText(String(value)); }} />
     {unit && <span className="m">{unit}</span>}
-    <span id={`${id}-b`} className={`tv-num-b ${valid ? "" : "bad"}`}>{min.toLocaleString("en")} to {max.toLocaleString("en")}</span>
+    <span id={`${id}-b`} className={`tv-num-b ${valid ? "" : "bad"}`}>{min.toLocaleString("en")}{showMax || !valid ? ` to ${max.toLocaleString("en")}` : " or more"}</span>
   </span>;
 }
 
@@ -364,6 +367,7 @@ function historyValue(key: string, value: unknown): string {
   if (key === "knobs.rangerTimeboxMaxMinutes") return `${value} min`;
   if (key === "tavern.repeatSeconds") return `${value} s`;
   if (key === "tavern.characterQuietUntil" && typeof value === "number") return value === 0 ? "Off" : new Date(value).toLocaleString();
+  if (key === "data.studyFollowupSeconds") return `${value} seconds`;
   if (key.startsWith("data.") || key === "backup.keep") return `${value} ${key === "backup.keep" || key === "data.backupKeep" ? "backups" : "days"}`;
   if (/^(knobs|tuned|tuning\.pinned)\./.test(key)) return knobValue(key.replace(/^(?:tuning\.pinned|tuned)\./,"knobs."),value);
   return typeof value === "string" && ["full","light","off","all","none","calm","lively","apply","suggest","enforce","watch","consequential"].includes(value) ? value.charAt(0).toUpperCase() + value.slice(1) : String(value);
@@ -672,6 +676,7 @@ export function DataSection() {
   const api = useTavernSettings();
   return <Shell api={api}>{(d) => { const x = d.effective.data; return <SettingsCard title="Retention" hint="Choose how long records stay and when quests leave the board." glyph="archive">
     <Row label="Keep history" setting="data.historyDays" help={x.historyDays === 0 ? "0 keeps everything, as today." : `Events older than ${x.historyDays} days are removed.`} control={(id) => <NumberField id={id} value={x.historyDays} min={0} max={3650} unit="days" disabled={api.pending} onSave={(v) => void api.save({ data: { historyDays: v } })} />} />
+    <NumberKnobRows group="data" />
     <Row label="Send returned quests to the cellar after" setting="data.autoArchiveDays" help={x.autoArchiveDays === 0 ? "0 = never. Sending a quest to the cellar marks it done, so by default only you do it." : `Returned quests go to the cellar after ${plural(x.autoArchiveDays, "day")}. 0 = never.`} control={(id) => <NumberField id={id} value={x.autoArchiveDays} min={0} max={3650} unit="days" disabled={api.pending} onSave={(v) => void api.save({ data: { autoArchiveDays: v } })} />} />
   </SettingsCard>; }}</Shell>;
 }

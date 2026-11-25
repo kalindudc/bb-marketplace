@@ -62,6 +62,9 @@ import type { NoteDraft } from "../../shared/schema";
 import { appendSummary } from "../summaries";
 import type { SummaryDraft } from "../../shared/schema";
 
+import type { PlanCause } from "../../shared/study-events";
+import { StudyRefusal } from "../study-events";
+
 export type PlanInput = Omit<
   Plan,
   "version" | "createdAt" | "fromSteer" | "reversible" | "alwaysAskKinds"
@@ -69,6 +72,7 @@ export type PlanInput = Omit<
   alwaysAskKinds?: Plan["alwaysAskKinds"];
   reversible?: boolean;
   fromSteer?: string | null;
+  cause?: PlanCause;
 };
 export type AskInput = Pick<
   Ask,
@@ -937,7 +941,7 @@ export class Keeper {
         r.keeperThreadId !== threadId ||
         !this.applicableRoutes(threadId).some((route) => route.id === r.id))
     )
-      throw new Error(
+      throw new StudyRefusal("plan.steer-route",
         "fromSteer must name an applicable, unexpired steer route for this quest",
       );
     this.guard(threadId, q.id);
@@ -1031,9 +1035,16 @@ export class Keeper {
         this.store.put("quests", q.id, updated);
         this.store.event(this.now(), threadId, q.id, "plan.proposed", `Plan v${plan.version}`, data, { kind: "agent", threadId });
       }
-      if (previous) this.store.event(this.now(), threadId, q.id, "plan.revised", `Revised plan v${previous.version} to v${plan.version}`, {
-        fromVersion: previous.version, toVersion: plan.version, reason: plan.changeNote, diff,
-      }, { kind: "agent", threadId });
+      if (previous && diff) {
+        const w = diff.waypoints;
+        const ownershipOnly = !Object.keys(diff.fields).length && !w.added.length && !w.removed.length && !w.order &&
+          w.changed.length > 0 && w.changed.every(({ fields }) => Object.keys(fields).length === 1 && Object.hasOwn(fields, "owner"));
+        const cause = r ? "steer" : input.cause ?? (ownershipOnly ? "owner-change" : "work-changed");
+        const causeSource = r ? "ledger" : input.cause ? "keeper" : ownershipOnly ? "ledger" : "default";
+        this.store.event(this.now(), threadId, q.id, "plan.revised", `Revised plan v${previous.version} to v${plan.version}`, {
+          fromVersion: previous.version, toVersion: plan.version, reason: plan.changeNote, diff, cause, causeSource,
+        }, { kind: "agent", threadId });
+      }
       for (const ask of this.store.openAsks(threadId, q.id)) {
         if (ask.kind === "greenlight" || ask.effect?.type === "user-waypoint")
           this.withdrawAsk(ask.id, "plan-superseded");
@@ -1140,7 +1151,7 @@ export class Keeper {
       if (w.actor === "outside" && (w.gate?.answer == null || w.gate.answeredAt === null))
         throw new Error("Record the outside gate answer before accepting this waypoint");
       if (w.check !== "keeper" || !(w.actor === "outside" ? !settled(w) : w.actor === "agent" && w.state === "reported"))
-        throw new Error("Only a reported or answered outside waypoint with a Keeper check can be accepted");
+        throw new StudyRefusal("waypoint.report-required", "Only a reported or answered outside waypoint with a Keeper check can be accepted");
     }
     if (as === "skipped" && (!w.optional || settled(w)))
       throw new Error("Only an unsettled optional waypoint can be skipped");
@@ -2257,7 +2268,7 @@ export class Keeper {
             !["done", "verified"].includes(e.status) || e.evidence.length === 0,
         ))
     ) {
-      throw new Error(
+      throw new StudyRefusal("report.linked-journal-evidence",
         "Mark every linked waypoint entry done with evidence first, then file the done report.",
       );
     }
