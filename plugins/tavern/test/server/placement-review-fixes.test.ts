@@ -59,7 +59,7 @@ describe("Review B submission fixes", () => {
     const f = await fixture(), id = await f.make(); await f.check();
     expect(await f.tool("checker", "journal", { action: "reject", threadId: "maker", id, reason: "Needs changes" })).not.toMatchObject({ isError: true });
     const result = await verdict(f, id);
-    expect(result).toMatchObject({ isError: true }); expect(JSON.stringify(result)).toContain("Only reported done entries can be verified.");
+    expect(result).toMatchObject({ isError: true, content: [{ type: "text", text: "Error: Only reported done entries awaiting review can receive a Warden verdict." }] });
   }, 60_000);
   it("hires the Warden after the placed maker reports done", async () => {
     const f = await fixture(), id = await f.make();
@@ -85,13 +85,13 @@ describe("Review B submission fixes", () => {
     const entry = applyAction(done, { action: "update", id: todo.id, description: "Reworded maker work" }, makerContext).entries[0];
     expect(entry.rewrites).toBeGreaterThan(0);
     const before = journalEntryFingerprint(entry);
-    const verified = applyAction([entry], { action: "verify", id: entry.id, evidence, reason: "Checked" }, { threadId: "maker", actor: { kind: "agent", threadId: "checker" }, now: 2_000_000, allocate: () => "a2",
-      roleOf: () => ({ classId: "warden", role: "member", boardQuestId: "quest", waypointId: "w1" }) }).entries[0];
+    const checkerContext = { ...makerContext, actor: { kind: "agent" as const, threadId: "checker" }, now: 2_000_000,
+      roleOf: () => ({ classId: "warden", role: "member" as const, boardQuestId: "quest", waypointId: "w1", checkerEntryReview: () => ({}) }) };
+    const verified = applyAction([entry], { action: "verify", id: entry.id, evidence, reason: "Checked" }, checkerContext).entries[0];
     expect(journalEntryFingerprint(verified)).toBe(before);
     for (const patch of [{ description: "New work" }, { status: "doing" as const }, { parentId: "a2" }, { evidence: [...entry.evidence, { kind: "note" as const, ref: "new evidence", detail: "", exitCode: null }] }])
       expect(journalEntryFingerprint({ ...entry, ...patch })).not.toBe(before);
-    const rejected = applyAction([entry], { action: "reject", id: entry.id, reason: "Needs changes" }, { threadId: "maker", actor: { kind: "agent", threadId: "checker" }, now: 2_000_000, allocate: () => "a2",
-      roleOf: () => ({ classId: "warden", role: "member", boardQuestId: "quest", waypointId: "w1" }) }).entries[0];
+    const rejected = applyAction([entry], { action: "reject", id: entry.id, reason: "Needs changes" }, checkerContext).entries[0];
     expect(journalEntryFingerprint(rejected)).toBe(before);
     for (const patch of [{ status: "rejected" as const }, { note: "Maker note" }, { evidence: [...entry.evidence, { kind: "note" as const, ref: "fix evidence", detail: "", exitCode: null }] }])
       expect(journalEntryFingerprint({ ...verified, ...patch, updatedBy: makerContext.actor })).not.toBe(before);

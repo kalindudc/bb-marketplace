@@ -145,10 +145,7 @@ describe("Warden target briefing", () => {
     f.bb.sdk.threads.getPluginMetadata = async () => ({});
     const journal = createJournalStore(f.bb, f.k.store.db, {
       invalidate: () => {},
-      roleOf: id => {
-        const member = f.k.member(id);
-        return member?.classId === "warden" ? { ...member, checkerWaypointIds: f.k.checkerWaypoints(id) } : member;
-      },
+      roleOf: id => f.runtime.journalRole(id),
     });
     Object.assign(f.port, journal);
     const plan = await f.runtime.plan("lead", { ...base, reversible: false, waypoints: [{ ...base.waypoints[0]!, title: subject, owner: "lead", check: "warden" }], party: [{ classId: "warden", characterId: null, model: null, purpose: "Validate", waypointIds: ["w1"] }] });

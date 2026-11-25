@@ -10,7 +10,7 @@ function fixture() {
   let counter = 576;
   const run = (action: JournalAction, actor = agent, warden = false) => {
     const result = applyAction(entries, action, { threadId: "smith", actor, now: 1000,
-      allocate: () => (counter++).toString(36), roleOf: () => warden ? { classId: "warden", role: "member", boardQuestId: "board", waypointId: "w1" } : null });
+      allocate: () => (counter++).toString(36), roleOf: () => warden ? { classId: "warden", role: "member", boardQuestId: "board", waypointId: "w1", checkerEntryReview: () => ({}) } : null });
     entries = result.entries;
     return result;
   };
@@ -114,6 +114,8 @@ describe("journal rules", () => {
     expect(() => f.run({ action: "verify", id: "g0", evidence: proof })).toThrow(/Warden/);
     f.run({ action: "verify", id: "g0", evidence: proof }, { kind: "agent", threadId: "warden" }, true);
     expect(f.entries()[0]).toMatchObject({ status: "verified", doneBy: agent, updatedBy: { kind: "agent", threadId: "warden" } });
+    f.run({ action: "reopen", id: "g0" }, { kind: "agent", threadId: "warden" }, true);
+    f.run({ action: "done", id: "g0", evidence: proof });
     f.run({ action: "reject", id: "g0", reason: "misses retry" }, { kind: "agent", threadId: "warden" }, true);
     expect(f.entries()[0]).toMatchObject({ status: "rejected", note: "misses retry" });
   });

@@ -75,7 +75,7 @@ describe("SQLite journal store", () => {
     expect(g.store.get("t").entries).toHaveLength(1);
   });
   it("implements linking, cross-thread verification, rejection notification and rejects privilege escalation through undo", async () => {
-    const { store } = fixture({}, t => t === "warden" ? { classId: "warden", role: "member", boardQuestId: "b", waypointId: "w1" } : null);
+    const { store } = fixture({}, t => t === "warden" ? { classId: "warden", role: "member", boardQuestId: "b", waypointId: "w1", checkerEntryReview: () => ({}) } : null);
     await store.ready("smith");
     const id = store.linkWaypoint("smith", { boardQuestId: "b", waypointId: "w1" }, "deliver", "smith", { kind: "tavern" });
     expect(store.linkWaypoint("smith", { boardQuestId: "b", waypointId: "w1" }, "deliver", "smith", { kind: "tavern" })).toBe(id);
@@ -84,6 +84,8 @@ describe("SQLite journal store", () => {
     expect((await store.runTool("intruder", { action: "verify", threadId: "smith", id, evidence: proof })).isError).toBe(true);
     expect((await store.runTool("warden", { action: "verify", threadId: "smith", id, evidence: proof })).isError).toBe(false);
     expect(store.linkedEntries("b")[0]?.status).toBe("verified");
+    await store.runTool("warden", { action: "reopen", threadId: "smith", id });
+    await store.runTool("smith", { action: "done", id, evidence: proof });
     await store.runTool("warden", { action: "reject", threadId: "smith", id, reason: "missing branch" });
     expect((await store.runTool("smith", { action: "undo" })).isError).toBe(true);
     expect((await store.runTool("smith", { action: "list" })).text).toContain("missing branch");

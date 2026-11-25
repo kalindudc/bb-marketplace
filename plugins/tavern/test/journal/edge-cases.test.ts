@@ -122,8 +122,8 @@ describe("journal persistence and race edges", () => {
     await f.store.runTool("t", { action: "split", id: "00", descriptions: ["my step"] });
     expect((await f.store.runTool("t", { action: "list", filter: "mine" })).text).toContain("my step");
   });
-  it("restricts Warden verdicts to their assigned waypoint and never trusts actor metadata", async () => {
-    const f = fixture(t => t === "w" ? { classId: "warden", role: "member", boardQuestId: "b", waypointId: "w2" } : null);
+  it("restricts Warden verdicts to their own quest and never trusts actor metadata", async () => {
+    const f = fixture(t => t === "w" ? { classId: "warden", role: "member", boardQuestId: "other", waypointId: "w1", checkerEntryReview: () => ({}) } : null);
     await f.store.ready("s");
     const id = f.store.linkWaypoint("s", { boardQuestId: "b", waypointId: "w1" }, "ship", "s", { kind: "tavern" });
     await f.store.runTool("s", { action: "done", id, evidence: proof });
@@ -199,16 +199,18 @@ describe("journal persistence and race edges", () => {
     expect(f.mirrors).not.toEqual([]);
     expect(f.mirrors.every(w => Object.keys((w as { set: object }).set).join() === "progress")).toBe(true);
   });
-  it("lets a Warden read and verify only assigned entries, without exposing the private next item", async () => {
-    const f = fixture(t => t === "w" ? { classId: "warden", role: "member", boardQuestId: "b", waypointId: "w1" } : null);
+  it("lets a Warden read same-quest links without exposing the private next item", async () => {
+    const f = fixture(t => t === "w" ? { classId: "warden", role: "member", boardQuestId: "b", waypointId: "w1", checkerEntryReview: () => ({}) } : null);
     await f.store.ready("s");
     const id = f.store.linkWaypoint("s", { boardQuestId: "b", waypointId: "w1" }, "shared work", "s", { kind: "tavern" });
     f.store.linkWaypoint("s", { boardQuestId: "b", waypointId: "w2" }, "other waypoint", "s", { kind: "tavern" });
+    f.store.linkWaypoint("s", { boardQuestId: "other", waypointId: "w1" }, "other quest", "s", { kind: "tavern" });
     await f.store.runTool("s", { action: "add", descriptions: ["private work"] });
     await f.store.runTool("s", { action: "done", id, evidence: proof });
     const list = await f.store.runTool("w", { action: "list", threadId: "s" });
     expect(list.isError).toBe(false); expect(list.text).toContain("shared work");
-    expect(list.text).not.toContain("private work"); expect(list.text).not.toContain("other waypoint");
+    expect(list.text).toContain("other waypoint");
+    expect(list.text).not.toContain("private work"); expect(list.text).not.toContain("other quest");
     const verdict = await f.store.runTool("w", { action: "verify", id, threadId: "s", evidence: proof });
     expect(verdict.isError).toBe(false); expect(verdict.text).toContain("verified");
     expect(verdict.text).not.toContain("private work"); expect(verdict.text).not.toContain("other waypoint");

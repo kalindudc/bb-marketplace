@@ -81,11 +81,11 @@ export async function reviewFixture(checkerCount = 1) {
     await intercept?.(method as HostMethod); return result;
   } });
   const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n")); const keepers = new KeeperStore(db);
-  let keeper: Keeper;
-  const journal = registerJournal(host.bb, db, { roleOf: id => { const member = keepers.get("members", id); return member ? { ...member, ...(member.classId === "warden" ? { checkerWaypointIds: keeper.checkerWaypoints(id) } : {}) } : null; }, invalidate: () => {} });
-  keeper = withMemberFixtures(new Keeper(keepers, journal, () => 1_000_000));
+  let runtime: TavernRuntime;
+  const journal = registerJournal(host.bb, db, { roleOf: id => runtime?.journalRole(id) ?? null, invalidate: () => {} });
+  const keeper = withMemberFixtures(new Keeper(keepers, journal, () => 1_000_000));
   keeper.bind("keeper", "keeper", "wren", "project");
-  const runtime = new TavernRuntime(host.bb, keeper, new Registry(fileURLToPath(new URL("../../", import.meta.url)), "/nonexistent"));
+  runtime = new TavernRuntime(host.bb, keeper, new Registry(fileURLToPath(new URL("../../", import.meta.url)), "/nonexistent"));
   const settings = new SettingsStore(db); runtime.enableSettings(settings, new InsightsReader(db, settings));
   const rule = (classId: "smith" | "warden") => placementRuleSchema.parse({ id: classId + "-rule", label: classId + " machines", enabled: true, match: { projectIds: ["project"], classes: [classId] },
     target: { kind: "provider", environmentProviderId: "isolated-checkout", inputs: { base: "{source.base}", branch: "{member.branch}" }, machine: { type: "new", machineProviderId: "isolated-compute" }, workspace: "dedicated-machine" },

@@ -16,7 +16,7 @@ it("a real accepted rebrief removes maker proof but keeps the Warden's independe
   f.bb.sdk.threads.getPluginMetadata = async () => ({});
   let k: Keeper, runtime: TavernRuntime;
   const journal = registerJournal(f.bb, f.k.store.db, {
-    roleOf: id => { const m = k?.member(id); return m ? { ...m, checkerWaypointIds: k.checkerWaypoints(id) } : null; },
+    roleOf: id => runtime?.journalRole(id) ?? null,
     invalidate: () => {}, reviewed: input => runtime.serviceRecords.reviewed(input), superseded: input => runtime.serviceRecords.superseded(input),
   });
   k = withMemberFixtures(new Keeper(f.k.store, journal, f.time, () => {})); runtime = new TavernRuntime(f.bb, k, f.runtime.registry);

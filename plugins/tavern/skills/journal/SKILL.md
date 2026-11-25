@@ -7,7 +7,7 @@ description: 'Manage this thread checklist with the journal tool. Use for multi-
 
 The journal is this thread's live plan. It serves you as working memory across long contexts and steers, gives the user a live checklist in the widget row and Journal tab, and feeds progress and waypoint verification to minions, Keepers, and Wardens.
 
-A board quest is a goal a Keeper holds; your journal is your own checklist. Linked entries stand for waypoints in a board quest and require evidence plus assigned Warden review; unlinked entries stay private to this thread.
+A board quest is a goal a Keeper holds; your journal is your own checklist. Members may link their own entries to assigned waypoints. Linked work needs evidence and follows the waypoint's planned check; unlinked entries stay private to this thread.
 
 Keeper auto-created `Quest: <title>` entries are read-only mirrors of board phases, not chores. Never tick, rename, or delete an active mirror with `journal`; use `tavern_wrap` to close a board quest.
 

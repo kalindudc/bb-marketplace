@@ -8,7 +8,7 @@ import { dispatchCheck, isUserRequest } from "../../src/server/journal/requests"
 import type { MessageDispatchHookContext } from "@get-bb/plugin-sdk";
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { vi.useRealTimers(); await Promise.all(cleanup.splice(0).map(f => f())); });
-const roles = (t: string) => t === "w" ? { classId: "warden", role: "member" as const, boardQuestId: "b", waypointId: "w1" } : t === "k" ? { classId: "keeper", role: "keeper" as const, boardQuestId: null, waypointId: null } : null;
+const roles = (t: string) => t === "w" ? { classId: "warden", role: "member" as const, boardQuestId: "b", waypointId: "w1", checkerEntryReview: () => ({}) } : t === "k" ? { classId: "keeper", role: "keeper" as const, boardQuestId: null, waypointId: null } : null;
 const proof = [{ kind: "command" as const, ref: "test", detail: "pass", exitCode: 0 }];
 const old = (count = 1) => ({ version: 1, quests: Array.from({ length: count }, (_, i) => ({ id: i.toString(16).padStart(2, "0"), description: `old ${i}`, done: false, createdAt: i })), steps: [] as {id: string;parentId: string;description: string;done: boolean;createdAt: number}[], usedIds: [] });
 function fixture(metadata: Record<string, unknown> = {}, enabled = false) {
@@ -89,6 +89,8 @@ describe("review regressions", () => {
     expect((await f.store.runTool("s",{action:"undo"})).isError).toBe(true);
     await f.store.runTool("s",{action:"clear",all:true}); expect(f.store.linkedEntries("b")).toHaveLength(1);
     expect((await f.store.runTool("s",{action:"delete",id})).isError).toBe(true);
+    await f.store.runTool("w",{action:"reopen",threadId:"s",id});
+    await f.store.runTool("s",{action:"done",id,evidence:proof});
     await f.store.runTool("w",{action:"reject",threadId:"s",id,reason:"missing branch"});
     expect(f.store.linkedEntries("b")[0]).toMatchObject({status:"rejected",note:expect.stringContaining("missing branch")});
     expect(f.store.progress("s").done).toBe(0); expect(f.store.pending("s").at(-1)?.action).toBe("reject");

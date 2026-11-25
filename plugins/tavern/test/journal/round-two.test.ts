@@ -6,7 +6,7 @@ import { createJournalStore } from "../../src/server/journal/store";
 import { watchRequests } from "../../src/server/journal/requests";
 const cleanup:(()=>Promise<void>)[]=[];
 afterEach(async()=>{vi.useRealTimers();await Promise.all(cleanup.splice(0).map(f=>f()));});
-const roles=(id:string)=>id==="k"?{classId:"keeper",role:"keeper" as const,boardQuestId:null,waypointId:null}:id==="w"?{classId:"warden",role:"member" as const,boardQuestId:"b",waypointId:"wp"}:null;
+const roles=(id:string)=>id==="k"?{classId:"keeper",role:"keeper" as const,boardQuestId:null,waypointId:null}:id==="w"?{classId:"warden",role:"member" as const,boardQuestId:"b",waypointId:"wp",checkerEntryReview:()=>({})}:null;
 const proof=[{kind:"command" as const,ref:"tests",detail:"pass",exitCode:0}];
 function fixture(metadata:Record<string,unknown>={}){
   const h=makeHost(metadata);cleanup.push(h.dispose);h.bb.storage.migrate(h.db,MIGRATIONS);

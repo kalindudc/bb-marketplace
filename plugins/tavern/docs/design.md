@@ -44,7 +44,7 @@ Reversible calls inside approved work appear in Decided for you, each with Undo.
 
 ## The journal
 
-Every bb thread gets a Journal in its context row and Journal side tab. Threads use it to track deliverables, steps, blockers, and observed evidence with grouped Undo. When a Keeper assigns a waypoint, Tavern links the matching Journal entry to that board quest. Linked entries require evidence before finishing, and only the assigned Warden can verify or reject them.
+Every bb thread gets a Journal in its context row and Journal side tab. Threads use it to track deliverables, steps, blockers, and observed evidence with grouped Undo. Tavern can link work when a Keeper assigns it, and active members can link their own entries to assigned waypoints. Linked work needs evidence before it can be submitted. An active Warden on the quest can check another maker's submission without a checker-slot change. Known same-family checks refuse; placed checks still use the exact submitted snapshot.
 
 ## Scopes and guardrails
 

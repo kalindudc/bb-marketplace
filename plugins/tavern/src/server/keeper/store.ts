@@ -262,6 +262,7 @@ export interface Runtime {
   failureAskId?: string | null;
   lastBriefAt?: number;
   lastAcceptedBriefId?: string;
+  acceptedBriefWaypoints?: { boardQuestId: string; waypointIds: string[] };
   initialBriefAt?: number;
   rangerBox?: { startedAt: number; priorBudgetMinutes: number; priorElapsedMinutes: number; priorOverrun: boolean };
   rangerAcceptedReportId?: string;

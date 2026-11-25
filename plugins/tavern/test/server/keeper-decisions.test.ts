@@ -208,9 +208,9 @@ async function reviewFixture() {
   const f = setup(); databases.push(f.k.store.db);
   f.bb.sdk.plugins.list = async () => ({ plugins: [] });
   f.bb.sdk.threads.getPluginMetadata = async () => ({});
-  let k: Keeper;
+  let k: Keeper, runtime: TavernRuntime;
   const journal = registerJournal(f.bb, f.k.store.db, {
-    roleOf: id => { const member = k.member(id); return member ? { ...member, checkerWaypointIds: k.checkerWaypoints(id) } : null; },
+    roleOf: id => runtime?.journalRole(id) ?? null,
     invalidate: () => {},
     verdictSubmitted: (actor, entries) => k.recordWardenRound(actor, entries),
   });
@@ -236,7 +236,7 @@ async function reviewFixture() {
   const wardenCall = (warden: string, action: "verify" | "reject", selected: string[]) =>
     run(warden, { action, ids: selected, threadId: "maker", ...(action === "reject" ? { reason: "Does not meet the plan" } : {}), evidence });
   const verdict = async (...args: Parameters<typeof wardenCall>) => expect(await wardenCall(...args)).toEqual(expect.any(String));
-  const runtime = new TavernRuntime(f.bb, k, f.runtime.registry);
+  runtime = new TavernRuntime(f.bb, k, f.runtime.registry);
   registerTools(f.bb, runtime);
   const reportTool = (outcome: string) => f.harness.behavior.invokeAgentTool("tavern_report", { status: "done", outcome, evidence, artifacts: [] }, { threadId: "maker" });
   const send = vi.spyOn(f.bb.sdk.threads, "send");

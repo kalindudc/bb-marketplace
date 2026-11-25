@@ -21,7 +21,7 @@ async function fixture() {
   const h = makeHost(); cleanup.push(h.dispose); h.bb.storage.migrate(h.db, MIGRATIONS);
   const superseded = vi.fn();
   const store = createJournalStore(h.bb, h.db, { roleOf: id => id === "m" ? { classId: "smith", role: "member", waypointId: "w1", boardQuestId: "q" } : id === "thr_vex"
-    ? { classId: "warden", role: "member", waypointId: "w2", boardQuestId: "q" } : null, invalidate: () => {}, superseded, nameOf: id => id === "thr_vex" ? "Vex" : null });
+    ? { classId: "warden", role: "member", waypointId: "w2", boardQuestId: "q", checkerEntryReview: () => ({}) } : null, invalidate: () => {}, superseded, nameOf: id => id === "thr_vex" ? "Vex" : null });
   await store.prepare("m");
   store.linkWaypoint("m", { boardQuestId: "q", waypointId: "w1" }, "Implement labelCount with tests", "m", tavern);
   store.linkWaypoint("m", { boardQuestId: "other", waypointId: "w9" }, "Another quest's waypoint", "m", tavern);

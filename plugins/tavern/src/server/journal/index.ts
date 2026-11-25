@@ -12,7 +12,7 @@ export const JOURNAL_INSTRUCTIONS = [
   "Use journal when you expect more than about 5 tool calls, any wait, or any delegation. Skip it only for an answer that takes one or two calls. Write one entry per checkable deliverable; split big entries into steps.",
   "Keep the journal current while working: start the entry you are doing and mark it done in the same message as the next action, not in a batch at the end.",
   "Revisit on a user redirect, resuming after interruption or error, a delegate report, and before your final answer. When the plan changes, add, update or delete entries. Never append DONE. Use the short ids in brackets, never positions.",
-  "A parent is done only after its steps. Linked entries need evidence to be reported done; only an assigned Warden can verify or reject them. Unlinked entries encourage evidence but do not require it.",
+  "Finish steps before their parent. Members can link their own entries to assigned waypoints. Linked entries need evidence. An active same-quest Warden can check another maker’s submission; unlinked entries work without evidence.",
   "Keeper entries named Quest: <title> mirror their board phase. Do not tick them as chores; use tavern_wrap to finish a board quest. They close only when its phase is done or stopped.",
   "Read the journal skill, or call journal with action skill, for the complete guide.",
   "When you delegate work to other agents, read the journal skill's Coordinating other agents section.",
@@ -26,7 +26,7 @@ export const registerJournal: RegisterJournal = (bb, db, deps) => {
   } });
   const review = new PlacementReview(bb, db, store, deps);
   const tool = {
-    description: "Manage this thread's journal: checklist entries, steps, progress, evidence, blockers, undo and redo. Use skill or rules for the complete journal guide. Only assigned Wardens can verify or reject linked entries; threadId targets the member's journal for Warden reads, verdicts and authorized reopening.",
+    description: "Manage this thread's journal: checklist entries, steps, progress, evidence, blockers, undo and redo. Use skill or rules for the complete journal guide. Active same-quest Wardens can verify or reject linked submissions, subject to independence and snapshot checks. Use threadId for Warden reads, verdicts and authorized reopening.",
     instructions: JOURNAL_INSTRUCTIONS,
     presentation: { label: { pending: "Updating the journal", completed: "Updated the journal" } },
     // JSON Schema is the public SDK escape hatch when its bundled Zod differs from the package's Zod.

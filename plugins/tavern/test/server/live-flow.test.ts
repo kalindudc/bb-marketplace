@@ -211,10 +211,7 @@ describe("live Keeper flow regressions", () => {
     f.bb.sdk.threads.getPluginMetadata = async () => ({});
     f.bb.sdk.threads.stop = async () => ({ ok: true });
     Object.assign(f.port, registerJournal(f.bb, f.k.store.db, {
-      roleOf: id => {
-        const member = f.k.member(id);
-        return member && { ...member, checkerWaypointIds: f.k.checkerWaypoints(id) };
-      },
+      roleOf: id => f.runtime.journalRole(id),
       invalidate: () => {},
       verdictSubmitted: (actor, entries) => f.k.recordWardenRound(actor, entries),
     }));
@@ -255,7 +252,7 @@ describe("live Keeper flow regressions", () => {
       action: "reject", threadId: "maker-one", id: firstEntry, reason: "Found a problem", evidence,
     })).toMatchObject({
       isError: true,
-      content: [expect.objectContaining({ text: expect.stringContaining("Only a Warden assigned to this board quest and waypoint") })],
+      content: [expect.objectContaining({ text: expect.stringContaining("Only an active Warden on this board quest") })],
     });
     expect(f.k.summary(q.id).waypoints.find(w => w.id === "w1")).toMatchObject({ state: "verified", verifiedBy: first.threadId });
 

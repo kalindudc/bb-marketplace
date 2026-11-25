@@ -92,6 +92,7 @@ import { PlacementStore } from "./placement/store";
 import { StopAll } from "./stop-all";
 import { PlacementController } from "./placement/controller";
 import { reviewWaypointFingerprint } from "./placement/review";
+import { wardenReview } from "./journal/engine";
 
 import { undoPullRequestReady } from "./pull-request-rules";
 
@@ -612,8 +613,11 @@ export class TavernRuntime {
           { memberThreadId: threadId, briefId: id, briefPending: false, delivery: "delivered", attempts: pending.attempts },
           { kind: "agent", threadId: member.keeperThreadId! });
         // Acceptance, the new brief version and the journal's reopen and supersession share this transaction.
-        if (member.boardQuestId) this.keeper.journal.rebriefed(threadId, member.boardQuestId,
-          this.keeper.store.runtime(threadId).briefVersion ?? 0, pending.waypointIds ?? this.rebriefWaypoints(member, pending.assignmentText ?? pending.text));
+        if (member.boardQuestId) {
+          const waypointIds = pending.waypointIds ?? this.rebriefWaypoints(member, pending.assignmentText ?? pending.text);
+          this.keeper.store.patch(threadId, { acceptedBriefWaypoints: { boardQuestId: member.boardQuestId, waypointIds } });
+          this.keeper.journal.rebriefed(threadId, member.boardQuestId, this.keeper.store.runtime(threadId).briefVersion ?? 0, waypointIds);
+        }
       }
 
     });
@@ -1366,13 +1370,12 @@ export class TavernRuntime {
     }
   }
   private wardenInstructions(member: Member) {
-    const waypointIds = new Set(this.keeper.checkerWaypoints(member.threadId));
     const reviewTarget = this.keeper.store.runtime(member.threadId).reviewTarget ?? null;
     const targets = new Map<string, { makerThreadId: string; waypointId: string; entryIds: string[] }>();
-    if (member.boardQuestId && waypointIds.size && !reviewTarget?.snapshotId) {
+    const role = this.journalRole(member.threadId);
+    if (member.boardQuestId && role && !reviewTarget?.snapshotId) {
       for (const entry of this.keeper.journal.linkedEntries(member.boardQuestId)) {
-        if (!entry.link || !waypointIds.has(entry.link.waypointId) || entry.owner === "You" || entry.threadId === member.threadId ||
-            !["done", "rejected"].includes(entry.status)) continue;
+        if (!entry.link || entry.status !== "done" || !entry.evidence.length || wardenReview(entry, member.threadId, role).problem) continue;
         const { waypointId } = entry.link;
         const key = `${waypointId}:${entry.threadId}`;
         const target = targets.get(key) ?? { makerThreadId: entry.threadId, waypointId, entryIds: [] };
@@ -1381,8 +1384,8 @@ export class TavernRuntime {
       }
     }
     return {
-      checkerWaypointIds: [...waypointIds], reviewTarget,
-      assignedJournalTargets: [...targets.values()],
+      checkerWaypointIds: role?.checkerWaypointIds ?? [], reviewTarget,
+      submittedJournalTargets: [...targets.values()],
       guardPosture: member.guardPosture ?? null,
       reviewPosture: member.checkIndependence === "independent" ? "known different-family check for the first review target"
         : reviewLimitation(member.checkIndependence ?? "not-established"),
@@ -1761,25 +1764,43 @@ export class TavernRuntime {
   }
   journalRole(threadId: string): ReturnType<import("./ports").JournalDeps["roleOf"]> {
     const member = this.keeper.member(threadId);
-    if (member?.classId !== "warden") return member;
+    if (!member || member.role !== "member") return member;
+    const active = member.state !== "failed" && isLiveMember(this.keeper.store, member);
+    if (member.classId !== "warden") return {
+      ...member,
+      canLinkWaypoint: link => {
+        if (!active || member.errand || member.leadLinkId || member.boardQuestId !== link.boardQuestId) return false;
+        const q = this.keeper.quest(link.boardQuestId);
+        const waypoint = this.keeper.store.get("plans", `${q.id}:${q.planVersion}`)?.waypoints.find(w => w.id === link.waypointId);
+        if (waypoint?.actor !== "agent" || keeperSubject(waypoint, q.keeperThreadId)) return false;
+        if (waypoint.owner === threadId) return true;
+        const owner = waypoint.owner ? this.keeper.member(waypoint.owner) : null;
+        if (owner?.boardQuestId === q.id && !wasReleased(owner)) return false;
+        const accepted = this.keeper.store.runtime(threadId).acceptedBriefWaypoints;
+        return member.waypointId === waypoint.id || (accepted?.boardQuestId === q.id && accepted.waypointIds.includes(waypoint.id));
+      },
+    };
+    if (!active) return null;
     return {
       ...member,
       checkerWaypointIds: this.keeper.checkerWaypoints(threadId),
       checkerEntryReview: entry => {
         const link = entry.link!;
+        const target = this.keeper.store.runtime(threadId).reviewTarget;
+        if (target?.snapshotId && (link.boardQuestId !== target.boardQuestId || entry.threadId !== target.makerThreadId ||
+            link.waypointId !== target.waypointId || !target.entryIds.includes(entry.id)))
+          return { problem: "This machine-placed Warden can only check its exact submitted journal targets." };
         const maker = this.keeper.member(entry.threadId);
         const q = this.keeper.quest(link.boardQuestId);
         const waypoint = this.keeper.store.get("plans", `${q.id}:${q.planVersion}`)?.waypoints.find(w => w.id === link.waypointId);
-        const target = this.keeper.store.runtime(threadId).reviewTarget;
-        if (target?.snapshotId && (entry.threadId !== target.makerThreadId || link.waypointId !== target.waypointId || !target.entryIds.includes(entry.id)))
-          return { problem: "This machine-placed Warden can only check its exact submitted journal targets." };
-        const leadResult = this.keeper.store.leadLinksBy("parentQuestId", q.id).some(link =>
-          link.parentWaypointId === entry.link!.waypointId && link.result?.makerThreadId === entry.threadId && link.result.entryId === entry.id);
-        const subject = waypoint && keeperSubject(waypoint, q.keeperThreadId);
-        if (!maker || maker.classId === "warden" || (subject
+        const leadResult = this.keeper.store.leadLinksBy("parentQuestId", q.id).some(lead =>
+          lead.parentWaypointId === link.waypointId && lead.result?.makerThreadId === entry.threadId && lead.result.entryId === entry.id);
+        if (!waypoint || waypoint.actor !== "agent" || !maker || maker.classId === "warden" || entry.owner === "You" || (keeperSubject(waypoint, q.keeperThreadId)
           ? maker.threadId !== q.keeperThreadId || entry.owner !== q.keeperThreadId
           : !leadResult && (maker.boardQuestId !== q.id || maker.role !== "member" || maker.errand)))
-          return { problem: "This entry is not evidence from the maker or recorded subject of the assigned waypoint." };
+          return { problem: "This entry is not evidence from a maker or recorded subject of this quest waypoint." };
+        if (!target?.snapshotId && new PlacementStore(this.keeper.store.db).byMember(maker.threadId))
+          return { problem: "Machine-placed work needs a Warden with its pinned submission snapshot." };
         const posture = this.serviceRecords.reviewPosture(maker, member);
         if (posture === "same-family") return { problem: "A same-family Warden cannot verify or reject this maker's work." };
         return { note: reviewLimitation(posture) };

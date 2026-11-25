@@ -91,7 +91,7 @@ export default async function tavern(bb: BbPluginApi) {
       runtime.serviceRecords.superseded(input);
     },
     settings: () => settings.read().journal,
-    roleOf: threadId => runtime?.journalRole(threadId) ?? store.get("members", threadId),
+    roleOf: threadId => runtime ? runtime.journalRole(threadId) : store.get("members", threadId),
     boardQuestsOf: (threadId) =>
       store.query("quests", "keeperThreadId", threadId, 5000),
     invalidate: (tags) => bb.rpc.experimental_invalidate(tags),

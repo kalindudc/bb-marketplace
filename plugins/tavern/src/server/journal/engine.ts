@@ -174,18 +174,17 @@ export const BOARD_MIRROR_REFUSAL = "This entry mirrors its board quest phase an
 export function requireMutable(entry: JournalEntry): void {
   if (entry.boardQuestId) throw new Error(BOARD_MIRROR_REFUSAL);
 }
-export function wardenCanReview(entry: JournalEntry, role: ReturnType<JournalDeps["roleOf"]>): boolean {
-  if (!entry.link || role?.classId !== "warden" || role.boardQuestId !== entry.link.boardQuestId) return false;
-  return role.checkerWaypointIds !== undefined ? role.checkerWaypointIds.includes(entry.link.waypointId) : role.waypointId === null || role.waypointId === entry.link.waypointId;
+export function wardenReview(entry: JournalEntry, threadId: string, role: ReturnType<JournalDeps["roleOf"]>) {
+  if (!entry.link || threadId === entry.threadId || role?.classId !== "warden" || role.role !== "member" || role.boardQuestId !== entry.link.boardQuestId)
+    return { problem: "Only an active Warden on this board quest can check another maker's linked entry." };
+  if (!role.checkerEntryReview) return { problem: "Warden review authorization is unavailable for this entry." };
+  return role.checkerEntryReview(entry);
 }
-export function requireWarden(entry: JournalEntry, actor: Actor, roleOf: JournalDeps["roleOf"], readOnly = false): string | null | undefined {
-  const role = actor.kind === "agent" ? roleOf(actor.threadId) : null;
-  if (!wardenCanReview(entry, role)) {
-    throw new Error("Only a Warden assigned to this board quest and waypoint can verify or reject this entry.");
-  }
-  const review = readOnly ? null : role?.checkerEntryReview?.(entry);
-  if (review?.problem) throw new Error(review.problem);
-  return review?.note;
+export function requireWarden(entry: JournalEntry, actor: Actor, roleOf: JournalDeps["roleOf"]): string | null | undefined {
+  const threadId = actor.kind === "agent" ? actor.threadId : "";
+  const review = wardenReview(entry, threadId, threadId ? roleOf(threadId) : null);
+  if (review.problem) throw new Error(review.problem);
+  return review.note;
 }
 export function canManageLinks(actor: Actor, roleOf: JournalDeps["roleOf"]): boolean {
   return actor.kind === "tavern" || (actor.kind === "agent" && roleOf(actor.threadId)?.classId === "keeper");
@@ -256,8 +255,11 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
       if (action.owner !== undefined && action.action !== "start") throw new Error("owner only goes with add, split, add_step, start or update.");
       for (const e of targets) {
         if (action.action === "start" && action.owner !== undefined && e.owner !== action.owner) { e.owner = action.owner; touch(e); }
-        if (action.action === "verify" || action.action === "reject") requireWarden(e, actor, ctx.roleOf);
-        if (action.action === "verify" && !closed(e)) throw new Error("Only reported done entries can be verified.");
+        if (action.action === "verify" || action.action === "reject") {
+          requireWarden(e, actor, ctx.roleOf);
+          if (e.status !== "done") throw new Error("Only reported done entries awaiting review can receive a Warden verdict.");
+          if (!e.evidence.length) throw new Error("The maker's submission needs evidence before it can be checked.");
+        }
         if ((action.action === "block" || action.action === "reject") && !action.reason) throw new Error("A reason is required.");
         const status: EntryStatus = action.action === "toggle" ? closed(e) ? "todo" : "done" :
           action.action === "done" ? "done" : action.action === "reject" ? "rejected" : action.action === "reopen" ? "todo" :
@@ -321,8 +323,13 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
     }
     case "link": {
       const e = find(action.id);
-      if (!canManageLinks(actor, ctx.roleOf)) throw new Error("Only a Keeper or Tavern can change waypoint links; ask the Keeper to assign this entry.");
       if (action.link === undefined) throw new Error("Provide link, or null to unlink.");
+      if (!canManageLinks(actor, ctx.roleOf)) {
+        if (e.link || !action.link) throw new Error("Only a Keeper or Tavern can change an existing waypoint link.");
+        if (actor.kind !== "agent" || actor.threadId !== e.threadId || (e.owner !== null && e.owner !== actor.threadId) ||
+            !ctx.roleOf(actor.threadId)?.canLinkWaypoint?.(action.link))
+          throw new Error("Link your own entry to a waypoint in your active quest assignment.");
+      }
       e.link = action.link;
       if (closed(e) && (e.status === "verified" || (e.link && !e.evidence.length))) setStatus(e, "todo");
       touch(e); break;

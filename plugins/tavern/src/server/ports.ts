@@ -50,8 +50,12 @@ export interface JournalDeps {
   // added by Builder A: the Keeper store is authoritative for board-mirror phases, including old unmarked entries.
   boardQuestsOf?(threadId: string): readonly BoardQuestMirror[];
   /** The caller's Tavern role, from the members table (never from metadata). */
-  // added by Builder A: a present checker list is the current-plan assignment; an empty list grants no review permission.
-  roleOf(threadId: string): { classId: string; role: "keeper" | "member" | "solo"; waypointId: string | null; boardQuestId: string | null; checkerWaypointIds?: readonly string[]; checkerEntryReview?: (entry: JournalEntry) => { problem?: string; note?: string | null } } | null;
+  roleOf(threadId: string): {
+    classId: string; role: "keeper" | "member" | "solo"; waypointId: string | null; boardQuestId: string | null;
+    canLinkWaypoint?: (link: WaypointLink) => boolean;
+    checkerWaypointIds?: readonly string[];
+    checkerEntryReview?: (entry: JournalEntry) => { problem?: string; note?: string | null };
+  } | null;
   invalidate(tags: string[]): void;
   /** A Tavern member's character name for a thread, so delegated entries name their owner; null for other threads. */
   nameOf?(threadId: string): string | null;

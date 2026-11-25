@@ -19,7 +19,7 @@ async function fixture(parentCheck: "warden" | "keeper" | "none" = "none", journ
     f.bb.sdk.plugins.list = async () => ({ plugins: [] });
     f.bb.sdk.threads.getPluginMetadata = async () => ({});
     Object.assign(f.port, registerJournal(f.bb, f.k.store.db, {
-      roleOf: id => { const m = f.k.member(id); return m && { ...m, checkerWaypointIds: f.k.checkerWaypoints(id) }; },
+      roleOf: id => f.runtime.journalRole(id),
       invalidate: () => {},
     }));
   }

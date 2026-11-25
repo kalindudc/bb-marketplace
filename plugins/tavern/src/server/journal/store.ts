@@ -6,7 +6,7 @@ import { actorSchema, journalChangeSchema, journalEntrySchema, type Actor, type 
 import type { Database, JournalDeps } from "../ports";
 import { DEFAULT_SETTINGS } from "../../shared/settings";
 import { LIMITS } from "../limits";
-import { actionSchema, ago, applyAction, awaitingSummary, closed, delegated, ordered, openSummary, rebriefEntries, type ShowOptions, planLine, progress, requireWarden, wardenCanReview, requireReopen, canManageLinks, BOARD_MIRROR_REFUSAL, copy, validateEntries, type JournalAction } from "./engine";
+import { actionSchema, ago, applyAction, awaitingSummary, closed, delegated, ordered, openSummary, rebriefEntries, type ShowOptions, planLine, progress, requireWarden, wardenReview, requireReopen, canManageLinks, BOARD_MIRROR_REFUSAL, copy, validateEntries, type JournalAction } from "./engine";
 import { normalizeLegacy } from "./legacy";
 import { boardMirrors, mirrorHistory } from "./board-mirrors";
 import { changeSummary, clip, formatUserChanges, MAX_NOTE_TEXT } from "./text";
@@ -477,7 +477,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     deps.assertWritable?.(threadId);
     get(threadId);
     if (!trusted(actor) && !journalRow(threadId)!.hydrated) throw new Error("The old journal is being imported. Retry this edit after the view refreshes.");
-    if (edit.op === "status" && (edit.status === "verified" || edit.status === "rejected")) throw new Error("Only the assigned Warden can verify or reject through the journal tool.");
+    if (edit.op === "status" && (edit.status === "verified" || edit.status === "rejected")) throw new Error("Only an eligible Warden can verify or reject through the journal tool.");
     switch (edit.op) {
       case "add": return mutate(threadId, { action: edit.parentId ? "split" : "add", id: edit.parentId ?? undefined, descriptions: edit.descriptions }, actor);
       case "status": return mutate(threadId, { action: edit.status === "todo" ? "reopen" : edit.status === "doing" ? "start" : edit.status === "blocked" ? "block" : edit.status === "rejected" ? "reject" : edit.status === "verified" ? "verify" : "done", ids: edit.entryIds, reason: edit.reason ?? (edit.status === "blocked" || edit.status === "rejected" ? localEntries(threadId).find(e => e.id === edit.entryIds[0])?.note ?? undefined : undefined), evidence: edit.evidence }, actor);
@@ -513,12 +513,17 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       if (threadId !== callerThreadId) {
         if (!["verify", "reject", "reopen", "list", "get"].includes(action.action)) throw new Error("Only Warden read and verdict actions can target another thread.");
         const role = deps.roleOf(callerThreadId);
-        const selected = new Set(action.ids ?? (action.id ? [action.id] : []));
-        const targets = selected.size ? entries.filter(e => selected.has(e.id)) : entries.filter(e => wardenCanReview(e, role));
+        const selected = new Set(action.action === "get" ? (action.id ? [action.id] : []) : action.ids ?? (action.id ? [action.id] : []));
+        const targets = selected.size ? entries.filter(e => selected.has(e.id)) : entries.filter(e => !wardenReview(e, callerThreadId, role).problem);
         if (!targets.length) throw new Error("No linked entries found in the target thread.");
         for (const entry of targets) {
-          if (action.action === "reopen" && entry.link && canManageLinks(actor, deps.roleOf)) continue;
-          const note = requireWarden(entry, actor, deps.roleOf, action.action === "list" || action.action === "get");
+          if (action.action === "reopen" && entry.link) {
+            if (canManageLinks(actor, deps.roleOf)) continue;
+            const { waypointId } = entry.link;
+            const assigned = role?.checkerWaypointIds?.includes(waypointId) ?? (role?.waypointId === null || role?.waypointId === waypointId);
+            if (!assigned) throw new Error("Only the Keeper or an assigned Warden can reopen another thread's linked entry.");
+          }
+          const note = requireWarden(entry, actor, deps.roleOf);
           if (note && (action.action === "verify" || action.action === "reject")) verdictNotes.add(note);
         }
       }
@@ -526,7 +531,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       let text: string;
       if (action.action === "list") {
         const role = deps.roleOf(callerThreadId);
-        const filtered = entries.filter(e => (threadId === callerThreadId || wardenCanReview(e, role)) && (action.filter === "open" ? !closed(e) : action.filter === "blocked" ? e.status === "blocked" : action.filter === "mine" ? e.owner === callerThreadId || (e.link && e.threadId === callerThreadId) || (e.createdBy.kind === "agent" && e.createdBy.threadId === callerThreadId) : true));
+        const filtered = entries.filter(e => (threadId === callerThreadId || !wardenReview(e, callerThreadId, role).problem) && (action.filter === "open" ? !closed(e) : action.filter === "blocked" ? e.status === "blocked" : action.filter === "mine" ? e.owner === callerThreadId || (e.link && e.threadId === callerThreadId) || (e.createdBy.kind === "agent" && e.createdBy.threadId === callerThreadId) : true));
         text = filtered.length ? filtered.map(e => `[${e.id}] ${e.description} (${e.status})${e.parentId ? `; step of [${e.parentId}]` : ""}${e.note ? ` — ${e.note}` : ""}`).join("\n") : "No matching journal entries.";
       } else if (action.action === "get") {
         const entry = entries.find(e => e.id === action.id);

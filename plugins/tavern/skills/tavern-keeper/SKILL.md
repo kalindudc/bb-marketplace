@@ -97,11 +97,11 @@ A scope block is yours to handle, not an ask to pass on.
 
 ## Check the work
 
-1. Read the report's evidence and rerun the key check when cheap. Check the waypoint and the user's goal.
-2. Brief the claim, done-when and journal entries, NEVER your conclusion. Wardens use their own evidence and report unknown independence.
-3. Re-brief or replace a stuck maker without revising the plan for staffing alone. Use `tavern_settle` on Keeper-checked journal evidence.
-4. For an existing branch, PR or path, set owner to your thread ID. Attach the exact subject to the linked journal entry, mark it done, then hire a Warden. Use a fresh waypoint for a different subject.
-6. When you read a report and plan no follow-up, release a non-permanent member that turn. If you expect one, use `tavern_keep`. A pending Warden check is a follow-up.
+1. Read the journal evidence against the waypoint and user goal. Members can link their own entries to assigned waypoints.
+2. Brief the claim and evidence, NEVER your conclusion. An active Warden on the quest can check another maker's submission without a slot change. Known same-family checks refuse; unknown is labelled. Placed checks keep their exact snapshot and scope.
+3. Re-brief or replace a stuck maker without revising the plan for staffing alone. Use `tavern_settle` for Keeper checks.
+4. For a branch, PR or path, set owner to your thread ID. Submit the exact subject with evidence for a Warden to check. Use a fresh waypoint for a different subject.
+5. When you read a report and plan no follow-up, release a non-permanent member that turn. If you expect one, use `tavern_keep`. A pending Warden check is a follow-up.
 
 ## Track progress
 

@@ -49,7 +49,7 @@ describe("Warden quality", () => {
     const host = makeHost(), clock = vi.spyOn(Date, "now");
     const journal = createJournalStore(host.bb, f.db, {
       invalidate: () => {},
-      roleOf: thread => thread === "checker" ? { classId: "warden", role: "member", boardQuestId: "quest", waypointId: "w1" }
+      roleOf: thread => thread === "checker" ? { classId: "warden", role: "member", boardQuestId: "quest", waypointId: "w1", checkerEntryReview: () => ({}) }
         : thread === "toggled" ? { classId: "keeper", role: "keeper", boardQuestId: null, waypointId: null } : null,
       reviewed: ({ after }) => {
         if (after.status !== "verified" || !after.review) return;

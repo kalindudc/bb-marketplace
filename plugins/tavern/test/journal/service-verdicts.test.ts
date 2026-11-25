@@ -10,7 +10,7 @@ afterEach(async () => { await Promise.all(dispose.splice(0).map(f => f())); });
 async function fixture() {
   const f = makeHost(); dispose.push(f.dispose); f.bb.storage.migrate(f.db, MIGRATIONS);
   const reviewed = vi.fn<(input: JournalReview) => void>();
-  const store = createJournalStore(f.bb, f.db, { reviewed, invalidate: vi.fn(), nameOf: id => id === "checker" ? "Fern" : id === "thr_keeper" ? "Wren II" : null, roleOf: t => t === "checker" ? { classId: "warden", role: "member", boardQuestId: "q", waypointId: "w1" } : t === "thr_keeper" ? { classId: "keeper", role: "keeper", boardQuestId: null, waypointId: null } : null });
+  const store = createJournalStore(f.bb, f.db, { reviewed, invalidate: vi.fn(), nameOf: id => id === "checker" ? "Fern" : id === "thr_keeper" ? "Wren II" : null, roleOf: t => t === "checker" ? { classId: "warden", role: "member", boardQuestId: "q", waypointId: "w1", checkerEntryReview: () => ({}) } : t === "thr_keeper" ? { classId: "keeper", role: "keeper", boardQuestId: null, waypointId: null } : null });
   await store.ready("maker");
   const id = store.linkWaypoint("maker", { boardQuestId: "q", waypointId: "w1" }, "Prove this", "maker", { kind: "tavern" });
   const proof = [{ kind: "command" as const, ref: "node check", detail: "Pass", exitCode: 0 }];

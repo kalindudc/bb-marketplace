@@ -18,7 +18,8 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Changed
 
-- Keepers can replace a maker without rewriting the plan or losing accepted work. Wardens can check more than one maker in a slot. Known same-family checks are refused, and unknown independence is labelled. Name waypoints in a follow-up brief to reopen only their journal entries; otherwise all of the member's linked work on the quest reopens. Reordering the party or retargeting an approved permanent slot leaves its greenlight in place.
+- Members can link their own journal entries to assigned waypoints. Any active Warden on the quest can check submitted work without a checker-slot change. Known same-family checks still refuse, unknown independence is labelled, and placed checks still use the exact snapshot.
+- Keepers can replace a maker without rewriting the plan or losing accepted work. Name waypoints in a follow-up brief to reopen only their journal entries; otherwise all of the member's linked work on the quest reopens. Reordering the party or retargeting an approved permanent slot leaves its greenlight in place.
 - In Lively, working members pace at their road stop and play their work cue. A timed remark can take them back to a passed stop before they return. Places and characters use only the first three quarters of the strip, folding older stops into milestones as needed.
 - Reorganized Tavern's documentation into five human-first guides anchored by an architecture overview and diagram, grouped contributor references under `docs/contributing/`, and split the Tavern, Keeper, and Journal agent skills into lean routers with on-demand reference files. The journal tool still returns the complete guide.
 - Answering the Keeper’s ask finishes your move without a journal tick. Declining or choosing another direction keeps the move open. Existing journal entries still work.

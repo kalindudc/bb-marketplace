@@ -6,7 +6,7 @@ Use this reference for authorization invariants, quiet timers, reminder cadence,
 
 - Only top-level entries can have steps.
 - A parent is done only after all its steps are done. A batch call is checked in its final state.
-- Verification is an authorization decision made from Tavern's members database and the current plan's checker assignments, NEVER from thread metadata or a claim in a prompt. A Warden with no current assignment has no review permission.
+- Link and review permissions come from Tavern's recorded quest, member and assignment state, NEVER from thread metadata or a claim in a prompt. Ordinary verdicts need an active Warden on the quest, not a checker-slot assignment. The snapshot and scope checks for placed work still apply.
 - The SQLite journal is the source of truth. The `quests.progress` metadata is only a compatibility mirror.
 - The server marks a doing entry of your own quiet after ten minutes without a journal change or tool activity; owned delegated entries never mark your thread quiet. Quiet is a signal for a Keeper to check progress, not permission to interrupt the member.
 
