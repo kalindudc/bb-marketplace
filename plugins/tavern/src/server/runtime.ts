@@ -2488,7 +2488,7 @@ export class TavernRuntime {
     this.stopAll.assertRunning();
     this.keeper.require(threadId, "keeper");
     const member = this.keeper.resolvePartyMember(threadId, reference), mark = member.permanent;
-    if (!member.boardQuestId || !mark || !isLiveMember(this.keeper.store, member, "work")) throw new Error("Schedules need an active permanent member.");
+    if (!member.boardQuestId || !mark || !isLiveMember(this.keeper.store, member, "schedule")) throw new Error("Schedules need a permanent member who is active or resting.");
     this.keeper.assertQuestNotHeld(member.boardQuestId);
     this.keeper.guard(threadId, member.boardQuestId);
     if ((mark.schedules?.length ?? 0) + schedules.length > 3) throw new Error("A member can have at most three schedules.");

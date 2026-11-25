@@ -4,12 +4,13 @@ import { wasReleased, type Engagement } from "../shared/member-engagement";
 import { currentLead } from "./keeper/leads";
 
 type Store = Pick<KeeperStore, "get" | "runtime">;
-export type MemberPurpose = "work" | "brief" | "occupy";
+export type MemberPurpose = "work" | "brief" | "occupy" | "schedule";
 
 const purposes: Record<MemberPurpose, readonly Engagement[]> = {
   work: ["active"],
   brief: ["briefing", "active", "resting"],
   occupy: ["briefing", "active", "releasing", "stopping"],
+  schedule: ["active", "resting"],
 };
 export function isOpenQuest(quest: BoardQuest | null | undefined): quest is BoardQuest {
   return !!quest && quest.archivedAt == null && quest.endedAt == null &&

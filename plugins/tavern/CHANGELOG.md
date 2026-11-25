@@ -34,6 +34,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- Keepers can ask to schedule rounds for permanent members even while they are resting. New rounds still need your approval.
 - Only Rangers see checkpoint fields when filing a report.
 - Tavern keeps checking briefs still queued in bb without asking for help. A refusal to replace a pending brief includes its ID.
 - Keepers can write ask options as plain labels or as objects. A malformed option names the field and shows the expected shape once.

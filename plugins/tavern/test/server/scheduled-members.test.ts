@@ -8,6 +8,7 @@ import { registerTools } from "../../src/server/tools";
 import { registerRpc } from "../../src/server/rpc";
 import { dispatch049 } from "./dispatch-fixture";
 import { makeThreadResponse } from "./host";
+import { fixtureActivity } from "./member-fixture";
 import { setup } from "./runtime-fixture";
 import { planInput, putQuestFixture, seedQuest } from "./support";
 
@@ -43,7 +44,8 @@ async function fixture() {
     const ask = await propose(schedules);
     f.k.answerAsk(ask.id, "approve", null, "page", "user", undefined, {}, receipt);
   };
-  return { ...f, q, propose, approve, messages, active: () => { status = "active"; }, idle: () => { status = "idle"; },
+  const approveCard = (askId: string) => f.harness.invokeRpc("answerAsk", { askId, optionId: "approve", note: null, via: "page" });
+  return { ...f, q, propose, approve, approveCard, messages, active: () => { status = "active"; }, idle: () => { status = "idle"; },
     sweep: () => runtime.sweep(), restart: () => {
       const store = new KeeperStore(new Database(f.k.store.db.serialize()));
       runtime = new TavernRuntime(f.bb, new Keeper(store, f.port, f.time), f.runtime.registry);
@@ -70,6 +72,34 @@ it("wakes at the daily time once, then persists the next run and records the rou
   ] });
   const duplicate = dispatch049({ threadId: "watch", pluginId: "tavern", text: f.messages[0] });
   await expect(f.runtime.dispatch(duplicate)).resolves.toMatchObject({ action: "reject" });
+});
+
+it.each(["request", "approval"] as const)("schedules and admits the next round when the member rests before %s", async stage => {
+  const f = await fixture();
+  if (stage === "request") fixtureActivity(f.k, "watch", "done");
+  const ask = await f.propose();
+  if (stage === "approval") fixtureActivity(f.k, "watch", "done");
+  expect(f.k.member("watch")?.engagement).toBe("resting");
+  expect(f.schedules()).toBeUndefined();
+
+  await expect(f.approveCard(ask.id)).resolves.toMatchObject({ ok: true });
+  expect(f.schedules()).toMatchObject([{ ...daily, nextAt: morning(5) }]);
+  f.at(morning(5));
+  await f.sweep();
+  expect(f.messages).toEqual([expect.stringContaining(daily.duty)]);
+  expect(f.schedules()?.[0]?.nextAt).toBe(morning(6));
+});
+
+it("refuses new schedule requests and pending approvals after release", async () => {
+  const f = await fixture();
+  const ask = await f.propose();
+  f.bb.sdk.threads.stop = async () => ({ ok: true });
+  expect(await f.runtime.release("lead", "watch", "Watch complete")).toBe(true);
+  expect(f.k.member("watch")?.disposition).toBe("released");
+
+  await expect(f.propose()).rejects.toThrow(/permanent member/);
+  await expect(f.approveCard(ask.id)).rejects.toThrow(/permanent member/);
+  expect(f.schedules()).toBeUndefined();
 });
 
 it("uses the server's local weekday and coalesces missed rounds across a restart", async () => {

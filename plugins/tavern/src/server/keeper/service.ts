@@ -1751,9 +1751,9 @@ export class Keeper {
         "member-schedules": effect => {
           if (effect.type !== "member-schedules" || optionId !== "approve") return;
           const member = this.member(effect.memberThreadId), permanent = member?.permanent;
-          if (!member || member.role !== "member" || !isLiveMember(this.store, member, "work") || !permanent ||
+          if (!member || member.role !== "member" || !isLiveMember(this.store, member, "schedule") || !permanent ||
               member.keeperThreadId !== ask.keeperThreadId || member.boardQuestId !== ask.boardQuestId || permanent.decisionId !== effect.permanentDecisionId)
-            throw new Error("This ask no longer names an active permanent member.");
+            throw new Error("This ask no longer names a permanent member who is active or resting.");
           const current = permanent.schedules ?? [];
           if (current.length + effect.schedules.length > 3) throw new Error("A member can have at most three schedules.");
           this.store.put("members", member.threadId, { ...member, permanent: { ...permanent, schedules: [...current, ...startSchedules(this, effect.schedules)] } });
