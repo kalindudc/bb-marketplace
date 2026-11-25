@@ -38,6 +38,8 @@ bb tavern guard status
 
 ## Guides
 
+See the [documentation index](docs/README.md) for the user guides and contributor references in one place.
+
 - [How Tavern works](docs/design.md) — architecture diagram, concepts, and end-to-end quest flow.
 - [Quests, party, and characters](docs/quests-and-party.md) — steering, controls, budgets, delegation, Keeper chains, classes, and service records.
 - [Safety and controls](docs/safety-and-controls.md) — scopes, Pi guard, send guard, cluster writes, `scopes.yml`, Closing time, and Stop all.
