@@ -39,7 +39,7 @@ it("folds the visit into one count line on a narrow room with work needing you, 
   vi.stubGlobal("matchMedia", vi.fn(query => ({ matches: query.includes("max-width"), addEventListener() {}, removeEventListener() {} })));
   const attention = { items: [], new: 2, decided: 1, needYou: 1, heldByYou: 0 };
   const slot = renderSlot({ component: CommonRoom }, { room: { ...room, attention }, registry });
-  const summary = slot.getByText("Since your last visit: 1 summary, 2 quests changed");
+  const summary = slot.getByText("Since your last visit: 1 answer, 2 quests changed");
   const details = summary.closest("details")!;
   expect(details.open).toBe(false);
   expect(details.previousElementSibling?.querySelector(".tv-hearth-band")).toBeTruthy();
@@ -68,7 +68,7 @@ it("does not show a visit block when all three lists have been seen", () => {
   expect(slot.container.querySelector(".rm-sline")?.nextElementSibling?.id).toBe("tv-away-notes");
 });
 
-it.each([[0, 0, "0 new (0 summaries, 0 unseen calls)"], [2, 1, "3 new (2 summaries, 1 unseen call)"]])("labels the Ledger's %i summaries and %i calls separately", async (summaries, decided, words) => {
+it.each([[0, 0, "0 new (0 answers, 0 unseen calls)"], [2, 1, "3 new (2 answers, 1 unseen call)"]])("labels the Ledger's %i answers and %i calls separately", async (summaries, decided, words) => {
   const attention = { items: [], new: summaries + decided, summaries, decided, needYou: 0, heldByYou: 0 };
   const slot = renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: { registry: () => fixtureRegistry, decor: () => fixtureDecor, ledger: () => ({ ...fixtureLedger, attention }) } });
   expect((await slot.findByLabelText("What the Keeper knows now")).textContent).toContain(words);

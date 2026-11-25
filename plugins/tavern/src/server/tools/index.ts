@@ -146,7 +146,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_route",
     "Read the user's message",
-    "Record how the oldest unrouted user message was read. notes is REQUIRED on every route kind: separate facts, promises and hand-backs with need (see tavern_note), or []. The goal itself is never a note: open a quest for it. A steer can name one boardQuestId or several boardQuestIds when the user means multiple goals. Asides and questions must not name quests. Record an explicit checker-handoff hold with checkerHandoffHold: { reason }. It stays held until a user control releases it; a reporting promise never releases it. Route queued messages before quest writes. steer: apply to every named quest; ask and change nothing if targets are unclear. A still-applicable steer or new-quest route survives later messages until its following Keeper turn ends; never re-route to regain it. question: answer from the ledger or knowledge without changing a quest. aside: act directly or hire with errand:true, outside any quest. A rule, question or aside alone does not block existing quest work. new-quest: open the concrete goal with tavern_quest and scout; a greeting or class selection is not a goal. rule: save the user's standing rule verbatim with tavern_rule and source:message, active for this Keeper by default; global only when the user explicitly names all Keepers or all Tavern threads. Keeper proposals wait for ledger confirmation. Promises need dueAt in Unix milliseconds.",
+    "Record how the oldest unrouted user message was read. notes is REQUIRED on every route kind: separate facts, promises and hand-backs with need (see tavern_note), or []. The goal itself is never a note: open a quest for it. A steer can name one boardQuestId or several boardQuestIds when the user means multiple goals. Asides must not name quests. For a quest question, name its boardQuestId; this grants no authority. Record an explicit checker-handoff hold with checkerHandoffHold: { reason }. It stays held until a user control releases it; a reporting promise never releases it. Route queued messages before quest writes. steer: apply to every named quest; ask and change nothing if targets are unclear. A still-applicable steer or new-quest route survives later messages until its following Keeper turn ends; never re-route to regain it. question: answer from the ledger or knowledge without changing a quest. aside: act directly or hire with errand:true, outside any quest. A rule, question or aside alone does not block existing quest work. new-quest: open the concrete goal with tavern_quest and scout; a greeting or class selection is not a goal. rule: save the user's standing rule verbatim with tavern_rule and source:message, active for this Keeper by default; global only when the user explicitly names all Keepers or all Tavern threads. Keeper proposals wait for ledger confirmation. Promises need dueAt in Unix milliseconds.",
     limit => z.object({
       kind: z.enum(ROUTE_KINDS),
       boardQuestId: optionalQuest,
@@ -166,9 +166,13 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_summary",
     "Posted a Keeper summary",
-    "Write only what the user would want to read later: finished work and its result, a decision and why, or something that needs them. Never post progress like “still working.” For an action, open and link the ask or hand-back. Include evidence; use results for figures. Put the returned directive on its own line in chat.",
+    "Record quest answers, results or requests, not progress. For questions and completed steers, put tavern_route IDs in answers; keep those IDs on corrections. Link asks, hand-backs and evidence. Put the returned card on its own line.",
     summaryDraftSchema,
-    (input, threadId) => `Posted. Put this card on its own line in your reply:\n::tavern-summary{id="${k.postSummary(threadId, input).id}"}`,
+    (input, threadId) => {
+      const summary = k.postSummary(threadId, input);
+      void runtime.push(threadId, "New Keeper answer", summary.title, undefined, "answer");
+      return `Posted. Put this card on its own line in your reply:\n::tavern-summary{id="${summary.id}"}`;
+    },
   );
   register(
     "tavern_note",

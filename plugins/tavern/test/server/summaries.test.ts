@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { Room } from "../../src/shared/contract";
 import { isNewsEvent, isWakeEvent } from "../../src/server/news";
 import { registerRpc, rpcHandlers } from "../../src/server/rpc";
@@ -11,14 +11,15 @@ const draft = { title: "Watch ended", body: "No alerts in **two shifts**.", link
 const dbs: ReturnType<typeof setup>["k"]["store"]["db"][] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); });
 
-async function fixture() {
+async function fixture(beforeRegistration?: (f: ReturnType<typeof setup>, questId: string) => void) {
   const f = setup(); dbs.push(f.k.store.db);
-  registerTools(f.bb, f.runtime);
-  registerRpc(f.bb, f.runtime);
   const q = await seedQuest(f.k, "lead", "Watch the rollout", "Watch");
   const brief = { outcome: "Read the log", mode: "make-it-work" as const, outOfScope: "Deploying", doneWhen: "Log checked", context: [], questions: [], timeboxMinutes: null };
   f.k.bind("maker", "smith", "vale", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: "w1", errand: false, title: "Read the log", brief });
   f.k.bind("other", "keeper", "wren", "project");
+  beforeRegistration?.(f, q.id);
+  registerTools(f.bb, f.runtime);
+  registerRpc(f.bb, f.runtime);
   const post = async (extra: Record<string, unknown> = {}, threadId = "lead") => {
     const result = await f.harness.behavior.invokeAgentTool("tavern_summary", { ...draft, boardQuestId: q.id, ...extra }, { threadId });
     const id = String(result).match(/::tavern-summary\{id="([^"]+)"\}/)?.[1];
@@ -40,6 +41,80 @@ it("records Keeper-authored news, not a Keeper wake, and refuses members and oth
   expect(isNewsEvent(event, "lead")).toBe(false);
   expect(isWakeEvent(event, "lead")).toBe(false);
   expect(await f.harness.invokeRpc("room", {})).toMatchObject({ recent: expect.arrayContaining([expect.objectContaining({ type: "summary.posted" })]) });
+});
+
+it("flags only routes recorded after answer tracking starts and can still search for a linked older route", async () => {
+  const oldText = "Keep the original copper gauge.";
+  const f = await fixture((fixture, questId) => {
+    fixture.k.receiveUser("lead", oldText);
+    fixture.k.route("lead", { kind: "steer", boardQuestId: questId, summary: "Keep the gauge" });
+    fixture.advance(1);
+  });
+  const unanswered = () => f.harness.invokeRpc("unansweredMessages", { boardQuestId: f.q.id });
+  expect(await unanswered()).toMatchObject({ messages: [] });
+  f.k.receiveUser("lead", "Can we sign off now?");
+  const question = f.k.route("lead", { kind: "question", boardQuestId: f.q.id, summary: "Asked about sign-off" });
+  expect(await unanswered()).toMatchObject({ messages: [{ id: question.id, kind: "question" }] });
+  const old = f.k.store.all("routes").find(route => route.userText === oldText)!;
+  const id = await f.post({ answers: [old.id] });
+  expect(await f.harness.invokeRpc("searchAnswers", { query: "original copper gauge" })).toMatchObject({ answers: [{ id }] });
+  expect(await unanswered()).toMatchObject({ messages: [{ id: question.id }] });
+  f.advance(1);
+  const reopened = rpcHandlers(f.runtime);
+  expect(await reopened.unansweredMessages({ boardQuestId: f.q.id })).toMatchObject({ messages: [{ id: question.id }] });
+});
+
+it("answers a quest question from its original words, without treating the route as permission", async () => {
+  const f = await fixture();
+  const text = "Can the watch use this evidence? " + "More context. ".repeat(20) + "OriginalSearchTerm";
+  f.advance(1);
+  f.k.receiveUser("lead", text);
+  const question = f.k.route("lead", { kind: "question", boardQuestId: f.q.id, summary: "Asked about evidence" });
+  expect(() => f.k.setQuestHeld(f.q.id, true, { kind: "agent", threadId: "lead" }, question.sourceMessageId!)).toThrow(/routed message/);
+  const unanswered = () => f.harness.invokeRpc("unansweredMessages", { boardQuestId: f.q.id });
+  expect(await unanswered()).toMatchObject({ messages: [{ id: question.id, text, kind: "question" }] });
+  const first = await f.post({ answers: [question.id, question.id] });
+  expect(await unanswered()).toMatchObject({ messages: [] });
+  expect(await f.harness.invokeRpc("summary", { id: first, threadId: "lead" })).toMatchObject({ summary: {
+    answers: [question.id], answerMessages: [{ id: question.id, text, kind: "question" }], questTitle: f.q.title,
+  } });
+  await expect(f.post({ answers: ["missing"] })).rejects.toThrow(/route/);
+  const replacement = await f.post({ answers: [question.id], supersedes: first });
+  const search = (query: string) => f.harness.invokeRpc("searchAnswers", { query, boardQuestId: f.q.id });
+  expect(await search("originalsearchterm")).toMatchObject({ answers: [{ id: replacement, correctedBy: null }, { id: first, correctedBy: replacement }] });
+  await f.post({ answers: [], supersedes: replacement });
+  expect(await unanswered()).toMatchObject({ messages: [{ id: question.id }] });
+});
+
+it("scopes route links to their Keeper and quest, but searches the whole Tavern", async () => {
+  const f = await fixture();
+  const other = await seedQuest(f.k, "other", "Survey the bridge", "Survey");
+  f.k.receiveUser("other", "Look under the stone arch.");
+  const steer = f.k.route("other", { kind: "steer", boardQuestId: other.id, summary: "Inspect the arch" });
+  await expect(f.post({ answers: [steer.id] })).rejects.toThrow(/route/);
+  const answer = await f.post({ boardQuestId: other.id, title: "Bridge survey", body: "Ice has not formed.", answers: [steer.id], results: { figures: [{ label: "Arches", value: "1" }] } }, "other");
+  const search = (query: string, boardQuestId?: string) => f.harness.invokeRpc("searchAnswers", { query, boardQuestId });
+  expect(await search("stone arch", f.q.id)).toMatchObject({ answers: [] });
+  for (const query of ["stone arch", "Survey the bridge", "result", "Ice has not formed"]) {
+    expect(await search(query)).toMatchObject({ answers: [{ id: answer, questTitle: other.title }] });
+  }
+  expect(await f.harness.invokeRpc("unansweredMessages", { boardQuestId: f.q.id })).toMatchObject({ messages: [] });
+});
+
+it("uses the configured page size and keeps answer push opt-in", async () => {
+  const f = await fixture();
+  const original = f.runtime.config();
+  const push = vi.spyOn(f.runtime.alerts, "deliver").mockResolvedValue({ outcome: "sent" });
+  const config = vi.spyOn(f.runtime, "config").mockReturnValue({ ...original, attention: { ...original.attention, answerPageSize: 1 } });
+  const first = await f.post({ title: "First watch result" });
+  expect(push).not.toHaveBeenCalled();
+  config.mockReturnValue({ ...original, attention: { ...original.attention, answerPageSize: 1, pushAnswers: true } });
+  const last = await f.post({ title: "Final watch result" });
+  expect(push).toHaveBeenCalledExactlyOnceWith("New Keeper answer", "Final watch result", "lead");
+  const page = await rpcHandlers(f.runtime).searchAnswers({ query: "watch result" });
+  expect(page.answers.map(answer => answer.id)).toEqual([last]);
+  expect((await rpcHandlers(f.runtime).searchAnswers({ query: "watch result", before: page.nextCursor! })).answers.map(answer => answer.id)).toEqual([first]);
+  expect(await f.detail()).toMatchObject({ summariesNextCursor: last });
 });
 
 it("folds an append-only correction under its new summary and drops the old item from attention", async () => {

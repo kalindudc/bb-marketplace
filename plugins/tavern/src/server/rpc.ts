@@ -27,7 +27,7 @@ import { isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
 import { isNotFound } from "./host-errors";
 import type { Runtime } from "./keeper/store";
 import { DecisionViews } from "./decisions";
-import { markSummariesSeen, markVisitSummariesSeen, summariesForQuest, summaryCounts, summaryView } from "./summaries";
+import { markSummariesSeen, markVisitSummariesSeen, searchAnswers, startAnswerTracking, summariesForQuest, summaryCounts, summaryView, unansweredMessages } from "./summaries";
 import { markQuestChangesSeen } from "./quest-change-attention";
 import { stopAllHandlers } from "./stop-all-rpc";
 import { placementHandlers } from "./placement/rpc";
@@ -58,6 +58,7 @@ export function rpcHandlers(
   runtime: TavernRuntime,
 ): OptionalRpcContext<ExperimentalPluginRpcHandlersWithContext<typeof rpcContract>> {
   const k = runtime.keeper;
+  const answerTrackingStarted = startAnswerTracking(k.store, k.now());
   const { identities } = threadIdentities(runtime);
   const placementStore = new PlacementStore(k.store.db);
   const pullRequestsFor = (id: string) => k.store.pullRequestsForMember(id);
@@ -386,7 +387,7 @@ export function rpcHandlers(
       void runtime.taleRenderer?.ensure(id);
       const summary = k.summary(id);
       const tale: BoardQuestDetail["tale"] = readTale(k, summary);
-      const historyPage = summariesForQuest(k.store, id);
+      const historyPage = summariesForQuest(k.store, id, runtime.config().attention.answerPageSize);
       const boardAttention = snapshot.view({ boardQuestId: id });
       const visitChangeId = boardAttention.items.find(item => item.kind === "quest-changed")?.id;
       let summaryDocument: BoardQuestDetail["summaryDocument"];
@@ -452,9 +453,15 @@ export function rpcHandlers(
         events,
       };
     },
+    searchAnswers: ({ query, boardQuestId, before }) => searchAnswers(k.store, query, runtime.config().attention.answerPageSize, boardQuestId, before),
+    unansweredMessages: ({ boardQuestId, before }) => {
+      const quest = k.quest(boardQuestId);
+      if (quest.deletedAt != null) return { messages: [], nextCursor: null };
+      return unansweredMessages(k.store, quest, answerTrackingStarted, runtime.config().attention.answerPageSize, before);
+    },
     olderSummaries: ({ boardQuestId, beforeId }) => {
       if (k.quest(boardQuestId).deletedAt != null) return { summaries: [], nextCursor: null };
-      const { summaries, summariesNextCursor } = summariesForQuest(k.store, boardQuestId, beforeId);
+      const { summaries, summariesNextCursor } = summariesForQuest(k.store, boardQuestId, runtime.config().attention.answerPageSize, beforeId);
       return { summaries, nextCursor: summariesNextCursor };
     },
     summary: ({ id, threadId }) => {

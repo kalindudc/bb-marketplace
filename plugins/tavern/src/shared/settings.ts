@@ -78,7 +78,7 @@ export type SparseTunables = Partial<Tunables>;
 
 export const GUARDRAIL_SETTING_KEYS = [
   "scopes.*", "away.*", "limits.*", "keepers.alwaysAsk", "keepers.greenlight", "keepers.partyMax", "keepers.decisionTimerMax",
-  "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "tavern.gitProgram", "tavern.piProgram", "tavern.speechExtensions", "tavern.speechInstructions", "tavern.speechRecentMessages", "attention.reviewBudget", "attention.notify", "attention.quietHours", "tuning.mode",
+  "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "tavern.gitProgram", "tavern.piProgram", "tavern.speechExtensions", "tavern.speechInstructions", "tavern.speechRecentMessages", "attention.reviewBudget", "attention.notify", "attention.pushAnswers", "attention.quietHours", "tuning.mode",
   "knobs.typingHoldSeconds", "knobs.afterMessageHoldSeconds", "knobs.rangerTimeboxMaxMinutes",
 ] as const;
 export function isGuardrailSetting(key: string) {
@@ -126,6 +126,8 @@ const speechFields = {
   speechExtensions: speechExtensionsSchema, speechInstructions: speechInstructionsSchema, speechRecentMessages: speechRecentMessagesSchema,
 };
 
+export const ANSWER_PAGE_SIZE = { min: 1, max: 100, default: 12 } as const;
+
 const sections = {
   tavern: z.object({ paused: z.boolean(), defaultClass: z.union([z.literal("none"), classId]),
     widgetRow: z.boolean(), voice: voiceModeSchema, voiceBeforeOff: voiceBeforeOffSchema, levels: z.boolean(), characters: z.boolean().default(true), hearthFlicker: z.boolean(), agentsMayChangeSettings: z.boolean().default(true),
@@ -137,7 +139,8 @@ const sections = {
   away: z.object({ neverWhileClosed: awayStopListSchema, defaultEndState: awayQuestSchema.shape.endState,
     defaultAllowWatched: z.boolean(), defaultWakeBlockers: z.boolean(), defaultWakeProduction: z.boolean(), ...numberFields(KNOB_FIELDS.away) }).strict(),
   attention: z.object({ reviewBudget: z.number().int().min(1).max(30),
-    notify: z.enum(["consequential", "all", "none"]), quietHours: quietHoursSchema.nullable() }).strict(),
+    notify: z.enum(["consequential", "all", "none"]), quietHours: quietHoursSchema.nullable(),
+    pushAnswers: z.boolean(), answerPageSize: z.number().int().min(ANSWER_PAGE_SIZE.min).max(ANSWER_PAGE_SIZE.max) }).strict(),
   keepers: z.object({ unreportedNudges: z.boolean(), restMinutes: z.number().int().min(1).max(10080).default(30), greenlight: z.enum(["explicit", "by-size"]),
     decisionTimerMax: z.number().int().min(1).max(10080), partyMax: z.number().int().min(1).max(1000),
     chainDepth: z.number().int().min(1).max(3), chainMembers: z.number().int().min(1).max(1000),
@@ -160,7 +163,8 @@ export const settingsSchema = z.object({
   }).prefault({ paused: false, defaultClass: "none", widgetRow: true, voice: DEFAULT_VOICE, levels: true, characters: true, hearthFlicker: true, agentsMayChangeSettings: true, ambientMotion: "calm", repeatSeconds: 20, batchWakeEvents: false }),
   away: sections.away.extend(defaultNumbers(KNOB_FIELDS.away)).prefault({ neverWhileClosed: [...AWAY_STOP_LIST],
     defaultEndState: "drafts-ready", defaultAllowWatched: false, defaultWakeBlockers: true, defaultWakeProduction: false }),
-  attention: sections.attention.default({ reviewBudget: 3, notify: "consequential", quietHours: null }),
+  attention: sections.attention.extend({ pushAnswers: z.boolean().default(false), answerPageSize: sections.attention.shape.answerPageSize.default(ANSWER_PAGE_SIZE.default) })
+    .prefault({ reviewBudget: 3, notify: "consequential", quietHours: null }),
   keepers: sections.keepers.extend({ ...defaultNumbers(KNOB_FIELDS.keepers), unreportedNudges: z.boolean().default(true), alwaysAsk: alwaysAskSchema.default([...ALWAYS_ASK_KINDS]), chainDepth: sections.keepers.shape.chainDepth.default(1), chainMembers: sections.keepers.shape.chainMembers.default(12) })
     .prefault({ greenlight: "explicit", decisionTimerMax: 10080, partyMax: 5, staleStrikes: 2, restMinutes: 30 }),
   classes: sections.classes.default({}), scopes: sections.scopes.extend({ sendTools: sendToolsSchema.default([]) }).prefault({ mode: "enforce" }),

@@ -127,7 +127,7 @@ function RuleScopeOnReceipt({ rule, questTitle }: { rule: Rule; questTitle: stri
     </>;
 }
 const ROUTE_WORD: Record<Route["kind"], string> = { steer: "steer", question: "question", aside: "aside", "new-quest": "new quest", rule: "standing rule" };
-const ROUTE_HELP: Record<Route["kind"], string> = { steer: "It changes a board quest; the Keeper updates the plan", question: "Answer it from the ledger; nothing changes", aside: "Unrelated; a quick answer or a side quest, goals untouched", "new-quest": "Pin it on the board as another goal", rule: "A standing rule in your words; active at once, shown in the ledger" };
+const ROUTE_HELP: Record<Route["kind"], string> = { steer: "It changes a board quest; the Keeper updates the plan", question: "Record an answer without changing the quest", aside: "Unrelated; a quick answer or a side quest, goals untouched", "new-quest": "Pin it on the board as another goal", rule: "A standing rule in your words; active at once, shown in the ledger" };
 
 export function MessageRouteTab({ threadId, params }: ExperimentalThreadTabProps & { params: JsonValue | null }) {
     const query = experimental_useRpcQuery({ contract: rpcContract, method: "routes", input: { threadId } });
@@ -142,6 +142,7 @@ export function MessageRouteTab({ threadId, params }: ExperimentalThreadTabProps
     const candidates = query.data?.routes.filter(r => typeof args.key !== "string" || r.messageKey === args.key) ?? [];
     const chosen = candidates.find(r => r.id === routeId) ?? (candidates.length === 1 ? candidates[0]! : null);
     const needsQuest = kind === "steer" || kind === "new-quest";
+    const showsQuest = needsQuest || kind === "question";
     const nowQuest = chosen && query.data?.boardQuests.find(q => q.id === chosen.boardQuestId);
     return <div className="tavern rtab" data-part="MessageRouteTab">
       <header className="journal-head"><div className="journal-title"><h2>Re-route this message</h2><button type="button" className="btn sm narrow-only" onClick={() => panel.close()}>Back to chat</button></div></header>
@@ -151,9 +152,9 @@ export function MessageRouteTab({ threadId, params }: ExperimentalThreadTabProps
         {candidates.length > 1 && <label className="rt-field">Which message?<select value={routeId} onChange={e => setRouteId(e.target.value)}><option value="">Choose the message</option>{candidates.map(r => <option value={r.id} key={r.id}>{new Date(r.messageAt).toLocaleString()} · {r.summary}</option>)}</select></label>}
         {chosen && <div className="tavern readas rt-now"><span className="ra-l">now read as</span>{nowQuest && <span className="ra-goal">{nowQuest.title}</span>}<span className={`route-chip k-${chosen.kind}`}>{ROUTE_WORD[chosen.kind]}</span><TimeAgo at={chosen.messageAt} /><span className="ra-sum">{chosen.summary}</span></div>}
         <fieldset className="opts"><legend className="rt-leg">Read it as</legend>{ROUTE_KINDS.map(k => <label key={k} className="opt"><input type="radio" name={`route-${threadId}`} checked={kind === k} onChange={() => { setKind(k); setSaved(false); }} /><span className="ol"><b>{ROUTE_WORD[k]}</b><span className="m">{ROUTE_HELP[k]}</span></span></label>)}</fieldset>
-        {needsQuest && <label className="rt-field">Board quest<select value={questId} onChange={e => setQuestId(e.target.value)}><option value="">Choose the goal</option>{query.data?.boardQuests.map(q => <option value={q.id} key={q.id}>{q.title}</option>)}</select></label>}
+        {showsQuest && <label className="rt-field">Board quest<select value={questId} onChange={e => setQuestId(e.target.value)}><option value="">{needsQuest ? "Choose the goal" : "No quest"}</option>{query.data?.boardQuests.map(q => <option value={q.id} key={q.id}>{q.title}</option>)}</select></label>}
         <p className="m small">Asides and questions never change a board quest. Saving wakes the Keeper with the corrected route.</p>
-        <div className="ask-f"><button type="button" className="btn pri" disabled={!chosen || !kind || mutation.isPending || (needsQuest && !questId)} onClick={() => { if (chosen && kind) void mutation.mutate({ routeId: chosen.id, kind, boardQuestId: needsQuest ? questId : null }).then(() => setSaved(true)).catch(setError); }}>Save route</button>{saved && <span className="receipt-inline" role="status"><Glyph name="check" /><span>Route corrected</span></span>}</div>
+        <div className="ask-f"><button type="button" className="btn pri" disabled={!chosen || !kind || mutation.isPending || (needsQuest && !questId)} onClick={() => { if (chosen && kind) void mutation.mutate({ routeId: chosen.id, kind, boardQuestId: showsQuest && questId ? questId : null }).then(() => setSaved(true)).catch(setError); }}>Save route</button>{saved && <span className="receipt-inline" role="status"><Glyph name="check" /><span>Route corrected</span></span>}</div>
         {query.data && candidates.length === 0 && <p className="m small">The Keeper has not recorded a route for this message yet.</p>}
       </div>
     </div>;

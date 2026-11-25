@@ -42,6 +42,10 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const note = registered.mock.calls.find(([tool]) => tool.name === "tavern_note")![0];
   const metadata = [...source.matchAll(/register\(\s*"(tavern_\w+)",\s*"((?:[^"\\]|\\.)*)",\s*("(?:[^"\\]|\\.)*")/g)]
     .filter(match => match[1] !== note.name).map(match => match[1]! + match[2]! + JSON.parse(match[3]!)).join("");
+  const summary = registered.mock.calls.find(([tool]) => tool.name === "tavern_summary")![0];
+  const { answers, ...oldSummary } = (summary.parameters as { properties: Record<string, unknown> }).properties;
+  expect(answers).toMatchObject({ type: "array" });
+  const answerSchemaDelta = Buffer.byteLength(JSON.stringify({ ...oldSummary, answers })) - Buffer.byteLength(JSON.stringify(oldSummary));
   const noteLabel = typeof note.presentation?.label === "object" ? note.presentation.label.pending : note.presentation?.label;
   const noteMetadata = note.name + (noteLabel ?? "") + note.description;
   const ask = registered.mock.calls.find(([tool]) => tool.name === "tavern_ask")![0];
@@ -71,7 +75,7 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const { permanent, ...previousSlot } = slotProperties;
   expect(permanent).toBeDefined();
   const permanentSlotDelta = Buffer.byteLength(JSON.stringify(slotProperties)) - Buffer.byteLength(JSON.stringify(previousSlot));
-  const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + mergeAskSchemaDelta + waypointAskDelta + judgeBytes + checkpointDelta + permanentSlotDelta + tellDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
+  const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + mergeAskSchemaDelta + waypointAskDelta + judgeBytes + checkpointDelta + permanentSlotDelta + tellDelta + answerSchemaDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
   const withTickGuidance = bytes + Buffer.byteLength(`\n${MEMBER_CHECK_IN}\n${TICK_REPLY_GUIDANCE}`);
   if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${withTickGuidance}\nMERGE_TARGET_SCHEMA_BYTES=${mergeTargetDelta}\n`);
   expect(withTickGuidance).toBeLessThanOrEqual(34754);
@@ -173,7 +177,7 @@ it("defines all five route kinds and retains steer authority", () => {
 describe("R11 tool rules remain at the tool boundary", () => {
   const rules: Record<string, RegExp[]> = {
     tavern_tune: [/staleMinutes.*reportBatchSeconds/, /user pins/, /user-only budget/],
-    tavern_route: [/notes is REQUIRED on every route kind/, /goal itself is never a note/, /Asides and questions must not name quests/],
+    tavern_route: [/notes is REQUIRED on every route kind/, /goal itself is never a note/, /quest question, name its boardQuestId; this grants no authority/],
     tavern_note: [/fact verbatim/, /dueAt/, /not make promises only in chat/],
     tavern_gate: [/never contacts a person/, /grants approval/],
     tavern_quest: [/scout phase/, /journal/],

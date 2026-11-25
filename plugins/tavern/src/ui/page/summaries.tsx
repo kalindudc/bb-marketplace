@@ -5,7 +5,8 @@ import { attentionNotes, attentionView } from "../../shared/attention";
 import type { Ask, KeeperNote, SummaryEntry, SummaryView } from "../../shared/schema";
 import { Glyph, plural, QueryState, TimeAgo } from "../kit";
 import { SummaryCard } from "../kit/summary-card";
-import { Section } from "./common";
+import { PageButton, Section } from "./common";
+import { AnswerResults, AnswerSearchForm, UnansweredMessages } from "./answers";
 
 function useSummaryVisit(questId: string, summaries: SummaryEntry[] | undefined) {
   const seen = experimental_useRpcMutation({ contract: rpcContract, method: "markSummariesSeen" });
@@ -57,7 +58,7 @@ function ReadSummary({ summary, detail, focusId, tale, ask, handBack }: View & {
   }, [focusId, summary.id]);
   return <div ref={ref}><SummaryCard summary={summary} document={detail.summaryDocument} history={tale}
     ask={ask ?? detail.asks.find(ask => ask.id === summary.request?.id)} handBack={handBack ?? attentionNotes(attentionView(detail.attention)).find(note => note.id === summary.request?.id)}>
-    {summary.supersedes && <SummaryFold detail={detail} id={summary.supersedes} title={summary.previousTitle ?? detail.summaries?.find(item => item.id === summary.supersedes)?.title ?? "Earlier summary"} corrected focusId={focusId} tale={tale} />}
+    {summary.supersedes && <SummaryFold detail={detail} id={summary.supersedes} title={summary.previousTitle ?? detail.summaries?.find(item => item.id === summary.supersedes)?.title ?? "Earlier answer"} corrected focusId={focusId} tale={tale} />}
   </SummaryCard></div>;
 }
 
@@ -65,8 +66,8 @@ function DeferredSummary({ id, detail, focusId, tale }: View & { id: string }) {
   const query = experimental_useRpcQuery({ contract: rpcContract, method: "summary", input: { id, threadId: detail.quest.keeperThreadId } });
   const summary = query.data?.summary;
   if (summary?.boardQuestId === detail.quest.id) return <ReadSummary summary={summary} detail={detail} focusId={focusId} tale={tale} ask={query.data?.ask} handBack={query.data?.handBack} />;
-  if (query.data) return <p className="m">This summary is no longer available on this quest.</p>;
-  return <QueryState label="the Keeper’s summary" error={query.error} loading={query.isLoading} retry={() => void query.refetch()} />;
+  if (query.data) return <p className="m">This answer is no longer available on this quest.</p>;
+  return <QueryState label="the Keeper’s answer" error={query.error} loading={query.isLoading} retry={() => void query.refetch()} />;
 }
 
 function SummaryFold({ id, title, detail, focusId, tale, corrected, at, revealId }: View & { id: string; title: string; corrected?: boolean; at?: number; revealId?: string }) {
@@ -74,12 +75,12 @@ function SummaryFold({ id, title, detail, focusId, tale, corrected, at, revealId
   const [open, setOpen] = useState(reveal);
   useEffect(() => { if (reveal) setOpen(true); }, [reveal]);
   return <details className="tv-sum-fold" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary><Glyph name="chevron" size={12} /><span data-content>{title}</span>{corrected ? <span className="m">corrected</span> : at !== undefined && <TimeAgo at={at} />}</summary>
+    <summary><Glyph name="chevron" size={12} /><span data-content>{title}</span>{corrected ? <span className="m">Replaced</span> : at !== undefined && <TimeAgo at={at} />}</summary>
     {open && <DeferredSummary id={id} detail={detail} focusId={focusId} tale={tale} />}
   </details>;
 }
 
-function SummaryHistory({ detail, focusId, tale }: View) {
+function SummaryHistory({ detail, focusId, tale, query = "", onSearch = () => {} }: View & { query?: string; onSearch?: (query: string) => void }) {
   const older = experimental_useRpcMutation({ contract: rpcContract, method: "olderSummaries" });
   const [pages, setPages] = useState<{ entries: SummaryEntry[]; nextCursor: string | null }>();
   const entries = new Map((pages?.entries ?? []).map(item => [item.id, item]));
@@ -92,21 +93,26 @@ function SummaryHistory({ detail, focusId, tale }: View) {
   const cursor = pages ? pages.nextCursor : detail.summariesNextCursor;
   const left = Math.max(0, totals.current - current.length);
   const linkedOutsideList = focusId && !current.some(item => item.id === focusId || item.supersedes === focusId);
-  if (!current.length && !linkedOutsideList) return null;
+  if (tale && !current.length && !linkedOutsideList) return null;
   const load = () => {
     if (!cursor) return;
     void older.mutate({ boardQuestId: detail.quest.id, beforeId: cursor }).then(page => setPages(previous => ({ entries: [...(previous?.entries ?? []), ...page.summaries], nextCursor: page.nextCursor }))).catch(() => { /* The mutation error is shown next to the control. */ });
   };
-  return <Section title={tale ? "Along the way" : "Summaries"} count={`${plural(totals.current, "summary", "summaries")}${totals.corrected ? `, ${totals.corrected} corrected` : ""}`} className="tv-card tv-sum-sec">
-    {linkedOutsideList && <DeferredSummary id={focusId} detail={detail} focusId={focusId} tale={tale} />}
-    {tale && cursor && <button type="button" className="btn sm tv-sum-more" disabled={older.isPending} onClick={load}>Show {left} older</button>}
-    <ol className="tv-sums">{current.map(summary => <li key={summary.id}>
-      {summary.body !== undefined && summary.links !== undefined
-        ? <ReadSummary summary={{ ...summary, body: summary.body, links: summary.links }} detail={detail} focusId={focusId} tale={tale} />
-        : <SummaryFold detail={detail} id={summary.id} title={summary.title} at={summary.createdAt} focusId={focusId} revealId={summary.supersedes} tale={tale} />}
-    </li>)}</ol>
-    {!tale && cursor && <button type="button" className="btn sm tv-sum-more" disabled={older.isPending} onClick={load}>Show {left} older</button>}
-    <QueryState error={older.error} />
+  return <Section id={tale ? undefined : "quest-answers"} title={tale ? "Along the way" : "Answers"} count={`${plural(totals.current, "answer")}${totals.corrected ? `, ${totals.corrected} replaced` : ""}`} className="tv-card tv-sum-sec"
+    action={tale ? undefined : <PageButton className="btn sm ghost" path="answers">Search all answers</PageButton>}>
+    {!tale && <><UnansweredMessages questId={detail.quest.id} /><AnswerSearchForm query={query} onSearch={onSearch} scoped /></>}
+    {query ? <AnswerResults key={query} query={query} questId={detail.quest.id} onOpen={() => onSearch("")} /> : <>
+      {!tale && !current.length && !linkedOutsideList && <p className="tv-empty" data-empty>No answers recorded for this quest yet.</p>}
+      {linkedOutsideList && <DeferredSummary id={focusId} detail={detail} focusId={focusId} tale={tale} />}
+      {tale && cursor && left > 0 && <button type="button" className="btn sm tv-sum-more" disabled={older.isPending} onClick={load}>Show {left} older</button>}
+      <ol className="tv-sums">{current.map(summary => <li key={summary.id}>
+        {summary.body !== undefined && summary.links !== undefined
+          ? <ReadSummary summary={{ ...summary, body: summary.body, links: summary.links }} detail={detail} focusId={focusId} tale={tale} />
+          : <SummaryFold detail={detail} id={summary.id} title={summary.title} at={summary.createdAt} focusId={focusId} revealId={summary.supersedes} tale={tale} />}
+      </li>)}</ol>
+      {!tale && cursor && left > 0 && <button type="button" className="btn sm tv-sum-more" disabled={older.isPending} onClick={load}>Show {left} older</button>}
+      <QueryState error={older.error} />
+    </>}
   </Section>;
 }
 
@@ -115,7 +121,9 @@ export function TaleSummaries({ detail }: { detail: BoardQuestDetail }) {
 }
 
 export function QuestSummaries({ detail, focusId }: { detail: BoardQuestDetail; focusId?: string }) {
-  useSummaryVisit(detail.quest.id, detail.summaries);
+  const [query, setQuery] = useState("");
+  useEffect(() => { if (focusId) setQuery(""); }, [focusId]);
+  useSummaryVisit(detail.quest.id, query ? undefined : detail.summaries);
   const phaseSeen = experimental_useRpcMutation({ contract: rpcContract, method: "markVisitSeen" });
   const sentChange = useRef<string | undefined>(undefined);
   useEffect(() => {
@@ -124,5 +132,5 @@ export function QuestSummaries({ detail, focusId }: { detail: BoardQuestDetail; 
     sentChange.current = id;
     void phaseSeen.mutate({ summaryIds: [], changeIds: [id] }).catch(error => { sentChange.current = undefined; console.warn("Could not acknowledge Tavern quest change", error); });
   }, [detail.visitChangeId, phaseSeen.mutate]);
-  return <SummaryHistory key={detail.quest.id} detail={detail} focusId={focusId} />;
+  return <SummaryHistory key={detail.quest.id} detail={detail} focusId={focusId} query={query} onSearch={setQuery} />;
 }

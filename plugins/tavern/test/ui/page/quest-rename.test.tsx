@@ -25,6 +25,8 @@ it("renames on the quest page, validates inline, retains the draft on refusal an
         actor: { kind: "user" }, type: "quest.renamed", text: `Renamed “${detail.quest.title}” to “${quest.title}”`,
         data: { from: { title: detail.quest.title, short: detail.quest.short }, to: { title: quest.title, short: quest.short } } }]),
     ] }), renameBoardQuest,
+    unansweredMessages: () => ({ messages: [], nextCursor: null }),
+    questAuthority: () => ({ keeperName: "Wren", rows: [], delegations: [], preapprovals: [], review: { used: 0, total: 3 }, spendBudget: null }),
   } });
   try {
     const open = await page.findByRole("button", { name: "Rename quest" });
@@ -65,6 +67,7 @@ it("renders the quest controls without duplicate React keys", async () => {
   try {
     const page = renderSlot({ component: QuestPage }, { detail, registry, room }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: {
       questSpend: () => ({ budgetCents: null, reachedAt: null, usdNanos: null, missing: 0, sources: [] }),
+      unansweredMessages: () => ({ messages: [], nextCursor: null }),
       questAuthority: () => ({ keeperName: "Wren", rows: [], delegations: [], preapprovals: [], review: { used: 0, total: 3 }, spendBudget: null }),
     } });
     try {

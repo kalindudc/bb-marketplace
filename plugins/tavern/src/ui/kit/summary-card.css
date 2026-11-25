@@ -19,6 +19,19 @@
 .tavern .tv-sum-fold { border-top: 1px solid var(--tavern-line); min-width: 0; overflow-wrap: anywhere; }
 .tavern .tv-sum-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .tavern .tv-sum-more { margin-block: 8px; }
+.tavern .tv-answer-search, .tavern .tv-unanswered li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.tavern .tv-answer-search { margin-block: 8px 12px; }
+.tavern .tv-answer-search input { flex: 1 1 16ch; min-width: 0; }
+.tavern .tv-answer-result, .tavern .tv-unanswered { display: grid; gap: 8px; min-width: 0; padding: 10px; overflow-wrap: anywhere; }
+.tavern .tv-answer-result .lnk-btn { min-width: 0; text-align: start; white-space: normal; }
+.tavern .tv-answer-results .tv-sum-actions { margin-block-start: 8px; }
+.tavern .tv-unanswered { border-inline-start: 2px solid var(--tavern-you); }
+.tavern .tv-unanswered h3, .tavern .tv-answer-quest { margin: 0; }
+:is(.tavern.tv-sum, .tavern .tv-answer-quotes, .tavern .tv-unanswered) q { white-space: pre-wrap; overflow-wrap: anywhere; }
+:is(.tavern.tv-sum, .tavern) .tv-answer-quotes { padding-inline-start: 8px; border-inline-start: 2px solid var(--tavern-line); }
+.tavern .tv-answer-quotes .tv-sums { gap: 4px; }
+:is(.tavern.tv-sum.tcard, .tavern .tv-answer-results) q.ct { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.tavern .tv-unanswered q { flex: 1 1 16ch; min-width: 0; }
 .tavern :where(.tv-sum-fold, .tv-sum .tale-visual details) > summary { cursor: pointer; min-height: 28px; }
 .tavern .tv-sum-fold > summary { display: flex; gap: 6px; align-items: center; list-style: none; font-size: 12px; }
 .tavern .tv-sum-fold > summary::-webkit-details-marker { display: none; }
@@ -33,6 +46,7 @@
 .tavern .lg-summary-rows li > span { flex: 1 1 14ch; }
 .tavern.qrow-done .qrow-unread { display: block; white-space: normal; }
 @media (max-width: 560px), (pointer: coarse) {
+  .tavern :is(.tv-answer-search input, .tv-answer-search button, .tv-answer-result button, .tv-answer-results .tv-sum-actions button, .tv-unanswered button, .lg-summary-rows button) { min-height: 44px; min-width: 44px; }
   .tavern .tv-sum-fold > summary, .tavern .tv-sum-more, :is(.tavern.tv-sum, .tavern .tv-sum) :is(button, .tale-visual summary, .evidence-list a), .tavern .tw-quest-popover button, .tavern.twidget:has(.tw-unread) .tw-ledger { min-height: 44px; min-width: 44px; }
   :is(.tavern.tv-sum, .tavern .tv-sum) .evidence-list a { display: block; width: fit-content; max-width: 100%; padding-block: 6px; }
 }

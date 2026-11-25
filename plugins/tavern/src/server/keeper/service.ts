@@ -337,7 +337,7 @@ export class Keeper {
     if (actor.kind !== "agent" || !messageId) throw new Error("Cite the user's own routed message for this quest");
     this.owned(actor.threadId, quest.id);
     const route = this.store.db.prepare("SELECT data FROM tavern_records WHERE kind='routes' AND json_extract(data,'$.keeperThreadId')=? AND json_extract(data,'$.sourceMessageId')=?").all(actor.threadId, messageId) as { data: string }[];
-    const routed = route.map(row => JSON.parse(row.data) as Route).some(route => routeQuestIds(route).includes(quest.id) && !route.classSelectionOnly);
+    const routed = route.map(row => JSON.parse(row.data) as Route).some(route => route.kind !== "question" && routeQuestIds(route).includes(quest.id) && !route.classSelectionOnly);
     const message = this.store.messageReceipt(actor.threadId, messageId, true);
     if (!routed || !message) throw new Error("Cite the user's own routed message for this quest");
     if (this.store.db.prepare("SELECT 1 FROM tavern_events WHERE json_extract(data,'$.receipt.kind')='user-message' AND json_extract(data,'$.receipt.id')=?").get(messageId)) throw new Error("This message is already a lifecycle receipt");
@@ -877,8 +877,8 @@ export class Keeper {
     questId: string | null,
     questIds: string[] = questId ? [questId] : [],
   ) {
-    if ((kind === "aside" || kind === "question") && questId)
-      throw new Error("Asides and questions must not name a board quest");
+    if (kind === "aside" && questId) throw new Error("Asides must not name a board quest");
+    if (kind === "question" && questIds.length > 1) throw new Error("A question can name one quest");
     if (kind === "steer" && !questId)
       throw new Error("A steer must name a board quest");
     for (const id of questIds) {
@@ -1813,8 +1813,11 @@ export class Keeper {
     this.require(threadId, "keeper");
     const quest = this.quest(draft.boardQuestId);
     if (quest.keeperThreadId !== threadId) throw new Error("A Keeper can only post a summary to its own quest.");
-    if (!isOpenQuest(quest)) throw new Error("Only an active quest can receive a summary.");
-    this.guard(threadId, quest.id);
+    const linked = !!draft.answers?.length;
+    if (quest.archivedAt != null || quest.deletedAt != null || quest.phase === "stopping" || !linked && !isOpenQuest(quest)) {
+      throw new Error("Only an active quest can receive a summary unless it is a linked answer on a finished quest.");
+    }
+    this.guard(threadId, linked ? null : quest.id);
     const summary = this.store.atomic(() => {
       const summary = appendSummary(this.store, threadId, draft, this.now());
       const [link] = this.store.leadLinksBy("childQuestId", quest.id);

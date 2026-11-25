@@ -41,7 +41,7 @@ export function heldQuests<Q extends Pick<BoardQuestSummary, "checkerHandoffHold
 }
 export const questNeedYouCount = (quest: Pick<BoardQuestSummary, "attention">, _asks?: readonly Ask[]) => attentionView(quest.attention).needYou;
 
-export function summaryCountWords(count: number) { return plural(count, "new summary", "new summaries"); }
+export function summaryCountWords(count: number) { return plural(count, "new answer"); }
 
 type Release = NonNullable<CheckerHandoffHold["release"]>;
 const RELEASE_VIA: Record<Release["via"], string> = { banner: "from the ask banner", page: "from the Tavern page", phone: "from your phone", chat: "in chat", cli: "from the command line" };

@@ -187,9 +187,9 @@ function SummaryDirective({ threadId, id }: { threadId: string; id: string }) {
   const navigate = useBbNavigate();
   const mark = experimental_useRpcMutation({ contract: rpcContract, method: "markSummariesSeen" });
   const [acknowledged, setAcknowledged] = useState<string>();
-  if (!query.data) return <div className="tavern tcard"><QueryState error={query.error} loading={query.isLoading} label="the Keeper’s summary" retry={() => void query.refetch()} /></div>;
+  if (!query.data) return <div className="tavern tcard"><QueryState error={query.error} loading={query.isLoading} label="the Keeper’s answer" retry={() => void query.refetch()} /></div>;
   const { summary, ask, handBack } = query.data;
-  if (!summary) return <p className="tavern m">This summary is not available in this thread.</p>;
+  if (!summary) return <p className="tavern m">This answer is not available in this thread.</p>;
   const seen = summary.seen || acknowledged === summary.id;
   return <SummaryCard summary={{ ...summary, seen }} ask={ask} handBack={handBack} chat>
     <footer className="tv-sum-actions"><button type="button" className="lnk-btn act" onClick={() => navigate.toPluginPanel("tavern", { subPath: summaryPath(summary.boardQuestId, summary.id) })}>Open on the quest page<OpensMark /></button>
@@ -200,7 +200,7 @@ function SummaryDirective({ threadId, id }: { threadId: string; id: string }) {
 }
 
 const cardKey = (kind: string, id: string) => `skel:thread:card:${kind.replace(/^tavern-/, "")}:${id}`;
-const CARD_LABEL: Record<DirectiveKind, string> = { "tavern-questmap": "the quest map", "tavern-ask": "the ask", "tavern-reports": "the reports", "tavern-ledger": "the ledger change", "tavern-party": "the party", "tavern-errand": "the errand result", "tavern-tale": "the tale", "tavern-summary": "the Keeper’s summary" };
+const CARD_LABEL: Record<DirectiveKind, string> = { "tavern-questmap": "the quest map", "tavern-ask": "the ask", "tavern-reports": "the reports", "tavern-ledger": "the ledger change", "tavern-party": "the party", "tavern-errand": "the errand result", "tavern-tale": "the tale", "tavern-summary": "the Keeper’s answer" };
 /** What a quest card's skeleton counts: waypoints on a map, the party on the party and tale cards, and a ledger change's lines. */
 function cardRows(kind: DirectiveKind, detail: BoardQuestDetail, version: number | null) {
   if (kind === "tavern-questmap") return ((version === null ? detail.quest.plan : detail.plans.find(p => p.version === version))?.waypoints.length ?? 0);

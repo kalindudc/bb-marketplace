@@ -165,7 +165,7 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
         const needsYou = list.needYou;
         const heldByYou = live.filter(q => list.items.some(item => item.kind === "held" && item.id === q.id));
         return <>
-          <p className="lg-now-line" aria-label="What the Keeper knows now">{plural(live.length, "active quest")} · {needsYou} need you · {list.new} new ({plural(list.summaries ?? 0, "summary", "summaries")}, {plural(list.decided ?? list.new, "unseen call")})</p>
+          <p className="lg-now-line" aria-label="What the Keeper knows now">{plural(live.length, "active quest")} · {needsYou} need you · {list.new} new ({plural(list.summaries ?? 0, "answer")}, {plural(list.decided ?? list.new, "unseen call")})</p>
           {heldByYou.length > 0 && <section className="lg-card" aria-label="Held by you"><h3>Held by you · {plural(list.heldByYou, "quest")}</h3>{heldByYou.map(q => <HeldResume key={q.id} quest={q} showHold={list.items.some(item => item.kind === "hold" && item.questId === q.id)} />)}</section>}
           {needsYou > 0 && <section className="lg-card lg-needs glow" style={glowVars(`needs:${threadId}`) as CSSProperties} aria-label="Needs you" data-attention-group="need">
             <h3><Glyph name="ask" size={13} /><span>Needs you</span><span className="num">{needsYou} need you</span></h3>
@@ -198,6 +198,7 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
                 text: `Check whether ${name} received the pending brief. Reconcile its delivery before sending it again.` }} />}
             </li>)}</ul>
           </section>}
+          <NewSummaries attention={list} />
           {live.map((q, i) => (
             <section className={`lg-card lg-quest ${i === 0 && needsYou === 0 ? "glow" : ""}`} style={i === 0 && needsYou === 0 ? glowVars(`ledger:${q.id}`) as CSSProperties : undefined} key={q.id} aria-label={`Board quest: ${q.title}`}>
               <div className="lg-qh"><button type="button" className="lg-qt act" title={`Open the quest page: ${q.title}`} onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${q.id}` })}><b className="clamp">{q.title}</b><OpensMark /></button><span className="m">plan v{q.planVersion}</span><PhaseStrip phase={q.phase} /></div>
@@ -221,7 +222,6 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
           ))}
           <KeptInMind notes={notes} total={data.notesTotal} older={data.olderPromises} short={short} />
           <h3 data-attention-group="new">New for you</h3>
-          <NewSummaries attention={list} />
           {!!data.undoLanes?.length && <section className="lg-card" aria-label="Decisions that now ask you">
             <h3>Decisions that now ask you</h3>
             <ul className="lg-undo-lanes">{data.undoLanes.map(lane => <li key={lane.kind}>

@@ -135,7 +135,7 @@ At every tick, ask four things: what finished, what is looping, what advanced, a
 ## Tell the user
 
 1. Lead with the outcome, evidence and next step. Put bad news first and say what you are doing about it.
-2. Use `tavern_summary` for what the user will want later, not progress. Link evidence rather than relaying raw reports.
+2. Record quest answers in `tavern_summary` with `answers` naming the question or finished steer routes. For other summaries, record what the user will want later, not progress. Link evidence, not raw reports.
 3. If asked and nothing changed, say so briefly. Only repeat warnings that changed.
 4. Continue your own work. Ask only when the user needs to choose, with real options. Use the live reply budget for chat.
 

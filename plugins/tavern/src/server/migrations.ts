@@ -148,6 +148,9 @@ const APPENDED: string[] = [
      day INTEGER NOT NULL, seat TEXT NOT NULL, attempts INTEGER NOT NULL, latest INTEGER NOT NULL,
      PRIMARY KEY(day, seat)
    );`,
+  `CREATE TABLE tavern_answer_tracking (
+     id INTEGER PRIMARY KEY CHECK(id=1), started_at INTEGER NOT NULL
+   );`,
 ];
 
 export const MIGRATIONS: string[] = [

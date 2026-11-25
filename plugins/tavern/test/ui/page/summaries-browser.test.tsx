@@ -27,14 +27,14 @@ it.runIf(process.env.TAVERN_LAYOUT_HARNESS === "1")("renders the summaries and c
   const seen = { ...correction, id: "watch-start", title: "West-cluster watch started", body: "The alert query was recorded before the watch began.", supersedes: undefined };
   const titles = Array.from({ length: 26 }, (_, index) => ({ id: `watch-notes-${index}`, title: `Confirmed coverage for shift ${26 - index}`, boardQuestId: "vault", keeperThreadId: "thr-wren", createdAt: min(120 + index * 30), seen: true, correctedBy: null }));
   const detail = { ...richDetails.vault!, summaries: [current, { ...correction, previousTitle: original.title }, seen, ...titles.slice(0, 9)], summaryCounts: { current: 3 + titles.length, corrected: 1 }, summariesNextCursor: titles[8]!.id, attention, quest: { ...richDetails.vault!.quest, attention, short: "Edge watch" } };
-  const rpc = { registry: () => registry, markSummariesSeen: () => ({ ok: true }), decor: () => ({ ...fixtureDecor, characters: false, keeperView: { ...fixtureDecor.keeperView!, attention, boardQuests: [detail.quest, richDetails.audit!.quest] } }), summary: () => ({ summary: { ...current, body: outcome + "\n\n" + evidence.trim() }, ask: null, handBack: null }) };
+  const rpc = { registry: () => registry, markSummariesSeen: () => ({ ok: true }), decor: () => ({ ...fixtureDecor, characters: false, keeperView: { ...fixtureDecor.keeperView!, attention, boardQuests: [detail.quest, richDetails.audit!.quest] } }), unansweredMessages: () => ({ messages: [], nextCursor: null }), summary: () => ({ summary: { ...current, body: outcome + "\n\n" + evidence.trim() }, ask: null, handBack: null }) };
   const quest = renderSlot({ component: QuestPage }, { detail, registry, room: richRoom }, { rpc });
-  const questHtml = (await quest.findByRole("region", { name: "Summaries" })).outerHTML;
+  const questHtml = (await quest.findByRole("region", { name: "Answers" })).outerHTML;
   const chat = renderSlot({ component: DirectiveCard }, { kind: "tavern-summary", attributes: { id: current.id }, source: "summary", message: { id: "msg", threadId: "thr-wren", turnId: null, projectId: null }, openWorkspaceFile: null }, { rpc });
   await within(chat.container).findByRole("button", { name: "OK" });
   const widget = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc });
-  fireEvent.click(await within(widget.container).findByRole("button", { name: "Show 2 quests" }));
-  await within(widget.container).findByText("1 new summary");
+  fireEvent.click(await within(widget.container).findByRole("button", { name: /Show .* and 1 other quest/ }));
+  await within(widget.container).findByText("1 new answer");
   process.stdout.write("SB2_SUMMARIES=" + JSON.stringify({ quest: questHtml, chat: chat.container.innerHTML, widget: widget.container.innerHTML }) + "\n");
   quest.lifecycle.unmount(); chat.lifecycle.unmount(); widget.lifecycle.unmount();
 });

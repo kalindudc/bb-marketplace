@@ -18,6 +18,8 @@ When the Keeper needs you to finish a move, answer its ask instead of ticking a 
 
 Keep talking in the same Keeper thread to steer work, naming the quest when your Keeper holds more than one. Tavern routes each message before the Keeper acts so questions, unrelated asides, and standing rules stay separate from plan changes. Standing rules remain local to that Keeper until you widen them in the Ledger. To send one unchanged message to several Keepers at once, use **Tell selected Keepers** on the Common room.
 
+Open **Answers** on a quest to see the Keeper’s recorded replies and unanswered questions or steers. A new answer appears in the Ledger with a link to its place on the quest page. **Search answers** in Tavern looks across Keepers and quests, including the original words quoted by an answer. Device notifications for answers are off by default. In **Settings → Your attention**, you can turn them on or change how many answers load per page.
+
 When a Keeper hires or re-briefs a member, Tavern attaches your exact opening request and routed steers in order, omitting unrelated questions and asides. Builders and checkers always read your literal words rather than a paraphrase. Requests up to 4,000 characters appear inline, and longer ones page cleanly without clipping. If you steer a quest after a member starts work, the Ledger and quest page flag that member until a fresh brief is delivered. Quoted chat text never grants tools, widens scopes, or bypasses approvals.
 
 ## Quest controls

@@ -12,13 +12,13 @@ import { hearthWords } from "../kit/hearth";
 export { isFinished, PHASE_STEPS, phaseIndex, phaseWord, pathProgress, questMove, keeperStatus, endedCounts, type MoveTone, type KeeperStatus } from "../kit";
 import { heldQuests, isFinished, keeperStatus, phaseWord, pathProgress, releaseWords, type MoveTone } from "../kit";
 
-export type PageRoute = { kind: "room" | "map" | "characters" | "classes" | "closing" | "digest" | "returned" | "archive" | "insights" | "memory" | "missing" } | { kind: "quest" | "tale" | "character" | "class"; id: string; summaryId?: string; askId?: string } | { kind: "machines"; rule?: string; hire?: string };
+export type PageRoute = { kind: "room" | "map" | "characters" | "classes" | "closing" | "digest" | "returned" | "archive" | "insights" | "memory" | "answers" | "missing" } | { kind: "quest" | "tale" | "character" | "class"; id: string; summaryId?: string; askId?: string } | { kind: "machines"; rule?: string; hire?: string };
 export function decodePageRoute(subPath: string): PageRoute {
   let parts: string[];
   try { parts = subPath.split("/").map(decodeURIComponent); } catch { return { kind: "missing" }; }
   if (parts.length === 1) {
     const kind = parts[0] === "" ? "room" : parts[0];
-    if (kind === "room" || kind === "map" || kind === "characters" || kind === "classes" || kind === "closing" || kind === "digest" || kind === "returned" || kind === "archive" || kind === "insights" || kind === "memory") return { kind };
+    if (kind === "room" || kind === "map" || kind === "characters" || kind === "classes" || kind === "closing" || kind === "digest" || kind === "returned" || kind === "archive" || kind === "insights" || kind === "memory" || kind === "answers") return { kind };
   }
   if (parts[0] === "machines" && parts.length <= 3 && parts.slice(1).every(Boolean)) return { kind: "machines", ...(parts[1] ? { rule: parts[1] } : {}), ...(parts[2] ? { hire: parts[2] } : {}) };
   if (parts.length === 4 && parts[0] === "quest" && parts[1] && parts[3]) {
@@ -206,7 +206,7 @@ function describeRaw(e: TavernEvent, ctx: EventContext): EventLine | null {
       const question = option ? prefixed(e.text, e.type === "ask.answered" ? "Answered: " : "Default applied to a reversible choice: ").split(` — ${option}`)[0]! : e.text;
       return { ...base, icon: "answer", tone: "done", filter: "asks", actor: e.type === "ask.answered" ? you : { kind: "tavern" }, head: e.type === "ask.answered" ? "answered" : "applied the default", detail: question };
     }
-    case "summary.posted": return { ...base, icon: "note", actor: leadActor, head: str("supersedes") ? "corrected a summary" : "posted a summary", detail: e.text };
+    case "summary.posted": return { ...base, icon: "note", actor: leadActor, head: str("supersedes") ? "replaced an answer" : "posted an answer", detail: e.text };
     case "decision.made": return { ...base, icon: "decided", filter: "decided", actor: leadActor, head: data.delegation ? `${lead ? "" : `${str("keeperName") ?? "The Keeper"} `}decided (delegated by you)` : data.keeperAuthority === "keepers.alwaysAsk" ? "decided under your Always ask setting" : "decided for you", detail: e.text };
     case "decision.undone": { const id = str("decisionId"); return { ...base, icon: "undo", filter: "decided", actor: you, head: "undid a decision", detail: (id && ctx.decisions.get(id)) ?? prefixed(e.text, "Undo this decision and reconcile its effects: ") }; }
     case "rule.added": return { ...base, icon: "rule", actor: leadActor, head: "added a standing rule", detail: e.text };

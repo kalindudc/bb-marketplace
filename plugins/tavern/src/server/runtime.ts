@@ -3875,13 +3875,14 @@ export class TavernRuntime {
     k.changed(threadId, id);
     return { members: membersToArchive, closeIds: pullRequests.closeIds };
   }
-  async push(threadId: string, title: string, body: string, askId?: string) {
-    const id = askId ?? this.keeper.store.openAsks(threadId).find(ask => ask.question === title && ask.why === body)?.id;
+  async push(threadId: string, title: string, body: string, askId?: string, kind: "ask" | "answer" = "ask") {
+    const attention = this.config().attention;
+    if (kind === "answer" && !attention.pushAnswers) return;
+    const id = kind === "ask" ? askId ?? this.keeper.store.openAsks(threadId).find(ask => ask.question === title && ask.why === body)?.id : undefined;
     const ask = id ? this.keeper.store.get("asks", id) : null;
     if (ask && (ask.state !== "open" || !askNeedsUser(this.keeper.store, ask))) return;
     const notificationId = id ? this.away.notificationKey(id) : null;
     if (notificationId && (this.notifiedAsks.has(notificationId) || this.away.notified(notificationId))) return;
-    const attention = this.config().attention;
     if (attention.notify === "none") return this.alerts.hold(threadId, id, notificationId, "mode-none");
     if (attention.quietHours) {
       const quiet = attention.quietHours;
@@ -3901,7 +3902,7 @@ export class TavernRuntime {
     const result = await this.alerts.deliver(title, body, threadId);
     this.alerts.recordPush(threadId, id, notificationId, result);
     if (result.outcome === "sent" && notificationId) this.away.markNotified(notificationId);
-    if (result.outcome === "failed") this.bb.log.info(`Tavern blocker push unavailable: ${result.error}`);
+    if (result.outcome === "failed") this.bb.log.info(`Tavern ${kind} push unavailable: ${result.error}`);
   }
   queued(entry: QueuedMessage) {
     const fence = this.succession.state.fence(entry.threadId);

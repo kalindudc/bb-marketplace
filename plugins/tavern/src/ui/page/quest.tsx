@@ -197,6 +197,7 @@ export function QuestPage({ detail, registry, room, summaryId, askId, recheck }:
       </div>
     </header>
     {stop.confirm}
+    <QuestSummaries key={`summaries:${quest.id}`} detail={detail} focusId={summaryId} />
     {quest.archivedAt === null && quest.deletedAt == null && <QuestRename key={`rename:${quest.id}`} quest={quest} />}
     <QuestSpend key={`spend:${quest.id}`} id={quest.id} editable={!finished && quest.phase !== "stopping"} />
     {finished && <QuestLead detail={detail} registry={registry} />}
@@ -209,7 +210,6 @@ export function QuestPage({ detail, registry, room, summaryId, askId, recheck }:
         <GateRows waypoints={quest.waypoints} />
       </div>}
     </section>
-    <QuestSummaries key={`summaries:${quest.id}`} detail={detail} focusId={summaryId} />
     <div className="tv-ggrid" role="group" aria-label="The quest sections">
       <div className="tv-col">
         {!finished ? <Section title="By whose move" count={`${attention.needYou} need you`}>

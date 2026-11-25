@@ -34,7 +34,10 @@ it("rejects a summary whose payload and row IDs disagree, and restores summaries
   const source = fixture(), destination = fixture(true);
   const quest = await seedQuest(source.k, "lead", "A watch", "Watch");
   source.k.plan("lead", planInput(quest.id));
-  const record = source.k.postSummary("lead", { boardQuestId: quest.id, title: "Coverage", body: "The evidence is attached.", links: [] });
+  const text = "How much of the watch did we check?";
+  source.k.receiveUser("lead", text);
+  const route = source.k.route("lead", { kind: "question", boardQuestId: quest.id, summary: "Asked about coverage" });
+  const record = source.k.postSummary("lead", { boardQuestId: quest.id, title: "Coverage", body: "The evidence is attached.", links: [], answers: [route.id] });
   const changeId = (await source.rpc.boardQuest({ id: quest.id })).visitChangeId!;
   await source.rpc.markVisitSeen({ summaryIds: [record.id], changeIds: [changeId] });
   const other = await seedQuest(source.k, "lead", "Another watch", "Other");
@@ -48,6 +51,7 @@ it("rejects a summary whose payload and row IDs disagree, and restores summaries
 
   destination.backup.restore(snapshot);
   expect(destination.k.store.get("summaries", record.id)).toEqual(record);
+  expect(await destination.rpc.searchAnswers({ query: text })).toMatchObject({ answers: [{ id: record.id, answerMessages: [{ id: route.id, text }] }] });
   for (const id of [record.id, changeId]) expect(destination.k.store.get("attentionSeen", id)).toEqual(source.k.store.get("attentionSeen", id));
   expect(destination.k.store.latestQuestEvent(quest.id, "summary.posted")).toEqual(source.k.store.latestQuestEvent(quest.id, "summary.posted"));
   expect(destination.k.store.get("attentionSeen", unreadId)).toBeNull();

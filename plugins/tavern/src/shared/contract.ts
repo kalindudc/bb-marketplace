@@ -44,6 +44,7 @@ import {
   reportSchema,
   summaryEntrySchema,
   summaryViewSchema,
+  answerMessageSchema,
   ROUTE_KINDS,
   routeSchema,
   ruleSchema,
@@ -511,7 +512,17 @@ export const rpcContract = defineContract({
   boardQuest: {
     input: z.object({ id, refreshPullRequests: z.boolean().optional() }).strict(),
     output: boardQuestDetailSchema,
-    tags: ({ id }: { id: string }) => [tags.boardQuest(id), tags.undoLanes()],
+    tags: ({ id }: { id: string }) => [tags.boardQuest(id), tags.undoLanes(), tags.settings()],
+  },
+  searchAnswers: {
+    input: z.object({ query: z.string(), boardQuestId: id.optional(), before: z.number().int().positive().optional() }).strict(),
+    output: z.object({ answers: z.array(summaryViewSchema), nextCursor: z.number().int().nullable() }),
+    tags: () => [tags.room(), tags.settings()],
+  },
+  unansweredMessages: {
+    input: z.object({ boardQuestId: id, before: z.number().int().positive().optional() }).strict(),
+    output: z.object({ messages: z.array(answerMessageSchema), nextCursor: z.number().int().nullable() }),
+    tags: ({ boardQuestId }: { boardQuestId: string }) => [tags.boardQuest(boardQuestId), tags.room(), tags.settings()],
   },
   olderSummaries: {
     input: z.object({ boardQuestId: id, beforeId: id }).strict(),

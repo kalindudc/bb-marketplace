@@ -9,7 +9,7 @@ const LABELS: Record<string, string> = {
   "tavern.contextualSpeech": "Contextual speech", "tavern.piProgram": "Pi program", "tavern.speechModel": "Speech model", "tavern.speechReasoning": "Speech thinking",
   "tavern.speechGapMinutes": SPEECH_GAP.label, "tavern.speechRecentMessages": SPEECH_RECENT_MESSAGES.label, "tavern.speechExtensions": "Extensions for speech", "tavern.speechInstructions": "Speech instructions",
   "tavern.characterQuietUntil": "Character quiet", "tavern.voiceBeforeOff": "Previous speech level",
-  "attention.reviewBudget": "Review budget", "attention.notify": "Push to your devices", "attention.quietHours": "Quiet hours",
+  "attention.reviewBudget": "Review budget", "attention.notify": "Push to your devices", "attention.pushAnswers": "Push Keeper answers", "attention.answerPageSize": "Answers per page", "attention.quietHours": "Quiet hours",
   "keepers.unreportedNudges": "Nudge unreported members",
   "keepers.restMinutes": "Rest before reminder", "keepers.greenlight": "Greenlight", "keepers.decisionTimerMax": "Longest decision timer", "keepers.partyMax": "Party ceiling", "keepers.chainDepth": "Lead chain depth", "keepers.chainMembers": "Lead chain ceiling", "keepers.staleStrikes": "Strikes before release advice", "keepers.restatementBytes": "Keeper restatement limit", "keepers.tickFactChars": "Tick facts limit",
   "scopes.mode": "Scopes", "scopes.sendTools": "Sending and drafting", "journal.journalReminders": "Journal reminders", "journal.journalQuietMinutes": "Quiet before a reminder",

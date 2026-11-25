@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { Attention } from "../../../src/shared/attention";
 import type { SummaryView } from "../../../src/shared/schema";
 import { TavernPage } from "../../../src/ui/page/register";
+import { NewSummaries } from "../../../src/ui/thread/new-summaries";
 import { registerThreadSurfaces } from "../../../src/ui/thread/register";
 import { ThreadWidget } from "../../../src/ui/thread/composer";
 import { fixtureDecor, fixtureRegistry } from "../../../src/ui/thread/fixtures";
@@ -26,9 +27,11 @@ const base: SummaryView = {
   createdAt: min(90), boardQuestId: "vault", keeperThreadId: "thr-wren", links: [], seen: true, correctedBy: "summary-correction",
 };
 const correction: SummaryView = { ...base, id: "summary-correction", createdAt: min(40), title: "Correction: watch covered one cluster", body: "Only the west cluster was in scope.", correctedBy: null, supersedes: base.id };
+const asked = { id: "route-watch", kind: "question" as const, at: min(20), text: "Did the alert cross the threshold?" };
+const waiting = { id: "route-signoff", kind: "question" as const, at: min(3), text: "Can we sign off on Friday?" };
 const current: SummaryView = {
   ...base, id: "summary-current", createdAt: min(8), title: "Watch ended with no alerts", body: "No actionable alerts in two shifts.",
-  seen: false, correctedBy: null, results: { figures: [{ label: "Hours watched", value: "48 h" }] },
+  seen: false, correctedBy: null, questTitle: "Edge watch", answerMessages: [asked], results: { figures: [{ label: "Hours watched", value: "48 h" }] },
   links: [{ kind: "url", ref: "https://example.com/watch", detail: "Search over both shifts", exitCode: null }],
   next: ["Send the watch record to the next shift."],
 };
@@ -37,16 +40,19 @@ const summaries = [current, correction, base];
 const documentContext = { threadId: "thr-wren", rootPath: "/keeper/work", target: { kind: "workspace" as const, environmentId: "keeper-env", path: "/keeper/work" } };
 const detail = { ...richDetails.vault!, summaries, attention: count, summaryDocument: documentContext, summaryCounts: { current: 2, corrected: 1 } };
 const page = (kind: "quest" | "tale" = "quest", markSummariesSeen = vi.fn(() => ({ ok: true as const }))) => renderSlot({ component: TavernPage }, { subPath: `${kind}/vault` }, {
-  pluginId: "tavern", rpc: { registry: () => registry, room: () => richRoom, boardQuest: () => kind === "quest" ? detail : { ...detail, quest: { ...detail.quest, phase: "done", endedAt: min(1) } }, markSummariesSeen },
+  pluginId: "tavern", rpc: { registry: () => registry, room: () => richRoom, boardQuest: () => kind === "quest" ? detail : { ...detail, quest: { ...detail.quest, phase: "done", endedAt: min(1) } }, markSummariesSeen, unansweredMessages: () => ({ messages: [waiting], nextCursor: null }) },
 });
 
 it("shows newest first, keeps the new mark until leaving, and folds the original under its correction", async () => {
   const mark = vi.fn(() => ({ ok: true as const }));
   const slot = page("quest", mark);
-  const section = await slot.findByRole("region", { name: "Summaries" });
+  const section = await slot.findByRole("region", { name: "Answers" });
+  expect(await within(section).findByText(waiting.text)).toBeTruthy();
+  const map = slot.container.querySelector(".tv-qmapcard")!;
+  expect(section.compareDocumentPosition(map) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   const titles = [...section.querySelectorAll("article h3")].map(h => h.textContent);
   expect(titles).toEqual([current.title, correction.title]);
-  expect(within(section).getByText("2 summaries, 1 corrected")).toBeTruthy();
+  expect(within(section).getByText("2 answers, 1 replaced")).toBeTruthy();
   expect(within(section).getByText("new", { exact: true }).closest("article")?.textContent).toContain(current.title);
   const folded = within(section).getByText(base.title, { selector: "summary span" }).closest("details");
   expect(folded?.open).toBe(false);
@@ -67,6 +73,8 @@ it("renders the stored title, Markdown and figures on both the registered chat d
     const heading = await within(slot.container).findByText(current.title, { selector: "h3" });
     const card = within(heading.closest("article")!);
     expect(card.getByText(current.body)).toBeTruthy();
+    expect(card.getByText(asked.text)).toBeTruthy();
+    expect(card.getByText("Result", { exact: true })).toBeTruthy();
     expect(card.getByText("48 h")).toBeTruthy();
     expect(card.getByRole("link", { name: "https://example.com/watch" })).toBeTruthy();
   }
@@ -85,7 +93,7 @@ it("keeps the Keeper's return headline and lists the summaries oldest first Alon
 it.each(["pagehide", "visibilitychange"])("marks displayed unread IDs on %s, without acknowledging on mount", async event => {
   const seen = vi.fn(() => ({ ok: true as const }));
   const slot = page("quest", seen);
-  await slot.findByRole("region", { name: "Summaries" });
+  await slot.findByRole("region", { name: "Answers" });
   expect(seen).not.toHaveBeenCalled();
   if (event === "pagehide") window.dispatchEvent(new Event(event));
   else {
@@ -112,7 +120,7 @@ it("loads seen history as title rows and fetches older titles only when asked", 
   const olderSummaries = vi.fn(() => ({ summaries: [title], nextCursor: null }));
   const slot = renderSlot({ component: TavernPage }, { subPath: "quest/vault" }, { pluginId: "tavern", rpc: {
     registry: () => registry, room: () => richRoom, boardQuest: () => ({ ...detail, summaryCounts: { current: 3, corrected: 1 }, summariesNextCursor: correction.id }),
-    olderSummaries, summary: () => ({ summary: { ...title, body: "Older words", links: [] }, ask: null, handBack: null }),
+    unansweredMessages: () => ({ messages: [], nextCursor: null }), olderSummaries, summary: () => ({ summary: { ...title, body: "Older words", links: [] }, ask: null, handBack: null }),
   } });
   fireEvent.click(await slot.findByRole("button", { name: "Show 1 older" }));
   await waitFor(() => expect(olderSummaries).toHaveBeenCalledWith({ boardQuestId: "vault", beforeId: correction.id }));
@@ -122,13 +130,32 @@ it("loads seen history as title rows and fetches older titles only when asked", 
   expect(await slot.findByText("Older words")).toBeTruthy();
 });
 
+it("searches every quest and opens a matching answer by its stable link", async () => {
+  const searchAnswers = vi.fn((_input: unknown) => ({ answers: [current], nextCursor: null }));
+  const slot = renderSlot({ component: TavernPage }, { subPath: "answers" }, { rpc: { registry: () => registry, room: () => richRoom, searchAnswers } });
+  const field = await slot.findByRole("searchbox", { name: "Search answers" });
+  fireEvent.change(field, { target: { value: "threshold" } });
+  fireEvent.click(slot.getByRole("button", { name: /^Search$/ }));
+  await waitFor(() => expect(searchAnswers.mock.calls.some(([input]) => (input as { query?: string }).query === "threshold")).toBe(true));
+  const match = await slot.findByRole("button", { name: current.title });
+  fireEvent.click(match);
+  expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "tavern", options: { subPath: "quest/vault/summary/summary-current" } });
+});
+
+it("puts a quiet unseen answer with a quest link in the Ledger", () => {
+  const slot = renderSlot({ component: NewSummaries }, { attention: count }, {});
+  expect(slot.getByText("New answer")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: `Open answer: ${current.title}` }));
+  expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "tavern", options: { subPath: "quest/vault/summary/summary-current" } });
+});
+
 it("uses the projected summary count on the quest chip and in its inline section", async () => {
   const quest = { ...fixtureDecor.keeperView!.boardQuests[0]!, attention: count };
   const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { registry: () => fixtureRegistry, decor: () => ({ ...fixtureDecor, characters: false, keeperView: { ...fixtureDecor.keeperView!, attention: count, boardQuests: [quest] } }) } });
   const chip = await slot.findByRole("button", { name: `Show ${quest.title}` });
-  expect(chip.title).toContain("1 new summary");
+  expect(chip.title).toContain("1 new answer");
   expect(chip.textContent).toContain("1 new");
   fireEvent.click(chip);
   const popover = slot.getByRole("region", { name: "Board quests" });
-  expect(within(popover).getByText("1 new summary")).toBeTruthy();
+  expect(within(popover).getByText("1 new answer")).toBeTruthy();
 });

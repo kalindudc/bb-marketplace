@@ -191,6 +191,8 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     },
     clusterRunStatus: () => call("clusterRunStatus", { askId: f.ask.id }),
     answerAsk: () => call("answerAsk", { askId: f.ask.id, optionId: "yes", via: "page" }),
+    searchAnswers: () => call("searchAnswers", { query: "" }),
+    unansweredMessages: () => call("unansweredMessages", { boardQuestId: f.q.id }),
     olderSummaries: () => call("olderSummaries", { boardQuestId: f.q.id, beforeId: "absent" }),
     summary: () => call("summary", { id: "absent", threadId: "lead" }),
     markVisitSeen: () => call("markVisitSeen", { summaryIds: [], changeIds: ["quest-change:999"] }),

@@ -36,7 +36,7 @@ export function SinceVisit({ visit, foldOnNarrow = false }: { visit?: Visit; fol
       <div className="tv-since-line"><h3 data-content>{title}</h3>{change?.phaseChange && <div className="m"><span>{phaseWord(change.phaseChange.from)} to {phaseWord(change.phaseChange.to)}</span><TimeAgo at={change.since} /></div>}
         <button type="button" className="lnk-btn act" aria-label={`Open: ${title}`} onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })}>Open<OpensMark /></button>
       </div>
-      {summaries.length > 0 && <div className="tv-since-summaries"><span className="m">{plural(summaries.length, "new summary", "new summaries")}</span>
+      {summaries.length > 0 && <div className="tv-since-summaries"><span className="m">{plural(summaries.length, "new answer")}</span>
         <ul>{summaries.map(summary => <li key={summary.id}><button type="button" className="lnk-btn act" onClick={() => navigate.toPluginPanel("tavern", { subPath: summaryPath(id, summary.id) })}><span data-content>{summary.title}</span><OpensMark /></button></li>)}</ul></div>}
     </li>)}</ul>}
     {(visit.summaries > summaryIds.length || visit.changedQuests > changeIds.length) && <p className="m">Showing the newest items. More appear as you mark these seen.</p>}
@@ -45,7 +45,7 @@ export function SinceVisit({ visit, foldOnNarrow = false }: { visit?: Visit; fol
   </Section>;
   if (!foldOnNarrow || !narrow) return content;
   const counts = [
-    visit.summaries > 0 && plural(visit.summaries, "summary", "summaries"),
+    visit.summaries > 0 && plural(visit.summaries, "answer"),
     visit.changedQuests > 0 && plural(visit.changedQuests, "quest changed", "quests changed"),
   ].filter(Boolean).join(", ") || plural(visit.decided, "call decided for you", "calls decided for you");
   return <details className="tv-since-fold">

@@ -21,6 +21,7 @@ import { SettingsPage } from "./settings";
 import { QuestPage, ReturnedList } from "./quest";
 import { TalePage } from "./tale";
 import { CommonRoom } from "./room";
+import { AnswersPage } from "./answers";
 import { ClassStartCards, withClassPill } from "./start";
 import { armClassSettings } from "../kit/remember";
 import { CharacterSheetEditor, CharacterSheets, ClassDetail, ClassesList } from "./sheets";
@@ -32,7 +33,7 @@ import { PLACEMENT_RPC_LIVE } from "./machines-contract";
 import { narrowTitle, useFoldedHeader, useNarrowTitle, usePageColumn } from "./page-title";
 import "./page.css";
 
-const destinations: [string, string, PageGlyphName][] = [["room", vocab("commonRoom"), "home"], ["map", vocab("connections"), "map"], ["memory", "Memory", "ledger"], ["archive", vocab("cellar"), "archive"], ["characters", "Character sheets (records)", "shield"], ["classes", "Classes (types)", "file"], ["digest", "While closed (digest)", "moon"], ["closing", vocab("closing"), "lantern"]];
+const destinations: [string, string, PageGlyphName][] = [["room", vocab("commonRoom"), "home"], ["map", vocab("connections"), "map"], ["memory", "Memory", "ledger"], ["answers", "Search answers", "question"], ["archive", vocab("cellar"), "archive"], ["characters", "Character sheets (records)", "shield"], ["classes", "Classes (types)", "file"], ["digest", "While closed (digest)", "moon"], ["closing", vocab("closing"), "lantern"]];
 /** The machine placement page joins the sidebar and the phone page picker once its server reads are live. */
 const pages = (): [string, string, PageGlyphName][] => PLACEMENT_RPC_LIVE ? [...destinations, ["machines", "Where work runs (machines)", "machine"]] : destinations;
 const isCurrent = (path: string, route: PageRoute) => path === route.kind || (path === "characters" && route.kind === "character") || (path === "classes" && route.kind === "class");
@@ -105,6 +106,7 @@ export function useTavernPageTitle({ subPath }: PluginNavPanelProps) {
     case "insights": return { title: "Insights" };
     case "machines": return { title: "Where work runs" };
     case "memory": return { title: "Memory" };
+    case "answers": return { title: "Search answers" };
     case "quest": return { breadcrumbs: [{ label: "Quests", to: root }, { label: quest ? questShortName(quest) : "Quest" }] };
     // The returned list holds stopped quests too; the first step says how this one ended.
     case "tale": return { breadcrumbs: [{ label: quest?.phase === "stopped" ? "Stopped" : "Returned", to: `${root}/returned` }, { label: quest ? questShortName(quest) : "Quest", to: `${root}/quest/${encodeURIComponent(route.id)}` }, { label: "The tale" }] };
@@ -230,6 +232,7 @@ export function TavernPage({ subPath }: PluginNavPanelProps) {
   if (route.kind === "missing") body = <><h1>Page not found</h1><PageButton path="room">Back to the common room</PageButton></>;
   else if (route.kind === "insights") body = <Surface.InsightsPage />;
   else if (route.kind === "memory") body = <Surface.MemoryPage />;
+  else if (route.kind === "answers") body = <AnswersPage />;
   else if (route.kind === "machines") body = <Surface.MachinesPage rule={route.rule} hire={route.hire} />;
   else if (!registry.data) { const sk = routeSkeleton(route, room.data); body = sk ? <PageLoad error={registry.error} retry={registry.refetch} {...sk} /> : <ReadState error={registry.error} retry={registry.refetch} />; }
   else if (route.kind === "quest" || route.kind === "tale") body = <Surface.QuestRoute key={route.id} id={route.id} summaryId={route.summaryId} askId={route.askId} tale={route.kind === "tale"} registry={registry.data} room={room.data} />;

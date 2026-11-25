@@ -106,6 +106,9 @@ export const evidenceSchema = z.object({
 });
 export type Evidence = z.infer<typeof evidenceSchema>;
 
+// "rule": the user stated a standing rule in their own words; it is recorded active at once.
+export const ROUTE_KINDS = ["steer", "question", "aside", "new-quest", "rule"] as const;
+
 const summaryLine = z.string().trim().min(1).regex(/^[^\r\n\u2028\u2029]+$/, "Use one line");
 export const summaryDraftSchema = z.object({
   boardQuestId: id,
@@ -116,9 +119,14 @@ export const summaryDraftSchema = z.object({
   next: z.array(summaryLine.max(400)).max(3).optional(),
   request: z.object({ kind: z.enum(["ask", "hand-back"]), id }).strict().optional(),
   supersedes: id.optional(),
+  answers: z.array(id).optional(),
 }).strict();
 export const summarySchema = summaryDraftSchema.extend({ id, keeperThreadId: threadId, createdAt: epochMs });
-export const summaryViewSchema = summarySchema.extend({ seen: z.boolean(), correctedBy: id.nullable(), previousTitle: z.string().optional() });
+export const answerMessageSchema = z.object({ id, text: z.string(), kind: z.enum(ROUTE_KINDS), at: epochMs });
+export const summaryViewSchema = summarySchema.extend({
+  seen: z.boolean(), correctedBy: id.nullable(), previousTitle: z.string().optional(),
+  questTitle: z.string().optional(), answerMessages: z.array(answerMessageSchema).optional(),
+});
 export const summaryEntrySchema = summaryViewSchema.partial({ body: true, links: true }).extend({ order: z.number().int().optional() });
 export type Summary = z.infer<typeof summarySchema>;
 export type SummaryDraft = z.infer<typeof summaryDraftSchema>;
@@ -750,9 +758,6 @@ export function reportFields(limit: IntakeLimits) {
 }
 export const reportSchema = reportFields(storedLimits);
 export type Report = z.infer<typeof reportSchema>;
-
-// "rule": the user stated a standing rule in their own words; it is recorded active at once.
-export const ROUTE_KINDS = ["steer", "question", "aside", "new-quest", "rule"] as const;
 
 /** How the Keeper read one user message. Drives the "read as" tag above the message. */
 export const routeSchema = z.object({
