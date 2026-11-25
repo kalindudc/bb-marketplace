@@ -91,6 +91,7 @@ export default async function tavern(bb: BbPluginApi) {
       runtime.serviceRecords.superseded(input);
     },
     settings: () => settings.read().journal,
+    limits: () => settings.read().limits,
     roleOf: threadId => runtime ? runtime.journalRole(threadId) : store.get("members", threadId),
     boardQuestsOf: (threadId) =>
       store.query("quests", "keeperThreadId", threadId, 5000),
@@ -108,12 +109,12 @@ export default async function tavern(bb: BbPluginApi) {
     bb.rpc.experimental_invalidate(tags),
   );
   keeper.moveNoticeAsks();
-  runtime = new TavernRuntime(
-    bb,
-    keeper,
-    new Registry(fileURLToPath(pluginRoot)),
-    keeperCards,
-  );
+  const registry = new Registry(fileURLToPath(pluginRoot));
+  try {
+    for (const { id, path } of registry.olderClassOverrides())
+      bb.log.warn(`Your ${id} class copy (${path}) is older than the shipped file and differs from it. Compare the two in Settings, Classes and models. Tavern still uses your copy.`);
+  } catch (error) { bb.log.warn(`Could not check class copies against the shipped files: ${String(error)}`); }
+  runtime = new TavernRuntime(bb, keeper, registry, keeperCards);
   const burn = new BurnCosts(bb);
   const insights = new InsightsReader(db, settings, Date.now, (data, from, to) => burn.read(data, from, to), () => ({ characters: runtime.snapshot().characters.map(character => ({ id: character.id, classIds: character.classes })), serviceRecords: runtime.serviceRecords.read() }));
   runtime.enableSettings(settings, insights);

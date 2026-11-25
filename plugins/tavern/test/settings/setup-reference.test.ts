@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { z } from "zod";
+import { LIMIT_FIELDS } from "../../src/shared/limits";
 import { DEFAULT_SETTINGS, isGuardrailSetting, settingsSchema } from "../../src/shared/settings";
 import { decodeSettingsToml, snake } from "../../src/server/settings/format";
 import { parse } from "smol-toml";
@@ -9,8 +10,9 @@ import { placementSettingsSchema } from "../../src/shared/placement-settings";
 
 const skill = (file: string) => readFileSync(new URL(`../../skills/tavern/${file}`, import.meta.url), "utf8");
 
-it("documents each settings schema key exactly once and gives its current default", () => {
+it("documents each fixed reference key exactly once and gives its current default", () => {
   const expected = Object.entries(settingsSchema.shape).flatMap(([group, schema]) => {
+    if (group === "limits") return [];
     const section = schema.unwrap();
     if (section instanceof z.ZodRecord)
       return Object.keys((section.valueType as z.ZodObject).shape).map(key => [`${group}.<id>.${snake(key)}`, "Inherits"]);
@@ -28,6 +30,16 @@ it("documents each settings schema key exactly once and gives its current defaul
     expect(entry.authority.includes("Plain")).toBe(isGuardrailSetting(key) && !consent.includes(key));
     expect(entry.authority.includes("Granted")).toBe(!isGuardrailSetting(key));
   }
+});
+
+it("points agents to live settings and documents each protective limit", () => {
+  const reference = skill("references/settings.md");
+  expect(reference).toContain("`bb tavern settings get limits`");
+  const expected = Object.entries(LIMIT_FIELDS).flatMap(([group, fields]) =>
+    Object.keys(fields).map(key => `limits.${group}.${key}`));
+  const documented = [...reference.matchAll(/^\| `(limits\.[^`]+)`(?: \(Advanced\))? \|/gm)].map(match => match[1]);
+  expect(documented.sort()).toEqual(expected.sort());
+  expect(expected.every(isGuardrailSetting)).toBe(true);
 });
 
 it("shows a valid disabled rule with each consent switch off", () => {

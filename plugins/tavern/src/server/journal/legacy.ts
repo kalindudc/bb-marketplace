@@ -2,12 +2,13 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { journalEntrySchema, type JournalEntry } from "../../shared/schema";
 import { closed, validateEntries } from "./engine";
+import { LIMIT_FIELDS, limitMessage } from "../../shared/limits";
 
 const oldEntry = z.object({ id: z.string().regex(/^[0-9a-f]{2}$/), description: z.string().min(1), done: z.boolean(), createdAt: z.number().int().nonnegative() });
 const oldLog = z.object({ version: z.literal(1), quests: z.array(oldEntry), steps: z.array(oldEntry.extend({ parentId: z.string() })), usedIds: z.array(z.string().regex(/^[0-9a-f]{2}$/)) });
 const extras = z.object({ agentChangedAt: z.number().int().nonnegative().nullable().optional(), notedAt: z.number().int().nonnegative().nullable().optional(), pendingUserChanges: z.array(z.string()).optional() });
 export type ArchivedLegacy = { id: string; data: string; reason: string };
-export function normalizeLegacy(threadId: string, metadata: Record<string, unknown>) {
+export function normalizeLegacy(threadId: string, metadata: Record<string, unknown>, entriesMax = LIMIT_FIELDS.journal.entriesMax.default) {
   const log = oldLog.parse(metadata.log), times = extras.parse(metadata);
   const actor = { kind: "import" as const, from: "pi-quests" };
   const archived: ArchivedLegacy[] = [];
@@ -27,10 +28,10 @@ export function normalizeLegacy(threadId: string, metadata: Record<string, unkno
     entries = entries.filter(e => !ids.has(e.id));
   }
   for (const e of [...entries].filter(closed).sort((a, b) => a.createdAt - b.createdAt)) {
-    if (entries.length <= 200) break;
-    if (entries.some(x => x.id === e.id)) archive(e, "Old completed entry archived to keep the active log within 200 entries");
+    if (entries.length <= entriesMax) break;
+    if (entries.some(x => x.id === e.id)) archive(e, `Old completed entry archived. ${limitMessage("limits.journal.entriesMax", entriesMax)}`);
   }
-  while (entries.length > 200) archive(entries.filter(e => e.parentId === null).at(-1)!, "Open overflow preserved outside the active 200-entry log");
+  while (entries.length > entriesMax) archive(entries.filter(e => e.parentId === null).at(-1)!, `Open overflow preserved. ${limitMessage("limits.journal.entriesMax", entriesMax)}`);
   const active = validateEntries(entries);
   return { entries: active, archived, reserved: [...new Set([...log.usedIds, ...rows.map(e => e.id)])],
     fingerprint: createHash("sha256").update(JSON.stringify({ log: metadata.log, agentChangedAt: times.agentChangedAt })).digest("hex"),

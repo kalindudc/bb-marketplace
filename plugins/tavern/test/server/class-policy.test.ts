@@ -1,12 +1,12 @@
 // @vitest-environment node
 import { seedQuest } from "./support";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Registry } from "../../src/server/registry";
 import { parseRegistryDefinition } from "../../src/server/registry-file";
-import { classLimits } from "../../src/server/class-execution";
+import { staffingLimits } from "../../src/server/class-execution";
 import { classRules } from "../../src/shared/class-rules";
 import { readStatus, statusInput } from "../../src/server/status";
 import { checkerAssignments } from "../../src/server/assignments";
@@ -69,10 +69,25 @@ describe("class character and quality policy", () => {
     expect(smith.body).toContain("An uncommitted turn-end is a defect");
   });
 
-  it("never widens settings limits through a project Keeper budget", () => {
+  it("warns about an older, changed copy of a shipped class without dropping the override", () => {
+    const r = registry();
+    const home = join(r.directories().global, "classes");
+    mkdirSync(home);
+    const path = join(home, "keeper.md");
+    const source = readFileSync(join(shipped, "classes/keeper.md"), "utf8");
+    writeFileSync(path, source.replace("Hold each concrete goal", "Record each concrete goal"));
+    utimesSync(path, 1, 1);
+    expect(r.olderClassOverrides()).toEqual([{ id: "keeper", path }]);
+    expect(r.read().classes.find(c => c.id === "keeper")?.body).toContain("Record each concrete goal");
+    writeFileSync(path, source);
+    utimesSync(path, 1, 1);
+    expect(r.olderClassOverrides()).toEqual([]);
+  });
+
+  it("reads staffing ceilings from Settings", () => {
     const f = setup();
-    const keeper = f.runtime.snapshot().classes.find(role => role.id === "keeper")!;
-    expect(classLimits({ ...keeper, source: "/repo/.agents/tavern/classes/keeper.md", budget: { members: 99, rangers: 99, rangerMinutes: 99 } }, f.runtime.config())).toEqual({ partyMax: f.runtime.config().keepers.partyMax, rangerMinutes: f.runtime.config().knobs.rangerTimeboxMaxMinutes });
+    const config = f.runtime.config();
+    expect(staffingLimits(config)).toEqual({ partyMax: config.keepers.partyMax, rangerMax: config.keepers.rangerMax, rangerMinutes: config.knobs.rangerTimeboxMaxMinutes });
   });
 
   it("keeps the project Keeper budget below the settings limit at hire", async () => {

@@ -136,13 +136,15 @@ describe("journal rules", () => {
     f.run({ action: "delete", ids: ["g0", "g1"] });
     expect(f.entries()).toEqual([]);
   });
-  it("caps descriptions, entries and evidence and validates missing ids", () => {
+  it("bounds new entries and validates ids without deleting long descriptions or evidence", () => {
     const f = fixture();
-    expect(() => f.run({ action: "add", descriptions: ["x".repeat(501)] })).toThrow();
+    const description = "x".repeat(501);
     expect(() => f.run({ action: "done", id: "zz" })).toThrow(/not found/);
-    f.run({ action: "add", descriptions: Array.from({ length: 200 }, (_, i) => `entry ${i}`) });
-    expect(() => f.run({ action: "add", descriptions: ["overflow"] })).toThrow(/200/);
-    expect(() => f.run({ action: "done", id: "g0", evidence: Array(31).fill(proof[0]) })).toThrow(/30/);
+    f.run({ action: "add", descriptions: [description, ...Array.from({ length: 199 }, (_, i) => `entry ${i}`)] });
+    expect(f.entries()[0]?.description).toBe(description);
+    expect(() => f.run({ action: "add", descriptions: ["overflow"] })).toThrow(/limits\.journal\.entriesMax = 200/);
+    const evidence = Array.from({ length: 31 }, (_, n) => ({ ...proof[0]!, ref: `test suite ${n}` }));
+    expect(f.run({ action: "done", id: "g0", evidence }).entries[0]?.evidence).toEqual(evidence);
   });
   it("stores notes, owners, links, dependencies and actor/time, and enforces readiness", () => {
     const f = fixture();

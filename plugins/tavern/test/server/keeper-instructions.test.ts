@@ -76,8 +76,8 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${withTickGuidance}\nMERGE_TARGET_SCHEMA_BYTES=${mergeTargetDelta}\n`);
   expect(withTickGuidance).toBeLessThanOrEqual(34754);
 });
-it("keeps the normal-reply limit and per-quest re-anchor instructions", () => {
-  expect(body).toContain("Keep normal replies under 120 words.");
+it("keeps replies concise and the per-quest re-anchor instructions", () => {
+  expect(body).toContain("Keep normal replies brief.");
   expect(body).toContain("The ledger is the truth, not your chat memory");
   expect(body).toContain("for each quest you need BEFORE acting");
   expect(body).toContain("the highest ledger version wins, configure or tick");
@@ -182,14 +182,14 @@ describe("R11 tool rules remain at the tool boundary", () => {
     tavern_release: [/your own party/, /reason/, /reversible release.*Decided for you/],
     tavern_scope: [/Temporary paths/, /own thread storage/, /explicit, never-timed scope answer/, /never approves a merge, deploy, delete, send or production action/],
     tavern_tell: [/your own members/, /never steer into a running tool/, /delivered, queued.*retrying.*blocked/],
-    tavern_plan: [/explicit greenlight/, /at most three questions/, /reversible:true only for fully reversible work/, /by-size.*one party slot/],
+    tavern_plan: [/explicit greenlight/, /questions/, /reversible:true only for fully reversible work/, /by-size.*one party slot/],
     tavern_ask: [/Only kind decision with explicit reversible: true may carry a timed default/, /Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer/],
     tavern_decide: [/reversible decision/, /Never claim the user's consent without an answered ask/],
     tavern_rule: [/verbatim/, /active immediately/, /stay inactive until the user confirms/],
     tavern_status: [/bounded board state/, /reportId and character offset/],
     tavern_wrap: [/quest NEVER concludes itself/, /never-timed conclude ask/, /Conclude for a settled map, Close early otherwise/, /Do not write the tale directive or archive anyone before the user answers/],
     tavern_unarchive: [/Unarchive one member/, /Deleted threads are refused/],
-    tavern_report: [/end your turn/, /at most 160 characters/, /mark every linked entry done with evidence/, /never a claim of independence/],
+    tavern_report: [/end your turn/, /short headline/, /mark every linked entry done with evidence/, /never a claim of independence/],
   };
   for (const [name, patterns] of Object.entries(rules)) it(name, () => {
     expect(tools.has(name)).toBe(true);

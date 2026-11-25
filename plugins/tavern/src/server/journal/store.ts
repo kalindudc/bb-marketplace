@@ -9,7 +9,9 @@ import { LIMITS } from "../limits";
 import { actionSchema, ago, applyAction, awaitingSummary, closed, delegated, ordered, openSummary, rebriefEntries, type ShowOptions, planLine, progress, requireWarden, wardenReview, requireReopen, canManageLinks, BOARD_MIRROR_REFUSAL, copy, validateEntries, type JournalAction } from "./engine";
 import { normalizeLegacy } from "./legacy";
 import { boardMirrors, mirrorHistory } from "./board-mirrors";
-import { changeSummary, clip, formatUserChanges, MAX_NOTE_TEXT } from "./text";
+import { changeSummary, clip, formatUserChanges } from "./text";
+import { boundedData } from "../instructions";
+import { limitMessage } from "../../shared/limits";
 import { REPORT_GRACE_MS } from "../../shared/journal-tracker";
 import { trackerMarkdown } from "./export";
 
@@ -227,7 +229,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       const wasHydrated = !!journalRow(threadId)!.hydrated;
       let imported: ReturnType<typeof normalizeLegacy> | null = null;
       let legacyProblem = false;
-      try { imported = metadata.log === undefined ? null : normalizeLegacy(threadId, metadata); }
+      try { imported = metadata.log === undefined ? null : normalizeLegacy(threadId, metadata, deps.limits?.().journal.entriesMax); }
       catch (error) {
         if (!wasHydrated) throw error;
         legacyProblem = true; reportReadError(threadId, error);
@@ -397,7 +399,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     } catch (error) { reportReadError(threadId, error); return minimal(threadId); }
   }
   const trusted = (actor: Actor) => canManageLinks(actor, deps.roleOf);
-  function mutate(threadId: string, input: JournalAction, actor: Actor): { message: string } {
+  function mutate(threadId: string, input: JournalAction, actor: Actor) {
     if (actor.kind === "agent") deps.assertWritable?.(actor.threadId);
     deps.assertWritable?.(threadId);
     initialize(threadId);
@@ -408,6 +410,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     const result = db.transaction(() => {
       const before = localEntries(threadId);
       let after: JournalEntry[], ids: string[], text: string;
+      let notices: string[] = [];
       let reviewHistory: { before: JournalEntry[]; after: JournalEntry[] } | null = null;
       if (action.action === "undo" || action.action === "redo") {
         const direction = action.action;
@@ -439,8 +442,9 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
         text = changeSummary(direction, ids, before, after);
         db.prepare("UPDATE questlog_history SET state = ? WHERE id = ?").run(direction === "undo" ? "redo" : "undo", row.id);
       } else {
-        const result = applyAction(before, action, { threadId, actor, now: Date.now(), allocate: () => allocate(threadId), roleOf: deps.roleOf, finishedMirror: finishedMirror(threadId) });
-        if (!result.changed) return { message: `No change. ${planLine(before, show)}`, changed: false, ids: [] as string[], affected: before };
+        const result = applyAction(before, action, { threadId, actor, now: Date.now(), allocate: () => allocate(threadId), roleOf: deps.roleOf, finishedMirror: finishedMirror(threadId), limits: deps.limits?.() });
+        notices = result.notices;
+        if (!result.changed) return { message: `No change. ${planLine(before, show)}`, notices, changed: false, ids: [] as string[], affected: before };
         after = result.entries; ids = result.entryIds; text = result.text;
         db.prepare("DELETE FROM questlog_history WHERE thread_id = ? AND state = 'redo'").run(threadId);
         db.prepare("INSERT INTO questlog_history(thread_id, before_data, after_data, action, actor, state) VALUES (?, ?, ?, ?, ?, 'undo')").run(threadId, JSON.stringify(before), JSON.stringify(after), action.action, JSON.stringify(actor));
@@ -468,10 +472,10 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       const noProof = after.filter(e => ids.includes(e.id) && e.status === "done" && !e.boardQuestId && !e.evidence.length);
       const details = action.action === "add" || action.action === "split" || action.action === "add_step" ? `\nNew ids: ${ids.join(", ")}\nOpen:\n${openSummary(after, 5, show)}` : "";
       const waiting = awaitingSummary(after, show);
-      return { message: `You ${text}\n${planLine(after, show)}${waiting ? `\n${waiting}` : ""}${details}${noProof.length ? `\n${noProof.map(e => `[${e.id}] done without evidence; attach a command/result, file or short statement when available.`).join("\n")}` : ""}`, changed: true, ids, affected: [...before, ...after] };
+      return { message: `You ${text}\n${planLine(after, show)}${waiting ? `\n${waiting}` : ""}${details}${noProof.length ? `\n${noProof.map(e => `[${e.id}] done without evidence; attach a command/result, file or short statement when available.`).join("\n")}` : ""}`, notices, changed: true, ids, affected: [...before, ...after] };
     })();
     if (result.changed) notify(threadId, result.ids, result.affected);
-    return { message: result.message };
+    return { message: [...result.notices, result.message].join("\n"), notices: result.notices };
   }
   function edit(threadId: string, edit: JournalEdit, actor: Actor): { message: string } {
     deps.assertWritable?.(threadId);
@@ -540,10 +544,12 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       } else if (action.action === "rules" || action.action === "skill") text = readJournalSkill();
       else {
         const verdictNote = action.action === "verify" || action.action === "reject" ? assertVerdict?.() : undefined;
-        text = mutate(threadId, action, actor).message;
+        const result = mutate(threadId, action, actor);
+        text = result.message;
         if (threadId !== callerThreadId) {
           const ids = action.ids ?? (action.id ? [action.id] : []);
-          text = localEntries(threadId).filter(e => ids.includes(e.id)).map(e => `[${e.id}] ${JSON.stringify(e.description)} ${e.status}${e.note ? `; ${JSON.stringify(e.note)}` : ""}`).join("\n");
+          const entries = localEntries(threadId).filter(e => ids.includes(e.id)).map(e => `[${e.id}] ${JSON.stringify(e.description)} ${e.status}${e.note ? `; ${JSON.stringify(e.note)}` : ""}`);
+          text = [...result.notices, ...entries].join("\n");
         }
         if (verdictNote) verdictNotes.add(verdictNote);
         if (verdictNotes.size) text += `\n${[...verdictNotes].join("\n")}`;
@@ -578,7 +584,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       let changed: { ids: string[]; entries: JournalEntry[] } | null = null;
       db.transaction(() => {
         const before = localEntries(threadId), at = Date.now();
-        const r = rebriefEntries(before, { boardQuestId, version, waypointIds, at, name: ownerLabel });
+        const r = rebriefEntries(before, { boardQuestId, version, waypointIds, at, name: ownerLabel, limits: deps.limits?.() });
         if (!r.ids.length) return;
         for (const entry of r.verified) deps.superseded?.({ entry, version, at });
         saveEntries(threadId, r.entries);
@@ -608,7 +614,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     let id = "";
     db.transaction(() => {
       const before = localEntries(threadId);
-      const r = applyAction(before, { action: "add", descriptions: [description], owner }, { threadId, actor, now: Date.now(), allocate: () => allocate(threadId), roleOf: deps.roleOf });
+      const r = applyAction(before, { action: "add", descriptions: [description], owner }, { threadId, actor, now: Date.now(), allocate: () => allocate(threadId), roleOf: deps.roleOf, limits: deps.limits?.() });
       id = r.createdIds[0]!;
       const entry = r.entries.find(e => e.id === id)!; entry.link = validatedLink;
       saveEntries(threadId, r.entries);
@@ -686,7 +692,9 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
         const stale = store.reminders() && reminderDue(state, entries, previousRequestAt, remindEveryMinutes * 60_000, reportGraceMinutes * 60_000);
         if (!stale && !changes.length) { skipped(store.reminders() ? `no reminder is due (statuses changed since the previous message, or one went out in the last ${remindEveryMinutes} minutes), and no user edits are waiting` : "reminders are off in Tavern's settings, and no user edits are waiting"); return false; }
         const named = stale ? [awaitingSummary(entries, { ...show, now }), ...staleLines(entries, { ...show, now })].filter(Boolean).join("\n") : "";
-        const text = clip(`${JOURNAL_NOTE_PREFIX} ${planLine(entries, show)}\n${clip(openSummary(entries, 5, show), 750)}\n${describeChanges(changes)}${named ? `${named}\n` : ""}${stale ? "You have not updated the journal's statuses since the previous message. If this request changes the plan, or a delegate reported, start, close, block, reopen, settle or wait on its entry; if not, carry on." : ""}`, MAX_NOTE_TEXT);
+        const max = (deps.limits?.() ?? DEFAULT_SETTINGS.limits).journal.reminderBytes;
+        const text = boundedData(`${JOURNAL_NOTE_PREFIX} ${planLine(entries, show)}\n${clip(openSummary(entries, 5, show), 750)}\n${describeChanges(changes)}${named ? `${named}\n` : ""}${stale ? "You have not updated the journal's statuses since the previous message. If this request changes the plan, or a delegate reported, start, close, block, reopen, settle or wait on its entry; if not, carry on." : ""}`,
+          max, `\n[Reminder shortened. ${limitMessage("limits.journal.reminderBytes", max)}]`);
         await send(text);
         if (disposed) return true;
         acknowledge(threadId, changes);

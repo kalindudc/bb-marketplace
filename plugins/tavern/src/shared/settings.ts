@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LIMIT_FIELDS, limitsPatchSchema, limitsSettingsSchema, type LimitSettingKey } from "./limits";
 import { defineContract } from "./define-contract";
 import { sendToolsSchema } from "./communication";
 import { scopeModeSchema } from "../scope/schema";
@@ -25,8 +26,8 @@ export const KNOB_FIELDS = {
     stopAskAfterSeconds: { default: 120, min: 30, max: 900, unit: "seconds", label: "Ask me about an unconfirmed stop after" },
     retryAfterSeconds: { default: 60, min: 10, max: 600, unit: "seconds", label: "Retry a refused tick after" },
     briefRetryAttempts: { default: 5, min: 1, max: 10, unit: "tries", label: "Brief delivery tries" },
-    replacementsPerSlot: { default: 2, min: 0, max: 5, unit: "replacements", label: "Replacements per party slot" },
-    rangerMax: { default: 3, min: 1, max: 20, unit: "Rangers", label: "Rangers at once when the class file is silent" },
+    replacementsPerSlot: { default: 4, min: 0, max: 5, unit: "replacements", label: "Replacements per party slot" },
+    rangerMax: { default: 3, min: 1, max: 20, unit: "Rangers", label: "Rangers at once" },
     keepMaxHours: { default: 168, min: 1, max: 168, unit: "hours", label: "Longest keep for a party member" },
     registryWaitSeconds: { default: 30, min: 5, max: 120, unit: "seconds", label: "Wait for class files" },
     clusterGrantMinutes: { default: 15, min: 1, max: 30, unit: "minutes", label: "Confirmed cluster command expires after" },
@@ -76,7 +77,7 @@ export type Tunables = z.infer<typeof tunablesSchema>;
 export type SparseTunables = Partial<Tunables>;
 
 export const GUARDRAIL_SETTING_KEYS = [
-  "scopes.*", "away.*", "keepers.alwaysAsk", "keepers.greenlight", "keepers.partyMax", "keepers.decisionTimerMax",
+  "scopes.*", "away.*", "limits.*", "keepers.alwaysAsk", "keepers.greenlight", "keepers.partyMax", "keepers.decisionTimerMax",
   "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "tavern.gitProgram", "tavern.piProgram", "tavern.speechExtensions", "tavern.speechInstructions", "tavern.speechRecentMessages", "attention.reviewBudget", "attention.notify", "attention.quietHours", "tuning.mode",
   "knobs.typingHoldSeconds", "knobs.afterMessageHoldSeconds", "knobs.rangerTimeboxMaxMinutes",
 ] as const;
@@ -150,6 +151,7 @@ const sections = {
   knobs: tunablesSchema.extend({ rangerTimeboxMaxMinutes: z.number().int().min(3).max(30), ...numberFields(KNOB_FIELDS.knobs) }),
 };
 export const settingsSchema = z.object({
+  limits: limitsSettingsSchema,
   tavern: sections.tavern.extend({ ...defaultNumbers(KNOB_FIELDS.tavern), characterQuietUntil: characterQuietUntilSchema.default(0), voiceBeforeOff: voiceBeforeOffSchema.default(DEFAULT_VOICE),
     contextualSpeech: speechFields.contextualSpeech.default(false), speechGapMinutes: speechGapMinutesSchema.default(SPEECH_GAP.default),
     speechExtensions: speechExtensionsSchema.default([]), speechInstructions: speechInstructionsSchema.default(DEFAULT_SPEECH_INSTRUCTIONS),
@@ -166,10 +168,11 @@ export const settingsSchema = z.object({
   journal: sections.journal.extend(defaultNumbers(KNOB_FIELDS.journal)).prefault({ journalReminders: true, journalQuietMinutes: 10 }),
   data: sections.data.default({ historyDays: 0, autoArchiveDays: 0, backupKeep: 14 }),
   tuning: sections.tuning.extend(defaultNumbers(KNOB_FIELDS.tuning)).prefault({ mode: "off" }),
-  knobs: sections.knobs.extend(defaultNumbers(KNOB_FIELDS.knobs)).prefault({ ...Object.fromEntries(TUNABLE_KEYS.map(key => [key, TUNABLES[key].default])), rangerTimeboxMaxMinutes: 12 } as Tunables & { rangerTimeboxMaxMinutes: number }),
+  knobs: sections.knobs.extend(defaultNumbers(KNOB_FIELDS.knobs)).prefault({ ...Object.fromEntries(TUNABLE_KEYS.map(key => [key, TUNABLES[key].default])), rangerTimeboxMaxMinutes: 30 } as Tunables & { rangerTimeboxMaxMinutes: number }),
 }).strict();
 export const DEFAULT_SETTINGS = settingsSchema.parse({});
 export const settingsPatchSchema = z.object({
+  limits: limitsPatchSchema.optional(),
   tavern: sections.tavern.partial().extend({ agentsMayChangeSettings: z.boolean().optional(), characters: z.boolean().optional(), ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().int().min(3).max(60).optional(), batchWakeEvents: z.boolean().optional(),
     lanternLight: z.boolean().optional(), lanternStrength: lanternStrengthSchema.optional(), lanternLightBb: z.boolean().optional(), gitProgram: gitProgramSettingSchema.optional(),
   }).optional(), attention: sections.attention.partial().optional(),
@@ -188,11 +191,14 @@ export const voicePatch = (voice: VoiceMode, prior: VoiceMode): SettingsPatch =>
   ({ tavern: { voice, ...(voice === "off" && prior !== "off" ? { voiceBeforeOff: prior } : {}) } });
 export const charactersPatch = (characters: boolean): SettingsPatch => ({ tavern: { characters } });
 export const characterQuietPatch = (characterQuietUntil: number): SettingsPatch => ({ tavern: { characterQuietUntil } });
-type EditableGroup = Exclude<keyof TavernSettings, "classes">;
+type EditableGroup = Exclude<keyof TavernSettings, "classes" | "limits">;
 type SettingPath = { [G in EditableGroup]: `${G}.${Extract<keyof TavernSettings[G], string>}` }[EditableGroup];
-export type ResettableSetting = Exclude<SettingPath, "machines.rules" | "machines.forges">;
-const resettable = Object.entries(DEFAULT_SETTINGS).flatMap(([group, values]) => group === "classes" ? [] : Object.keys(values).map(key => `${group}.${key}`))
-  .filter(key => key !== "machines.rules" && key !== "machines.forges") as ResettableSetting[];
+export type ResettableSetting = Exclude<SettingPath, "machines.rules" | "machines.forges"> | LimitSettingKey;
+const resettable = Object.entries(DEFAULT_SETTINGS).flatMap(([group, values]) => {
+  if (group === "classes") return [];
+  if (group === "limits") return Object.entries(LIMIT_FIELDS).flatMap(([name, rules]) => Object.keys(rules).map(key => `limits.${name}.${key}`));
+  return Object.keys(values).map(key => `${group}.${key}`);
+}).filter(key => key !== "machines.rules" && key !== "machines.forges") as ResettableSetting[];
 export const settingsEvidenceSchema = z.object({ section: z.string().max(100), chart: z.string().max(100),
   figure: z.number().finite().optional(), facts: z.record(z.string(), z.union([z.number().finite(), z.string().max(500), z.null()])).optional(),
 }).strict();
@@ -230,7 +236,8 @@ export const settingsSnapshotSchema = z.object({ revision: z.number().int(), eff
 export type SettingsSnapshot = z.infer<typeof settingsSnapshotSchema>;
 export const settingsFileSchema = z.object({ path: z.string(), exists: z.boolean(), differs: z.boolean(), error: z.string().nullable(), changedKeys: z.array(z.string()), hash: z.string().nullable().optional() });
 const settingAuthorSchema = settingDecisionSchema.pick({ at: true, by: true, threadId: true });
-export const settingsViewSchema = settingsSnapshotSchema.extend({ file: settingsFileSchema, gitProgramProblem: z.string().optional(),
+export const settingsViewSchema = settingsSnapshotSchema.extend({
+  file: settingsFileSchema, gitProgramProblem: z.string().optional(),
   speechAttemptsToday: z.number().int().nonnegative().optional(), speechProblem: z.string().optional(),
   lastChangers: z.record(z.string(), settingAuthorSchema).optional(),
   liveOverrides: z.array(z.object({ questId: z.string(), questTitle: z.string(), keeperThreadId: z.string(), keeperName: z.string(),

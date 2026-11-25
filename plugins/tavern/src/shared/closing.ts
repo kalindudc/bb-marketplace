@@ -5,7 +5,7 @@ import { pullRequestSchema } from "./pull-request";
 export const questOutcomeSchema = z.enum(["concluded", "closed-early", "stopped"]);
 const phase = z.enum(["scout", "greenlight", "build"]);
 export const unsettledWaypointSchema = z.object({
-  waypointId: z.string(), title: z.string(), state: z.enum(["planned", "todo", "doing", "blocked", "rejected", "reported"]), reason: z.string().min(1).max(500),
+  waypointId: z.string(), title: z.string(), state: z.enum(["planned", "todo", "doing", "blocked", "rejected", "reported"]), reason: z.string().min(1),
 });
 export const waypointWaiverSchema = unsettledWaypointSchema.extend({ askId: z.string(), planVersion: z.number().int().nonnegative() });
 export type WaypointWaiver = z.infer<typeof waypointWaiverSchema>;
@@ -23,7 +23,7 @@ export const concludeDraftSchema = z.object({
   pullRequests: z.array(closePullRequestSchema).optional(),
   lead: z.object({ linkId: z.string().min(1), generation: z.number().int().positive(), parentVersion: z.number().int().positive() }).optional(),
 });
-export const closeEarlyDraftSchema = concludeDraftSchema.extend({ unsettled: z.array(unsettledWaypointSchema).max(24), noPlan: z.literal(true).optional(), reason: z.string().min(1).max(500).optional() })
+export const closeEarlyDraftSchema = concludeDraftSchema.extend({ unsettled: z.array(unsettledWaypointSchema), noPlan: z.literal(true).optional(), reason: z.string().min(1).optional() })
   .refine(draft => draft.noPlan ? draft.unsettled.length === 0 : draft.unsettled.length > 0, "Close early needs open waypoints or an unplanned quest");
 export const isCloseEffect = <T extends { type: string }>(effect: T | null | undefined): effect is Extract<T, { type: "conclude" | "close-early" }> =>
   effect?.type === "conclude" || effect?.type === "close-early";

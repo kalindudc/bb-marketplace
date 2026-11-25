@@ -374,8 +374,8 @@ describe("round 2 release, ask and scout policies", () => {
     const f = await stuckMember("running turn");
     const key = `${f.q.id}:1:smith`;
     const allocation = f.k.store.get("staffing", key)!;
-    f.k.store.put("staffing", key, { ...allocation, slots: [{ memberThreadId: f.member.threadId, uses: 3 }] });
-    expect(await f.release(true)).toContain("Only two replacements are allowed per party slot");
+    f.k.store.put("staffing", key, { ...allocation, slots: [{ memberThreadId: f.member.threadId, uses: 1 + f.runtime.config().keepers.replacementsPerSlot }] });
+    expect(await f.release(true)).toContain("Limit: keepers.replacementsPerSlot = 4");
     expect(f.k.member(f.member.threadId)).toMatchObject({ engagement: "archived", disposition: "released" });
     expect(f.k.store.activeStaffing("lead")).toEqual([]);
   });

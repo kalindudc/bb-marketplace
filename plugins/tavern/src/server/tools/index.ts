@@ -7,11 +7,14 @@ import { localClock } from "../clock";
 import { taleResultsSchema } from "../../shared/tale-results";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import {
+  askFields,
   askSchema,
   checkerHandoffHoldDraftSchema,
-  briefSchema,
-  planInputSchema,
-  settleWaypointSchema,
+  briefFields,
+  planInputFields,
+  settleWaypointFields,
+  reportFields,
+  reportSchema,
   ROUTE_KINDS,
   noteDraftSchema,
   summaryDraftSchema,
@@ -36,8 +39,10 @@ import { registerReady } from "./ready";
 import { managePullRequest, pullRequestActionSchema } from "../pull-request-rules";
 import { refreshQuestPullRequests } from "../conclude-pull-requests";
 import { memoryToolInput } from "../../shared/memory";
+import { SpawnedHireNeedsRecovery } from "../hires";
 import { argumentError, askArgumentError, askOptionsInput, decideInput, judgeInput, memberInput, reportInput } from "./arguments";
 import { toolInput } from "./parameters";
+import { IntakeLimits, limitMessage } from "../../shared/limits";
 
 const id = z.string().min(1).max(120);
 const optionalQuest = id.nullish();
@@ -56,18 +61,19 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     name: string,
     label: string,
     description: string,
-    parameters: S,
+    parameters: S | ((limit: IntakeLimits) => S),
     action: (
       input: z.output<S>,
       threadId: string,
       projectId: string,
       signal: AbortSignal,
+      limit: IntakeLimits,
     ) => unknown | Promise<unknown>,
     role: "keeper" | "member" | ((input: z.output<S>, threadId: string) => void) = "keeper",
     inputError?: (error: z.ZodError, input: unknown) => Error,
     operations?: readonly string[],
   ) => {
-    const inputSpec = toolInput(parameters, operations);
+    const inputSpec = toolInput(typeof parameters === "function" ? parameters(new IntakeLimits()) : parameters, operations);
     bb.agents.registerTool({
       name,
       description,
@@ -79,12 +85,15 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         const refused = runtime.beginMemberTavernCall(ctx.threadId, name);
         const done = runtime.succession.track(ctx.threadId);
         let result: unknown;
+        const notices = new Set<string>();
+        const values = runtime.config().limits;
         try {
           if (typeof role === "string") k.require(ctx.threadId, role);
-          const parsed = inputSpec.parse(input);
+          const limit = new IntakeLimits(values, notices);
+          const parsed = inputSpec.parse(input, typeof parameters === "function" ? parameters(limit) : parameters);
           if (!parsed.success) throw inputError?.(parsed.error, input) ?? parsed.error;
           if (typeof role === "function") role(parsed.data, ctx.threadId);
-          result = await action(parsed.data, ctx.threadId, ctx.projectId, ctx.signal);
+          result = await action(parsed.data, ctx.threadId, ctx.projectId, ctx.signal, limit);
         } catch (error) {
           if (ctx.signal.aborted)
             throw new Error(`${name} failed while its turn was cancelled or stopped; its outcome is not confirmed. Read tavern_status before retrying. Cause: ${String(error)}`, { cause: error });
@@ -94,9 +103,11 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         const visible = agentData(result);
         const text =
           typeof visible === "string" ? visible : JSON.stringify(visible);
-        return text.length <= 18000
-          ? text
-          : `${text.slice(0, 17800)}\nOutput truncated. Call tavern_status with a narrower section, reportId or page.`;
+        const output = notices.size ? `${[...notices].join("\n")}\n${text}` : text;
+        const max = values.transport.toolResultChars;
+        if (output.length <= max) return output;
+        const end = `\nOutput truncated. Call tavern_status with a narrower section, reportId or page. ${limitMessage("limits.transport.toolResultChars", max)}`;
+        return output.slice(0, max - end.length).replace(/[\uD800-\uDBFF]$/, "") + end;
       },
     });
   };
@@ -136,12 +147,12 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     "tavern_route",
     "Read the user's message",
     "Record how the oldest unrouted user message was read. notes is REQUIRED on every route kind: separate facts, promises and hand-backs with need (see tavern_note), or []. The goal itself is never a note: open a quest for it. A steer can name one boardQuestId or several boardQuestIds when the user means multiple goals. Asides and questions must not name quests. Record an explicit checker-handoff hold with checkerHandoffHold: { reason }. It stays held until a user control releases it; a reporting promise never releases it. Route queued messages before quest writes. steer: apply to every named quest; ask and change nothing if targets are unclear. A still-applicable steer or new-quest route survives later messages until its following Keeper turn ends; never re-route to regain it. question: answer from the ledger or knowledge without changing a quest. aside: act directly or hire with errand:true, outside any quest. A rule, question or aside alone does not block existing quest work. new-quest: open the concrete goal with tavern_quest and scout; a greeting or class selection is not a goal. rule: save the user's standing rule verbatim with tavern_rule and source:message, active for this Keeper by default; global only when the user explicitly names all Keepers or all Tavern threads. Keeper proposals wait for ledger confirmation. Promises need dueAt in Unix milliseconds.",
-    z.object({
+    limit => z.object({
       kind: z.enum(ROUTE_KINDS),
       boardQuestId: optionalQuest,
-      boardQuestIds: z.array(id).max(8).default([]),
-      summary: z.string().max(300),
-      notes: z.array(noteDraftSchema).max(12),
+      boardQuestIds: z.array(id).default([]),
+      summary: limit.prose(z.string()),
+      notes: z.array(noteDraftSchema),
       checkerHandoffHold: checkerHandoffHoldDraftSchema.optional(),
     }),
     async (input, threadId) => {
@@ -229,15 +240,15 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_hire",
     "Hired a party member",
-    "Hire with a bounded brief. title names the task; Tavern names the thread. Include brief.outcome (2,000 characters max), mode, out-of-scope, re-runnable done-when and context paths. Rangers need numbered questions and a check-in interval; return evidence, not the deliverable. Widening scope opens a never-timed scope ask; the brief stays queued until approval. Only the user can lift the review budget on the quest page. A reversible tavern_decide with exceeds: party or rangers allows one hire, never beyond keepers.partyMax. Scouts and errands may precede greenlight; staffing needs recorded greenlight, by default the user's explicit approval. A waypoint Warden needs a known maker journal entry. Give the maker, entries, trusted worktree and explicit check commands. The checker preset allows standard check runners there. Do not request commands as tool names; quote custom commands. Use one Warden for assigned waypoints it can check independently. Repeat any review limitation. A missing maker root must not widen scope. Prefer Pi for scoped hires. Otherwise requestDetectionOnly:true asks without hiring. After the user approves, repeat with detectionOnlyAskId. Remote and scoped local non-Pi hires detect only, not prevent; never claim hooks are installed. Unknown models refuse before allocation; set classes.<classId>.model or the rule model in Where work runs. Report execution substitutions now. Obey the approved party and replacements per slot per plan version. Resting, released and stopped members free slots. Retry or release failed or unbriefed members before replacing. Scouts need no re-plan. Call tavern_placements with repo, classId and optional boardQuestId. repo defaults to your own project, or the Warden's maker repo for a Warden. placement is {ruleId} or {kind:\"current\"} for your repo only. Only the rule sets consent, inputs, models and forge. No pick uses the matching rule or stays here for your own repo; leads take no automatic rule. Cross-repo hires carry only the pushed default-branch tip. There is no fallback model. The first line names the repo, rule or pick and target.",
-    z.object({
+    "Hire with a bounded brief. title names the task; Tavern names the thread. Include brief.outcome, mode, out-of-scope, re-runnable done-when and context paths. Rangers need numbered questions and a check-in interval; return evidence, not the deliverable. Widening scope opens a never-timed scope ask; the brief stays queued until approval. Only the user can lift the review budget on the quest page. A reversible tavern_decide with exceeds: rangers allows one hire, never beyond keepers.partyMax. Scouts and errands may precede greenlight; staffing needs recorded greenlight, by default the user's explicit approval. A waypoint Warden needs a known maker journal entry. Give the maker, entries, trusted worktree and explicit check commands. The checker preset allows standard check runners there. Do not request commands as tool names; quote custom commands. Use one Warden for assigned waypoints it can check independently. Repeat any review limitation. A missing maker root must not widen scope. Prefer Pi for scoped hires. Otherwise requestDetectionOnly:true asks without hiring. After the user approves, repeat with detectionOnlyAskId. Remote and scoped local non-Pi hires detect only, not prevent; never claim hooks are installed. Unknown models refuse before allocation; set classes.<classId>.model or the rule model in Where work runs. Report execution substitutions now. Obey the approved party and replacements per slot per plan version. Resting, released and stopped members free slots. Retry or release failed or unbriefed members before replacing. Scouts need no re-plan. Call tavern_placements with repo, classId and optional boardQuestId. repo defaults to your own project, or the Warden's maker repo for a Warden. placement is {ruleId} or {kind:\"current\"} for your repo only. Only the rule sets consent, inputs, models and forge. No pick uses the matching rule or stays here for your own repo; leads take no automatic rule. Cross-repo hires carry only the pushed default-branch tip. There is no fallback model. The first line names the repo, rule or pick and target.",
+    limit => z.object({
       classId: id,
-      brief: briefSchema,
+      brief: briefFields(limit),
       boardQuestId: optionalQuest,
       waypointId: id.nullish(),
       errand: z.boolean().default(false),
       characterId: id.nullish(),
-      title: z.string().min(1).max(200),
+      title: limit.prose(z.string().min(1)),
       scope: scopeOverrideSchema.optional(),
       requestDetectionOnly: z.boolean().default(false),
       detectionOnlyAskId: id.optional(),
@@ -250,6 +261,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       try {
         m = await runtime.hire(threadId, projectId, input);
       } catch (error) {
+        if (error instanceof SpawnedHireNeedsRecovery) return error.message;
         if (error instanceof PlacementHireBlocked && error.outcome === "unknown") return error.message;
         if (error instanceof PlacementHireBlocked && input.boardQuestId) {
           const ask = k.ask(threadId, { boardQuestId: input.boardQuestId, kind: "blocker", effect: { type: "placement-blocker" }, question: "Placement blocked this hire", why: error.message.slice(0, 200), options: [{ id: "retry", label: "Retry once", detail: "Repeat this exact hire without changing its placement.", recommended: false }, { id: "stop", label: "Stop the quest", detail: "Stop rather than bypass placement.", recommended: false }], meanwhile: "No alternate placement is approved.", holds: input.waypointId ? [input.waypointId] : [] }, {}, true);
@@ -263,11 +275,11 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       }
       const substitutions = m.executionNotes.filter(note => /^(?:provider|model|permission|reasoning) .+ -> /.test(note));
       const firstLine = m.placementSummary + (substitutions.length ? ` Execution substitutions: ${substitutions.join(" ")} Tell the user in this turn.` : "") + "\n";
-      if (m.pendingScopeAsk)
-        return `${firstLine}Created ${runtime.keeper.name(m)}: ${m.threadId}. Awaiting scope approval; the original brief is queued and the member has not started.\n::tavern-ask{id="${m.pendingScopeAsk}"}`;
       const adjustments = m.executionNotes.length
         ? `\nExecution adjustments:\n${m.executionNotes.map((note) => `- ${note}`).join("\n")}\n`
         : "\n";
+      if (m.pendingScopeAsk)
+        return `${firstLine}Created ${runtime.keeper.name(m)}: ${m.threadId}. Awaiting scope approval; the original brief is queued and the member has not started.${adjustments}::tavern-ask{id="${m.pendingScopeAsk}"}`;
       return `${firstLine}Hired ${runtime.keeper.name(m)}: ${m.threadId}.${m.briefPending ? " Hired, brief pending; Tavern will retry delivery. Do not hire a second member for this slot." : ""}${adjustments}Write on its own line:\n${m.errand ? `::tavern-errand{member="${m.threadId}"}` : `::tavern-party{quest="${m.boardQuestId}"}`}`;
     },
     "keeper", argumentError,
@@ -402,8 +414,8 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_plan",
     "Wrote the quest map",
-    "Map owners, done-when, dependencies, lead times, review load, party and at most three questions. Set reversible:true only for fully reversible work. List acts for pre-approval: read/workspace-write need relative paths; check needs a recognised command. Check: warden, keeper or none (agent), you (user mark), keeper (outside, tavern_gate). Warden slots name waypoints, not makers. Use explicit greenlight, the Ranger exception or by-size approval for one party slot. Ask for more seats, new classes, weaker checks or a new permanent slot. Schedules use server time; weekdays 0=Sun to 6=Sat. For a reversible check change, fromSteer cites the user's routed steer. Limit waypoint titles to 200 and changeNote to 500 characters. Emit the returned quest-map directive verbatim.",
-    planInputSchema,
+    "Map owners, done-when, dependencies, lead times, review load, party and questions. Set reversible:true only for fully reversible work. List acts for pre-approval: read/workspace-write need relative paths; check needs a recognised command. Check: warden, keeper or none (agent), you (user mark), keeper (outside, tavern_gate). Warden slots name waypoints, not makers. Use explicit greenlight, the Ranger exception or by-size approval for one party slot. Ask for more seats, new classes, weaker checks or a new permanent slot. Schedules use server time; weekdays 0=Sun to 6=Sat. For a reversible check change, fromSteer cites the user's routed steer. Limit waypoint titles to 200 and changeNote to 500 characters. Emit the returned quest-map directive verbatim.",
+    planInputFields,
     async (input, threadId) => {
       const plan = await runtime.plan(threadId, input);
       const quest = k.quest(plan.boardQuestId);
@@ -428,15 +440,16 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     "tavern_settle",
     "Recorded a waypoint decision",
     "Record why you accepted a Keeper check (reported work or an answered outside gate), skipped an unsettled optional waypoint, or reopened one you accepted or skipped. Set as to accepted, skipped, or open. The reason is visible and the user can undo the call. This never awards Warden credit.",
-    settleWaypointSchema,
+    settleWaypointFields,
     (input, threadId) => { const result = k.settle(threadId, input); return "question" in result ? keeperCallAsk(result.id) : result; },
   );
   register(
     "tavern_ask",
     "Opened an ask",
     "Ask for a user choice or move. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. Cluster writes need target.command, change, known undo and runThreadId for a member. Approve and confirm each run on its card. Use shellGrant.heldEventId for held shell acts or heldCommunicationAskId for held messages (dismiss:true to discard). Give the full sends-as-you draft and recipient. For checker handoff use blocker, boardQuestId and releaseCheckerHandoff:true. Give options as labels or objects (use objects for ids and recommendations), what continues and held waypoints. For an existing merge, give mergeAskId, action ask-user or withdraw, and reason. Chat and timers give no approval. Never use native question tools. Answers do not execute acts or supply credentials.",
-    z.union([askSchema
-      .pick({
+    limit => {
+      const ask = askFields(limit);
+      return z.union([ask.pick({
         question: true,
         why: true,
         kind: true,
@@ -444,19 +457,19 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         holds: true,
       })
       .extend({
-        options: askOptionsInput,
+        options: askOptionsInput(ask.shape.options),
         boardQuestId: optionalQuest,
         releaseCheckerHandoff: z.literal(true).optional(),
         waypointId: id.optional(),
-        completeOn: z.array(askSchema.shape.options.element.shape.id).min(1).max(5).optional(),
-        proceedInMinutes: z.number().int().min(1).max(10080).nullish(),
+        completeOn: z.array(askSchema.shape.options.element.shape.id).min(1).optional(),
+        proceedInMinutes: z.number().int().min(1).nullish(),
         reversible: z.boolean().optional(),
         unsure: z.boolean().optional(),
         target: askSchema.shape.target,
         change: askSchema.shape.change,
         runThreadId: askSchema.shape.runThreadId,
         undo: askSchema.shape.undo,
-        draft: askSchema.shape.draft.optional(),
+        draft: ask.shape.draft.optional(),
         shellGrant: z.union([
           z.object({ heldEventId: z.string().min(1).max(420) }).strict(),
           z.object({ memberThreadId: z.string().min(1).max(200), command: z.string().min(1).max(8000) }).strict(),
@@ -464,7 +477,8 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       }).strict(),
       z.object({ heldCommunicationAskId: id, dismiss: z.literal(true).optional() }).strict(),
       z.object({ mergeAskId: id, action: z.enum(["ask-user", "withdraw"]), reason: z.string().trim().min(1).max(500) }).strict(),
-    ]).meta({ type: "object" }),
+      ]).meta({ type: "object" });
+    },
     (input, threadId) => {
       if ("mergeAskId" in input) {
         const ask = k.changeMergeAsk(threadId, input.mergeAskId, input.action, input.reason);
@@ -502,7 +516,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_decide",
     "Recorded a decision",
-    "Record a reversible decision with Undo. Give text, why, reversible, unsure:false, change, audience and undo. For a plain call give options and coverageKind: route, rule or answer with coverageId, or plan with planVersion and waypointId. For answers use askId and optionId instead; source keeper answers your lane, source ask records the user's exact answer. Never claim the user's consent without an answered ask. Use leadPlan for a linked plan; exceeds: party or rangers permits one hire within hard limits.",
+    "Record a reversible decision with Undo. Give text, why, reversible, unsure:false, change, audience and undo. For a plain call give options and coverageKind: route, rule or answer with coverageId, or plan with planVersion and waypointId. For answers use askId and optionId instead; source keeper answers your lane, source ask records the user's exact answer. Never claim the user's consent without an answered ask. Use leadPlan for a linked plan; exceeds: rangers permits one hire within the party ceiling.",
     decideInput,
     async (input, threadId) => {
       if (input.askId && input.optionId !== undefined && input.source === "keeper") {
@@ -590,13 +604,18 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_status",
     "Read the party\'s status",
-    "Read bounded board state. section=pending shows unrouted messages and pending member briefs. Page reports, asks, events or rules. Use reportId and character offset for the full report and brief. The summary lists released threads you can archive with tavern_release. member accepts a unique live name or thread ID. section=requests shows that member's frozen sources; page by sourceIndex and offset. section=placement shows machine rules and slots. Fetch omitted facts and re-read affected quests after a re-anchor.",
+    "Read bounded board state. section=pending shows unrouted messages and pending member briefs. Page reports, asks, events or rules. Use reportId and character offset for the full report and brief. Use section=brief with offset for your saved brief or a member's brief if you are their Keeper. The summary lists released threads you can archive with tavern_release. member accepts a unique live name or thread ID. section=requests shows that member's frozen sources; page by sourceIndex and offset. section=placement shows machine rules and slots. Fetch omitted facts and re-read affected quests after a re-anchor.",
     statusInput,
     ({ member, memberThreadId, ...input }, threadId) => {
       const reference = member ?? memberThreadId;
+      if (input.section === "brief" && (!reference || reference === threadId)) {
+        if (!k.member(threadId)) k.require(threadId, "member");
+        return readStatus(runtime, threadId, { ...input, memberThreadId: threadId });
+      }
+      k.require(threadId, "keeper");
       return readStatus(runtime, threadId, { ...input, memberThreadId: reference ? k.resolvePartyMember(threadId, reference).threadId : null });
     },
-    "keeper", argumentError,
+    () => {}, argumentError,
   );
   register("tavern_pull_request", "Recorded a pull request action",
     "Manage a quest PR by id: ready (optional reviewers) needs the Warden’s full commit in journal review evidence; Undo returns it to draft. Close records why; comment replies on your quest’s PR. For others, draft the URL, operation and full text; in your lane, give the quest and the literal gh or dt command with full URL, allowed once. unsure:true asks the user.",
@@ -606,13 +625,13 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     "tavern_wrap",
     "Reported the final summary",
     "A quest NEVER concludes itself. Open a never-timed conclude ask: Conclude for a settled map, Close early otherwise. Give a reason for unfinished work and cite fromSteer if the user asked in chat. Tell what changed and what was proved in outcome; put remaining work in left and actions in next. Do not repeat the next list. Use results.figures and results.chart for a short summary. Check renderer blocks with check_ui and fix every error. If the check tool is absent, keep the block simple; do not ask the user for it. End with the ask directive. Do not write the tale directive or archive anyone before the user answers.",
-    z.object({
+    limit => z.object({
       boardQuestId: id,
-      outcome: z.string().min(1).max(4000),
-      next: z.array(z.string().trim().min(1).max(200)).max(5),
+      outcome: limit.prose(z.string().min(1)),
+      next: z.array(limit.prose(z.string().trim().min(1))),
       results: taleResultsSchema.optional(),
-      left: z.string().max(4000),
-      reason: z.string().trim().min(1).max(500).optional(),
+      left: limit.prose(z.string()),
+      reason: limit.prose(z.string().trim().min(1)).optional(),
       fromSteer: id.optional(),
     }).strict(),
     async (input, threadId) => {
@@ -634,10 +653,10 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_report",
     "Filed a report",
-    "File a report and end your turn. Give a headline of at most 160 characters. A Warden headline states the result, never a claim of independence; retain the review limitation. Before done, mark every linked entry done with evidence or have it verified. Use wait with condition and dueAt for a reminder.",
+    "File a report and end your turn. Give a short headline. A Warden headline states the result, never a claim of independence; retain the review limitation. Before done, mark every linked entry done with evidence or have it verified. Use wait with condition and dueAt for a reminder.",
     reportInput,
-    async (input, threadId) => {
-      const report = k.report(threadId, input);
+    async (input, threadId, _project, _signal, limit) => {
+      const report = k.report(threadId, input, limit);
       const member = k.member(threadId)!;
       if (member.rangerCheckpointReportId === report.id)
         return `Report written. End your turn and wait for the Keeper to accept, continue or release you.\nReport id: ${report.id}`;

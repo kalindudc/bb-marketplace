@@ -3,6 +3,7 @@ import { loadPluginApp, renderSlot, type RenderedSlot } from "@get-bb/plugin-sdk
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, settingsContract } from "../../../src/shared/settings";
+import { LIMIT_FIELDS } from "../../../src/shared/limits";
 import { rpcContract } from "../../../src/shared/contract";
 import { backupContract } from "../../../src/shared/backup";
 import { memoryContract } from "../../../src/shared/memory";
@@ -19,13 +20,13 @@ async function section(id:string,view=structuredClone(settingsView),rpc:Record<s
  const slot=renderSlot(settingsGroups.find(s=>s.id===id)!,{}, {pluginId:"tavern",experimental_rpcContract:{...rpcContract,...settingsContract,...backupContract,...memoryContract},rpc:{memorySettings:()=>({revision:0,config:{active:"builtin",profiles:[]}}),settings:()=>view,registry:()=>registry,backupList:()=>({dir:"/fixture/backups",keep:14,backups:[],error:null,dataBytes:0,exportLimitBytes:8388608}),...rpc},providers:{status:"ready",providers:[{id:"codex",displayName:"Codex",available:true}] as never}});
  slots.push(slot);return slot;
 }
-async function settingsPage(settings: () => typeof settingsView | Promise<typeof settingsView> = () => settingsView) {
+async function settingsPage(settings: () => typeof settingsView | Promise<typeof settingsView> = () => settingsView, rpc: Record<string, (input: unknown) => unknown> = {}) {
  const app = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
  const slot = renderSlot(app.settingsSections[0]!, {}, {
   pluginId: "tavern", experimental_rpcContract: { ...rpcContract, ...settingsContract, ...backupContract, ...memoryContract, ...setupContract },
   rpc: { settings, registry: () => registry, setupPending: () => [], setupProjects: () => [],
    memorySettings: () => ({ revision: 1, config: { active: "builtin", profiles: [{ id: "test-notes", name: "Test notes", save: "/bin/save", find: "/bin/find", curate: "/bin/curate", timeoutSeconds: 15 }] } }),
-   backupList: () => ({ dir: "/fixture/backups", keep: 14, backups: [], error: null, dataBytes: 0, exportLimitBytes: 8388608 }),
+   backupList: () => ({ dir: "/fixture/backups", keep: 14, backups: [], error: null, dataBytes: 0, exportLimitBytes: 8388608 }), ...rpc,
   },
  });
  slots.push(slot);
@@ -168,7 +169,7 @@ it.runIf(!!process.env.TAVERN_SEND_SETTINGS_MARKUP)("renders named rules for bro
 it("registers Setup first, kit descriptions for each section, and history last",async()=>{
  const s = await settingsPage();
  expect(s.getAllByRole("heading", { level: 2 }).map(h => h.textContent)).toEqual([
-  "Setup", "Tavern", "Your attention", "Keepers and decisions", "Classes and models", "Scopes", "Where work runs",
+  "Setup", "Tavern", "Your attention", "Keepers and decisions", "Limits", "Classes and models", "Scopes", "Where work runs",
   "Memory profiles", "Atmosphere", "Closing time", "Journal", "Tuning", "Data and backups", "Settings history",
  ]);
  for (const group of s.container.querySelectorAll(".tv-settings-group")) {
@@ -184,7 +185,9 @@ it.each([
  expect(summary?.querySelector("svg.act-i.down[aria-hidden='true']")).toBeTruthy();
 });
 it("shows the schema's user knobs with defaults and only offers Reset for changed values",async()=>{
- const expected=Object.entries(DEFAULT_SETTINGS).flatMap(([group,keys])=>Object.keys(keys).map(key=>`${group}.${key}`));
+ const expected = Object.entries(DEFAULT_SETTINGS).flatMap(([group, keys]) => group === "limits"
+  ? Object.entries(LIMIT_FIELDS).flatMap(([topic, limits]) => Object.keys(limits).map(key => `limits.${topic}.${key}`))
+  : Object.keys(keys).map(key => `${group}.${key}`));
  // Class records, machine rules and forge profiles have dedicated editors.
  const exceptions=new Set(["machines.rules","machines.forges"]);
  const shown=new Set<string>();
@@ -204,6 +207,30 @@ it("shows the schema's user knobs with defaults and only offers Reset for change
   s.lifecycle.unmount();
  }
  expect(expected.filter(key=>!exceptions.has(key)&&!shown.has(key))).toEqual([]);
+});
+it("finds an advanced limit by tool or refusal text and keeps it editable", async () => {
+ const update = vi.fn(() => ({ code: "ok", revision: settingsView.revision + 1, settings: settingsView, problems: [] }));
+ const page = await settingsPage(() => settingsView, { settingsUpdate: update });
+ const search = page.getByRole("searchbox", { name: "Search settings" });
+ const advanced = (await page.findByText("Advanced limits")).closest("details")!;
+ expect(advanced.open).toBe(false);
+ fireEvent.change(search, { target: { value: "tavern_ask" } });
+ const draft = await page.findByRole("spinbutton", { name: "Exact draft body" });
+ expect(advanced.open).toBe(true);
+ expect((draft as HTMLInputElement).disabled).toBe(false);
+ fireEvent.change(search, { target: { value: "operation open: draft.body: Limit: limits.transport.draftBodyChars = 12000 (Settings, Limits)" } });
+ await waitFor(() => expect(within(page.getByRole("search")).getByRole("status").textContent).toBe("1 match"));
+ expect(page.getByRole("spinbutton", { name: "Exact draft body" })).toBe(draft);
+ fireEvent.change(search, { target: { value: "limits.intake.brief_prompt_bytes" } });
+ const brief = await page.findByRole("spinbutton", { name: "Brief prompt budget" });
+ expect((brief as HTMLInputElement).value).toBe("32000");
+ fireEvent.change(search, { target: { value: "" } });
+ expect(advanced.open).toBe(false);
+ const field = await page.findByRole("spinbutton", { name: "Stored agent prose" });
+ expect((field as HTMLInputElement).value).toBe("16000");
+ fireEvent.change(field, { target: { value: "12000" } });
+ fireEvent.keyDown(field, { key: "Enter" });
+ await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ patch: { limits: { intake: { proseChars: 12000 } } } })));
 });
 it("lets the user confirm a test alert and shows the last real failure separately", async () => {
  let route: import("../../../src/shared/alert-route").AlertRouteView = { proven: false, lastTest: null, lastFailure: { at: Date.now(), error: "Fixture delivery failed" } };

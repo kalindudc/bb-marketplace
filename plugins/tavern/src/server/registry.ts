@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { LIMITS } from "./limits";
 import { join } from "node:path";
@@ -61,6 +61,17 @@ export class Registry {
     for (const character of snapshot.characters) this.characterFiles.set(character, files.get(`character/${character.id}`)!);
     this.cache.set(key, { at: this.now(), snapshot, files });
     return snapshot;
+  }
+  olderClassOverrides(): { id: string; path: string }[] {
+    return this.read().classes.flatMap(role => {
+      const file = this.file("class", role.id);
+      if (file.source !== "global" || !file.path) return [];
+      const shipped = join(this.builtin, "classes", `${role.id}.md`);
+      const localTime = statSync(file.path, { throwIfNoEntry: false })?.mtimeMs;
+      const shippedTime = statSync(shipped, { throwIfNoEntry: false })?.mtimeMs;
+      return localTime !== undefined && shippedTime !== undefined && localTime < shippedTime && readFileSync(file.path, "utf8") !== readFileSync(shipped, "utf8")
+        ? [{ id: role.id, path: file.path }] : [];
+    });
   }
   directories() { return { builtin: this.builtin, global: this.home }; }
   invalidate() { this.cache.clear(); }

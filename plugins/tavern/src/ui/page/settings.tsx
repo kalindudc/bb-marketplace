@@ -22,6 +22,7 @@ import { WardenQualitySection } from "./warden-quality";
 import { MemorySettings } from "./memory-settings";
 import { gitProgramSettingSchema, piProgramSettingSchema } from "../../shared/git-program";
 import { SettingsSearch } from "./settings-search";
+import { LIMIT_FIELDS, limitMessage, limitRule, type LimitGroup, type LimitSettingKey } from "../../shared/limits";
 
 const WHY = "Changed on the settings page";
 export const ATMOSPHERE_ANCHOR = "tavern-settings-atmosphere";
@@ -51,22 +52,17 @@ export function useTavernSettings() {
   return { data: query.data, error: query.error, refetch: query.refetch, save, reset: (key: ResettableSetting) => save({}, undefined, [key]), pending: update.isPending, problems, note };
 }
 type Api = ReturnType<typeof useTavernSettings>;
-type SettingsGroup = Exclude<keyof TavernSettings, "classes">;
 type SettingKey = ResettableSetting;
 const SettingsBody = createContext<Api | null>(null);
-const settingsValue = (settings: TavernSettings, path: SettingKey): unknown => {
-  const [section, key] = path.split(".") as [SettingsGroup, string];
-  return (settings[section] as Record<string, unknown>)[key];
-};
+const settingsValue = (settings: TavernSettings, path: SettingKey): unknown =>
+  path.split(".").reduce<unknown>((value, key) => (value as Record<string, unknown>)[key], settings);
 function differsFromDefault(effective: TavernSettings, key: SettingKey) {
   const current = settingsValue(effective, key), fallback = settingsValue(DEFAULT_SETTINGS, key);
   if (Array.isArray(current) && Array.isArray(fallback)) return current.length !== fallback.length || current.some(value => !fallback.includes(value));
   return JSON.stringify(current) !== JSON.stringify(fallback) || (key === "tavern.ambientMotion" && !effective.tavern.hearthFlicker);
 }
-const settingsPatch = (path: SettingKey, value: unknown): SettingsPatch => {
-  const [section, key] = path.split(".");
-  return { [section!]: { [key!]: value } };
-};
+const settingsPatch = (path: SettingKey, value: unknown): SettingsPatch =>
+  path.split(".").reduceRight((value, key) => ({ [key]: value }), value) as SettingsPatch;
 
 function Shell({ api, children, className = "" }: { api: Api; children: (data: SettingsView) => ReactNode; className?: string }) {
   return <div className={`tavern tv-page tv-set ${className}`}>
@@ -96,10 +92,10 @@ export function SettingDefault({ setting, api: provided, managed = false }: { se
   </div>;
 }
 
-function Row({ label, help, children, control, setting, managed = false, coveredBy = [], group = false }: { label: string; help?: ReactNode; children?: ReactNode; control: (id: string) => ReactNode; setting?: SettingKey; managed?: boolean; coveredBy?: SettingKey[]; group?: boolean }) {
+function Row({ label, help, children, control, setting, managed = false, coveredBy = [], group = false, search }: { label: string; help?: ReactNode; children?: ReactNode; control: (id: string) => ReactNode; setting?: SettingKey; managed?: boolean; coveredBy?: SettingKey[]; group?: boolean; search?: string }) {
   const id = useId();
   const keys = setting ? [setting, ...coveredBy] : coveredBy;
-  return <div className="tv-set-row" data-settings-row={keys.length ? undefined : ""} data-setting-keys={keys.length ? keys.join(" ") : undefined}><div className="tv-set-l">{group ? <span className="tv-set-lbl" id={id} data-settings-copy>{label}</span> : <label htmlFor={id} data-settings-copy>{label}</label>}{help && <p data-settings-copy>{help}</p>}{children}{setting && <SettingDefault setting={setting} managed={managed} />}</div><div className="tv-set-c" role={group ? "group" : undefined} aria-labelledby={group ? id : undefined}>{control(id)}</div></div>;
+  return <div className="tv-set-row" data-settings-row={search ?? (keys.length ? undefined : "")} data-setting-keys={keys.length ? keys.join(" ") : undefined}><div className="tv-set-l">{group ? <span className="tv-set-lbl" id={id} data-settings-copy>{label}</span> : <label htmlFor={id} data-settings-copy>{label}</label>}{help && <p data-settings-copy>{help}</p>}{children}{setting && <SettingDefault setting={setting} managed={managed} />}</div><div className="tv-set-c" role={group ? "group" : undefined} aria-labelledby={group ? id : undefined}>{control(id)}</div></div>;
 }
 
 const NUMBER_HELP: Record<{ [G in keyof typeof KNOB_FIELDS]: keyof typeof KNOB_FIELDS[G] }[keyof typeof KNOB_FIELDS], string> = {
@@ -115,7 +111,7 @@ const NUMBER_HELP: Record<{ [G in keyof typeof KNOB_FIELDS]: keyof typeof KNOB_F
   retryAfterSeconds: "How long Tavern waits before retrying a routine Keeper check-in the host refused.",
   briefRetryAttempts: "How many times Tavern tries to deliver a member's brief before asking you.",
   replacementsPerSlot: "How many fresh members may take the same party slot on one version of the plan.",
-  rangerMax: "The fallback limit when the Keeper's class file has no Ranger budget.",
+  rangerMax: "How many Rangers a Keeper may have at once before a recorded one-hire exception is needed.",
   keepMaxHours: "How far ahead a Keeper may reserve a party member for follow-up.",
   registryWaitSeconds: "How long Tavern waits for class files before letting your message through with the built-in Keeper.",
   clusterGrantMinutes: "How long a confirmed cluster command can wait to run once before it needs a new ask.",
@@ -340,6 +336,7 @@ export function SettingAuthor({ threadId, by, label = "another thread", sentence
 
 function historySection(key: string) {
   const path = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+  if (path.startsWith("limits.")) return "Limits";
   if (path === "knobs.rangerTimeboxMaxMinutes") return "Keepers and decisions";
   if (/^tavern\.(characters|voice|voiceBeforeOff|levels|ambientMotion|hearthFlicker|characterQuietUntil|repeatSeconds|lanternLight|lanternStrength|lanternLightBb|reportedPoseSeconds|verifiedPoseMinutes)$/.test(path)) return "Atmosphere";
   if (/^(knobs|tuned|overrides|tuning\.pinned)\./.test(path)) return "Tuning";
@@ -353,7 +350,7 @@ function defaultWords(key: SettingKey, value: unknown): string {
   if (key === "attention.quietHours" && value === null) return "Off";
   if (key === "away.defaultBackAtHour") return `${String(value).padStart(2, "0")}:00`;
   const [group, field] = key.split(".");
-  const numberRule = (KNOB_FIELDS[group as keyof typeof KNOB_FIELDS] as Record<string, {unit: string}> | undefined)?.[field!];
+  const numberRule = limitRule(key) ?? (KNOB_FIELDS[group as keyof typeof KNOB_FIELDS] as Record<string, {unit: string}> | undefined)?.[field!];
   if (numberRule && typeof value === "number") return `${value.toLocaleString("en")} ${numberRule.unit}`;
   return historyValue(key, value);
 }
@@ -490,7 +487,7 @@ export function KeepersSection() {
   return <Shell api={api}>{(d) => { const k = d.effective.keepers; return <><SettingsCard title="Delegated decisions" hint="Set the decisions and staffing a Keeper may handle." glyph="you" guardrail>
     <Row label="Greenlight" setting="keepers.greenlight" help={k.greenlight === "explicit" ? "You approve every quest map before work starts." : "Plans with one member and only reversible steps start and tell you; bigger ones wait for you."} control={() => <SegFilter label="Greenlight" value={k.greenlight} onChange={(v) => void api.save({ keepers: { greenlight: v } })} options={[{ id: "explicit", label: "Always ask me" }, { id: "by-size", label: "By size" }]} />} />
     <Row label="Longest decision timer" setting="keepers.decisionTimerMax" help={`The longest a Keeper may wait before a reversible decision applies its recommendation: now ${formatValue(k.decisionTimerMax * 60, "s")}. Timers stay opt-in per ask.`} control={(id) => <NumberField id={id} value={k.decisionTimerMax} min={1} max={10080} unit="min" disabled={api.pending} onSave={(v) => void api.save({ keepers: { decisionTimerMax: v } })} />} />
-    <Row label="Party ceiling" setting="keepers.partyMax" help="Most live party members across all of a Keeper's quests at once, not a per-quest limit. A quest map still holds at most 8, and class files set per-class budgets beneath it." control={(id) => <NumberField id={id} value={k.partyMax} min={1} max={1000} unit="members" disabled={api.pending} onSave={(v) => void api.save({ keepers: { partyMax: v } })} />} />
+    <Row label="Party ceiling" setting="keepers.partyMax" help="Most live party members across all of a Keeper's quests at once, not a per-quest limit." control={(id) => <NumberField id={id} value={k.partyMax} min={1} max={1000} unit="members" disabled={api.pending} onSave={(v) => void api.save({ keepers: { partyMax: v } })} />} />
     <Row label="Lead chain depth" setting="keepers.chainDepth" help="How many layers of leads a Keeper can hire below the root. One layer lets the root hire leads, but those leads cannot hire another layer." control={(id) => <NumberField id={id} value={k.chainDepth} min={1} max={3} unit="layers" disabled={api.pending} onSave={(v) => void api.save({ keepers: { chainDepth: v } })} />} />
     <Row label="Lead chain ceiling" setting="keepers.chainMembers" help="Most seats in the entire linked party, including leads and reserved hires but not the root Keeper. Changes apply to new hires." control={(id) => <NumberField id={id} value={k.chainMembers} min={1} max={1000} unit="members" disabled={api.pending} onSave={(v) => void api.save({ keepers: { chainMembers: v } })} />} />
     <Row label="Ranger check-in interval" setting="knobs.rangerTimeboxMaxMinutes" help="How long a Ranger scouts before it reports to its Keeper, who continues it or accepts the work." control={(id) => <NumberField id={id} value={d.effective.knobs.rangerTimeboxMaxMinutes} min={3} max={30} unit="min" disabled={api.pending} onSave={(v) => void api.save({ knobs: { rangerTimeboxMaxMinutes: v } })} />} />
@@ -833,11 +830,46 @@ function MachineCard() {
   </SettingsCard>}</Shell>;
 }
 
+const LIMIT_TOPICS: Record<LimitGroup, { title: string; tools: string }> = {
+  intake: { title: "Saved work", tools: "tavern_plan tavern_hire tavern_status tavern_ask tavern_report tavern_route tavern_settle journal" },
+  journal: { title: "Journal", tools: "journal" },
+  transport: { title: "Delivery", tools: "tavern_ask tavern_status" },
+};
+const LIMIT_ROWS = (Object.keys(LIMIT_TOPICS) as LimitGroup[]).flatMap(topic =>
+  Object.entries(LIMIT_FIELDS[topic]).map(([name, rule]) => ({ topic, key: `limits.${topic}.${name}` as LimitSettingKey, rule })));
+
+function LimitsSection() {
+  const api = useTavernSettings();
+  return <Shell api={api}>{data => {
+    const row = ({ key, rule, topic }: typeof LIMIT_ROWS[number]) => {
+      const value = settingsValue(data.effective, key) as number;
+      const { tools, title } = LIMIT_TOPICS[topic];
+      return <Row key={key} setting={key} label={rule.label} help={rule.help}
+        search={`${title} ${tools} ${limitMessage(key, value)}`}
+        control={id => <NumberField id={id} value={value} min={rule.min} max={rule.max} unit={rule.unit}
+          disabled={api.pending} onSave={next => void api.save(settingsPatch(key, next))} />}>
+        <code className="tv-limit-key" data-settings-copy>{key.replace(/[A-Z]/g, char => `_${char.toLowerCase()}`)}</code>
+      </Row>;
+    };
+    return <>
+      <SettingsCard title="Saved work" hint="Limits that bound how much Tavern keeps, separate from how cards display it." glyph="file">
+        {LIMIT_ROWS.filter(item => !item.rule.advanced).map(row)}
+      </SettingsCard>
+      <details className="tv-set-advanced tv-card tv-limit-advanced">
+        <FoldSummary><strong>Advanced limits</strong><span className="tag">{LIMIT_ROWS.filter(item => item.rule.advanced).length}</span></FoldSummary>
+        <p className="tv-set-intro">Technical limits for prompts and delivery. Exact paths, commands and drafts stay intact in saved work.</p>
+        {LIMIT_ROWS.filter(item => item.rule.advanced).map(row)}
+      </details>
+    </>;
+  }}</Shell>;
+}
+
 export const SETTINGS_SECTIONS = [
   { id: "setup", title: "Setup", intro: `Open the bb composer with your request. The agent proposes changes for you to review. ${SETUP_CALLER_NOTICE}`, component: SetupSettings },
   { id: "tavern", title: "Tavern", intro: "Pause work and choose how new threads start.", component: TavernSection },
   { id: "attention", title: "Your attention", intro: "Choose your review budget, notifications and quiet hours.", component: AttentionSection },
   { id: "keepers", title: "Keepers and decisions", intro: "Set what Keepers may decide and how they check in.", component: KeepersSection },
+  { id: "limits", title: "Limits", intro: "Find a limit by its name, tool or refusal. Changes apply to new calls, not saved work. Only you can change these limits.", component: LimitsSection },
   { id: "classes", title: "Classes and models", intro: "Choose the agent, model and thinking each class uses.", component: ClassesSection },
   { id: "scopes", title: "Scopes", intro: "Set the guardrails on what members may touch.", component: ScopesSection },
   ...(PLACEMENT_RPC_LIVE ? [{ id: "machines", title: "Where work runs", intro: "Choose the machines and environments that may host work.", component: MachineCard }] as const : []),

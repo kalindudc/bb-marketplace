@@ -10,7 +10,7 @@ function objectBranches(schema: JsonSchema): JsonSchema[] {
 
 export function toolInput<S extends z.ZodType>(schema: S, operations?: readonly string[]) {
   const parameters = z.toJSONSchema(schema, { io: "input" });
-  if (!parameters.anyOf && !parameters.oneOf) return { parameters, parse: (input: unknown) => schema.safeParse(input) };
+  if (!parameters.anyOf && !parameters.oneOf) return { parameters, parse: (input: unknown, active: S = schema) => active.safeParse(input) };
 
   const branches = objectBranches(parameters);
   const key = operations ? "operation" : schema instanceof z.ZodDiscriminatedUnion ? schema.def.discriminator : null;
@@ -18,13 +18,13 @@ export function toolInput<S extends z.ZodType>(schema: S, operations?: readonly 
     operations && (operations.length !== branches.length || operations.length !== schema.options.length))
     throw new Error("Tool input unions need flat object variants and an operation selector.");
 
-  const options = schema.options;
-  const parse = (input: unknown): z.ZodSafeParseResult<z.output<S>> => {
-    if (!operations || !input || typeof input !== "object" || !Object.hasOwn(input, "operation")) return schema.safeParse(input);
+  const parse = (input: unknown, active: S = schema): z.ZodSafeParseResult<z.output<S>> => {
+    if (!operations || !input || typeof input !== "object" || !Object.hasOwn(input, "operation")) return active.safeParse(input);
+    if (!(active instanceof z.ZodUnion)) throw new Error("Tool input operations need matching variants.");
     const { operation, ...args } = input as Record<string, unknown>;
     const index = typeof operation === "string" ? operations.indexOf(operation) : -1;
     if (index < 0) throw new Error(`operation: choose ${operations.join(" or ")}.`);
-    const result = z.safeParse(options[index]!, args);
+    const result = z.safeParse(active.options[index]!, args);
     if (!result.success) throw new Error(`operation ${operation}: ${argumentError(result.error).message}`);
     return result as z.ZodSafeParseSuccess<z.output<S>>;
   };

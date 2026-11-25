@@ -1,6 +1,7 @@
 import { memberDetails } from "./member-engagement";
 import type { BoardQuest } from "../shared/schema";
 
+import { limitMessage } from "../shared/limits";
 import type { Keeper } from "./keeper/service";
 import type { Staffing, StaffingReservation } from "./keeper/store";
 
@@ -69,7 +70,7 @@ export function reserveStaffing(
     );
   if (slot < 0)
     throw new Error(
-      `Only ${replacements === 2 ? "two" : replacements} ${replacements === 1 ? "replacement is" : "replacements are"} allowed per party slot per plan version. Re-plan before another ${classId} attempt.`,
+      `Only ${replacements === 2 ? "two" : replacements} ${replacements === 1 ? "replacement is" : "replacements are"} allowed per party slot per plan version. Re-plan before another ${classId} attempt. ${limitMessage("keepers.replacementsPerSlot", replacements)}`,
     );
   const previous = slots[slot]!;
   const reservation = { id, slot, replacement: previous.uses, previous };

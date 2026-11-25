@@ -162,8 +162,20 @@ it("leaves every existing ask lane unchanged without undos", async () => {
   }
 });
 
-it.each(["party", "rangers"] as const)("requires a typed answer for the next %s exception after two undos", async kind => {
+it("does not open an exception ask for the Settings party ceiling", async () => {
   const f = await fixture(1);
+  const prior = f.k.store.openAsks("lead");
+  const rule = f.k.addRule({ scope: "keeper", scopeId: "lead", source: "message", text: "Allow an extra hire for bounded work." });
+  await expect(f.harness.behavior.invokeAgentTool("tavern_decide", {
+    text: "One extra", why: "Bounded work", reversible: true, source: "keeper", exceeds: "party", unsure: false,
+    consequence: { change: "Allow one extra hire", audience: "The Keeper", undo: "Undo the exception" },
+    coveredBy: { kind: "rule", id: rule.id }, options: ["Allow one extra", "Stay at the current limit"],
+  }, { threadId: "lead" })).rejects.toThrow("The Settings party ceiling has no one-hire exception");
+  expect(f.k.store.openAsks("lead")).toEqual(prior);
+});
+
+it("requires a typed answer for the next Ranger exception after two undos", async () => {
+  const f = await fixture(1), kind = "rangers" as const;
   const input = { text: "One extra", why: "Bounded work", reversible: true, source: "keeper" as const, exceeds: kind };
   await f.undo(f.k.decide("lead", input).id);
   await f.undo(f.k.decide("lead", input).id);

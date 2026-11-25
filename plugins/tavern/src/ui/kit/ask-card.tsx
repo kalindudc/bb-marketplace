@@ -3,7 +3,7 @@ import { experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate } 
 import { rpcContract } from "../../shared/contract";
 import type { Ask, LeadPlanReview } from "../../shared/schema";
 import { Glyph } from "./glyphs";
-import { MemberChip, QueryState, TimeAgo, clockTime } from "./primitives";
+import { Clamp, MemberChip, QueryState, TimeAgo, clockTime } from "./primitives";
 import { CONSEQUENTIAL_ASK_KINDS, preapprovalWords } from "../../shared/quest-authority";
 import { QuestAuthority } from "./quest-authority";
 import { useRegistry } from "./registry";
@@ -134,9 +134,10 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
       onAnswered?.({ ...ask, state: "answered", answer: { optionId, note: note.trim() || null, by: "user", via, at, surface: "client (unattested)" } });
     } catch (e) { setError(e); }
   }
+  const why = ask.why ? `Yours because ${ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}` : "";
   return (
     <section className={`tavern ask k-${ask.kind}`} aria-label={`Ask: ${ask.question}`} data-ask>
-      {headless ? ask.why && <p className="ask-why">Yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</p> : <><div className="ask-h"><span className="kind">{early ? "Close early" : KIND[ask.kind]}</span>{ask.createdAt > 0 && <span>asked <TimeAgo at={ask.createdAt} /></span>}{ask.why && <span>· yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</span>}</div><h3 className="ask-q">{ask.question}</h3></>}
+      {headless ? why && <Clamp text={why} className="ask-why" /> : <><div className="ask-h"><span className="kind">{early ? "Close early" : KIND[ask.kind]}</span>{ask.createdAt > 0 && <span>asked <TimeAgo at={ask.createdAt} /></span>}{why && <Clamp text={`· ${why.charAt(0).toLowerCase() + why.slice(1)}`} className="ask-why" />}</div><h3 className="ask-q"><Clamp text={ask.question} /></h3></>}
       {ask.kind === "greenlight" && <p className="m small">Cluster writes always ask you, even after you approve the quest map.</p>}
       {ask.effect?.type === "member-schedules" && <dl className="sendbox" aria-label="Schedules to approve">
         {ask.effect.schedules.map((schedule, index) => <Fragment key={index}><dt>{scheduleLabel(schedule)} (server time)</dt><dd data-content>{schedule.duty}</dd></Fragment>)}
@@ -203,7 +204,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
         {ask.options.map(o => (
           <label key={o.id} className="opt">
             <input type="radio" name={name} checked={optionId === o.id} onChange={() => setOption(o.id)} disabled={answer.isPending || (missingGrant && GRANTING(o.id)) || (cluster && o.id !== "deny" && readiness.data?.guarded !== true)} />
-            <span className="ol"><b>{o.label}{o.recommended && <span className="rec"> · recommended</span>}</b>{o.detail && <span className="m">{o.detail}</span>}{userMove && <span className="m">{userMove.completeOn.includes(o.id) ? "Finishes your waypoint." : "Leaves your waypoint open."}</span>}</span>
+            <span className="ol"><b className="opt-copy ct">{o.label}{o.recommended && <span className="rec"> · recommended</span>}</b>{o.detail && <>{" "}<span className="opt-copy ct m">{o.detail}</span></>}{userMove && <>{" "}<span className="m">{userMove.completeOn.includes(o.id) ? "Finishes your waypoint." : "Leaves your waypoint open."}</span></>}</span>
           </label>
         ))}
       </fieldset>}

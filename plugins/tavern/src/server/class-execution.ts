@@ -1,15 +1,11 @@
 import type { ClassExecutionInput, ClassModeFacts } from "../shared/class-execution-contract";
 import { CLASS_BODY_LIMIT, classRules } from "../shared/class-rules";
-import type { ClassDef } from "../shared/schema";
 import { resolveHireExecution } from "./execution";
 import type { RegistrySnapshot } from "./registry";
 import type { TavernRuntime } from "./runtime";
 
-export function classLimits(role: ClassDef, config: ReturnType<TavernRuntime["config"]>) {
-  return {
-    partyMax: Math.min(config.keepers.partyMax, role.source === "builtin" ? config.keepers.partyMax : role.budget?.members ?? config.keepers.partyMax),
-    rangerMinutes: Math.min(config.knobs.rangerTimeboxMaxMinutes, role.source === "builtin" ? config.knobs.rangerTimeboxMaxMinutes : role.budget?.rangerMinutes ?? config.knobs.rangerTimeboxMaxMinutes),
-  };
+export function staffingLimits(config: ReturnType<TavernRuntime["config"]>) {
+  return { partyMax: config.keepers.partyMax, rangerMax: config.keepers.rangerMax, rangerMinutes: config.knobs.rangerTimeboxMaxMinutes };
 }
 
 export async function classExecutionFacts(runtime: TavernRuntime, input: ClassExecutionInput, prepared?: RegistrySnapshot): Promise<ClassModeFacts> {
@@ -35,13 +31,15 @@ export async function classExecutionFacts(runtime: TavernRuntime, input: ClassEx
     out.fields.push({ ...fileField("permission", forcePermission ? "full" : role.permission), ...(forcePermission ? { source: "forced" as const, rule: "The provider runs at full permission. Act guard checks recognized acts, not general tool access." } : {}) }, { field: "scope", value: requestedPreset, source: role.scope ? source : "preset" },
       { ...fileField("environment", input.mode === "hire" ? role.environment : null), ...(input.mode === "start" ? { source: "role" as const, rule: "Uses the environment selected in the composer; class worktree preference applies only to hires." } : {}) },
       { ...fileField("role prompt", `${out.body.bytes} bytes`), rule: classRules(kind) },
-      { field: "tools", value: kind === "keeper" ? ["journal", ...runtime.toolNames.filter(name => !["tavern_report", "tavern_request_sources"].includes(name))].join(", ") : kind === "member" ? "journal, tavern_memory, tavern_report, tavern_request_sources" : "journal, tavern_memory", source: "role" },
+      { field: "tools", value: kind === "keeper" ? ["journal", ...runtime.toolNames.filter(name => !["tavern_report", "tavern_request_sources"].includes(name))].join(", ") : kind === "member" ? "journal, tavern_memory, tavern_report, tavern_request_sources, tavern_status (own brief only)" : "journal, tavern_memory", source: "role" },
       { ...fileField("characters", role.characters.join(", ") || "None"), rule: "Only these, in this order; the first free character is chosen. None chosen means no character name. When all are busy the first is reused with a unique display name." });
     if (role.id === "keeper") {
-      const limits = classLimits(role, runtime.config());
-      out.fields.push({ field: "party cap", value: String(limits.partyMax), source: "settings", rule: "A class file may narrow, never raise, the settings limit." }, { field: "Ranger minutes", value: String(limits.rangerMinutes), source: "settings", rule: "A class file may narrow, never raise, the settings limit." });
+      const { partyMax, rangerMax, rangerMinutes } = staffingLimits(runtime.config());
+      out.fields.push({ field: "party cap", value: String(partyMax), source: "settings", rule: "keepers.partyMax" },
+        { field: "Ranger count", value: String(rangerMax), source: "settings", rule: "keepers.rangerMax" },
+        { field: "Ranger minutes", value: String(rangerMinutes), source: "settings", rule: "knobs.rangerTimeboxMaxMinutes" });
     }
-    if (file.source === "project" && file.path) out.projectOverrides.push(...["provider", "model", "reasoning", "permission", "hires", "body", "budget"].map(field => ({ field, path: file.path!, message: `This project's ${role.label} file replaces the whole class, including ${field}. Review it before starting or hiring.` })));
+    if (file.source === "project" && file.path) out.projectOverrides.push(...["provider", "model", "reasoning", "permission", "hires", "body"].map(field => ({ field, path: file.path!, message: `This project's ${role.label} file replaces the whole class, including ${field}. Review it before starting or hiring.` })));
     if (!projectId) {
       for (const field of out.fields) if (field.field !== "tools" && !(field.field === "permission" && forcePermission)) field.dependsOnProject = true;
       out.notes.push("Execution depends on the project. Shown values use only user-level and built-in layers; select a project to verify its class overrides, scope policy and model catalog.");

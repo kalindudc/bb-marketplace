@@ -138,12 +138,12 @@ describe("Durable member and review memory", () => {
   it("refuses Keeper review overrides and consumes the user's allowance once", async () => {
     const f = await approved();
     vi.spyOn(f.runtime, "review").mockReturnValue({ waiting: 3, budget: 3, items: [] });
-    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("Only the user can lift this limit");
+    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("Limit: attention.reviewBudget = 3");
     f.k.decide("lead", { boardQuestId: f.q.id, text: "Extra work", why: "Bounded", source: "keeper", reversible: true });
-    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("Only the user can lift this limit");
+    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("Limit: attention.reviewBudget = 3");
     await rpcHandlers(f.runtime).allowReview({ id: f.q.id }, { experimental_caller: { kind: "client" } } as never);
     await expect(f.runtime.hire("lead", "project", f.input)).resolves.toBeTruthy();
-    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("Only the user can lift this limit");
+    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("Limit: attention.reviewBudget = 3");
   });
   it("does not use another quest's allowance and restores an allowance after a definite spawn refusal", async () => {
     const f = await approved();

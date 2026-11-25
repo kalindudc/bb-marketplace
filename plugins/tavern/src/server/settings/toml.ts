@@ -6,6 +6,7 @@ import { settingsSchema, settingsPatchSchema, sparseTunablesSchema, USER_ONLY_SP
 import { displayChanges } from "./store";
 import { LIMITS } from "../limits";
 import { decodeSettingsToml, encodeSettingsToml, SettingsTomlError, snake } from "./format";
+import { limitRule } from "../../shared/limits";
 
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date);
 function linesOf(source: string) {
@@ -91,7 +92,8 @@ export function previewToml(source: string, snapshot: Pick<SettingsSnapshot, "us
         const canonical = [...prefix, ...parts.map(String)];
         const path = canonical.map((key, index) => canonical[0] === "classes" && index === 1 ? key : snake(key));
         const key = canonical.at(-1)!;
-        let range: { min: number; max: number } | undefined = Object.hasOwn(TUNABLES, key) ? TUNABLES[key as keyof typeof TUNABLES] : undefined;
+        let range: { min: number; max: number } | undefined = limitRule(canonical.join("."))
+          ?? (Object.hasOwn(TUNABLES, key) ? TUNABLES[key as keyof typeof TUNABLES] : undefined);
         if (!range && Object.hasOwn(settingsSchema.shape, canonical[0]!)) {
           const section = settingsSchema.shape[canonical[0] as keyof typeof settingsSchema.shape].unwrap();
           let field: z.core.$ZodType | undefined = section instanceof z.ZodObject ? (section.shape as Record<string, z.ZodType>)[key] : undefined;

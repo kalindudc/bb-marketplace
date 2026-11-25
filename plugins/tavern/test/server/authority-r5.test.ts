@@ -68,23 +68,14 @@ it("keeps the user's raised party allowance with the built-in Keeper", async () 
   for (let i = 0; i < 8; i++) await expect(f.runtime.hire("lead", "project", input)).resolves.toBeTruthy();
   await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(/party budget/);
 });
-it.each([8, 3])("keeps a custom class's soft party size below partyMax %s", async partyMax => {
+it.each([8, 3])("keeps Settings partyMax %s authoritative even with an older class budget", async partyMax => {
   const f = setup(), config = f.runtime.config.bind(f.runtime), snapshot = f.runtime.snapshot();
   snapshot.classes = snapshot.classes.map(role => role.id === "keeper" ? { ...role, source: "global" as const, budget: { rangers: 3, rangerMinutes: 5, ...role.budget, members: 2 } } : role);
   vi.spyOn(f.runtime, "snapshot").mockReturnValue(snapshot);
   f.runtime.config = q => { const c = config(q); return { ...c, keepers: { ...c.keepers, partyMax } }; };
   const input = { classId: "wanderer", errand: true, title: "Look", brief: { outcome: "Read", doneWhen: "Evidence", outOfScope: "Changes", mode: "make-it-work" as const, context: [], questions: [], timeboxMinutes: 1 } };
-  for (let i = 0; i < 2; i++) await expect(f.runtime.hire("lead", "project", input)).resolves.toBeTruthy();
-  for (let i = 0; i < 2; i++) await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(/party budget/);
-  const allowOne = () => f.k.decide("lead", { text: "One extra helper", why: "Bounded work", reversible: true, source: "keeper", exceeds: "party" });
-  allowOne();
-  await expect(f.runtime.hire("lead", "project", input)).resolves.toBeTruthy();
-  await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(/party budget/);
-  for (let count = 3; count < partyMax; count++) {
-    allowOne();
-    await expect(f.runtime.hire("lead", "project", input)).resolves.toBeTruthy();
-  }
-  const unused = allowOne();
+  for (let i = 0; i < partyMax; i++) await expect(f.runtime.hire("lead", "project", input)).resolves.toBeTruthy();
+  const unused = f.k.decide("lead", { text: "Historical party exception", why: "Old receipt", reversible: true, source: "keeper", exceeds: "party" });
   await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(/party budget/);
   expect(new LimitPolicy(f.k).softDecision("lead", null, "party")).toBe(unused.id);
 });

@@ -79,15 +79,15 @@ export async function backfillTaleDelivery(k: Keeper, quest: Pick<BoardQuestSumm
   if (result.output && hasDirective(result.output, quest.id)) saveDelivery(k, quest.id, quest.keeperThreadId, result.output, telling);
 }
 
-const skipSchema = z.object({ waypointId: z.string().min(1).max(120), reason: z.string().max(500) });
+const skipSchema = z.object({ waypointId: z.string().min(1).max(120), reason: z.string() });
 const wrapDataSchema = z.object({
-  outcome: z.string().min(1).max(4000),
-  left: z.string().max(4000).nullish(),
-  skipped: z.array(skipSchema).max(24).optional(),
+  outcome: z.string().min(1),
+  left: z.string().nullish(),
+  skipped: z.array(skipSchema).optional(),
   closure: questOutcomeSchema.optional(),
-  closeReason: z.string().min(1).max(500).optional(),
-  waivers: z.array(waypointWaiverSchema).max(24).optional(),
-  next: z.array(z.string().max(200)).max(5).optional(),
+  closeReason: z.string().min(1).optional(),
+  waivers: z.array(waypointWaiverSchema).optional(),
+  next: z.array(z.string()).optional(),
   results: z.unknown().optional(),
 });
 
@@ -103,9 +103,9 @@ export function readTale(k: Keeper, quest: BoardQuestSummary) {
   const results = taleResultsSchema.safeParse(data.results);
   const skipped = wrapData.skipped ?? (k.store.db.prepare(
     `SELECT data FROM tavern_events WHERE board_quest_id=? AND type='waypoint.skipped'
-      AND id<? AND json_extract(data,'$.version')=? ORDER BY id DESC LIMIT 24`,
+      AND id<? AND json_extract(data,'$.version')=? ORDER BY id ASC`,
   ).all(quest.id, wrapped.id, quest.planVersion) as { data: string }[])
-    .reverse().map(row => skipSchema.parse(JSON.parse(row.data)));
+    .map(row => skipSchema.parse(JSON.parse(row.data)));
   const record = k.store.get("serviceRecords", quest.id);
   const levels = record?.credits.flatMap(credit => credit.level ? [{
     characterId: credit.characterId, role: credit.role, before: credit.level.before, after: credit.level.after, historyComplete: credit.level.historyComplete === true,

@@ -1,5 +1,6 @@
 import { KNOB_FIELDS, SPEECH_GAP, SPEECH_RECENT_MESSAGES } from "../../shared/settings";
 import { knobLabel } from "./insights";
+import { limitRule } from "../../shared/limits";
 
 const LABELS: Record<string, string> = {
   "tavern.gitProgram": "Git program",
@@ -17,6 +18,8 @@ const LABELS: Record<string, string> = {
 /** A settings path in words: TOML's snake_case and the RPC's camelCase both map to the label the row uses. */
 export function settingLabel(key: string) {
   const camel = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase()).replace(/^(?:tuning\.pinned|tuned)\./, "knobs.");
+  const limit = limitRule(camel);
+  if (limit) return limit.label;
   const [group, field] = camel.split(".");
   const known = (KNOB_FIELDS[group as keyof typeof KNOB_FIELDS] as Record<string, {label:string}> | undefined)?.[field!];
   if (known) return known.label;

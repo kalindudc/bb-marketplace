@@ -39,12 +39,16 @@ it.each(["member", "memberThreadId"])("uses %s for member tools", async field =>
   expect(release).toHaveBeenCalledWith("lead", "member-1", "Finished");
 });
 
-it("names member, dueAt, title, changeNote and outcome in validation errors", async () => {
+it("names missing inputs and preserves long prose and exact context paths", async () => {
   const f = fixture();
   const q = await seedQuest(f.k, "lead", "Plan the parser", "Parser");
   const plan = planInput(q.id);
   await expect(f.call("tavern_release", { reason: "Done" })).rejects.toThrow(/member/);
   await expect(f.call("tavern_route", { kind: "new-quest", summary: "Plan it", notes: [{ kind: "commitment", text: "Run checks" }] })).rejects.toThrow(/notes\.0\.dueAt/);
-  await expect(f.call("tavern_plan", { ...plan, changeNote: "x".repeat(501), waypoints: [{ ...plan.waypoints[0], check: "keeper", title: "x".repeat(201) }] })).rejects.toThrow(/changeNote.*500[\s\S]*waypoints\.0\.title.*200|waypoints\.0\.title.*200[\s\S]*changeNote.*500/);
-  await expect(f.call("tavern_hire", { title: "Build", classId: "smith", brief: { outcome: "x".repeat(2001), mode: "make-it-work", outOfScope: "", doneWhen: "Done", context: [], questions: [], timeboxMinutes: null } })).rejects.toThrow(/brief\.outcome.*2000/);
+  await expect(f.call("tavern_plan", { ...plan, changeNote: "x".repeat(501), waypoints: [{ ...plan.waypoints[0], check: "keeper", title: "x".repeat(201) }] })).resolves.toContain("Plan v1 saved");
+  const context = [`/tmp/${"segment/".repeat(225)}fixture.txt`];
+  const outcome = "x".repeat(2001);
+  await expect(f.call("tavern_hire", { title: "Check", classId: "ranger", errand: true, brief: { outcome, mode: "make-it-work", outOfScope: "", doneWhen: "Done", context, questions: ["What changed?"], timeboxMinutes: 5 } })).resolves.toContain("Hired");
+  const member = f.k.store.all("members").find(m => m.classId === "ranger")!;
+  expect(f.k.store.runtime(member.threadId).brief).toMatchObject({ context, outcome });
 });

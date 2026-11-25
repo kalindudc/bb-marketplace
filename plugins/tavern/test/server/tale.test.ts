@@ -127,22 +127,21 @@ describe("report headline", () => {
     expect(f.k.report("scout", { ...f.report(), headline: "The README is correct." }).id).toBe(updated.id);
   });
 
-  it("advertises headline on tavern_report and rejects blank or overlong headlines", async () => {
+  it("advertises headline on tavern_report and validates stored headlines without an intake limit", async () => {
     const f = await fixture(); f.bind("scout", "ranger"); registerTools(f.bb, f.runtime);
     const tool = f.harness.inspection.registrations.agentTools.find(t => t.name === "tavern_report")!;
     expect((tool as unknown as { parameters: { properties: Record<string, unknown> } }).parameters.properties).toHaveProperty("headline");
     const base = f.k.report("scout", f.report());
     expect(() => reportSchema.parse({ ...base, headline: " " })).toThrow();
-    expect(() => reportSchema.parse({ ...base, headline: "x".repeat(161) })).toThrow();
+    expect(reportSchema.parse({ ...base, headline: "x".repeat(161) }).headline).toHaveLength(161);
   });
 
-  it("accepts the headline boundary and names the extra room needed for a same-family label", async () => {
-    const f = await fixture(); f.bind("scout", "ranger");
-    expect(f.k.report("scout", { ...f.report(), headline: "x".repeat(160) }).headline).toHaveLength(160);
+  it("preserves a long headline and adds the same-family label", async () => {
+    const f = await fixture();
     const w = f.bind("checker", "warden");
     f.k.store.put("members", w.threadId, { ...w, checkIndependence: "same-family" });
-    expect(() => f.k.report("checker", { ...f.report(), headline: "x".repeat(160) })).toThrow(/same-family label/);
-    expect(f.k.store.query("reports", "memberThreadId", "checker")).toEqual([]);
+    const headline = "x".repeat(170);
+    expect(f.k.report("checker", { ...f.report(), headline }).headline).toBe(`same-family check (not independent): ${headline}`);
   });
 
   it("does not let Warden headlines claim independence and retains the same-family limitation", async () => {

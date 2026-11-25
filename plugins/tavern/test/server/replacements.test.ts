@@ -95,7 +95,7 @@ describe("bounded party replacements", () => {
     expect(replacementDecisions(f)).toHaveLength(1);
     expect(f.k.store.query("decisions", "keeperThreadId", "lead")).toHaveLength(2);
   });
-  it("frees completed, explicitly released and stopped capacity, journals replacements, and persists the two-replacement cap", async () => {
+  it("frees completed, explicitly released and stopped capacity, journals replacements, and persists the replacement cap", async () => {
     const f = await approvedParty();
     const { k, runtime, q, input, plan } = f;
     const first = await runtime.hire("lead", "project", input);
@@ -110,12 +110,14 @@ describe("bounded party replacements", () => {
     const restarted = new TavernRuntime(runtime.bb, k, runtime.registry);
     const third = await restarted.hire("lead", "project", input);
     fixtureActivity(k, third.threadId, "stopped");
-    await expect(restarted.hire("lead", "project", input)).rejects.toThrow(
-      /two replacements.*plan version/i,
-    );
+    for (let i = 2; i < runtime.config().keepers.replacementsPerSlot; i++) {
+      const next = await restarted.hire("lead", "project", input);
+      fixtureActivity(k, next.threadId, "stopped");
+    }
+    await expect(restarted.hire("lead", "project", input)).rejects.toThrow(/Limit: keepers.replacementsPerSlot = 4/);
     const decisions = replacementDecisions(f);
-    expect(k.store.query("decisions", "keeperThreadId", "lead")).toHaveLength(4);
-    expect(decisions).toHaveLength(2);
+    expect(k.store.query("decisions", "keeperThreadId", "lead")).toHaveLength(6);
+    expect(decisions).toHaveLength(4);
     for (const decision of decisions)
       expect(decision).toMatchObject({
         boardQuestId: q.id,
@@ -158,7 +160,7 @@ describe("bounded party replacements", () => {
     const { k, runtime, input } = f;
     const first = await runtime.hire("lead", "project", input);
     const second = await runtime.hire("lead", "project", input);
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < runtime.config().keepers.replacementsPerSlot; i++) {
       const current = k.store
         .query("members", "boardQuestId", input.boardQuestId)
         .find(
@@ -173,10 +175,10 @@ describe("bounded party replacements", () => {
         (m) => m.threadId !== second.threadId && m.engagement === "active",
       )!;
     await failAndRelease(f, activeFirstSlot.threadId);
-    await expect(runtime.hire("lead", "project", input)).rejects.toThrow(/two replacements/);
+    await expect(runtime.hire("lead", "project", input)).rejects.toThrow(/Limit: keepers.replacementsPerSlot = 4/);
     fixtureActivity(k, second.threadId, "stopped");
     const replacement = await runtime.hire("lead", "project", input);
     expect(replacement.threadId).not.toBe(first.threadId);
-    await expect(runtime.hire("lead", "project", input)).rejects.toThrow(/two replacements/);
+    await expect(runtime.hire("lead", "project", input)).rejects.toThrow(/Limit: keepers.replacementsPerSlot = 4/);
   });
 });

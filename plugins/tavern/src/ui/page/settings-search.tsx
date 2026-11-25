@@ -7,7 +7,8 @@ const GROUP = ".tv-settings-group, .tv-settings-card, details";
 export function SettingsSearch({ children }: { children: ReactNode }) {
   const [text, setText] = useState("");
   const [count, setCount] = useState(0);
-  const query = text.trim().toLowerCase().replace(/\s+/g, " ");
+  const search = /\blimit:\s+([a-z][\w.]+\.[a-z]\w*)\s*=/i.exec(text)?.[1] ?? text;
+  const query = search.trim().toLowerCase().replace(/\s+/g, " ");
   const results = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const id = useId();

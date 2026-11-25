@@ -1,5 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { JournalEdit } from "../shared/contract";
+import type { LimitValues } from "../shared/limits";
 import type { Actor, BoardQuest, JournalEntry, Journal, JournalProgress, WaypointLink } from "../shared/schema";
 
 type HookContext = Parameters<Parameters<BbPluginApi["experimental_hooks"]["on"]>[1]>[0];
@@ -46,6 +47,7 @@ export interface JournalDeps {
   verdictSubmitted?(actor: Actor, entries: JournalEntry[]): void;
   /** A verified entry is about to reopen for a newer brief: its receipt no longer proves the maker's waypoint, though the Warden keeps the check. Inside the journal transaction; must not throw. */
   superseded?(input: { entry: JournalEntry; version: number; at: number }): void;
+  limits?(): LimitValues;
   settings?(): { journalReminders: boolean; journalQuietMinutes: number; remindEveryMinutes?: number; reportGraceMinutes?: number };
   // added by Builder A: the Keeper store is authoritative for board-mirror phases, including old unmarked entries.
   boardQuestsOf?(threadId: string): readonly BoardQuestMirror[];

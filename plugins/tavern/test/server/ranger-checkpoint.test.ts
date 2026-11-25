@@ -12,10 +12,11 @@ const brief = { outcome: "Find the source", doneWhen: "Evidence", mode: "make-it
 const findings = { outcome: "1. The source is in the manual.", evidence: [{ kind: "file" as const, ref: "MANUAL.md", detail: "", exitCode: null }], artifacts: [] };
 const checkpoint = { ...findings, status: "checkpoint", checkpoint: { left: "2. Find the owner.", moreMinutes: 4 } };
 
-async function scout(errand = false) {
+async function scout(errand = false, rangerTimeboxMaxMinutes?: number) {
   const f = setup();
   const q = errand ? null : await seedQuest(f.k, "lead", "Read", "Read");
   const settings = new SettingsStore(f.k.store.db, f.time), insights = new InsightsReader(f.k.store.db, settings, f.time);
+  if (rangerTimeboxMaxMinutes !== undefined) settings.update({ revision: settings.snapshot().revision, patch: { knobs: { rangerTimeboxMaxMinutes } }, why: "Set the interval" });
   f.runtime.enableSettings(settings, insights);
   registerTools(f.bb, f.runtime);
   const member = await f.runtime.hire("lead", "project", { classId: "ranger", title: "Read", boardQuestId: q?.id, errand, brief });
@@ -83,8 +84,8 @@ it("continues the current report with a new box, narrowed questions, and a fresh
   expect(f.harness.inspection.sdk.callsTo("threads.archive")).toHaveLength(0);
 });
 
-it("refuses boxes above the ceiling and counts continued boxes against the class budget", async () => {
-  const f = await scout();
+it("refuses boxes above the ceiling and counts continued boxes against the configured budget", async () => {
+  const f = await scout(false, 12);
   const extend = (minutes: number) => f.invoke("tavern_judge", { op: "continue", reportId: f.reportId(), minutes, reason: "Check the second source" });
   await f.sendReport();
   await expect(extend(13)).rejects.toThrow(/check-in interval.*12/);

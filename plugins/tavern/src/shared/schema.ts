@@ -5,6 +5,7 @@ import { LOOK_BUILDS, LOOK_HAIRS, LOOK_HAIR_COLOURS, LOOK_HATS, LOOK_LIGHTS, LOO
 import { SPEECH_KEYS } from "./says";
 import { taleResultsSchema } from "./tale-results";
 import { dispositionSchema, engagementSchema } from "./member-engagement";
+import { IntakeLimits, storedLimits } from "./limits";
 
 // The one source of truth for Tavern's domain shapes, shared by the server, the RPC contract and the UI.
 // Words: a "board quest" is a goal a Keeper holds; a "journal" is any thread's own checklist.
@@ -98,9 +99,9 @@ export function readStoredActor(raw: string): Actor {
 export const evidenceSchema = z.object({
   kind: z.enum(["command", "file", "url", "pr", "query", "note"]),
   /** The command, path:line, URL, PR link or query. */
-  ref: z.string().min(1).max(2000),
+  ref: z.string().min(1),
   /** What it showed, in a line or two. */
-  detail: z.string().max(2000).default(""),
+  detail: z.string().default(""),
   exitCode: z.number().int().nullable().default(null),
 });
 export type Evidence = z.infer<typeof evidenceSchema>;
@@ -137,18 +138,21 @@ export const journalEntrySchema = z.object({
   /** Never reused: new ids are zero-padded hex; previously issued base36 ids remain valid. */
   id: z.string().regex(/^[0-9a-z]{2,8}$/),
   parentId: z.string().nullable(),
-  description: z.string().min(1).max(500),
+  description: z.string().min(1),
   status: z.enum(ENTRY_STATUSES),
   owner: z.string().nullable(),
   // added by Builder A: dependency readiness, artifact links and completion attribution survive reload and undo.
-  after: z.array(z.string()).max(200).default([]),
-  links: z.array(evidenceSchema).max(30).default([]),
+  after: z.array(z.string()).default([]),
+  links: z.array(evidenceSchema).default([]),
   doneAt: epochMs.nullable().default(null),
   doneBy: actorSchema.nullable().default(null),
-  note: z.string().max(2000).nullable(),
+  note: z.string().nullable(),
   evidence: z.array(evidenceSchema),
   // added by Builder A: separate review evidence and attribution; memberEvidenceAt marks proof submitted after the latest rejection.
-  review: z.object({ actor: actorSchema, at: epochMs, evidence: z.array(evidenceSchema).max(30), reason: z.string().max(2000).nullable(), previousNote: z.string().max(2000).nullable().default(null), memberEvidenceAt: epochMs.nullable().default(null) }).nullable().default(null),
+  review: z.object({ actor: actorSchema, at: epochMs,
+    evidence: z.array(evidenceSchema),
+    reason: z.string().nullable(),
+    previousNote: z.string().nullable().default(null), memberEvidenceAt: epochMs.nullable().default(null) }).nullable().default(null),
   link: waypointLinkSchema.nullable(),
   // added by Builder A: board summaries are phase-owned mirrors, not agent-ticked waypoint work.
   boardQuestId: id.nullable().default(null),
@@ -158,7 +162,7 @@ export const journalEntrySchema = z.object({
    */
   report: z.object({ kind: z.enum(["idle", "settled", "archived", "deleted"]), at: epochMs, threadId: z.string().nullable(), summary: z.string().max(300).nullable(), by: actorSchema }).nullable().optional(),
   /** Evidence from earlier briefs, moved off the entry when a follow-up brief reopened it: a done needs at least one item not in here. */
-  rebrief: z.object({ version: z.number().int().positive(), evidence: z.array(evidenceSchema).max(30) }).nullable().optional(),
+  rebrief: z.object({ version: z.number().int().positive(), evidence: z.array(evidenceSchema) }).nullable().optional(),
   /** Description rewrites since the last status change: rewording doesn't keep an entry current. */
   rewrites: z.number().int().min(0).optional(),
   order: z.number(),
@@ -274,16 +278,18 @@ export const memberSchema = z.object({
 });
 export type Member = z.infer<typeof memberSchema> & { pullRequests?: import("./pull-request").PullRequest[]; placement?: import("./placement-view").PlacementView | null };
 
-export const briefSchema = z.object({
-  outcome: z.string().min(1).max(2000),
-  mode: z.enum(["make-it-work", "make-it-better"]),
-  outOfScope: z.string().max(2000).default(""),
-  doneWhen: z.string().min(1).max(2000),
-  context: z.array(z.string().max(500)).max(30).default([]),
-  /** Rangers: numbered questions and a time box. */
-  questions: z.array(z.string().max(1000)).max(12).default([]),
-  timeboxMinutes: z.number().int().min(1).max(240).nullable().default(null),
-});
+export function briefFields(limit: IntakeLimits) {
+  return z.object({
+    outcome: limit.prose(z.string().min(1)),
+    mode: z.enum(["make-it-work", "make-it-better"]),
+    outOfScope: limit.prose(z.string()).default(""),
+    doneWhen: limit.prose(z.string().min(1)),
+    context: z.array(z.string()).default([]),
+    questions: z.array(limit.prose(z.string())).default([]),
+    timeboxMinutes: z.number().int().min(1).nullable().default(null),
+  });
+}
+export const briefSchema = briefFields(storedLimits);
 export type Brief = z.infer<typeof briefSchema>;
 
 // ---------- Board quests and the Keeper's ledger ----------
@@ -339,29 +345,39 @@ export const gateRecordSchema = gateInputSchema.extend({
 export type GateRecord = z.infer<typeof gateRecordSchema>;
 
 export const waypointCheckSchema = z.enum(["warden", "keeper", "none", "you"], { error: "Each waypoint needs a check: warden, keeper, or none for an agent; you for the user; keeper for an outside owner." });
-export const waypointSchema = z.object({
-  id: z.string().regex(/^w[0-9]{1,3}$/),
-  title: z.string().min(1).max(200),
-  acts: z.array(z.object({ kind: z.string().min(1).max(120), path: z.string().max(4096).optional(), command: z.string().max(8000).optional() }).strict()).max(30).optional(),
-  /** agent: a party member; user: the human; outside: a named person or team (a gate). */
-  actor: z.enum(["agent", "user", "outside"]),
-  check: waypointCheckSchema.optional(),
-  /** Member thread id once staffed; a class id while planned; a person or team name for outside gates. */
-  owner: z.string().nullable(),
-  leadTime: z.string().max(80).nullable(),
-  dependsOn: z.array(z.string()),
-  doneWhen: z.string().max(1000).nullable(),
-  optional: z.boolean(),
-});
+function waypointFields(limit: IntakeLimits) {
+  return z.object({
+    id: z.string().regex(/^w[0-9]{1,3}$/),
+    title: limit.prose(z.string().min(1)),
+    acts: z.array(z.object({
+      kind: z.string().min(1),
+      path: z.string().optional(),
+      command: z.string().optional(),
+    }).strict()).optional(),
+    /** agent: a party member; user: the human; outside: a named person or team (a gate). */
+    actor: z.enum(["agent", "user", "outside"]),
+    check: waypointCheckSchema.optional(),
+    /** Member thread id once staffed; a class id while planned; a person or team name for outside gates. */
+    owner: z.string().nullable(),
+    leadTime: limit.prose(z.string()).nullable(),
+    dependsOn: z.array(z.string()),
+    doneWhen: limit.prose(z.string()).nullable(),
+    optional: z.boolean(),
+  });
+}
+export const waypointSchema = waypointFields(storedLimits);
 export type Waypoint = z.infer<typeof waypointSchema>;
 
-export const planQuestionSchema = z.object({
-  id: z.string().regex(/^q[0-9]{1,2}$/),
-  text: z.string().min(1).max(500),
-  options: z.array(z.string().max(200)).max(5),
-  recommended: z.number().int().nullable(),
-  reversible: z.boolean(),
-});
+function planQuestionFields(limit: IntakeLimits) {
+  return z.object({
+    id: z.string().regex(/^q[0-9]{1,2}$/),
+    text: limit.prose(z.string().min(1)),
+    options: z.array(limit.prose(z.string())),
+    recommended: z.number().int().nullable(),
+    reversible: z.boolean(),
+  });
+}
+export const planQuestionSchema = planQuestionFields(storedLimits);
 
 export const leadEnvelopeSchema = z.object({
   members: z.number().int().min(1).max(1000),
@@ -395,55 +411,66 @@ export const leadLinkSchema = z.object({
 });
 export type LeadLink = z.infer<typeof leadLinkSchema>;
 
-export const partySlotSchema = z.object({
-  classId: z.string(),
-  characterId: z.string().nullable(),
-  model: z.string().nullable(),
-  purpose: z.string().max(300),
-  waypointIds: z.array(z.string()),
-  leadEnvelope: leadEnvelopeSchema.optional(),
-  permanent: plannedPermanent.extend({ decisionId: id.optional() }).optional(),
-});
+function partySlotFields(limit: IntakeLimits) {
+  return z.object({
+    classId: z.string(),
+    characterId: z.string().nullable(),
+    model: z.string().nullable(),
+    purpose: limit.prose(z.string()),
+    waypointIds: z.array(z.string()),
+    leadEnvelope: leadEnvelopeSchema.optional(),
+    permanent: plannedPermanent.extend({ decisionId: id.optional() }).optional(),
+  });
+}
+export const partySlotSchema = partySlotFields(storedLimits);
 
 import { budgetCentsSchema, spendBudgetSchema, spendProposalSchema } from "./spend";
 
 /** One version of a quest map: the plan the user greenlights. */
-export const planSchema = z.object({
-  boardQuestId: id,
-  reversible: z.boolean().default(false),
+function planFields(limit: IntakeLimits) {
+  return z.object({
+    boardQuestId: id,
+    reversible: z.boolean().default(false),
+    goal: limit.prose(z.string()),
+    doneWhen: limit.prose(z.string()),
+    findings: z.array(limit.prose(z.string())),
+    assumptions: z.array(limit.prose(z.string())),
+    questions: z.array(planQuestionFields(limit)),
+    alwaysAskKinds: z.array(z.enum(CONSEQUENTIAL_ASK_KINDS)).default([]),
+    reviewLoad: limit.prose(z.string()),
+    spendBudgetCents: budgetCentsSchema.optional().describe("Proposed spend budget in USD cents. Only the user approving this exact plan can set it."),
+    eta: limit.prose(z.string()).nullable(),
+    changeNote: limit.prose(z.string()).nullable(),
+  });
+}
+export const planSchema = planFields(storedLimits).extend({
   version: z.number().int().positive(),
   createdAt: epochMs,
-  /** Set when this version came from a user steer; shown as "from your steer, 14:05". */
-  fromSteer: z.object({ routeId: id, at: epochMs, text: z.string().max(300) }).nullable(),
-  goal: z.string().max(1000),
-  doneWhen: z.string().max(1000),
-  findings: z.array(z.string().max(500)).max(12),
-  assumptions: z.array(z.string().max(300)).max(10),
-  questions: z.array(planQuestionSchema).max(3),
-  waypoints: z.array(waypointSchema).min(1).max(24),
-  party: z.array(partySlotSchema).max(8),
-  alwaysAskKinds: z.array(z.enum(CONSEQUENTIAL_ASK_KINDS)).default([]),
-  reviewLoad: z.string().max(300),
-  spendBudgetCents: budgetCentsSchema.optional().describe("Proposed spend budget in USD cents. Only the user approving this exact plan can set it."),
-  eta: z.string().max(120).nullable(),
-  changeNote: z.string().max(500).nullable(),
+  fromSteer: z.object({ routeId: id, at: epochMs, text: z.string() }).nullable(),
+  waypoints: z.array(waypointSchema).min(1),
+  party: z.array(partySlotSchema),
 });
 export type Plan = z.infer<typeof planSchema>;
 
-export const planInputSchema = planSchema.omit({ version: true, createdAt: true, fromSteer: true }).extend({
-  fromSteer: id.nullish(),
-  party: z.array(partySlotSchema.extend({ permanent: plannedPermanent.optional() })).max(8),
-  waypoints: z.array(waypointSchema.extend({ check: waypointCheckSchema }).refine(w =>
-    w.actor === "user" ? w.check === "you" : w.actor === "outside" ? w.check === "keeper" : w.check !== "you",
-  { path: ["check"], message: "Use warden, keeper, or none for an agent; you for the user; keeper for an outside owner." })).min(1).max(24),
-});
+export function planInputFields(limit: IntakeLimits) {
+  return planFields(limit).extend({
+    fromSteer: id.nullish(),
+    party: z.array(partySlotFields(limit).extend({ permanent: plannedPermanent.optional() })),
+    waypoints: z.array(waypointFields(limit).extend({ check: waypointCheckSchema }).refine(w =>
+      w.actor === "user" ? w.check === "you" : w.actor === "outside" ? w.check === "keeper" : w.check !== "you",
+    { path: ["check"], message: "Use warden, keeper, or none for an agent; you for the user; keeper for an outside owner." })).min(1),
+  });
+}
 
-export const settleWaypointSchema = z.object({
-  boardQuestId: id,
-  waypointId: z.string().regex(/^w[0-9]{1,3}$/),
-  as: z.enum(["accepted", "skipped", "open"]),
-  reason: z.string().trim().min(1).max(500),
-}).strict();
+export function settleWaypointFields(limit: IntakeLimits) {
+  return z.object({
+    boardQuestId: id,
+    waypointId: z.string().regex(/^w[0-9]{1,3}$/),
+    as: z.enum(["accepted", "skipped", "open"]),
+    reason: limit.prose(z.string().trim().min(1)),
+  }).strict();
+}
+export const settleWaypointSchema = settleWaypointFields(storedLimits);
 
 export const checkerHandoffHoldDraftSchema = z.object({ reason: z.string().trim().min(1).max(1000) }).strict();
 export const checkerHandoffHoldSchema = z.object({
@@ -473,7 +500,7 @@ export const boardQuestSchema = z.object({
   short: z.string().min(1).max(40),
   phase: z.enum(PHASES),
   outcome: questOutcomeSchema.optional(),
-  waivers: z.array(waypointWaiverSchema).max(24).optional(),
+  waivers: z.array(waypointWaiverSchema).optional(),
   held: z.object({ from: z.enum(["scout", "greenlight", "build"]), since: epochMs }).optional(),
   planVersion: z.number().int().nonnegative(),
   greenlitVersion: z.number().int().nullable(),
@@ -497,12 +524,15 @@ export type BoardQuest = z.infer<typeof boardQuestSchema>;
 // Only "decision" may carry a timed default; every other kind waits for the user.
 export const ASK_KINDS = ["greenlight", "decision", "conclude", ...CONSEQUENTIAL_ASK_KINDS, "blocker", "scope"] as const;
 
-export const askOptionSchema = z.object({
-  id: z.string().regex(/^[a-z0-9-]{1,20}$/),
-  label: z.string().min(1).max(160),
-  detail: z.string().max(300).default(""),
-  recommended: z.boolean().default(false),
-});
+function askOptionFields(limit: IntakeLimits) {
+  return z.object({
+    id: z.string().regex(/^[a-z0-9-]{1,20}$/),
+    label: limit.prose(z.string().min(1)),
+    detail: limit.prose(z.string()).default(""),
+    recommended: z.boolean().default(false),
+  });
+}
+export const askOptionSchema = askOptionFields(storedLimits);
 
 import { shellGrantTargetSchema } from "./shell-grant";
 const leadPlanLimitsSchema = z.object({
@@ -552,7 +582,7 @@ export const askEffectSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("close-early"), draft: closeEarlyDraftSchema }),
   z.object({ type: z.literal("release-hold"), holdId: id }),
   settleWaypointSchema.omit({ boardQuestId: true }).extend({ type: z.literal("settle-waypoint"), planVersion: z.number().int().positive() }),
-  z.object({ type: z.literal("user-waypoint"), waypointId: id, planVersion: z.number().int().positive(), completeOn: z.array(askOptionSchema.shape.id).min(1).max(5) }),
+  z.object({ type: z.literal("user-waypoint"), waypointId: id, planVersion: z.number().int().positive(), completeOn: z.array(askOptionSchema.shape.id).min(1) }),
   z.object({ type: z.literal("member-schedules"), memberThreadId: threadId, permanentDecisionId: id, schedules: schedulesInputSchema }),
   z.object({ type: z.literal("soft-limit"), limit: z.enum(["party", "rangers"]), text: z.string().min(1).max(400), reason: z.string().max(600) }),
   z.object({ type: z.literal("pull-request-draft"), operation: pullRequestDraftOperationSchema }),
@@ -568,7 +598,8 @@ export const askEffectSchema = z.discriminatedUnion("type", [
   ...(["retry-provider", "retry-tick", "placement-blocker", "answer-blocker", "registry-blocker"] as const).map(type => z.object({ type: z.literal(type) })),
 ]);
 export type AskEffect = z.infer<typeof askEffectSchema>;
-export const askSchema = z.object({
+export function askFields(limit: IntakeLimits) {
+  return z.object({
   unsure: z.boolean().optional(),
   target: actTargetSchema.optional(),
   mergeApproval: z.object({ expiresAt: epochMs, delegationId: id.optional() }).optional(),
@@ -590,20 +621,23 @@ export const askSchema = z.object({
   id,
   keeperThreadId: threadId,
   boardQuestId: id.nullable(),
-  question: z.string().min(1).max(400),
-  forwardedQuestion: z.object({ parentQuestId: id, byline: z.string().min(1).max(400), body: z.string().min(1).max(400) }).optional(),
+  question: limit.prose(z.string().min(1)),
+  forwardedQuestion: z.object({ parentQuestId: id, byline: z.string().min(1).max(400), body: z.string().min(1) }).optional(),
   /** Why it is the user's call, in a few words. */
-  why: z.string().max(200),
+  why: limit.prose(z.string()),
   kind: z.enum(ASK_KINDS),
-  options: z.array(askOptionSchema).min(1).max(5),
+  options: z.array(askOptionFields(limit)).min(1),
   /** What keeps going while it waits. */
-  meanwhile: z.string().max(300),
+  meanwhile: limit.prose(z.string()),
   /** Waypoint ids that wait on the answer. */
   holds: z.array(z.string()),
   /** Reversible asks only: when the recommended option applies by itself. */
   proceedAt: epochMs.nullable(),
   /** For sends-as-you: exactly what would be sent, and where. Shown in full wherever the ask is answered. */
-  draft: z.object({ to: z.string().max(300), body: z.string().max(8000) }).nullable(),
+  draft: z.object({
+    to: z.string(),
+    body: limit.draftBody(z.string()),
+  }).nullable(),
   state: z.enum(["open", "answered", "defaulted", "withdrawn"]),
   draftApprovalInvalidated: z.literal(true).optional(),
   withdrawnAt: epochMs.nullable().optional(),
@@ -622,7 +656,9 @@ export const askSchema = z.object({
     })
     .nullable(),
   createdAt: epochMs,
-});
+  });
+}
+export const askSchema = askFields(storedLimits);
 export type Ask = z.infer<typeof askSchema>;
 
 const decisionReceiptSchema = z.discriminatedUnion("kind", [
@@ -634,9 +670,10 @@ const decisionReceiptSchema = z.discriminatedUnion("kind", [
 const consequenceLine = z.string().trim().min(1).max(400);
 
 /** A call recorded in the ledger. Reversible calls the Keeper made alone show under "Decided for you" with an Undo. */
+export const DECISION_TEXT_MAX = 400;
 export const decisionSchema = z.object({
   coveredBy: decisionReceiptSchema.optional(),
-  options: z.array(consequenceLine).min(1).max(5).optional(),
+  options: z.array(z.string().trim().min(1)).min(1).optional(),
   consequence: z.object({ change: consequenceLine, audience: consequenceLine, undo: consequenceLine }).strict().optional(),
   unsure: z.boolean().optional(),
   undoUnavailable: z.literal(true).optional(),
@@ -658,8 +695,8 @@ export const decisionSchema = z.object({
   id,
   keeperThreadId: threadId,
   boardQuestId: id.nullable(),
-  text: z.string().min(1).max(400),
-  why: z.string().max(600),
+  text: z.string().min(1).max(DECISION_TEXT_MAX),
+  why: z.string(),
   source: z.enum(["keeper", "steer", "ask", "user"]),
   sourceRef: z.string().nullable(),
   reversible: z.boolean(),
@@ -688,26 +725,30 @@ export const ruleSchema = z.object({
 });
 export type Rule = z.infer<typeof ruleSchema>;
 
-export const reportSchema = z.object({
+export function reportFields(limit: IntakeLimits) {
+  return z.object({
   id,
   memberThreadId: threadId,
   keeperThreadId: threadId.nullable(),
   boardQuestId: id.nullable(),
   waypointId: z.string().nullable(),
   status: z.enum(["done", "needs-decision", "blocked", "checkpoint"]),
-  checkpoint: z.object({ left: z.string().trim().min(1).max(1000), moreMinutes: z.number().int().min(0).max(240) }).strict().optional(),
-  outcome: z.string().min(1).max(4000),
+  checkpoint: z.object({ left: limit.prose(z.string().trim().min(1)),
+    moreMinutes: z.number().int().nonnegative() }).strict().optional(),
+  outcome: limit.prose(z.string().min(1)),
   // added by Builder B: the answer belongs in credits; the full report stays one click away.
-  headline: z.string().trim().min(1).max(160).optional(),
-  evidence: z.array(evidenceSchema).max(30),
-  artifacts: z.array(z.string().max(1000)).max(30),
+  headline: limit.prose(z.string().trim().min(1)).optional(),
+  evidence: z.array(evidenceSchema.extend({ detail: limit.prose(evidenceSchema.shape.detail.unwrap()).default("") })),
+  artifacts: z.array(z.string()),
   confidence: z.object({ intent: z.number().int().min(0).max(100), safe: z.number().int().min(0).max(100) }).nullable(),
   /** One line in the character's voice; dropped by the server for blocked and needs-decision reports. */
   voice: z.string().max(140).nullable(),
   wait: z.object({ condition: noteCondition, dueAt: epochMs }).strict().optional(),
   createdAt: epochMs,
   deliveredAt: epochMs.nullable(),
-});
+  });
+}
+export const reportSchema = reportFields(storedLimits);
 export type Report = z.infer<typeof reportSchema>;
 
 // "rule": the user stated a standing rule in their own words; it is recorded active at once.
@@ -729,9 +770,9 @@ export const routeSchema = z.object({
   kind: z.enum(ROUTE_KINDS),
   boardQuestId: id.nullable(),
   /** A steer that names several board quests ("close both quests"); boardQuestId is the first of them. */
-  boardQuestIds: z.array(id).max(8).default([]),
+  boardQuestIds: z.array(id).default([]),
   /** What the Keeper did about it, one line. */
-  summary: z.string().max(300),
+  summary: z.string(),
   corrected: z.boolean(),
   createdAt: epochMs,
 });

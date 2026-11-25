@@ -251,7 +251,7 @@ describe("ticks and lifecycle", () => {
 });
 
 describe("host boundaries", () => {
-  it("selects journal and the Tavern setup skill in untyped threads; members get report only", async () => {
+  it("selects journal and the Tavern setup skill in untyped threads; members get their brief and report tools", async () => {
     const { harness, k, runtime } = setup();
     const c = await harness.behavior.resolveAgentConfiguration(
       makePluginAgentConfigurationContext({ thread: { id: "untyped" } }),
@@ -279,7 +279,7 @@ describe("host boundaries", () => {
     const member = await harness.behavior.resolveAgentConfiguration(
       makePluginAgentConfigurationContext({ thread: { id: "child" } }),
     );
-    expect(member.tools.map((t) => t.name)).toEqual(["journal", "tavern_memory", "tavern_request_sources", "tavern_report", "tavern_draft_pr"]);
+    expect(member.tools.map((t) => t.name)).toEqual(["journal", "tavern_memory", "tavern_request_sources", "tavern_status", "tavern_report", "tavern_draft_pr"]);
     expect(member.instructions).toContain("Write asks, blockers and failures plainly");
     expect(member.instructions).not.toContain("Character voice rules");
   });

@@ -14,6 +14,7 @@ export const statusInput = z.object({
   section: z
     .enum([
       "summary",
+      "brief",
       "archived",
       "holds",
       "events",
@@ -87,6 +88,22 @@ function statusData(
     const previous = child.planVersion > 1 ? k.store.get("plans", `${child.id}:${child.planVersion - 1}`) : null;
     return { record: record?.state === "pending" ? { ...record, request: currentLeadPlanNames(k.store, record.request) } : record,
       change: previous && plan ? planDiff(previous, plan) : "First plan", plan };
+  }
+  if (input.section === "brief") {
+    const memberId = input.memberThreadId ?? threadId;
+    const member = k.member(memberId);
+    if (!member || memberId !== threadId && member.keeperThreadId !== threadId)
+      throw new Error("Only the member or its Keeper may read this brief.");
+    const state = k.store.runtime(memberId);
+    if (memberId === threadId && state.scopePending) throw new Error("The brief is held for a scope decision.");
+    const brief = state.brief;
+    if (!brief) throw new Error("No saved brief. A Keeper can name one of their members.");
+    const text = JSON.stringify(brief, null, 2);
+    const start = Math.min(input.offset, text.length);
+    const max = runtime.config(member.boardQuestId).limits.transport.toolResultChars;
+    let end = Math.min(start + Math.min(8000, max - 180), text.length);
+    if (end < text.length && /[\uD800-\uDBFF]/.test(text.charAt(end - 1))) end--;
+    return `Saved brief, characters ${start}-${end} of ${text.length} (data):\n${text.slice(start, end)}\n${end < text.length ? `More: call tavern_status section=brief with the same member and offset=${end}.` : "End of brief."}`;
   }
   if (input.section === "requests") return readRequestSources(k, threadId, { memberThreadId: input.memberThreadId ?? undefined, manifestId: input.manifestId ?? undefined, sourceIndex: input.sourceIndex, offset: input.offset });
   const party = k.store.query("members", "keeperThreadId", threadId, -1);

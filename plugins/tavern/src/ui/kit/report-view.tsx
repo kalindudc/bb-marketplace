@@ -95,11 +95,14 @@ export function ReportView({ report, names = {}, compact = false, member, onView
   const headline = extractReportHeadline(report, names);
   let outcome = readable(report.outcome, names);
   // A headline taken from the outcome is its first sentence: the body starts after it rather than repeating it.
-  if (headline && !report.headline?.trim()) { const at = outcome.indexOf(headline); if (at >= 0 && at < 80) outcome = outcome.slice(at + headline.length).trim(); }
+  if (headline && !report.headline?.trim() && !headline.includes("\n") && !/\bCommands? used:/i.test(headline)) {
+    const at = outcome.indexOf(headline);
+    if (at >= 0 && at < 80) outcome = outcome.slice(at + headline.length).trim();
+  }
   const evidence = readableEvidence(report.evidence, names);
   const prs = pullRequests.filter(pr => pr.memberThreadId === report.memberThreadId || pr.owner === report.memberThreadId).map(pr => <p key={pr.id} className="rv-p" data-content><a href={pr.url} target="_blank" rel="noreferrer">{pullRequestLine(pr)}</a></p>);
   if (compact) return <div className={`rv compact r-${report.status}`}>
-    {headline && <p className="rv-lead" data-content>{headline}</p>}
+    {headline && <Clamp text={headline} lines={2} className="rv-lead" />}
     {outcome && <Clamp text={outcome} lines={2} className="rv-out" />}
     {prs}
     {(evidence.length > 0 || onView) && <p className="rv-foot">{evidence.length > 0 && <span className="m">{plural(evidence.length, "piece")} of evidence</span>}{onView && <button type="button" className="lnk-btn act" onClick={onView}><span>View report</span><OpensMark /></button>}</p>}

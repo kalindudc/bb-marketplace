@@ -41,7 +41,7 @@ export const serviceQuestRecordSchema = z.object({
   keeperThreadId: identity.nullable(), backfilledAt: at.nullable(), completeSince: at.nullable(),
   credits: z.array(creditSchema),
   outcome: questOutcomeSchema.optional(),
-  waivers: z.array(waypointWaiverSchema).max(24).optional(),
+  waivers: z.array(waypointWaiverSchema).optional(),
   waypoints: waypointCountsSchema.optional(),
 }).strict();
 export type ServiceQuestRecord = z.infer<typeof serviceQuestRecordSchema>;

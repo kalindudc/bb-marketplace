@@ -50,7 +50,7 @@ describe("settings compatibility and validation", () => {
   it("keeps today's defaults, units, opt-in timers and unlimited history", () => {
     const settings = settingsSchema.parse({});
     expect(settings.knobs).toEqual({ tickSeconds: 60, typingHoldSeconds: 45, afterMessageHoldSeconds: 60,
-      staleMinutes: 20, reportBatchSeconds: 60, rangerTimeboxMaxMinutes: 12, ledgerRefreshMinutes: 10 });
+      staleMinutes: 20, reportBatchSeconds: 60, rangerTimeboxMaxMinutes: 30, ledgerRefreshMinutes: 10 });
     expect(settings.keepers).toMatchObject({ staleStrikes: 2, restatementBytes: 28000, tickFactChars: 14000 });
     expect(settings.data).toEqual({ historyDays: 0, autoArchiveDays: 0, backupKeep: 14 });
     expect(settings.keepers.decisionTimerMax).toBe(10080);

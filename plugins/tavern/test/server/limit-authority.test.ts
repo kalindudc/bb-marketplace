@@ -20,21 +20,17 @@ it("only a client may lift review once, with its surface recorded", async () => 
   expect(limits.reviewAvailable(q.id)).toBe(false);
   expect(() => limits.claimReview(q.id, "hire2")).toThrow();
 });
-it.each(["party", "rangers"] as const)("enforces the %s grant in the real hire path", async limit => {
-  const f = setup(), snapshot = f.runtime.snapshot();
-  snapshot.classes = snapshot.classes.map(role => role.id === "keeper" ? { ...role, source: "global" as const, budget: { rangerMinutes: 5, ...role.budget, members: limit === "party" ? 1 : 5, rangers: limit === "rangers" ? 1 : 5 } } : role);
-  vi.spyOn(f.runtime, "snapshot").mockReturnValue(snapshot);
-  const input = { classId: "ranger", errand: true, title: "Scout", brief: { outcome: "Read", doneWhen: "Evidence", outOfScope: "Changes", mode: "make-it-work" as const, context: [], questions: ["1. What changed?"], timeboxMinutes: 1 } };
-  await f.runtime.hire("lead", "project", input);
-  await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(limit === "party" ? "party budget" : "Ranger budget");
-  f.k.decide("lead", { text: "One extra", why: "Bounded scout", reversible: true, source: "keeper", exceeds: limit });
-  await expect(f.runtime.hire("lead", "project", input)).resolves.toBeTruthy();
-  await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(limit === "party" ? "party budget" : "Ranger budget");
-});
-it("names a failed Ranger who still occupies the class limit and honours a one-hire exception", async () => {
-  const f = setup(), snapshot = f.runtime.snapshot();
-  snapshot.classes = snapshot.classes.map(role => role.id === "keeper" ? { ...role, source: "global" as const, budget: { members: 5, rangers: 1, rangerMinutes: 5 } } : role);
-  vi.spyOn(f.runtime, "snapshot").mockReturnValue(snapshot);
+function withRangerLimit(rangerMax: number, rangerTimeboxMaxMinutes: number) {
+  const f = setup(), config = f.runtime.config.bind(f.runtime);
+  vi.spyOn(f.runtime, "config").mockImplementation(quest => {
+    const current = config(quest);
+    return { ...current, keepers: { ...current.keepers, rangerMax }, knobs: { ...current.knobs, rangerTimeboxMaxMinutes } };
+  });
+  return f;
+}
+
+it("names a failed Ranger who still occupies the Settings limit and honours a one-hire exception", async () => {
+  const f = withRangerLimit(1, 5);
   const member = await f.runtime.hire("lead", "project", scout);
   f.k.activity(member.threadId, "failed");
   await expect(f.runtime.hire("lead", "project", scout)).rejects.toThrow(`These members failed: ${f.k.name(member)}. Release them or retry their work`);
@@ -44,30 +40,23 @@ it("names a failed Ranger who still occupies the class limit and honours a one-h
   expect(f.k.store.get("decisions", decision.id)?.usedBy).toBeTruthy();
 });
 
-it("shares one Ranger exception between the class time box and count, below the settings ceiling", async () => {
-  const f = setup(), snapshot = f.runtime.snapshot();
-  snapshot.classes = snapshot.classes.map(role => role.id === "keeper" ? { ...role, source: "global" as const, budget: { members: 5, rangers: 1, rangerMinutes: 2 } } : role);
-  vi.spyOn(f.runtime, "snapshot").mockReturnValue(snapshot);
+it("honours a one-hire Ranger exception for count, never past the Settings time box", async () => {
+  const f = withRangerLimit(1, 5);
   const timebox = (timeboxMinutes: number) => ({ ...scout, brief: { ...scout.brief, timeboxMinutes } });
   await f.runtime.hire("lead", "project", scout);
   await expect(f.runtime.hire("lead", "project", scout)).rejects.toThrow(/Ranger budget.*tavern_decide.*rangers/);
-  await expect(f.runtime.hire("lead", "project", timebox(3))).rejects.toThrow(/2 minutes.*tavern_decide.*rangers/);
-  const decision = f.k.decide("lead", { text: "One longer scout", why: "Check another source", reversible: true, source: "keeper", exceeds: "rangers" });
+  const decision = f.k.decide("lead", { text: "One more scout", why: "Check another source", reversible: true, source: "keeper", exceeds: "rangers" });
   await expect(f.runtime.hire("lead", "project", timebox(f.runtime.config().knobs.rangerTimeboxMaxMinutes + 1))).rejects.toThrow(/settings.*ceiling/i);
   expect(f.k.store.get("decisions", decision.id)?.usedBy).toBeUndefined();
   await expect(f.runtime.hire("lead", "project", timebox(3))).resolves.toBeTruthy();
   expect(f.k.store.get("decisions", decision.id)?.usedBy).toBeTruthy();
   await expect(f.runtime.hire("lead", "project", timebox(3))).rejects.toThrow(/tavern_decide.*rangers/);
 });
-it("a class time box by itself triggers a Ranger exception", async () => {
-  const f = setup(), snapshot = f.runtime.snapshot();
-  snapshot.classes = snapshot.classes.map(role => role.id === "keeper" ? { ...role, source: "global" as const, budget: { members: 5, rangers: 5, rangerMinutes: 2 } } : role);
-  vi.spyOn(f.runtime, "snapshot").mockReturnValue(snapshot);
-  const input = { ...scout, brief: { ...scout.brief, timeboxMinutes: 3 } };
-  await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(/2 minutes.*tavern_decide.*rangers/);
-  const decision = f.k.decide("lead", { text: "One longer scout", why: "Check another source", reversible: true, source: "keeper", exceeds: "rangers" });
-  await expect(f.runtime.hire("lead", "project", input)).resolves.toBeTruthy();
-  expect(f.k.store.get("decisions", decision.id)?.usedBy).toBeTruthy();
+it("enforces the Settings time box even when staffing is below both caps", async () => {
+  const f = withRangerLimit(3, 3);
+  const input = { ...scout, brief: { ...scout.brief, timeboxMinutes: 4 } };
+  await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(/Limit: knobs\.rangerTimeboxMaxMinutes = 3/);
+  await expect(f.runtime.hire("lead", "project", { ...input, brief: { ...input.brief, timeboxMinutes: 3 } })).resolves.toBeTruthy();
 });
 it("a Ranger exception cannot pass the user's party ceiling", async () => {
   const f = setup(), config = f.runtime.config.bind(f.runtime), snapshot = f.runtime.snapshot();

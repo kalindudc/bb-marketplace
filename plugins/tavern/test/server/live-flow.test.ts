@@ -698,15 +698,16 @@ describe("live Keeper flow regressions", () => {
     expect(lines).toContain("tick.sent");
     expect(lines).toContain("tick.held");
   });
-  it("states the Ranger time-box limit in the hire error", async () => {
+  it("states the live Ranger time-box setting and limit in the hire error", async () => {
     const f = setup();
+    const cap = f.runtime.config().knobs.rangerTimeboxMaxMinutes;
     await expect(
       f.runtime.hire("lead", "project", {
         classId: "ranger",
         title: "Scout",
         errand: true,
-        brief: { ...brief, timeboxMinutes: 15 },
+        brief: { ...brief, timeboxMinutes: cap + 1 },
       }),
-    ).rejects.toThrow("settings ceiling of 12 minutes");
+    ).rejects.toThrow(`Limit: knobs.rangerTimeboxMaxMinutes = ${cap}`);
   });
 });

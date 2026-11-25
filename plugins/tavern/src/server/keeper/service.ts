@@ -23,7 +23,9 @@ import { PlacementStore } from "../placement/store";
 import { wasReleased } from "../../shared/member-engagement";
 import type { JournalPort } from "../ports";
 import { messageKey, SCOPE_DENIAL_TEXT } from "../../shared/text";
+import { z } from "zod";
 import { DEFAULT_SETTINGS, type TavernSettings } from "../../shared/settings";
+import { IntakeLimits, limitMessage } from "../../shared/limits";
 import {
   askSchema,
   boardQuestSchema,
@@ -1201,13 +1203,13 @@ export class Keeper {
     }
     this.checkDecision(threadId, quest, input);
     if (!input.exceeds || !input.reversible || input.kind) return this.decide(threadId, input);
+    if (input.exceeds === "party")
+      throw new Error(`The Settings party ceiling has no one-hire exception. ${limitMessage("keepers.partyMax", this.settings(input.boardQuestId).keepers.partyMax)}`);
     this.assertUnusedSoftLimitAnswer(input.sourceRef);
     const shift = this.keeperCallShift(threadId, input.exceeds);
     if (!shift) return this.decide(threadId, input);
-    const target = input.exceeds === "party" ? "party" : "Ranger";
-    const question = `Allow one hire beyond the class ${target} limit?`;
     return this.askForKeeperCall(threadId, input.boardQuestId ?? null, { type: "soft-limit", limit: input.exceeds, text: input.text, reason: input.why },
-      question, "Allow one hire", `Give the Keeper one ${target} exception for this hire; your settings ceiling still applies.`, "Do not give the Keeper an exception.", "The Keeper waits for your answer before using an exception.");
+      "Allow one hire beyond the Ranger limit?", "Allow one hire", "Give the Keeper one Ranger exception for this hire; your party ceiling still applies.", "Do not give the Keeper an exception.", "The Keeper waits for your answer before using an exception.");
   }
   private checkDecision(threadId: string, quest: BoardQuest | null, input: Parameters<Keeper["decide"]>[1]) {
     if (input.unsure === true) throw new Error("This is uncertain; ask the user instead of recording a decision.");
@@ -1413,15 +1415,12 @@ export class Keeper {
       throw new Error("Sends-as-you requires the complete recipient and draft");
     if (new Set(input.options.map((o) => o.id)).size !== input.options.length)
       throw new Error("Option ids must be unique");
-    if (
-      input.proceedInMinutes != null &&
-      (input.proceedInMinutes <= 0 ||
-        input.proceedInMinutes > this.settings().keepers.decisionTimerMax ||
-        input.options.filter((o) => o.recommended).length !== 1)
-    )
-      throw new Error(
-        "A timed default needs one recommendation and a time within seven days",
-      );
+    if (input.proceedInMinutes != null) {
+      const max = this.settings(questId).keepers.decisionTimerMax;
+      if (input.proceedInMinutes > max) throw new Error(limitMessage("keepers.decisionTimerMax", max));
+      if (input.proceedInMinutes <= 0 || input.options.filter((o) => o.recommended).length !== 1)
+        throw new Error("A timed default needs one recommendation and a positive time.");
+    }
     if (input.kind === "greenlight" && input.effect.type !== "greenlight" && (input.effect.type !== "lead-plan" || !trusted))
       throw new Error("A greenlight ask needs its typed plan version; propose the plan instead.");
     if (input.kind === "conclude" && !isCloseEffect(input.effect)) throw new Error("A conclude ask needs its typed draft; tell the quest result instead.");
@@ -1459,7 +1458,6 @@ export class Keeper {
     if (input.kind === "merge" && input.target?.merge && input.effect.type === "decision") {
       const { repository, sourceBranch, pullRequest, targetBranch } = input.target.merge;
       const detail = `${repository}: ${sourceBranch ?? pullRequest} into ${targetBranch} at ${input.target.commit}.`;
-      if (detail.length > 300) throw new Error("Use shorter exact repository and pull request names so the approval shows the full target.");
       input = { ...input, options: input.options.map(option => option.id === "approve" ? { ...option, detail } : option) };
     }
     const lane = this.authority.baseLane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure, effect: input.effect, sendTarget: input.sendTarget });
@@ -1468,7 +1466,7 @@ export class Keeper {
     if (lane === "user" && childLink?.childKeeperThreadId === threadId) {
       const parent = this.quest(childLink.parentQuestId), parentKeeper = this.member(parent.keeperThreadId);
       const byline = `${this.name(callingKeeper)} asks, for ${parentKeeper ? this.name(parentKeeper) + "’s " : ""}`;
-      forwardedQuestion = { parentQuestId: parent.id, byline, body: input.question.slice(0, 400) };
+      forwardedQuestion = { parentQuestId: parent.id, byline, body: input.question };
       input = { ...input, question: forwardedAskQuestion(forwardedQuestion, parent.short) };
     }
     if (questId && lane === "user" && input.kind !== "drafts-as-you" && DELEGATABLE_KINDS.some(kind => kind === input.kind)) {
@@ -2233,6 +2231,7 @@ export class Keeper {
       Report,
       "status" | "outcome" | "headline" | "evidence" | "artifacts" | "confidence" | "wait" | "checkpoint"
     > & Partial<Pick<Report, "voice">>,
+    intake?: IntakeLimits,
   ) {
     const m = this.require(threadId, "member");
     const ranger = m.classId === "ranger";
@@ -2260,20 +2259,20 @@ export class Keeper {
       );
     }
     const limitation = reviewLimitation(m.checkIndependence);
-    const outcome = m.classId === "warden" && limitation && !input.outcome.startsWith(limitation)
-      ? `${limitation}: ${input.outcome}`
-      : input.outcome;
+    const limit = intake ?? new IntakeLimits(this.settings(m.boardQuestId).limits);
+    const outcome = limit.prose(z.string().min(1)).parse(
+      m.classId === "warden" && limitation && !input.outcome.startsWith(limitation) ? `${limitation}: ${input.outcome}` : input.outcome,
+    );
     const { headline: suppliedHeadline, ...details } = input;
-    let headline = reportSchema.shape.headline.parse(suppliedHeadline);
+    let headline = suppliedHeadline?.trim();
     if (m.classId === "warden" && headline !== undefined) {
       const claim = headline.replace(/\b(?:not|no)\s+independen(?:t(?:ly)?|ce)\b/gi, "");
       if (/\bindependen(?:t(?:ly)?|ce)\b/i.test(claim))
         throw new Error("A Warden's headline must state the check result, not claim independence");
       if (limitation && !headline.startsWith(limitation))
         headline = `${limitation}: ${headline}`;
-      if (limitation && headline.length > 160)
-        throw new Error(`Headline must leave room for the ${m.checkIndependence === "same-family" ? "same-family" : "not-established"} label; use at most ${160 - limitation.length - 2} characters before the label`);
     }
+    headline = limit.prose(z.string().min(1)).optional().parse(headline);
     const report = reportSchema.parse({
       ...details,
       ...(headline === undefined ? {} : { headline }),

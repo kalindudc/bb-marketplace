@@ -31,7 +31,7 @@ it("captures from the idle runtime path and backfills only on explicit detail re
   g.runtime.memberEnded(makeThreadResponse({ id: "lead" }), `Idle answer\n${g.directive}`);
   expect(g.k.store.get("taleDeliveries", g.q.id)?.text).toContain("Idle answer");
 });
-it("stores next actions on the wrap event and requires the bounded tool field", async () => {
+it("stores next actions on the wrap event and requires a list of nonempty next actions", async () => {
   const f = await fixture(); registerTools(f.bb, f.runtime);
   f.k.plan("lead", { ...planInput(f.q.id), waypoints: [{ ...planInput(f.q.id).waypoints[0]!, optional: true }] });
   await concludeQuest(f.runtime, "lead", f.q.id, "Delivered", "", [{ waypointId: "w1", reason: "Not needed" }], ["Read the report"]);
@@ -39,7 +39,8 @@ it("stores next actions on the wrap event and requires the bounded tool field", 
   const tool = f.harness.inspection.registrations.agentTools.find(tool => tool.name === "tavern_wrap")!;
   const parameters = (tool as unknown as { parameters: { required: string[]; properties: Record<string, unknown> } }).parameters;
   expect(parameters.required).toContain("next");
-  expect(parameters.properties.next).toMatchObject({ maxItems: 5, items: { maxLength: 200 } });
+  expect(parameters.properties.next).toMatchObject({ type: "array", items: { type: "string", minLength: 1 } });
+  expect(parameters.properties.next).not.toHaveProperty("maxItems");
 });
 it("preserves deliveries and backfill attempts through a records backup", async () => {
   const f = await fixture(); f.wrap();

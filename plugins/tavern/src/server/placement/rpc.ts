@@ -149,10 +149,7 @@ async function preview(runtime: TavernRuntime, input: PlacementPreviewInput, sig
   if (match.state === "blocked") return { ...base, verdict: { state: "blocked", code: match.code, problems: match.problems } };
   if (match.state === "compatibility") return { ...base, verdict: { state: "compatibility", posture: compatibilityPosture } };
   if (policy.state !== "valid") throw new Error("A matched rule requires a valid machine policy.");
-  const config = runtime.config(input.questId);
-  const keeperClass = runtime.snapshot().classes.find(role => role.id === (runtime.keeper.member(input.keeperThreadId ?? "")?.classId ?? "keeper"));
-  const baseCeiling = keeperClass?.source === "builtin" ? config.keepers.partyMax : keeperClass?.budget?.members ?? config.keepers.partyMax;
-  const partyCeiling = runtime.settings?.hasUser("keepers.partyMax") ? Math.min(baseCeiling, config.keepers.partyMax) : baseCeiling;
+  const partyCeiling = runtime.config(input.questId).keepers.partyMax;
   if (match.rule.target.kind === "current") return { ...base, verdict: {
     state: "matched", ruleId: match.rule.id, matchEvidence: match.matchEvidence, blocked: null, posture: compatibilityPosture,
     remote: null, slot: null, slotsInUse: null, slotCap: null, partyCeiling,

@@ -90,6 +90,12 @@ export async function settleCancelledHire(bb: BbPluginApi, k: Keeper, token: str
   releaseHire(k, token, intent);
   k.store.event(k.now(), intent.owner.keeperThreadId, intent.owner.boardQuestId, "hire.cancelled", "Stopped a hire whose quest ended before it could join", { token, memberThreadId: threadId });
 }
+export class SpawnedHireNeedsRecovery extends Error {
+  constructor(threadId: string, cause: unknown) {
+    super(`Tavern created thread ${threadId}, but post-spawn work did not finish. Do not hire again. Read tavern_status for this thread. ${String(cause)}`, { cause });
+  }
+}
+
 export async function recoverHires(
   bb: BbPluginApi,
   k: Keeper,

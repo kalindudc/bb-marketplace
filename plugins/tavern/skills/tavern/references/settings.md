@@ -1,6 +1,6 @@
 # Tavern settings reference
 
-Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A value omitted from a settings file normally inherits its default. Use Tavern Settings for user changes; the CLI's preview does not change anything.
+The main table uses snake_case paths for TOML. The Limits table uses the camelCase keys shown in CLI output and limit notices. A value omitted from a settings file normally inherits its default. Use Tavern Settings for user changes; the CLI's preview does not change anything.
 
 - User: only the user can make the change. You can set forge commands on the Settings page or by applying a setup proposal, not through the settings CLI or a backup restore. Every setup proposal waits for your Apply, whatever its keys.
 - Granted: the user can change it, and the settings CLI accepts an agent write while `tavern.agents_may_change_settings` is on. The thread’s shell scope still applies.
@@ -63,8 +63,8 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `keepers.stop_ask_after_seconds` | Sets when to ask about a stop that has no confirmation. | `120` | User; Granted |
 | `keepers.retry_after_seconds` | Sets when a refused Keeper tick can be retried. | `60` | User; Granted |
 | `keepers.brief_retry_attempts` | Caps attempts to deliver a brief. | `5` | User; Granted |
-| `keepers.replacements_per_slot` | Caps replacements in the same party slot. | `2` | User; Granted |
-| `keepers.ranger_max` | Sets the soft Ranger concurrency default when the class file does not say. | `3` | User; Granted |
+| `keepers.replacements_per_slot` | Caps replacements in the same party slot. | `4` | User; Granted |
+| `keepers.ranger_max` | Sets the Ranger count before a one-hire exception is needed. Class files do not override it. | `3` | User; Granted |
 | `keepers.keep_max_hours` | Caps how far ahead a Keeper can reserve a party member for follow-up. | `168` | User; Granted |
 | `keepers.registry_wait_seconds` | Sets how long a Keeper waits for class files. | `30` | User; Granted |
 | `keepers.succession_recovery_seconds` | Sets how long Tavern checks an uncertain refresh before returning control to the current Keeper. | `600` | User; Granted |
@@ -94,8 +94,24 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `knobs.after_message_hold_seconds` | Holds ticks for a time after your message. | `60` | User; Plain; Tuned |
 | `knobs.stale_minutes` | Sets how long a quiet member has before it is stale. A Keeper can set a bounded quest override. | `20` | User; Granted; Tuned |
 | `knobs.report_batch_seconds` | Sets how long to gather reports before delivery. A Keeper can set a bounded quest override. | `60` | User; Granted; Tuned |
-| `knobs.ranger_timebox_max_minutes` | Ranger check-in interval: how long a Ranger scouts before it reports to its Keeper, who continues it or accepts the work. | `12` | User; Plain |
+| `knobs.ranger_timebox_max_minutes` | Ranger check-in interval: how long a Ranger scouts before it reports to its Keeper; continuations share the same minutes budget. | `30` | User; Plain |
 | `knobs.ledger_refresh_minutes` | Sets the time between full ledger refreshes. | `10` | User; Granted |
+
+## Limits
+
+Search Settings by label, help text, key, tool, or a pasted `Limit:` notice. Staffing is under Keepers and decisions and Where work runs. The review budget is under Your attention. Set a spend budget on the quest itself; it stops new work after measured spend reaches the amount you set.
+
+Open Settings, Limits for storage and delivery budgets. Only the user or a plain thread with an approved settings write can apply changes. They affect new calls, not saved records. Use `bb tavern settings get limits` to read the live values.
+
+| Key | Default | What it protects |
+| --- | ---: | --- |
+| `limits.intake.proseChars` | 16,000 characters | Each covered prose field stays small enough to save and read. Tavern shortens oversized prose with a notice. |
+| `limits.intake.briefPromptBytes` (Advanced) | 32,000 bytes | Bounds the copy of a brief sent to members and repeated in their prompts. Tavern keeps the full brief; read it with `tavern_status section=brief`. |
+| `limits.journal.entriesMax` | 200 entries | Bounds the active checklist Tavern reads and checks on each edit. Lowering it does not remove existing entries. |
+| `limits.journal.noteKeepChars` | 2,000 characters | A running journal note cannot grow without bound. New lines replace the oldest first. |
+| `limits.journal.reminderBytes` (Advanced) | 4,096 bytes | Journal reminders leave room for the rest of the thread's prompt. |
+| `limits.transport.draftBodyChars` (Advanced) | 8,000 characters | Exact send-as-you drafts remain small enough to save and deliver intact for approval. |
+| `limits.transport.toolResultChars` (Advanced) | 18,000 characters | Returned tool text does not fill the model's context. Saved work is unchanged, and status can read it in smaller pages. |
 
 ## Structured values
 

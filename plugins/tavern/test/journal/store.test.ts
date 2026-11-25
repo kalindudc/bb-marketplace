@@ -4,21 +4,56 @@ import { makeHost } from "./host";
 import { createJournalStore } from "../../src/server/journal/store";
 import { MIGRATIONS as JOURNAL_MIGRATIONS } from "../../src/server/migrations";
 import type { JournalDeps } from "../../src/server/ports";
+import { DEFAULT_SETTINGS } from "../../src/shared/settings";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.all(cleanup.splice(0).map(fn => fn())); });
-function fixture(metadata: Record<string, unknown> = {}, roles: JournalDeps["roleOf"] = () => null, legacyEnabled = false) {
+function fixture(metadata: Record<string, unknown> = {}, roles: JournalDeps["roleOf"] = () => null, legacyEnabled = false, limits?: JournalDeps["limits"]) {
   const invalidations: string[][] = [];
   const { bb, db, mirrors, dispose, ...host } = makeHost(metadata, legacyEnabled);
   cleanup.push(dispose);
   bb.storage.migrate(db, JOURNAL_MIGRATIONS);
-  const deps: JournalDeps = { roleOf: roles, invalidate: t => invalidations.push(t) };
+  const deps: JournalDeps = { roleOf: roles, invalidate: t => invalidations.push(t), limits };
   const store = createJournalStore(bb, db, deps);
   return { store, db, bb, mirrors, invalidations, ...host };
 }
 const proof = [{ kind: "command" as const, ref: "npm test", detail: "pass", exitCode: 0 }];
 
 describe("SQLite journal store", () => {
+  it("reads legacy-sized journals even after lowering the live cap, and admits new entries only under it", async () => {
+    const limits = structuredClone(DEFAULT_SETTINGS.limits);
+    const { store } = fixture({}, () => null, false, () => limits);
+    await store.ready("t");
+    await store.runTool("t", { action: "add", descriptions: ["one", "two"] });
+    limits.journal.entriesMax = 1;
+    expect(store.get("t").entries).toHaveLength(2);
+    const result = await store.runTool("t", { action: "add", description: "three" });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Limit: limits.journal.entriesMax = 1 (Settings, Limits)");
+    expect(store.get("t").entries).toHaveLength(2);
+    expect((await store.runTool("t", { action: "delete", ids: ["00", "01"] })).isError).toBe(false);
+    expect((await store.runTool("t", { action: "add", description: "now fits" })).isError).toBe(false);
+  });
+
+  it("clips journal prose and preserves every exact evidence reference", async () => {
+    const limits = structuredClone(DEFAULT_SETTINGS.limits);
+    const { store } = fixture({}, () => null, false, () => limits);
+    await store.ready("t");
+    await store.runTool("t", { action: "add", description: "Check" });
+    await store.runTool("t", { action: "done", id: "00", evidence: [proof[0]!, { ...proof[0]!, ref: "another" }] });
+    limits.intake.proseChars = 64;
+    const result = await store.runTool("t", { action: "block", id: "00", reason: "x".repeat(65) });
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("Limit: limits.intake.proseChars = 64 (Settings, Limits)");
+    expect(store.get("t").entries[0]).toMatchObject({ note: `${"x".repeat(63)}…`, evidence: expect.arrayContaining(proof) });
+    const evidence = Array.from({ length: 31 }, (_, n) => ({ ...proof[0]!, ref: `npm test -- ${n} ${"a".repeat(2100)}` }));
+    const done = await store.runTool("t", { action: "done", id: "00", evidence });
+    expect(done.isError, done.text).toBe(false);
+    expect(store.get("t").entries[0]!.evidence).toEqual([...proof, { ...proof[0]!, ref: "another" }, ...evidence]);
+    const description = "Updated: ".repeat(60);
+    expect((await store.runTool("t", { action: "update", id: "00", description })).text).toContain("Text truncated");
+    expect(store.get("t").entries[0]!.description).toHaveLength(64);
+  });
   it("persists, groups batch add and split, and never reuses deleted or undone ids", async () => {
     const { store } = fixture();
     await store.ready("t");
@@ -42,7 +77,7 @@ describe("SQLite journal store", () => {
     for (let i = 0; i < 55; i++) await store.runTool("t", { action: "add", descriptions: [`entry ${i}`] });
     expect(db.prepare("SELECT count(*) AS n FROM questlog_history").get()).toEqual({ n: 50 });
     const before = store.get("t");
-    const bad = await store.runTool("t", { action: "split", id: "00", descriptions: ["x".repeat(501)] });
+    const bad = await store.runTool("t", { action: "split", id: "00", descriptions: [""] });
     expect(bad.isError).toBe(true);
     expect(store.get("t")).toEqual(before);
   });

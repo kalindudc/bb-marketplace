@@ -6,6 +6,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Added
 
+- Plans, briefs, asks and reports no longer have separate quotas for each field. Cards fold long labels and headlines without changing the saved text. Search Tavern Settings for the limits that still protect staffing, review time, storage and delivery. When Tavern shortens prose or the copy of a brief sent to a member, the tool names the setting. The full saved brief stays readable, and exact commands and drafts stay intact.
 - Tavern can privately nudge a member that ends a turn without a report, once per brief. It skips members that are waiting or stopped, and leaves scheduled-round excerpts with the Keeper without nudging the member. You can turn off the nudge or the permanent member quiet window in Settings under Keepers and decisions.
 
 - Permanent members can take daily or weekly rounds after you approve their duties. Tavern wakes them when they are idle and work is allowed. See their next run in the party and Ledger, and pause or remove a schedule from the member’s row.
@@ -20,6 +21,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Changed
 
+- Party size, Ranger count and Ranger minutes come from Settings. Old class-file budgets no longer override them, and Tavern warns when an older class copy differs from the shipped one.
 - Ticks ask the Keeper to check on silent members and leave it up to the Keeper whether there is anything the user needs to hear.
 - Act guard holds recognized sensitive acts without changing Keeper authority. Ordinary calls are recorded without waking the Keeper. Closing time, Tavern control files, and Warden access to the maker’s checkout keep their separate protections.
 - Members can link their own journal entries to assigned waypoints. Any active Warden on the quest can check submitted work without a checker-slot change. Known same-family checks still refuse, unknown independence is labelled, and placed checks still use the exact snapshot.

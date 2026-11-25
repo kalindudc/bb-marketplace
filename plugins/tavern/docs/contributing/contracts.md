@@ -48,7 +48,7 @@ Effective values resolve in order (later wins): code defaults (`DEFAULT_SETTINGS
 | `knobs.afterMessageHoldSeconds` | `60` s | `15–180` | Tunable |
 | `knobs.staleMinutes` | `20` min | `10–120` | Tunable and quest override |
 | `knobs.reportBatchSeconds` | `60` s | `30–300` | Tunable and quest override |
-| `knobs.rangerTimeboxMaxMinutes` | `12` min | `3–30` | No |
+| `knobs.rangerTimeboxMaxMinutes` | `30` min | `3–30` | No |
 | `knobs.ledgerRefreshMinutes` | `10` min | `2–60` | No |
 | `keepers.partyMax` / `chainMembers` | `5` / `12` | `1–1,000` | No |
 | `keepers.chainDepth` | `1` | `1–3` | No |

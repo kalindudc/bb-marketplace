@@ -55,6 +55,6 @@ export function extractReportHeadline(
   const first = own || (text.match(/^([\s\S]+?[.!?])(?=\s+[A-Z(]|\s*$)/)?.[1]?.trim() ?? text);
   if (!first || /^\(\d+\)/.test(first)) return null;
   const { text: headline, unresolved } = nameReportIds(first, names);
-  if (unresolved.length || RAW_ID.test(headline) || headline.length < 12 || headline.length > 160) return null;
+  if (unresolved.length || RAW_ID.test(headline) || headline.length < 12) return null;
   return headline;
 }

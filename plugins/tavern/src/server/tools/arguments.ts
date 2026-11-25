@@ -1,18 +1,20 @@
 import { z } from "zod";
-import { askOptionSchema, askSchema, decisionSchema, reportSchema } from "../../shared/schema";
+import { askOptionSchema, askSchema, decisionSchema, reportFields, reportSchema } from "../../shared/schema";
+import { IntakeLimits } from "../../shared/limits";
 
-export const reportInput = reportSchema
-  .pick({ status: true, outcome: true, headline: true, evidence: true, artifacts: true, wait: true, checkpoint: true })
-  .extend({ confidence: reportSchema.shape.confidence.default(null) });
-const memberReportParameters = z.toJSONSchema(reportInput.omit({ checkpoint: true })
-  .extend({ status: reportInput.shape.status.exclude(["checkpoint"]) }), { io: "input" });
+export const reportInput = (limit: IntakeLimits) => reportFields(limit)
+  .pick({ status: true, evidence: true, artifacts: true, wait: true, checkpoint: true })
+  .extend({ outcome: z.string().min(1), headline: z.string().trim().min(1).optional(), confidence: reportSchema.shape.confidence.default(null) });
+const defaultReportInput = reportInput(new IntakeLimits());
+const memberReportParameters = z.toJSONSchema(defaultReportInput.omit({ checkpoint: true })
+  .extend({ status: defaultReportInput.shape.status.exclude(["checkpoint"]) }), { io: "input" });
 
 export function reportTool(classId: string) {
   return classId === "ranger" ? "tavern_report" : { name: "tavern_report", parameters: memberReportParameters };
 }
 
 const optionShape = "Use a string label or an object with id and label.";
-export const askOptionsInput = z.array(z.union([askOptionSchema.shape.label, askOptionSchema], { error: optionShape }),
+export const askOptionsInput = (shape: typeof askSchema.shape.options) => z.array(z.union([askOptionSchema.shape.label, askOptionSchema], { error: optionShape }),
   { error: "Use an array of string labels or option objects with id and label." })
   .transform((options): z.input<typeof askSchema.shape.options> => {
     const ids = new Set(options.flatMap(option => typeof option === "string" ? [] : [option.id]));
@@ -23,7 +25,7 @@ export const askOptionsInput = z.array(z.union([askOptionSchema.shape.label, ask
       do { id = `option-${++next}`; } while (ids.has(id));
       return { id, label: option, detail: "", recommended: false };
     });
-  }).pipe(askSchema.shape.options);
+  }).pipe(shape);
 
 export function askArgumentError(error: z.ZodError) {
   const root = error.issues[0];
@@ -59,8 +61,8 @@ export function memberInput<T extends z.ZodRawShape>(shape: T) {
 const action = z.enum(["accept", "continue"]).optional();
 export const judgeInput = z.object({
   action, op: action, decision: action, reportId: id,
-  reason: reason.optional(), minutes: z.number().int().min(1).max(240).optional(),
-  questionNumbers: z.array(z.number().int().min(1).max(12)).min(1).max(12).optional(),
+  reason: reason.optional(), minutes: z.number().int().min(1).optional(),
+  questionNumbers: z.array(z.number().int().min(1)).min(1).optional(),
 }).strict().transform((input, ctx) => {
   const action = alias(ctx, "action", "Choose accept or continue.", input.action, input.op, input.decision);
   if (action === "continue") {
@@ -82,13 +84,14 @@ const legacyCoverage = z.object({
 const options = decisionSchema.shape.options.unwrap();
 const option = options.element;
 
-export const decideInput = decisionSchema.pick({ why: true, reversible: true, source: true, leadPlan: true, exceeds: true, askId: true, optionId: true, kind: true }).extend({
+export const decideInput = (limit: IntakeLimits) => decisionSchema.pick({ reversible: true, source: true, leadPlan: true, exceeds: true, askId: true, optionId: true, kind: true }).extend({
+  why: limit.prose(decisionSchema.shape.why),
   text: decisionSchema.shape.text.optional(), decision: decisionSchema.shape.text.optional(),
   boardQuestId: id.nullish(), sourceRef: id.nullish(), source: decisionSchema.shape.source.default("keeper"),
   unsure: decisionSchema.shape.unsure.unwrap(),
   coverageKind: coverageKind.optional(), coverageId: id.optional(), planVersion: planVersion.optional(), waypointId: id.optional(),
   ...consequence.partial().shape, consequence: consequence.optional(), coveredBy: legacyCoverage.optional(),
-  options: z.array(z.union([option, z.object({ label: option, id: id.optional() }).strict()])).min(1).max(5).optional(),
+  options: z.array(z.union([option, z.object({ label: option, id: id.optional() }).strict()])).min(1).optional(),
 }).strict().transform((input, ctx) => {
   const { text, decision, coveredBy, coverageKind, coverageId, planVersion, waypointId, change, audience, undo, consequence, options, ...common } = input;
   const summary = alias(ctx, "text", "Give the decision text.", text, decision);

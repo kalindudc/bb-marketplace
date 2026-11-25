@@ -1,6 +1,5 @@
 import type { JournalChange, JournalEntry } from "../../shared/schema";
 import { journalActionText } from "../../shared/journal-action-text";
-export const MAX_NOTE_TEXT = 4096;
 export function clip(text: string, limit: number): string {
   if (Buffer.byteLength(text, "utf8") <= limit) return text;
   return `${Buffer.from(text).subarray(0, limit - 3).toString("utf8").replace(/\uFFFD$/, "")}...`;

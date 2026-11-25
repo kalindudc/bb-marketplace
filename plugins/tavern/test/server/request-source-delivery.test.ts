@@ -84,15 +84,17 @@ describe("verbatim user sources at native brief delivery", () => {
     await expect(read()).resolves.toContain("SOURCE_ONLY_original");
   });
 
-  it("offers members only the scoped source tool and leaves the status tool Keeper-only", async () => {
+  it("lets members page their own assignment but leaves request-source status Keeper-only", async () => {
     const f = await fixture(), child = await f.runtime.hire("lead", "project", f.input);
     const manifest = f.k.store.runtime(child.threadId).requestSources!;
     registerTools(f.bb, f.runtime);
     const memberConfig = f.runtime.configure(makePluginAgentConfigurationContext({ thread: { id: child.threadId } }));
-    expect(memberConfig.tools).toContain("tavern_request_sources"); expect(memberConfig.tools).not.toContain("tavern_status");
+    expect(memberConfig.tools).toContain("tavern_request_sources");
+    expect(memberConfig.tools).toContain("tavern_status");
     const member = { threadId: child.threadId }, keeper = { threadId: "lead" };
     const invoke = f.harness.behavior.invokeAgentTool;
     expect(JSON.parse(await invoke("tavern_request_sources", { manifestId: manifest.id }, member) as string)).toMatchObject({ text: raw });
+    await expect(invoke("tavern_status", { section: "brief" }, member)).resolves.toContain(brief.outcome);
     await expect(invoke("tavern_status", { section: "requests", memberThreadId: child.threadId }, member)).rejects.toThrow(/Keeper/i);
     await expect(invoke("tavern_request_sources", { manifestId: manifest.id }, keeper)).rejects.toThrow(/member/i);
     expect(JSON.parse(await invoke("tavern_status", { section: "requests", memberThreadId: child.threadId, manifestId: manifest.id }, keeper) as string)).toMatchObject({ text: raw });

@@ -1,18 +1,20 @@
 import { z } from "zod";
 import { actorSchema, evidenceSchema, journalEntrySchema, waypointLinkSchema, type Actor, type EntryStatus, type JournalEntry, type JournalProgress } from "../../shared/schema";
 import type { JournalDeps } from "../ports";
+import { DEFAULT_SETTINGS } from "../../shared/settings";
+import { IntakeLimits, limitMessage, type LimitValues } from "../../shared/limits";
 import { changeSummary, clip } from "./text";
 
 export const ACTIONS = ["add", "split", "add_step", "list", "toggle", "update", "delete", "clear", "reorder", "reparent", "undo", "redo", "rules", "skill", "start", "done", "block", "reopen", "verify", "reject", "note", "link", "get", "settle", "wait"] as const;
 const shortId = z.string().regex(/^[0-9a-z]{2,8}$/);
 export const actionSchema = z.object({
-  action: z.enum(ACTIONS), id: shortId.optional(), ids: z.array(shortId).min(1).max(200).optional(),
-  descriptions: z.array(z.string().trim().min(1).max(500)).min(1).max(200).optional(),
-  description: z.string().trim().min(1).max(500).optional(),
+  action: z.enum(ACTIONS), id: shortId.optional(), ids: z.array(shortId).min(1).optional(),
+  descriptions: z.array(z.string().trim().min(1)).min(1).optional(),
+  description: z.string().trim().min(1).optional(),
   targetId: shortId.nullable().optional(), parentId: shortId.nullable().optional(), all: z.boolean().optional(),
-  evidence: z.array(evidenceSchema).max(30).optional(), reason: z.string().trim().min(1).max(2000).optional(),
-  note: z.string().max(2000).nullable().optional(), owner: z.string().max(100).nullable().optional(),
-  after: z.array(shortId).max(200).optional(), links: z.array(evidenceSchema).max(30).optional(),
+  evidence: z.array(evidenceSchema).optional(), reason: z.string().trim().min(1).optional(),
+  note: z.string().nullable().optional(), owner: z.string().max(100).nullable().optional(),
+  after: z.array(shortId).optional(), links: z.array(evidenceSchema).optional(),
   link: waypointLinkSchema.nullable().optional(), filter: z.enum(["open", "mine", "blocked"]).optional(),
   threadId: z.string().min(1).max(100).optional(),
   mode: z.enum(["append", "replace"]).optional(),
@@ -28,7 +30,7 @@ export function ordered(entries: JournalEntry[]): JournalEntry[] {
   return sorted.filter(e => e.parentId === null).flatMap(e => [e, ...sorted.filter(s => s.parentId === e.id)]);
 }
 export function validateEntries(value: unknown): JournalEntry[] {
-  const entries = z.array(journalEntrySchema).max(200).parse(value);
+  const entries = z.array(journalEntrySchema).parse(value);
   const ids = new Set(entries.map(e => e.id));
   if (ids.size !== entries.length) throw new Error("Duplicate entry ids in the saved journal; nothing was changed.");
   // One step at a time for the agent's own work (the pi-quests rule). Entries with an owner are someone else's work, so any number run at once.
@@ -43,7 +45,6 @@ export function validateEntries(value: unknown): JournalEntry[] {
     visited.add(id);
   };
   for (const entry of entries) {
-    if (entry.evidence.length > 30) throw new Error("At most 30 evidence items per entry.");
     if (entry.parentId !== null) {
       if (entry.parentId === entry.id) throw new Error("An entry cannot be its own parent.");
       const parent = entries.find(e => e.id === entry.parentId);
@@ -79,11 +80,18 @@ export function noteLine(at: number, text: string): string {
   const d = new Date(at);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")} ${text}`;
 }
-const NOTE_LIMIT = 2000;
-function appendNote(existing: string | null, line: string): string {
-  const lines = [...(existing ? existing.split("\n") : []), clip(line, NOTE_LIMIT)];
-  while (lines.length > 1 && lines.join("\n").length > NOTE_LIMIT) lines.shift();
-  return lines.join("\n");
+function appendNote(existing: string | null, line: string, values: LimitValues, notices?: Set<string>): string {
+  const limit = new IntakeLimits(values, notices);
+  const latest = limit.journalNote(z.string()).parse(line);
+  const combined = existing ? `${existing}\n${latest}` : latest;
+  let start = 0;
+  while (combined.length - start > values.journal.noteKeepChars) {
+    const newline = combined.indexOf("\n", start);
+    if (newline < 0) break;
+    start = newline + 1;
+  }
+  if (start) notices?.add(`Older journal note lines omitted. ${limitMessage("limits.journal.noteKeepChars", values.journal.noteKeepChars)}`);
+  return combined.slice(start);
 }
 /**
  * A follow-up brief reached a member: finished entries linked to its named waypoints reopen.
@@ -91,7 +99,9 @@ function appendNote(existing: string | null, line: string): string {
  * Rejected entries stay rejected with their reason. In every case the member's evidence moves into the note, labelled with its brief,
  * so a done report needs fresh evidence. Unfinished entries are left alone.
  */
-export function rebriefEntries(original: JournalEntry[], { boardQuestId, version, waypointIds, at, name }: { boardQuestId: string; version: number; waypointIds: readonly string[]; at: number; name: (threadId: string) => string }) {
+export function rebriefEntries(original: JournalEntry[], { boardQuestId, version, waypointIds, at, name, limits = DEFAULT_SETTINGS.limits }: {
+  boardQuestId: string; version: number; waypointIds: readonly string[]; at: number; name: (threadId: string) => string; limits?: LimitValues;
+}) {
   const entries = copy(original);
   const targets = new Set(waypointIds);
   const was = version - 1;
@@ -114,7 +124,7 @@ export function rebriefEntries(original: JournalEntry[], { boardQuestId, version
     // An answer to a rejection given under the earlier brief no longer counts.
     if (e.review) e.review.memberEvidenceAt = null;
     const kept = [...(e.rebrief?.evidence ?? []), ...e.evidence];
-    e.rebrief = { version, evidence: kept.filter((v, i) => kept.findIndex(x => JSON.stringify(x) === JSON.stringify(v)) === i).slice(-30) };
+    e.rebrief = { version, evidence: kept.filter((v, i) => kept.findIndex(x => JSON.stringify(x) === JSON.stringify(v)) === i) };
     if (e.status !== "rejected") {
       const own = !delegated(e);
       e.status = own && doingOwn ? "todo" : "doing";
@@ -122,7 +132,7 @@ export function rebriefEntries(original: JournalEntry[], { boardQuestId, version
       e.doneAt = null; e.doneBy = null; e.report = null; e.rewrites = 0;
     }
     e.evidence = [];
-    e.note = appendNote(e.note, noteLine(at, `Brief v${version} arrived; ${parts.join(" ")}`));
+    e.note = appendNote(e.note, noteLine(at, `Brief v${version} arrived; ${parts.join(" ")}`), limits);
     e.updatedAt = at; e.updatedBy = { kind: "tavern" };
     ids.push(e.id);
   }
@@ -194,11 +204,22 @@ export function requireReopen(entry: JournalEntry, actor: Actor, roleOf: Journal
 }
 export interface EngineContext {
   threadId: string; actor: Actor; now: number; allocate(): string; roleOf: JournalDeps["roleOf"];
+  limits?: LimitValues;
   /** A board mirror whose quest phase is over (done or stopped), from the Keeper store: clear may remove it whatever its status. */
   finishedMirror?(entry: JournalEntry): boolean;
 }
 export function applyAction(original: JournalEntry[], input: JournalAction, ctx: EngineContext) {
-  const action = actionSchema.parse(input);
+  const values = ctx.limits ?? DEFAULT_SETTINGS.limits;
+  const notices = new Set<string>(), limit = new IntakeLimits(values, notices);
+  const evidence = z.array(evidenceSchema.extend({ detail: limit.prose(evidenceSchema.shape.detail.unwrap()).default("") }));
+  const note = limit.journalNote(z.string());
+  const description = limit.prose(actionSchema.shape.description.unwrap());
+  const action = actionSchema.extend({ reason: limit.prose(actionSchema.shape.reason.unwrap()).optional(),
+    description: description.optional(), descriptions: z.array(description).min(1).optional(),
+    evidence: evidence.optional(), links: evidence.optional(), note: note.nullable().optional(),
+  }).parse(input);
+  const combineEvidence = (saved: JournalEntry["evidence"], incoming: JournalEntry["evidence"]) =>
+    [...new Map([...saved, ...incoming].map(item => [JSON.stringify(item), item])).values()];
   const actor = actorSchema.parse(ctx.actor);
   let entries = copy(original);
   const find = (id: string | undefined) => {
@@ -243,7 +264,8 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
         if (closed(parent)) throw new Error("Reopen the parent before adding steps.");
         parentId = parent.id;
       }
-      if (entries.length + descriptions.length > 200) throw new Error("A journal holds at most 200 entries. Clear completed work first.");
+      if (entries.length + descriptions.length > values.journal.entriesMax)
+        throw new Error(`Clear completed journal work first. ${limitMessage("limits.journal.entriesMax", values.journal.entriesMax)}`);
       resultIds = descriptions.map(d => add(d, parentId));
       break;
     }
@@ -266,8 +288,7 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
           action.action === "start" ? "doing" : action.action === "block" ? "blocked" : "verified";
         if (status === "doing" && e.after.some(id => !closed(find(id)))) throw new Error("Finish this entry's dependencies before starting it.");
         if (action.evidence !== undefined && action.action !== "verify" && action.action !== "reject") {
-          const merged = [...e.evidence, ...action.evidence];
-          const evidence = merged.filter((v, i) => merged.findIndex(x => JSON.stringify(x) === JSON.stringify(v)) === i);
+          const evidence = combineEvidence(e.evidence, action.evidence);
           if (JSON.stringify(e.evidence) !== JSON.stringify(evidence)) { e.evidence = evidence; touch(e); }
           if (e.review?.reason && action.evidence.length) { e.review.memberEvidenceAt = ctx.now; touch(e); }
         }
@@ -282,8 +303,8 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
           e.review = { actor, at: ctx.now, evidence: action.evidence ?? [], reason: action.reason ?? null, previousNote: e.note, memberEvidenceAt: null }; touch(e);
         }
         if (action.reason !== undefined && !e.note?.includes(action.reason)) {
-          e.note = action.action === "reject" && e.note ? clip(`Rejected: ${action.reason}\nPrevious note: ${e.note}`, 2000)
-            : e.note ? appendNote(e.note, noteLine(ctx.now, `${action.action === "block" ? "Blocked" : "Reason"}: ${action.reason}`)) : action.reason;
+          e.note = action.action === "reject" && e.note ? note.parse(`Rejected: ${action.reason}\nPrevious note: ${e.note}`)
+            : e.note ? appendNote(e.note, noteLine(ctx.now, `${action.action === "block" ? "Blocked" : "Reason"}: ${action.reason}`), values, notices) : note.parse(action.reason);
           touch(e);
         }
         if (!(e.status === "verified" && status === "done")) setStatus(e, status);
@@ -296,8 +317,7 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
         if (action.action === "wait") { if (e.report) { e.report = null; touch(e); } continue; }
         if (closed(e)) throw new Error(`[${e.id}] is already closed; reopen it before settling it again.`);
         if (action.evidence?.length) {
-          const merged = [...e.evidence, ...action.evidence];
-          e.evidence = merged.filter((v, i) => merged.findIndex(x => JSON.stringify(x) === JSON.stringify(v)) === i);
+          e.evidence = combineEvidence(e.evidence, action.evidence);
         }
         e.report = { kind: "settled", at: ctx.now, threadId: e.owner, summary: action.reason ? clip(action.reason, 300) : null, by: actor };
         touch(e);
@@ -318,7 +338,7 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
       const e = find(action.id);
       if (action.note === undefined) throw new Error("Provide note (or null to clear it).");
       // Notes are a running log: each call adds a timed line. mode "replace" rewrites the whole note, as the UI's editor does.
-      e.note = action.note === null || action.mode === "replace" ? action.note : appendNote(e.note, noteLine(ctx.now, action.note));
+      e.note = action.note === null || action.mode === "replace" ? action.note : appendNote(e.note, noteLine(ctx.now, action.note), values, notices);
       touch(e); break;
     }
     case "link": {
@@ -384,5 +404,5 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
   const reworded = action.action === "update" ? entries.find(e => e.id === action.id && (e.rewrites ?? 0) >= 3) : undefined;
   const hint = reworded ? ` Hint: [${reworded.id}] has been reworded ${reworded.rewrites} times without a status change. Put progress in a note, close it, or split it.` : "";
   const text = clip(`${changeSummary(action.action, [...changedIds], original, entries)}${detail}`, 1000) + hint;
-  return { entries, entryIds: [...changedIds], createdIds: resultIds, changed, text };
+  return { entries, entryIds: [...changedIds], createdIds: resultIds, changed, text, notices: [...notices] };
 }

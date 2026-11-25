@@ -126,9 +126,11 @@ describe("legacy report headline extraction", () => {
     expect(extractReportHeadline({ outcome: "(1) a (2) b" })).toBeNull();
   });
 
-  it("does not truncate a replacement or raw id at the legacy display limit", () => {
-    expect(extractReportHeadline({ outcome: `Checked thr_test000023 in the repository.` }, { threadNames: new Map([["thr_test000023", "x".repeat(160)]]) })).toBeNull();
+  it("preserves a long named headline for the card to clamp", () => {
+    expect(extractReportHeadline({ outcome: `Checked thr_test000023 in the repository.` }, { threadNames: new Map([["thr_test000023", "x".repeat(160)]]) })).toBe(`Checked ${"x".repeat(160)} in the repository.`);
     expect(extractReportHeadline({ headline: "x".repeat(160), outcome: "" })).toHaveLength(160);
-    expect(extractReportHeadline({ headline: "x".repeat(161), outcome: "" })).toBeNull();
+    expect(extractReportHeadline({ headline: "x".repeat(161), outcome: "" })).toHaveLength(161);
+    expect(extractReportHeadline({ outcome: "x".repeat(161) })).toHaveLength(161);
+    expect(extractReportHeadline({ headline: "x".repeat(1300), outcome: "" })).toHaveLength(1300);
   });
 });

@@ -221,7 +221,7 @@ export const threadDecorSchema = z.object({
   /** Member threads: the brief they were hired with. */
   brief: z.string().nullable(),
   /** The brief as hired, plus every follow-up the Keeper sent since; follow-ups outgrow the hire-time limits. */
-  briefFields: briefSchema.extend({ context: z.array(z.string().max(8200)).max(DECOR_BRIEF_CONTEXT_MAX) }).nullable().optional(),
+  briefFields: briefSchema.extend({ context: z.array(z.string()).max(DECOR_BRIEF_CONTEXT_MAX) }).nullable().optional(),
   progress: journalProgressSchema,
   /** Keeper threads only. */
   keeperView: z
@@ -263,12 +263,12 @@ export const boardQuestDetailSchema = z.object({
     results: taleResultsSchema.optional(),
     fileHostId: z.string().optional(),
     delivery: z.object({ text: z.string().max(24000), capturedAt: z.number(), threadId: z.string(), truncated: z.boolean(), companionThreadId: z.string().optional(), companionReady: z.boolean().optional(), companionFailed: z.boolean().optional() }).optional(),
-    next: z.array(z.string().max(200)).max(5).optional(),
+    next: z.array(z.string()).optional(),
     document: keeperDocumentSchema.optional(),
     skipped: z.array(z.object({ waypointId: id, reason: z.string() })),
     closure: questOutcomeSchema.optional(),
-    closeReason: z.string().min(1).max(500).optional(),
-    waivers: z.array(waypointWaiverSchema).max(24).optional(),
+    closeReason: z.string().min(1).optional(),
+    waivers: z.array(waypointWaiverSchema).optional(),
     wrappedAt: z.number().int().nonnegative(),
     levels: z.array(taleLevelSchema).nullable().optional(),
     keptCharacterIds: z.array(id).optional(),
@@ -397,11 +397,11 @@ export type Room = z.infer<typeof roomSchema>;
 export const crestSchema = z.object({ threadId, classId: z.string(), characterId: z.string().nullable(), label: z.string() });
 
 const journalEditSchema = z.discriminatedUnion("op", [
-  z.object({ op: z.literal("add"), descriptions: z.array(z.string().min(1).max(500)).min(1).max(20), parentId: z.string().nullable().default(null) }),
-  z.object({ op: z.literal("update"), entryId: z.string(), description: z.string().min(1).max(500) }),
+  z.object({ op: z.literal("add"), descriptions: z.array(z.string().min(1)).min(1), parentId: z.string().nullable().default(null) }),
+  z.object({ op: z.literal("update"), entryId: z.string(), description: z.string().min(1) }),
   // added by Builder A: UI status edits can supply a blocker reason or completion evidence without bypassing gates.
-  z.object({ op: z.literal("status"), entryIds: z.array(z.string()).min(1), status: z.enum(ENTRY_STATUSES), reason: z.string().max(2000).optional(), evidence: z.array(evidenceSchema).max(30).optional() }),
-  z.object({ op: z.literal("note"), entryId: z.string(), note: z.string().max(2000).nullable() }),
+  z.object({ op: z.literal("status"), entryIds: z.array(z.string()).min(1), status: z.enum(ENTRY_STATUSES), reason: z.string().optional(), evidence: z.array(evidenceSchema).optional() }),
+  z.object({ op: z.literal("note"), entryId: z.string(), note: z.string().nullable() }),
   z.object({ op: z.literal("delete"), entryIds: z.array(z.string()).min(1) }),
   z.object({ op: z.literal("reorder"), entryId: z.string(), beforeId: z.string().nullable() }),
   z.object({ op: z.literal("reparent"), entryId: z.string(), parentId: z.string().nullable() }),

@@ -45,6 +45,24 @@ describe("thread UI", () => {
         await slot.findByText(/Watch the rollback path/);
         slot.lifecycle.unmount();
     });
+    it("keeps a long option's full accessible name and clamps its visible text", () => {
+        const label = "Continue only after the follow-up check passes. ".repeat(30).trim();
+        const detail = "Explain what must be checked before proceeding. ".repeat(30).trim();
+        const question = "Is the exact exported record ready for review? ".repeat(30).trim();
+        const ask = { ...fixtureAsk, kind: "decision" as const, question, draft: null, options: [{ id: "go", label, detail, recommended: false }] };
+        const slot = renderSlot({ component: () => <AskCard ask={ask} /> } as never, {}, {});
+        const radio = slot.getByRole("radio", { name: `${label} ${detail}` }) as HTMLInputElement;
+        expect(slot.getByText(question).closest(".lg-clamp")).not.toBeNull();
+        expect(radio.labels?.[0]?.querySelector(".opt-copy")?.textContent).toBe(label);
+        expect(radio.labels?.[0]?.querySelector(".opt-copy.m")?.textContent).toBe(detail);
+        fireEvent.click(radio);
+        expect(radio.checked).toBe(true);
+    });
+    it("puts long report headlines in the compact card's display clamp", () => {
+        const headline = "The named output and the replayed output match. ".repeat(30).trim();
+        const view = render(<ReportCard report={{ ...fixtureReport, headline }} />);
+        expect(view.getByText(headline).closest(".lg-clamp")).not.toBeNull();
+    });
     it("suppresses voice on bad news even if the backend includes it", () => {
         const view = render(<ReportCard report={{ ...fixtureReport, status: "blocked", voice: "Should not appear" }}/>);
         expect(view.queryByText("Should not appear")).toBeNull();
