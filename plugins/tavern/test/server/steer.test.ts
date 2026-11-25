@@ -49,7 +49,7 @@ describe("two-quest steer replay", () => {
     expect(keeper.store.all("routes")).toHaveLength(12);
     expect(keeper.store.all("routes").filter(route => route.kind === "new-quest")).toHaveLength(2);
   });
-  it("rejects ambiguous, foreign and aside-scoped writes", async () => {
+  it("allows planning after a plain aside while rejecting invalid routes and foreign writes", async () => {
     const quest = await seedQuest(keeper,"lead", "A", "A");
     keeper.endTurn("lead");
     keeper.receiveUser("lead", "An unrelated aside");
@@ -57,7 +57,9 @@ describe("two-quest steer replay", () => {
       keeper.route("lead", { kind: "aside", boardQuestId: quest.id, summary: "aside" }),
     ).toThrow(/must not/);
     keeper.route("lead", { kind: "aside", summary: "aside" });
-    expect(() => keeper.plan("lead", planInput(quest.id))).toThrow(/route/);
+    keeper.plan("lead", planInput(quest.id));
+    expect(keeper.quest(quest.id).planVersion).toBe(1);
+    keeper.receiveUser("lead", "Change the plan");
     expect(() => keeper.route("lead", { kind: "steer", summary: "unsure" })).toThrow(/quest/);
     keeper.bind("other", "keeper", "moss", "project");
     expect(() => keeper.plan("other", planInput(quest.id))).toThrow(/own/);

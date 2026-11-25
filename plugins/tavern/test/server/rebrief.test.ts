@@ -13,10 +13,9 @@ import { makeThreadResponse } from "./host";
 import { setup } from "./runtime-fixture";
 
 const instruction = "Check the revised acceptance criteria";
-function party() {
-  const f = setup();
+function party(f = setup(), boardQuestId: string | null = null) {
   f.k.bind("child", "smith", "vale", "project", {
-    keeperThreadId: "lead", boardQuestId: null, waypointId: null, errand: true, title: "Task",
+    keeperThreadId: "lead", boardQuestId, waypointId: null, errand: boardQuestId === null, title: "Task",
     displayName: "Pip", brief: { outcome: "Task", doneWhen: "Evidence", mode: "make-it-work", outOfScope: "Production", context: [], questions: [], timeboxMinutes: null },
   });
   f.runtime.spawnBriefDelivered("child");
@@ -35,6 +34,53 @@ const briefSends = (send: { mock: { calls: { 0: { threadId: string } }[] } }) =>
 function pending(f: ReturnType<typeof party>, attempts = 0) {
   patchThreadFixture(f.k.store, "child", { pendingBrief: { id: "brief_old", text: instruction, attempts, nextAttemptAt: f.time(), attemptedAt: attempts ? f.time() : null, hostAfterSeq: null, error: null } });
 }
+
+async function questParty() {
+  const f = setup();
+  const quest = await seedQuest(f.k, "lead", "Build", "Build");
+  f.k.endTurn("lead");
+  return party(f, quest.id);
+}
+
+describe("re-briefs after routing a user message", () => {
+  it.each([
+    ["rule", "Include a test summary in every pull request"],
+    ["question", "How is work going?"],
+    ["aside", "Thanks for the update"],
+  ] as const)("delivers a quest brief after the %s route", async (kind, text) => {
+    const f = await questParty();
+    f.k.receiveUser("lead", text);
+    f.k.route("lead", { kind, summary: text, notes: [] });
+
+    await expect(f.tell()).resolves.toContain("Brief delivered to Pip");
+    expect(told(f)).toHaveLength(1);
+  });
+
+  it.each(["steer", "new-quest"] as const)("still refuses a quest brief when a %s names only another quest", async kind => {
+    const f = await questParty();
+    const other = await seedQuest(f.k, "lead", "Document", "Document");
+    if (kind === "steer") {
+      f.k.endTurn("lead");
+      f.k.receiveUser("lead", "Document the changes too");
+      f.k.route("lead", { kind, boardQuestId: other.id, summary: "Document the changes too", notes: [] });
+    }
+    f.k.receiveUser("lead", "Thanks");
+    f.k.route("lead", { kind: "aside", summary: "Thanks", notes: [] });
+
+    await expect(f.tell()).rejects.toThrow("The current routes do not name this board quest");
+    expect(told(f)).toHaveLength(0);
+  });
+
+  it("still refuses a quest brief with an unrouted message pending", async () => {
+    const f = await questParty();
+    f.k.receiveUser("lead", "Thanks");
+    f.k.route("lead", { kind: "aside", summary: "Thanks", notes: [] });
+    f.k.receiveUser("lead", "Check the new requirement");
+
+    await expect(f.tell()).rejects.toThrow('Route the oldest unrouted user message before changing a board quest: "Check the new requirement"');
+    expect(told(f)).toHaveLength(0);
+  });
+});
 
 describe("member re-brief delivery through the strict host", () => {
   it("delivers to a reported member's idle thread and starts a new report generation", async () => {

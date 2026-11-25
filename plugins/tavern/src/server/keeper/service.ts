@@ -483,21 +483,16 @@ export class Keeper {
   guard(threadId: string, questId: string | null) {
     this.succession.assertMutable(threadId);
     const runtime = this.store.runtime(threadId);
-    const routes = this.applicableRoutes(threadId);
-    if (
-      questId !== null &&
-      routes.some(
-        (route) =>
-          ["steer", "new-quest"].includes(route.kind) &&
-          routeQuestIds(route).includes(questId),
-      )
-    )
+    const questRoutes = this.applicableRoutes(threadId).filter(
+      (route) => route.kind === "steer" || route.kind === "new-quest",
+    );
+    if (questId !== null && questRoutes.some((route) => routeQuestIds(route).includes(questId)))
       return;
     if (runtime.pending.length)
       throw new Error(
         `Route the oldest unrouted user message before changing a board quest: ${JSON.stringify(runtime.pending[0]!.text.slice(0, 300))}. No change was applied by this request.`, 
       );
-    if (routes.length && questId !== null)
+    if (questRoutes.length && questId !== null)
       throw new Error("The current routes do not name this board quest");
   }
   receiveUser(

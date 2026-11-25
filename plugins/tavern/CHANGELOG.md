@@ -34,6 +34,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- After routing a rule, question or aside, a Keeper can continue existing quest work, including briefing the party. A steer for another quest still does not apply to this one.
 - Keepers can ask to schedule rounds for permanent members even while they are resting. New rounds still need your approval.
 - Only Rangers see checkpoint fields when filing a report.
 - Tavern keeps checking briefs still queued in bb without asking for help. A refusal to replace a pending brief includes its ID.

@@ -595,15 +595,14 @@ describe("remaining review coverage", () => {
   it("enforces tell guards, user route corrections, decision undo and inactive proposals", async () => {
     const { k, runtime } = setup();
     const q = await seedQuest(k, "lead", "A", "A");
+    const other = await seedQuest(k, "lead", "B", "B");
     k.endTurn("lead");
     bind(k, "child", q.id, "w1");
-    k.receiveUser("lead", "aside");
-    const route = k.route("lead", { kind: "aside", summary: "Aside" });
-    await expect(runtime.tell("lead", "child", "Change board")).rejects.toThrow(
-      /route/,
-    );
+    k.receiveUser("lead", "Change the plan");
+    const route = k.route("lead", { kind: "steer", boardQuestId: other.id, summary: "Change the plan" });
+    await expect(runtime.tell("lead", "child", "Change board")).rejects.toThrow(/route/);
     k.correctRoute(route.id, "steer", q.id);
-    await runtime.tell("lead", "child", "Change board");
+    await expect(runtime.tell("lead", "child", "Change board")).resolves.toMatchObject({ status: "delivered" });
     const decision = k.decide("lead", {
       boardQuestId: q.id,
       text: "Small",
