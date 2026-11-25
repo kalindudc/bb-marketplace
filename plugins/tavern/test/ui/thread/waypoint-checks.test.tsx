@@ -28,6 +28,7 @@ it("shows the checks beside owners and the resolution and reason in the Ledger w
   const map = renderSlot({ component: () => <QuestMapCard detail={proposed} version={1} /> } as never, {}, { composer: { scope: { kind: "thread", threadId: "keeper-1" } }, rpc: { registry: () => fixtureRegistry } });
   const ledger = renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: { ledger: () => ({ ...fixtureLedger, asks: [], boardQuests: [detail.quest] }), decor: () => fixtureDecor, registry: () => fixtureRegistry, questAuthority: () => ({ rows: [], delegations: [], preapprovals: [], review: { used: 0, total: 3 } }) } });
   try {
+    fireEvent.click(map.getByRole("button", { name: /^Order / }));
     const route = within(map.getByRole("region", { name: "Route in order" }));
     expect(route.getByText("No Warden checks on this map")).toBeTruthy();
     fireEvent.click(map.getByRole("button", { name: "Quest map" }));

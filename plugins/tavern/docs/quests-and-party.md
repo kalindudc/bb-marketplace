@@ -14,9 +14,11 @@ Open **Tavern**, choose **Start a quest**, and give your Keeper the goal, what a
 
 During scouting, Rangers answer numbered questions inside timed check-in boxes. At check-in, a Ranger reports its findings, evidence, remaining work, and time estimate, then waits. Only the Keeper decides whether to accept the result, extend the Ranger for another box, or release it.
 
-Using that evidence, the Keeper proposes a quest map with waypoints, owners, check methods, and an optional spend cap. The plan card puts the goal, done-when, and party alongside the route and what comes back to you. Open **Exact commands** to see the checks or **Quest map** to see the drawn route. Explicit approval is the default before planned building starts. Plans with only Rangers skip the staffing greenlight when they have no user or outside waypoint, though proposed budgets and weaker checks still ask.
+Using that evidence, the Keeper proposes a quest map with waypoints, owners, check methods, and an optional spend cap. The plan card keeps **Done when** open and summarizes **Who**, **Order**, **Checks**, **To you**, and **Keeps running**. Open **Order** for individual steps and **Keeps running** for permanent members’ schedules, outside work, and scheduled work that might need an owner. Open **Exact commands** for the checks to run or **Quest map** for the drawn route.
 
-Updated cards and the quest page show changes since the last plan, starting with the Keeper's note. Revisions show every change and repeat only the done-when sentences that changed.
+Explicit approval is the default before planned building starts. Plans with only Rangers skip the staffing greenlight when they have no user or outside waypoint, though proposed budgets and weaker checks still ask.
+
+Updated cards and the quest page show changes since the last plan, starting with the Keeper's note. Revisions show plan-level changes and mark edits inside the done-when sentences that changed.
 
 When the Keeper needs you to finish a move, answer its ask instead of ticking a Journal entry. The ask shows which choices finish the move. Declining or choosing another direction leaves it open. Existing Journal entries still work.
 

@@ -24,9 +24,9 @@ it.each(["card", "page"] as const)("shows the note and only the done-when change
     const changes = within(slot.getByRole("region", { name: "Changed since v1" }));
     expect(changes.getByText(smallPlan.changeNote!)).toBeTruthy();
     expect(changes.getAllByRole("listitem").map(item => item.textContent)).toEqual([
-      "Clean the lens · done when: No streaks → No streaks under a second lamp",
+      "Clean the lens · done when: No streaks under a second lamp",
     ]);
-    expect(changes.getByText("No streaks").tagName).toBe("DEL");
+    expect(changes.getByText("under a second lamp").tagName).toBe("INS");
   } finally { slot.lifecycle.unmount(); }
 });
 
@@ -40,10 +40,11 @@ it("lists added steps and the party change with the full map folded and approval
       "Added: Repeat the signal at low tide",
       "Party: Warden 0 to 1",
     ]);
-    expect(slot.getByRole("button", { name: "Form the party (greenlight)" })).toBeTruthy();
+    expect(slot.getByRole("button", { name: "Approve: Form the party (greenlight)" })).toBeTruthy();
     const fold = slot.getByRole("button", { name: "Quest map" });
+    fireEvent.click(slot.getByRole("button", { name: /^Order / }));
     const route = within(slot.getByRole("region", { name: "Route in order" }));
-    expect(within(route.getByRole("list", { name: "Waypoints in order" })).getAllByRole("listitem")).toHaveLength(11);
+    expect(within(route.getByRole("list", { name: "Waypoints in order" })).getAllByRole("button")).toHaveLength(11);
     expect(route.queryByText("planned")).toBeNull();
     expect(fold.getAttribute("aria-expanded")).toBe("false");
     expect(slot.container.querySelector(".qsvg")).toBeNull();
@@ -84,13 +85,13 @@ it("reports removals, field updates and relative order without treating addition
     expect(changes.getAllByRole("listitem").map(item => item.textContent)).toEqual([
       "Removed: Replace the wick",
       "Title: Inspect the lamp → Inspect the brass lamp; owner: Smith → Warden; check: Keeper accepts → Warden check",
-      "Party: Smith on waypoint 1, 2, 3, 4, 5, 6, 7, 8 → 1, 2, 4",
+      "Party: Smith −3, −5, −6, −7, −8",
       "Order: Waypoints reordered",
     ]);
   } finally { slot.lifecycle.unmount(); }
 });
 
-it("shows the Spread's goal, criteria, exact commands and everything that comes back to you", () => {
+it("shows the Charter's goal, criteria, exact commands and everything that comes back to you", () => {
   const plan = { ...firstPlan, goal: "Restore the lamp. Keep its brass housing.",
     doneWhen: "The lamp burns steadily. Run \`npm --prefix tools/lamp test\`. No live install or release.",
     findings: ["The lamp needs fuel."], assumptions: ["The watch has spare fuel."],
@@ -109,9 +110,9 @@ it("shows the Spread's goal, criteria, exact commands and everything that comes 
     expect(done.queryByText("npm --prefix tools/lamp test")).toBeNull();
     fireEvent.click(done.getByRole("button", { name: "Exact commands" }));
     expect(done.getByText("npm --prefix tools/lamp test").closest("pre")).toBeTruthy();
-    const back = within(slot.getByRole("region", { name: "Comes back to you" }));
+    const back = within(slot.getByRole("list", { name: "Comes back to you" }));
     expect(back.getByText("Use the spare fuel?")).toBeTruthy();
-    expect(back.getByText("Waypoint 2")).toBeTruthy();
+    expect(back.getByRole("button", { name: "Your move: waypoint 2" })).toBeTruthy();
     expect(back.getByText("One review")).toBeTruthy();
     expect(back.getByText("Production steps and anything sent as you still ask you.")).toBeTruthy();
     expect(slot.queryByText("The lamp needs fuel.")).toBeNull();
@@ -132,6 +133,7 @@ it("only gives the drawn map a tab stop and a scroll cue when it needs them", ()
   const slot = renderPlan(planDetail(plan, [plan]), "card");
   try {
     fireEvent.click(slot.getByRole("button", { name: "Quest map" }));
+    fireEvent.click(slot.getByRole("button", { name: /^Order / }));
     const route = slot.getByRole("region", { name: "Route in order" });
     const map = slot.getByRole("region", { name: "Drawn quest map: Harbor signal lamp" });
     expect(within(route).getByRole("list", { name: "Waypoints in order" })).toBeTruthy();
@@ -155,11 +157,11 @@ it("shows only edited sentences, and spells out a reassignment and added questio
   const slot = renderPlan(planDetail(after, [before, after]), "card");
   try {
     const changes = within(slot.getByRole("region", { name: "Changed since v1" }));
-    expect(changes.getByText("Check the old glass.").tagName).toBe("DEL");
-    expect(changes.getByText("Check the new glass.").tagName).toBe("INS");
+    expect(changes.getByText("old").tagName).toBe("DEL");
+    expect(changes.getByText("new").tagName).toBe("INS");
     expect(changes.getByText("(2 other sentences unchanged)")).toBeTruthy();
     expect(changes.queryByText("Light the lamp.")).toBeNull();
-    expect(changes.getByRole("list").textContent).toContain("Warden on waypoint 2 → 1, 2");
+    expect(changes.getByRole("list").textContent).toContain("Warden +1");
     expect(changes.getByText("+1 for you")).toBeTruthy();
     expect(changes.queryByRole("button")).toBeNull();
   } finally { slot.lifecycle.unmount(); }

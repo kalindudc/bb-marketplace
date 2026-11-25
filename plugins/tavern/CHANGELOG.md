@@ -43,7 +43,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 - A plan with only Rangers no longer needs a staffing greenlight if it has no user or outside waypoint. Proposed budgets and weaker checks still need their usual approval.
 - A Keeper can record an existing branch, pull request or path for a Warden to check without hiring a maker. The tale credits the Warden for the check and says the Keeper recorded the subject.
 - Keeper guidance explains how a lead can open a linked side quest, even for one job.
-- Plan cards put the goal, done-when and party alongside the route and what comes back to you. Open Exact commands to see the checks, or Quest map to see the drawn route. Revisions show every change and repeat only the done-when sentences that changed.
+- Plan cards put the goal and done-when first, followed by one row each for Who, Order, Checks, To you and Keeps running. Open Order for each step's owner and checks, or Quest map for the drawing. Keeps running names permanent members and outside work, shows permanent members' schedules, and flags scheduled work to double-check. Revisions keep every change visible, including changes to the goal, done-when, forecast, review load and findings.
 - Keepers can reserve a working or resting member for follow-up. The Keep limit in Settings is the only deadline cap.
 - Wardens can re-check corrected work after any number of rejections without a plan revision. A plan cannot ask for approval of a party outside the Keeper’s hire policy.
 - Keeper acceptances stay in place when a new plan leaves the waypoint unchanged. The quest history records what carried forward.

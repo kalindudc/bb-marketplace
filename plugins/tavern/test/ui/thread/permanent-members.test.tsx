@@ -22,8 +22,15 @@ it("shows the reason on the plan's party before greenlight", async () => {
     composer: { scope: { kind: "thread", threadId: "keeper-1" } }, rpc: { registry: () => fixtureRegistry },
   });
   try {
-    expect(await slot.findByText(`Permanent: ${why}`)).toBeTruthy();
-    expect(await slot.findByText(/Daily 07:00.*Read the public tracker/i)).toBeTruthy();
+    const scheduleText = /daily 07:00 \(server time\) · Read the public tracker/i;
+    fireEvent.click(await slot.findByRole("button", { name: /^Who / }));
+    const proposed = within(slot.getByRole("region", { name: "Proposed party (team)" }));
+    expect(proposed.getByText(`Permanent: ${why}`)).toBeTruthy();
+    expect(proposed.getByText(scheduleText)).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: /^Keeps running / }));
+    const running = within(slot.getByRole("region", { name: "Keeps running after the quest" }));
+    expect(running.getByText(`Permanent: ${why}`)).toBeTruthy();
+    expect(running.getByText(scheduleText)).toBeTruthy();
     expect(await slot.findByRole("button", { name: /Form the party/ })).toBeTruthy();
   } finally { slot.lifecycle.unmount(); }
 });

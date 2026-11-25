@@ -64,7 +64,7 @@ describe("the two moments play once", () => {
     let reached = false;
     const listen = () => { reached = true; };
     document.addEventListener("keydown", listen);
-    const button = await slot.findByRole("button", { name: "Form the party (greenlight)" });
+    const button = await slot.findByRole("button", { name: "Approve: Form the party (greenlight)" });
     expect(fireEvent.keyDown(button, { key: "Enter" })).toBe(true); // not defaultPrevented
     expect(reached).toBe(true); // not stopped on the way up
     fireEvent.click(button);

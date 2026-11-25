@@ -62,7 +62,7 @@ describe("Tavern surfaces", () => {
         const card = app.messageDirectives.find(d => d.id === "tavern-questmap")!;
         const slot = renderSlot(card, { attributes: { quest: "vault", version: "1" }, source: "map", message: { id: "m1", threadId: "keeper-1", turnId: null, projectId: null }, openWorkspaceFile: null }, { rpc: { boardQuest: () => ({ ...fixtureDetail, quest: { ...fixtureDetail.quest, planVersion: 2 } }), registry: () => fixtureRegistry } });
         await slot.findByText("This plan was superseded; it cannot be greenlit here.");
-        expect(slot.queryByRole("button", { name: "Form the party (greenlight)" })).toBeNull();
+        expect(slot.queryByRole("button", { name: "Approve: Form the party (greenlight)" })).toBeNull();
         slot.lifecycle.unmount();
     });
     it("validates untrusted directive attributes before querying", () => {

@@ -1,15 +1,18 @@
 import type { CSSProperties } from "react";
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { z } from "zod";
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_useAppPanel, useBbNavigate, useComposer, type PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
 import { PlacementFacts } from "../kit/placement";
 import { PlanChanges } from "../kit/plan-changes";
+import { PlanOwnerMark, PlanRoad, planOwnerText, planSteps, stepNumber, type PlanStep } from "../kit/plan-steps";
+import type { Registry } from "../kit/registry";
 import { memberName } from "../../shared/member-name";
 import { scheduleLabel } from "../../shared/member-schedule";
 import { SHAPE_PATHS } from "../../shared/heraldry";
 import { rpcContract, type BoardQuestDetail } from "../../shared/contract";
-import { checkName, doneParts, sentences } from "../../shared/plan-text";
-import type { CharacterDef, ClassDef, Report } from "../../shared/schema";
+import { checkName, doneParts, planForecast, sentences } from "../../shared/plan-text";
+import { settled } from "../../shared/waypoint";
+import type { CharacterDef, ClassDef, Plan, Report } from "../../shared/schema";
 import { voiceShown, AskCard, Clamp, Crest, levelsShown, reachedInParty, reachedWords, DecidedForYou, EvidenceList, FigureRow, taleFigures, ExpandsMark, Glyph, OpensMark, QuestMap, QueryState, ReportView, SkCrest, SkFigureRow, SkGlyph, SkLine, SkLines, SkMapNode, StatusPill, TimeAgo, VOCABULARY, Vocabulary, clockTime, levelFor, memberIdentity, questNames, readable, summaryNames, useRegistry, useSkeletonCount } from "../kit";
 import type { ReportHeadlineNames } from "../../shared/report-headline";
 import { TaleAction } from "../kit/tale-delivery";
@@ -66,7 +69,7 @@ function PlanDoneWhen({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   const heading = useId(), commands = useId();
   return <section className="qm-done" aria-labelledby={heading} data-part="DoneWhen">
-    <h4 id={heading}>Done when</h4>
+    <div className="qm-charter-line"><h4 id={heading}>Done when</h4><span className="m">{criteria.length} {criteria.length === 1 ? "criterion" : "criteria"}</span></div>
     {criteria.length > 0 && <ul className="qm-criteria">{criteria.map((criterion, i) => <li key={i}>{criterion.split(/\s+/).length > 60 ? <Clamp text={criterion} lines={3} /> : <span data-content>{criterion}</span>}</li>)}</ul>}
     {checks.length > 0 && <div className="qm-checks">
       <b><Glyph name="check" size={12} />Checks</b>
@@ -74,8 +77,123 @@ function PlanDoneWhen({ text }: { text: string }) {
       <button type="button" className="lnk-btn act" aria-expanded={open} aria-controls={commands} onClick={() => setOpen(!open)}>Exact commands<ExpandsMark open={open} /></button>
       <div id={commands} hidden={!open}>{open && <pre data-content><code>{checks.join("\n")}</code></pre>}</div>
     </div>}
-    {never.length > 0 && <p className="qm-never" title={neverSource.join(" ")}><b><Glyph name="block" size={12} />Never</b><span data-content>{never.join(" · ")}</span></p>}
+    {never.length > 0 && <div className="qm-never" role="group" aria-label="Never" aria-description={neverSource.join(" ")} title={neverSource.join(" ")}><b><Glyph name="block" size={12} />Never</b><span data-content>{never.join(" · ")}</span></div>}
   </section>;
+}
+
+function CharterRow({ label, summary, open, onToggle, children }: { label: string; summary: ReactNode; open?: boolean; onToggle?: () => void; children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  const content = useId();
+  const shown = open ?? expanded;
+  return <div className="qm-charter-row">
+    <button type="button" className="qm-charter-line" aria-controls={content} aria-expanded={shown} onClick={onToggle ?? (() => setExpanded(!expanded))}>
+      <span>{label}</span>{" "}<span className="qm-answer">{summary}</span><ExpandsMark open={shown} />
+    </button>
+    <div className="qm-charter-body" id={content} hidden={!shown}>{children}</div>
+  </div>;
+}
+
+const counted = (n: number, label: string) => `${n} ${label}${n === 1 ? "" : "s"}`;
+const checkGroups = { warden: "Warden", keeper: "Keeper", you: "You", none: "No check" } as const;
+
+function PermanentSlot({ permanent }: { permanent: NonNullable<Plan["party"][number]["permanent"]> }) {
+  return <>
+    <span className="qm-permanent m">Permanent: {permanent.why}</span>
+    {permanent.schedules?.map((schedule, index) => <span className="qm-permanent m" key={index} data-content>{scheduleLabel(schedule)} (server time) · {schedule.duty}</span>)}
+  </>;
+}
+
+function PlanCharter({ quest, plan, previous, registry, sealed, onOpenAsk }: { quest: BoardQuestDetail["quest"]; plan: Plan; previous: Plan | undefined; registry: Registry | undefined; sealed: boolean; onOpenAsk: (id: string) => void }) {
+  const road = planSteps(quest, plan, previous, registry);
+  const [orderOpen, setOrderOpen] = useState(false);
+  const [toYouOpen, setToYouOpen] = useState(plan.questions.length > 0);
+  const [jump, setJump] = useState<string | null>(null);
+  const sheet = useRef<HTMLDivElement>(null);
+  const id = useId();
+  const stepId = (idOfStep: string) => `${id}-${idOfStep}`;
+  useLayoutEffect(() => {
+    if (!jump || !orderOpen) return;
+    const root = sheet.current?.getRootNode() as Document | ShadowRoot | undefined;
+    const target = root?.getElementById(jump);
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView?.({ block: "center" });
+    setJump(null);
+  }, [jump, orderOpen]);
+  const jumpButton = (step: PlanStep, label: string) => <button key={step.w.id} type="button" className="btn qm-jump" aria-label={`${label} ${stepNumber(step.w.id)}`} onClick={() => { setOrderOpen(true); setJump(stepId(step.w.id)); }}>{stepNumber(step.w.id)}</button>;
+
+  const [lead, ...goal] = sentences(plan.goal);
+  const moves = road.steps.filter(s => s.owner.kind === "you");
+  const outside = road.steps.filter(s => s.owner.kind === "outside" || s.owner.kind === "permanent" && !s.owner.slot);
+  const flags = road.steps.filter(s => s.warning);
+  const standing = road.slots.filter(s => s.slot.permanent);
+  const done = road.steps.filter(s => settled(s.w)).length;
+  const doing = road.steps.filter(s => s.w.state === "doing").length;
+  const owners = new Map<string, { owner: PlanStep["owner"]; count: number }>();
+  for (const { owner } of road.steps) {
+    const key = owner.slot ? `slot:${road.slots.indexOf(owner.slot)}` : `${owner.kind}:${owner.name}`;
+    const group = owners.get(key);
+    if (group) group.count++;
+    else owners.set(key, { owner, count: 1 });
+  }
+  const who = [...owners.values()].sort((a, b) => Number(b.owner.kind === "you") - Number(a.owner.kind === "you"));
+  const checks = Object.entries(checkGroups).map(([kind, label]) => ({ kind, label, steps: road.steps.filter(s => s.kind === kind) }));
+  const wardens = road.slots.filter(s => s.slot.classId === "warden").map(s => ({ ...s,
+    checks: road.steps.filter(step => step.kind === "warden" && s.slot.waypointIds.includes(step.w.id)).map(step => step.w.id),
+  }));
+  const running = [...standing.map(s => ({ kind: "permanent" as const, name: s.name, slot: s })), ...outside.map(s => s.owner)];
+  return <div className="qm-charter" ref={sheet}>
+    <section className="qm-goal" aria-label="Goal" data-part="PlanGoal"><p data-content><b>{lead}</b></p>{goal.length > 0 && <Clamp text={goal.join(" ")} lines={2} />}</section>
+    <PlanDoneWhen text={plan.doneWhen} />
+    <CharterRow label="Who" summary={<>
+      <span className="qm-owner-bar" aria-hidden="true">{who.flatMap(({ owner, count }, i) => Array.from({ length: count }, (_, j) => <i key={`${i}:${j}`} className={`owner-${owner.kind}${i > 0 && j === 0 ? " group-start" : ""}`} />))}</span>
+      {who.map(({ owner, count }, i) => <span key={i} className="qm-person" style={{ "--i": i } as CSSProperties}><PlanOwnerMark owner={owner} size={12} /><b>{owner.name}</b>{` ${count} `}</span>)}
+    </>}>
+      <section className="qm-party" aria-label={sealed ? "Formed party (team)" : "Proposed party (team)"}>
+        <h4><Vocabulary word="party" /> · {sealed ? "formed" : "proposed"}</h4>
+        {road.slots.length === 0 ? <p className="m">No party slots</p> : <ul role="list">{road.slots.map((s, i) => <li key={i} style={{ "--i": i } as CSSProperties}>
+          <PlanOwnerMark owner={{ kind: s.slot.permanent ? "permanent" : "member", name: s.name, slot: s }} />
+          <span data-content><b>{s.name}</b>{s.name !== s.className && <span className="anc"> {s.className}{s.cls ? ` · ${s.cls.plain}` : ""}</span>}{!s.character && <span className="m"> · On hire</span>}
+            {s.slot.waypointIds.length > 0 && <span className="m"> · {s.slot.classId === "warden" ? "checks " : "steps "}{s.slot.waypointIds.map(stepNumber).join(", ")}</span>}
+            {s.slot.permanent && <PermanentSlot permanent={s.slot.permanent} />}
+          </span>
+        </li>)}</ul>}
+      </section>
+    </CharterRow>
+    <CharterRow label="Order" summary={<span>{counted(road.steps.length, "step")} · {counted(road.stages.length, "stage")}{done > 0 && ` · ${done} done`}{doing > 0 && ` · ${doing} in progress`}</span>} open={orderOpen} onToggle={() => setOrderOpen(!orderOpen)}>
+      <PlanRoad road={road} stepId={stepId} onOpenAsk={onOpenAsk} compact={plan.version > 1} />
+    </CharterRow>
+    <CharterRow label="Checks" summary={<span>{checks.filter(g => g.steps.length > 0).map(g => `${g.label} ${g.steps.length}`).join(" · ")}</span>}>
+      <ul className="qm-lines" role="list">
+        {wardens.map((s, i) => <li key={i}><PlanOwnerMark owner={{ kind: s.slot.permanent ? "permanent" : "member", name: s.name, slot: s }} /><span><b>{s.name}</b> checks {s.checks.map(stepNumber).join(", ") || "no assigned steps"}</span></li>)}
+        {checks.map(g => {
+          const steps = g.steps.filter(s => g.kind !== "warden" || !wardens.some(w => w.checks.includes(s.w.id)));
+          return steps.length > 0 && <li key={g.kind}><Glyph name={g.kind === "none" ? "close" : g.kind === "you" ? "check" : "shield"} /><span><b>{g.label}</b> · {steps.map(s => stepNumber(s.w.id)).join(", ")}</span></li>;
+        })}
+      </ul>
+    </CharterRow>
+    <CharterRow label="To you" summary={<span>{counted(plan.questions.length, "question")} · {counted(moves.length, "move")}</span>} open={toYouOpen} onToggle={() => setToYouOpen(!toYouOpen)}>
+      <ul className="qm-lines qm-qs" role="list" aria-label="Comes back to you">
+        {plan.questions.length === 0 && <li><Glyph name="ask" /><span>No open questions</span></li>}
+        {plan.questions.map((q, i) => <li key={q.id}><span className="qn">{i + 1}</span><span className="qx"><span data-content>{q.text}</span><span className="m" data-content>{q.recommended !== null && q.options[q.recommended] ? `recommends ${q.options[q.recommended]}` : q.options.join(" or ")} · {q.reversible ? "reversible" : "needs your decision"}</span></span></li>)}
+        {moves.length > 0 && <li><PlanOwnerMark owner={{ kind: "you", name: "You" }} size={14} /><span className="qm-jumps"><b>Your moves</b>{moves.map(s => jumpButton(s, "Your move: waypoint"))}</span></li>}
+        <li><Glyph name="report" /><span className="qm-review"><b>Review load</b><Clamp text={plan.reviewLoad} lines={1} /></span></li>
+        <li><Glyph name="wax-seal" /><span>Production steps and anything sent as you still ask you.</span></li>
+      </ul>
+    </CharterRow>
+    <CharterRow label="Keeps running" summary={<>
+      {running.map((owner, i) => <span key={i} className="qm-person"><PlanOwnerMark owner={owner} size={12} /><b>{owner.name}</b>{" "}</span>)}
+      {flags.length > 0 && <span className="qm-warn"><Glyph name="st-stale" size={12} />{counted(flags.length, "step")} to check</span>}
+      {!running.length && !flags.length && <span className="m">Nothing</span>}
+    </>}>
+      <section className="qm-running" aria-label="Keeps running after the quest">
+        {running.length === 0 && flags.length === 0 ? <p className="m">No permanent roles or outside steps are listed.</p> : <ul className="qm-lines" role="list">
+          {standing.map((s, i) => <li key={i}><PlanOwnerMark owner={{ kind: "permanent", name: s.name, slot: s }} /><span><b>{s.name}</b><PermanentSlot permanent={s.slot.permanent!} /></span></li>)}
+          {outside.map(s => <li key={s.w.id}><PlanOwnerMark owner={s.owner} /><span className="qm-jumps">{jumpButton(s, "Go to waypoint")}<span>{s.w.title}<span className="qm-permanent m">{planOwnerText(s.owner)}</span></span></span></li>)}
+          {flags.length > 0 && <li><Glyph name="st-stale" /><div><span className="qm-jumps"><b>To check</b>{flags.map(s => jumpButton(s, "Check waypoint"))}</span><p className="m">Mentions {Array.from(new Set(flags.map(s => s.warning))).join(", ")}. These steps may set up work that outlasts the quest, but no permanent member owns them.</p></div></li>}
+        </ul>}
+      </section>
+    </CharterRow>
+  </div>;
 }
 
 export function QuestMapCard({ detail, version, measurement }: { detail: BoardQuestDetail; version: number | null; measurement?: StudyCard }) {
@@ -84,7 +202,9 @@ export function QuestMapCard({ detail, version, measurement }: { detail: BoardQu
   const registry = useRegistry();
   const composer = useComposer();
   const [error, setError] = useState<unknown>(null);
-  const [more, setMore] = useState<null | "findings" | "decided">(null);
+  const [findingsOpen, setFindingsOpen] = useState(false);
+  const [decidedOpen, setDecidedOpen] = useState(false);
+  const findingsId = useId(), decidedId = useId();
   const plan = version === null ? detail.quest.plan : detail.plans.find(p => p.version === version);
   const card = useRef<HTMLElement>(null);
   const probe = useStudyCard(plan ? measurement : undefined, card);
@@ -102,65 +222,41 @@ export function QuestMapCard({ detail, version, measurement }: { detail: BoardQu
   const reviewLead = greenlight?.effect?.type === "lead-plan" ? greenlight : null;
   const waitsForParent = detail.quest.leadPlanLane === "keeper";
   const formOption = reviewLead ? null : greenlight?.options.find(o => o.recommended) ?? greenlight?.options[0];
-  const unknownLead = plan.waypoints.filter(w => w.leadTime === null).length;
   const redirect = () => { composer.insert(`About ${detail.quest.title}, plan v${plan.version}: `); composer.focus(); };
-  const [lead, ...goal] = sentences(plan.goal);
   const mode = sealed || noStaffingGreenlight ? "live" : "plan";
-  const forecast = plan.eta ?? (unknownLead ? `pending ${unknownLead} unknown lead time${unknownLead === 1 ? "" : "s"}` : "no ETA given");
+  const forecast = planForecast(plan);
+  const showScope = !noStaffingGreenlight && !reviewLead && !waitsForParent;
+  const sealLabel = answer.isPending ? "Sealing…" : greenlight?.effect?.type === "greenlight" && greenlight.effect.requiresExplicit ? "Approve the updated plan" : "Form the party (greenlight)";
   const openAsk = (id: string) => revealAsk(quest.keeperThreadId, id);
   return (
     <article ref={probe} {...moment} className={`tavern tcard qmcard ${sealed ? "sealed" : ""}`} style={glowVars(`map:${detail.quest.id}`) as CSSProperties} aria-label={`Quest map${noStaffingGreenlight ? "" : " (greenlight)"}: ${detail.quest.title}, plan v${plan.version}`} data-part="QuestMapCard">
       <header className="qm-h">
-        <span className="qm-t"><b>{noStaffingGreenlight ? VOCABULARY.map[0] : <Vocabulary word="map" />}</b><span className="qm-q">{detail.quest.title} · plan v{plan.version}</span></span>
+        <span className="qm-t"><b>{noStaffingGreenlight ? VOCABULARY.map[0] : <Vocabulary word="map" />}</b><span className="qm-q" title={detail.quest.title}>{detail.quest.short || detail.quest.title} · plan v{plan.version}</span></span>
         {plan.fromSteer && <span className="qm-steer" title={`From your steer: ${plan.fromSteer.text}`}><Glyph name="route" size={12} /><span>from your steer, {clockTime(plan.fromSteer.at)}</span></span>}
         <span className="tc-sp" />
         {sealed ? <span className="sealmark"><Glyph name="wax-seal" size={16} /><span>Sealed · party formed</span></span> : noStaffingGreenlight ? <span className="qm-wait">No staffing greenlight needed</span> : current ? <span className="qm-wait">{waitsForParent ? "Hiring Keeper decides" : "Waits for your seal"}</span> : <StatusPill status="superseded">superseded</StatusPill>}
       </header>
       <PlanChanges plan={plan} plans={detail.plans} quest={quest} registry={registry.data} />
-      <div className="qm-cols">
-        <div className="qm-leaf" data-part="PlanBrief">
-          <section className="qm-goal" aria-label="Goal" data-part="PlanGoal"><p data-content><b>{lead}</b></p>{goal.length > 0 && <p data-content>{goal.join(" ")}</p>}</section>
-          <PlanDoneWhen key={plan.version} text={plan.doneWhen} />
-          <section className="qm-party" aria-label={sealed ? "Formed party (team)" : "Proposed party (team)"}>
-            <h4><Vocabulary word="party" /> · {sealed ? "formed" : "proposed"}</h4>
-            <ul>{plan.party.map((p, i) => { const cls = registry.data?.classes.find(c => c.id === p.classId); const character = registry.data?.characters.find(c => c.id === p.characterId); return <li key={i} style={{ ["--i" as string]: i }}>{cls && character ? <Crest cls={cls} character={character} size={18} /> : <svg className="wp-mark open" width={16} height={16} viewBox="0 0 24 24" aria-hidden="true"><path d={SHAPE_PATHS[cls?.shape ?? "shield"]} /></svg>}<span className="pn" data-content><b>{character?.name ?? cls?.label ?? p.classId}</b>{character ? <span className="anc"> {cls ? `${cls.label} · ${cls.plain}` : p.classId}</span> : <span className="m"> · On hire</span>}{p.permanent && <span className="qm-permanent m small">Permanent: {p.permanent.why}</span>}{p.permanent?.schedules?.map((schedule, index) => <span className="qm-permanent m small" key={index}>{scheduleLabel(schedule)} (server time) · {schedule.duty}</span>)}</span><span className="pw m" data-content>{p.waypointIds.map(w => w.replace(/^w/, "")).join(", ")}</span></li>; })}</ul>
-          </section>
-        </div>
-        <div className="qm-leaf" data-part="PlanRoad">
-          <section className="qm-route" aria-label="Route in order">
-            <h4>Route <span className="m">in order</span></h4>
-            <QuestMap quest={quest} mode={mode} rowsOnly showChecks showAll onOpenAsk={openAsk} />
-          </section>
-          <section className="qm-qs" aria-label="Comes back to you">
-            <h4>Comes back to you</h4>
-            <ul>
-              {plan.questions.length === 0 && <li><Glyph name="ask" /><span>No open questions</span></li>}
-              {plan.questions.map((q, i) => <li key={q.id}><span className="qn">{i + 1}</span><span className="qx"><span data-content>{q.text}</span><span className="m" data-content>{q.recommended !== null && q.options[q.recommended] ? `recommends ${q.options[q.recommended]}` : q.options.join(" or ")} · {q.reversible ? "reversible" : "needs your decision"}</span></span></li>)}
-              {plan.waypoints.filter(w => w.actor === "user").map(w => <li key={w.id}><Glyph name="route" /><span data-content><b>Waypoint {w.id.replace(/^w/, "")}</b> {w.title}{w.dependsOn.length > 0 && <span className="m"> · after {w.dependsOn.map(d => d.replace(/^w/, "")).join(", ")}</span>}</span></li>)}
-              <li><Glyph name="report" /><span className="qm-review"><b>Review load</b><Clamp text={plan.reviewLoad} lines={1} /></span></li>
-              <li><Glyph name="wax-seal" /><span>Production steps and anything sent as you still ask you.</span></li>
-            </ul>
-          </section>
-        </div>
-      </div>
-      <PlanMapFold key={plan.version}>
+      <PlanCharter key={`charter:${plan.version}`} quest={quest} plan={plan} previous={detail.plans.find(p => p.version === plan.version - 1)} registry={registry.data} sealed={sealed} onOpenAsk={openAsk} />
+      <div className="qm-facts"><span className="qm-forecast"><b>Forecast</b><Clamp text={forecast} lines={1} /></span><span className="qm-more">
+        {plan.findings.length + plan.assumptions.length > 0 && <button type="button" className="lnk-btn act" aria-expanded={findingsOpen} aria-controls={findingsId} onClick={() => setFindingsOpen(!findingsOpen)}>{plan.findings.length + plan.assumptions.length} findings and assumptions<ExpandsMark open={findingsOpen} /></button>}
+        {decided.length > 0 && <button type="button" className="lnk-btn act" aria-expanded={decidedOpen} aria-controls={decidedId} onClick={() => setDecidedOpen(!decidedOpen)}><Glyph name="decided" size={12} /><span>{decided.filter(d => !d.undone).length} decided for you</span><ExpandsMark open={decidedOpen} /></button>}
+      </span></div>
+      {plan.findings.length + plan.assumptions.length > 0 && <div id={findingsId} className="qm-fold" hidden={!findingsOpen}>{findingsOpen && <ul className="dots">{plan.findings.map((f, i) => <li key={`f${i}`} data-content>{f}</li>)}{plan.assumptions.map((f, i) => <li key={`a${i}`} className="m" data-content>Assumes: {f}</li>)}</ul>}</div>}
+      {decided.length > 0 && <div id={decidedId} hidden={!decidedOpen}>{decidedOpen && <DecidedForYou decisions={decided} pending={undo.isPending} onUndo={id => void undo.mutate({ decisionId: id }).catch(setError)} />}</div>}
+      <PlanMapFold key={`map:${plan.version}`}>
         <QuestMap quest={quest} mode={mode} dealt={sealed} stretch={!sealed} showChecks showAll drawn onOpenAsk={openAsk} />
         <div className="qm-key m"><span><i className="k crest" />agent</span><span><i className="k you" />your move</span><span><i className="k gate" />outside owner</span><span>left to right is order, not a schedule</span></div>
       </PlanMapFold>
-      <div className="qm-facts"><span className="qm-forecast"><b>Forecast</b><Clamp text={forecast} lines={1} /></span><span className="qm-more">
-        {plan.findings.length + plan.assumptions.length > 0 && <button type="button" className="lnk-btn act" aria-expanded={more === "findings"} onClick={() => setMore(more === "findings" ? null : "findings")}>{plan.findings.length + plan.assumptions.length} findings and assumptions<ExpandsMark open={more === "findings"} /></button>}
-        {decided.length > 0 && <button type="button" className="lnk-btn act" aria-expanded={more === "decided"} onClick={() => setMore(more === "decided" ? null : "decided")}><Glyph name="decided" size={12} /><span>{decided.filter(d => !d.undone).length} decided for you</span><ExpandsMark open={more === "decided"} /></button>}
-      </span></div>
-      {more === "findings" && <div className="qm-fold"><ul className="dots">{plan.findings.map((f, i) => <li key={`f${i}`}>{f}</li>)}{plan.assumptions.map((f, i) => <li key={`a${i}`} className="m">Assumes: {f}</li>)}</ul></div>}
-      {more === "decided" && <DecidedForYou decisions={decided} pending={undo.isPending} onUndo={id => void undo.mutate({ decisionId: id }).catch(setError)} />}
       <QueryState error={error} />
-      {current && !sealed && (
+      {current && !sealed && <>
+        {showScope && <p className="qm-reply m">Or reply in chat, e.g. “seal, 1 Monday”.</p>}
         <footer className="qm-f">
-          {noStaffingGreenlight ? null : reviewLead && detail.quest.keeperThreadId ? <button type="button" className="btn" onClick={() => revealAsk(detail.quest.keeperThreadId, reviewLead.id)}>Review lead plan and limits</button> : greenlight && formOption ? <button type="button" className="btn pri seal" disabled={answer.isPending} onClick={() => void answer.mutate({ askId: greenlight.id, optionId: formOption.id, note: null, via: "chat" }).catch(setError)}><Glyph name="wax-seal" />{answer.isPending ? "Sealing…" : greenlight.effect?.type === "greenlight" && greenlight.effect.requiresExplicit ? "Approve the updated plan" : "Form the party (greenlight)"}</button> : waitsForParent ? <span className="m small">Staffing waits for the hiring Keeper’s decision.</span> : <span className="m small">The greenlight ask is not open yet.</span>}
-          <button type="button" className="btn" onClick={redirect} title={!noStaffingGreenlight && !reviewLead && !waitsForParent ? "Or reply in chat, e.g. “seal, 1 Monday”." : undefined}>Redirect in chat</button>
-          {!noStaffingGreenlight && !reviewLead && !waitsForParent && <span className="qm-scope m">Approves the party and these checks.</span>}
+          {noStaffingGreenlight ? null : reviewLead && detail.quest.keeperThreadId ? <button type="button" className="btn" onClick={() => revealAsk(detail.quest.keeperThreadId, reviewLead.id)}>Review lead plan and limits</button> : greenlight && formOption ? <button type="button" className="btn pri seal" aria-label={sealLabel === "Form the party (greenlight)" ? `Approve: ${sealLabel}` : sealLabel} disabled={answer.isPending} onClick={() => void answer.mutate({ askId: greenlight.id, optionId: formOption.id, note: null, via: "chat" }).catch(setError)}><Glyph name="wax-seal" /><span className="qm-full">{sealLabel}</span><span className="qm-short" aria-hidden="true">{answer.isPending ? "Sealing…" : "Approve"}</span></button> : waitsForParent ? <span className="m small">Staffing waits for the hiring Keeper’s decision.</span> : <span className="m small">The greenlight ask is not open yet.</span>}
+          <button type="button" className="btn" aria-label="Redirect in chat" onClick={redirect}><span className="qm-full">Redirect in chat</span><span className="qm-short" aria-hidden="true">Redirect</span></button>
+          {showScope && <span className="qm-scope m">Approves the party and these checks.</span>}
         </footer>
-      )}
+      </>}
       {!sealed && !current && <p className="m small qm-old">This plan was superseded; it cannot be greenlit here.</p>}
     </article>
   );

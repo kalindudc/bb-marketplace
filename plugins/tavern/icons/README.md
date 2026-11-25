@@ -27,6 +27,7 @@ Tavern's own marks: the plugin icon, a small set of glyphs for its UI and its to
 | `party.svg` | party | The party: members staffed on a board quest (two shields). The party picture's heading, `tavern_hire` rows. |
 | `ledger.svg` | ledger | The Keeper's lead state. The "Ledger (lead state)" control and tab, `tavern_status` rows. |
 | `report.svg` | report | A member's report to its Keeper. Report cards and digests, `tavern_report` rows. |
+| `standing.svg` | standing | Permanent work. The loop badge on a permanent member's mark in the plan card. |
 | `wax-seal.svg` | wax-seal | The greenlight under 28 px: a plain round seal with two ribbon tails and the Keeper's shield, so it can never read as a settings cog. The "Form the party" seal button and the "Sealed 12:58" stamp. |
 | `wax-seal-large.svg` | wax-seal-large | The greenlight from 28 px up: the scalloped wax seal with the shield. The quest map card's seal mark and the Tavern page. |
 | `tick.svg` | tick | A Keeper update: the tick loop's one message per minute (a pulse). `[Tavern tick]` rows and the held-while-you-typed note. |

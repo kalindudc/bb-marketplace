@@ -44,6 +44,7 @@ const PATHS = {
   "rejected": "M12 2.5 21.5 12 12 21.5 2.5 12ZM9.25 9.25l5.5 5.5M14.75 9.25l-5.5 5.5",
   "pause": "M9 5.5v13M15 5.5v13",
   "gate": "M4 20.25V3.75M20 20.25V3.75M2.5 4.25h19M2.5 7.75h19M7 11.75h10M7 15.75h10",
+  "standing": "M19.5 12.5a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4",
   // State marks (StateMark), drawn as the page drew them.
   // Work and busy: a ring half filled, the still "in progress" mark. An open arc read as a spinner that had frozen.
   "st-work": "M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17Z",

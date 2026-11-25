@@ -261,13 +261,55 @@ html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--atten
 .tavern .qm-key .k.crest { background: var(--tavern-teal); clip-path: path("M0 0h9v4.5C9 7 7 8.4 4.5 9 2 8.4 0 7 0 4.5Z"); }
 .tavern .qm-key .k.you { background: var(--tavern-you); transform: rotate(45deg) scale(.8); }
 .tavern .qm-key .k.gate { border: 2px solid var(--foreground); border-bottom: 0; }
-.tavern .qm-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-block: 1px solid var(--tavern-line); }
-.tavern .qm-leaf { display: grid; gap: 8px; align-content: start; min-width: 0; padding-block: 10px; overflow-wrap: anywhere; }
-.tavern .qm-leaf:first-child { padding-right: 12px; }
-.tavern .qm-leaf + .qm-leaf { padding-left: 12px; border-left: 1px solid var(--tavern-line); }
-.tavern .qm-cols h4 { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
-.tavern .qm-cols h4 .m { font-size: 12px; font-weight: 400; }
-.tavern .qm-done, .tavern .qm-party, .tavern .qm-qs { border-top: 1px solid var(--tavern-line); padding-top: 6px; }
+.tavern .qm-charter { margin-inline: -12px; padding: 8px 12px 0; background: var(--tavern-paper); border-block: 1px solid var(--tavern-paper-rule); overflow-wrap: anywhere; }
+.tavern .qm-charter .qm-goal { padding-bottom: 8px; }
+.tavern .qm-goal .lg-clamp { padding-inline: 0; font-size: inherit; }
+.tavern .qm-done, .tavern .qm-charter-row { border-top: 1px solid var(--tavern-paper-rule); }
+.tavern .qm-done { padding-bottom: 8px; }
+.tavern .qm-charter-line { display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; min-height: 36px; padding: 4px; font-size: 12px; }
+.tavern button.qm-charter-line, .tavern .qm-step-toggle { width: 100%; border: 0; background: none; color: inherit; cursor: pointer; text-align: left; }
+.tavern .qm-charter-line > :first-child { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--tavern-muted); }
+.tavern :is(button.qm-charter-line, .qm-step-toggle):hover { background: var(--tavern-hover); }
+.tavern .qm-answer { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; min-width: 0; }
+.tavern .qm-person, .tavern .qm-warn { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.tavern .qm-warn { font-weight: 600; }
+.tavern .qm-warn .tavern-glyph, .tavern .qm-running .tavern-glyph { color: var(--tavern-blocked); }
+.tavern .qm-owner-bar { display: flex; flex: 1 0 100%; gap: 1px; max-width: 320px; height: 8px; }
+.tavern .qm-owner-bar i { flex: 1; background: var(--tavern-ink); }
+.tavern .qm-owner-bar .owner-you { background: var(--tavern-you); }
+.tavern .qm-owner-bar .owner-permanent { background: var(--tavern-teal); }
+.tavern .qm-owner-bar .owner-outside { background: var(--tavern-plum); }
+.tavern .qm-owner-bar .owner-keeper { background: var(--tavern-muted); }
+.tavern .qm-owner-bar .group-start { margin-left: 3px; }
+.tavern .qm-owner-mark { position: relative; display: inline-flex; flex: none; }
+.tavern .qm-owner-mark .qm-standing { position: absolute; right: -4px; bottom: -3px; background: var(--tavern-paper); color: var(--tavern-teal); }
+.tavern .wp-mark.qm-filled path { fill: var(--tavern-ink); }
+.tavern .qm-charter-body, .tavern .qm-done > :not(.qm-charter-line) { margin-inline: 126px 4px; }
+.tavern .qm-charter-body { padding-block: 2px 10px; }
+.tavern .qm-lines { display: grid; gap: 5px; padding: 0; font-size: 12px; }
+.tavern .qm-lines > li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 6px; align-items: start; }
+.tavern .qm-lines li > .tavern-glyph { margin-top: 2px; }
+.tavern .qm-jumps { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.tavern .qm-jump { min-width: 24px; min-height: 24px; padding-inline: 4px; }
+.tavern .qm-running { border: 1px dashed var(--tavern-paper-spine); padding: 8px; }
+.tavern .qm-road, .tavern .qm-stage-steps { display: grid; list-style: none; padding: 0; }
+.tavern .qm-road { position: relative; gap: 4px; }
+.tavern .qm-road::before { content: ""; position: absolute; left: 11px; top: 10px; bottom: 10px; border-left: 2px dashed var(--tavern-road); }
+.tavern .qm-stage { display: block; margin-left: 30px; font-size: 11px; }
+.tavern .qm-step-toggle { display: grid; grid-template-columns: 24px auto minmax(0, 1fr) auto; align-items: start; gap: 6px; min-height: 30px; padding: 4px 4px 4px 0; font: inherit; }
+.tavern .qm-step-mark { position: relative; justify-self: center; margin-top: 2px; background: var(--tavern-paper); box-shadow: 0 0 0 2px var(--tavern-paper); }
+.tavern .qm-step-num, .tavern .qm-step-main > .m { font-size: 12px; }
+.tavern .qm-step-main { display: grid; gap: 1px; }
+.tavern .qm-step-state { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; font-size: 11px; }
+.tavern .qm-step-state > .m { display: inline-flex; align-items: center; gap: 3px; }
+.tavern .qm-step-change { padding-inline: 4px; background: var(--tavern-recessed); border-left: 2px solid var(--tavern-paper-spine); }
+.tavern .qm-step.owner-you > .qm-step-toggle { background: var(--tavern-you-fill); --tavern-muted: color-mix(in oklab, var(--muted-foreground) 45%, var(--foreground)); }
+.tavern .qm-step.owner-you > .qm-step-toggle:hover { background: color-mix(in oklab, var(--tavern-you) 20%, var(--tavern-paper)); }
+.tavern .qm-step.is-done .qm-step-toggle { min-height: 26px; }
+.tavern .qm-step.is-done .qm-step-main > b { font-weight: 400; }
+.tavern .qm-step-detail, .tavern .qm-step-ask { margin: 1px 0 4px 30px; font-size: 12px; }
+.tavern .qm-step-detail { padding: 5px 8px; border-left: 2px solid var(--tavern-paper-spine); background: var(--tavern-recessed); }
+.tavern .qm-charter :is(button, [tabindex]):focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 .tavern .qm-criteria { display: grid; gap: 4px; list-style: square; padding-left: 16px; }
 .tavern .qm-criteria .lg-clamp { padding: 0; font-size: inherit; }
 .tavern .qm-checks, .tavern .qm-never { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 8px; margin-top: 6px; font-size: 12px; }
@@ -276,24 +318,17 @@ html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--atten
 .tavern .qm-chips code { display: inline-block; border: 1px solid var(--tavern-line); background: var(--tavern-recessed); padding: 1px 5px; max-width: 100%; }
 .tavern .qm-checks > div { flex: 0 0 100%; min-width: 0; }
 .tavern .qm-checks pre { padding: 6px 8px; border: 1px solid var(--tavern-line); background: var(--tavern-recessed); white-space: pre-wrap; }
-.tavern .qm-qs ul { display: grid; gap: 5px; padding: 0; }
-.tavern .qm-qs li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 6px; align-items: start; font-size: 12px; }
-.tavern .qm-qs li > .tavern-glyph { margin-top: 2px; }
 .tavern .qm-qs .qn { display: grid; place-items: center; width: 16px; height: 16px; border: 1px solid var(--tavern-you); font-size: 11px; font-weight: 700; margin-top: 1px; }
 .tavern .qm-qs .qx { display: flex; flex-direction: column; min-width: 0; }
 .tavern .qm-qs .qx .m { font-size: 12px; }
 .tavern :is(.qm-review, .qm-forecast) { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
 .tavern :is(.qm-review, .qm-forecast) > b { flex: none; }
 .tavern .qm-forecast { flex: 1 1 260px; }
-.tavern .qm-party ul { display: flex; flex-wrap: wrap; gap: 4px; }
-.tavern .qm-party li { display: flex; align-items: center; gap: 5px; padding: 2px 5px; border: 1px solid var(--tavern-line); font-size: 12px; min-width: 0; max-width: 100%; }
-.tavern .qm-party .pn { min-width: 0; }
-.tavern .qm-party .qm-permanent { display: block; }
-.tavern .qm-party .pw { font-size: 12px; }
-.tavern .qm-party .pw::before { content: "· "; }
-.tavern .qm-route .qlist .qt .m { font-size: 12px; }
-/* The two moments play once, under the class the coordinator adds (moment.ts), and end within --tavern-dur-moment at five members. */
-.tavern.qmcard.mo-seal .qm-party li { animation: tavern-card .4s var(--tavern-ease) both; animation-delay: calc(200ms + min(var(--i), 6) * 100ms); }
+.tavern .qm-party h4 { font-size: 12px; margin-bottom: 4px; }
+.tavern .qm-party ul { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.tavern .qm-party li { display: flex; align-items: start; gap: 6px; font-size: 12px; min-width: 0; max-width: 100%; }
+.tavern .qm-permanent { display: block; font-size: 12px; }
+.tavern.qmcard.mo-seal :is(.qm-party li, .qm-person[style]) { animation: tavern-card .4s var(--tavern-ease) both; animation-delay: calc(200ms + min(var(--i), 6) * 100ms); }
 .tavern .qm-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 16px; font-size: 12px; color: var(--tavern-muted); }
 .tavern .qm-facts b { color: var(--foreground); font-weight: 600; }
 .tavern .qm-more { display: inline-flex; flex-wrap: wrap; gap: 0 4px; margin-left: auto; }
@@ -302,7 +337,13 @@ html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--atten
 .tavern .qm-more .tavern-glyph:first-child { color: var(--tavern-wax); }
 .tavern .qm-fold .dots { display: flex; flex-direction: column; gap: 2px; padding-left: 14px; list-style: square; font-size: 12px; }
 .tavern .qm-f { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px -12px 0; padding: 8px 12px; border-top: 1px solid var(--tavern-line); background: var(--tavern-recessed); position: sticky; bottom: 0; z-index: 2; }
+.tavern.qmcard:has(> .qm-f) :is(button, a, [tabindex]) { scroll-margin-bottom: 72px; }
 .tavern .qm-scope { flex: 1 1 140px; font-size: 12px; }
+.tavern .qm-reply { font-size: 12px; }
+.tavern .qm-short { display: none; }
+.tavern.qmcard .plan-changes { background: color-mix(in oklab, var(--tavern-recessed) 55%, var(--card)); }
+.tavern.qmcard .plan-changes ins { background: color-mix(in oklab, var(--success) 14%, transparent); text-decoration: underline; text-decoration-color: var(--success); text-underline-offset: 2px; }
+.tavern.qmcard .plan-changes del { background: color-mix(in oklab, var(--destructive) 10%, transparent); }
 .tavern .qm-old { padding-bottom: 10px; }
 .tavern .btn.seal { background: var(--tavern-wax); border-color: var(--tavern-wax); color: var(--primary-foreground); min-height: 32px; padding: 0 12px; }
 .tavern .btn.seal:hover:not(:disabled) { background: color-mix(in oklab, var(--tavern-wax) 86%, var(--foreground)); }
@@ -353,10 +394,19 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .tale-left { font-size: 12px; padding: 6px 8px; background: var(--tavern-you-fill); border-left: 3px solid var(--tavern-you); }
 .tavern .lc-note { font-size: 13px; }
 @container plan-card (width <= 534px) {
-  .tavern .qm-cols { grid-template-columns: minmax(0, 1fr); }
-  .tavern .qm-leaf:first-child { padding-right: 0; }
-  .tavern .qm-leaf + .qm-leaf { padding-left: 0; border-left: 0; border-top: 1px solid var(--tavern-line); }
-  .tavern.qmcard :is(.btn, .lnk-btn, .lg-clamp.act) { min-height: 44px; }
+  .tavern .qm-charter-line { grid-template-columns: minmax(0, 1fr) auto; }
+  .tavern .qm-charter-line > :not(.act-i) { grid-column: 1; }
+  .tavern .qm-charter-line > .act-i { grid-area: 1 / 2 / span 2; }
+  .tavern .qm-charter-body, .tavern .qm-done > :not(.qm-charter-line) { margin-inline: 4px; }
+  .tavern.qmcard :is(.btn, .lnk-btn, .lg-clamp.act, button.qm-charter-line, .qm-step .qm-step-toggle), .tavern .qm-step.is-done .qm-step-toggle { min-height: 44px; }
+  .tavern .qm-jump { min-width: 44px; }
+  .tavern .qm-f .qm-full { display: none; }
+  .tavern .qm-f .qm-short { display: inline; }
+  .tavern .qm-f .qm-scope { flex-basis: 92px; }
+}
+@media (pointer: coarse) {
+  .tavern.qmcard :is(button.qm-charter-line, .qm-step .qm-step-toggle, .qm-step.is-done .qm-step-toggle, .qm-jump) { min-height: 44px; }
+  .tavern .qm-jump { min-width: 44px; }
 }
 @container page (max-width: 560px) { .tavern .roll li { grid-template-columns: auto minmax(0, 1fr); } .tavern .roll .rl-w { grid-column: 2; } }
 
