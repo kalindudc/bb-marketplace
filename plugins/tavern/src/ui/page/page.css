@@ -489,7 +489,8 @@
 .tavern.tv-page .tv-item-t b { font-weight: 700; }
 .tavern.tv-page .tv-item-s { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 11px; color: var(--tv-text-2); min-width: 0; }
 .tavern.tv-page .tv-item-s .tv-fold { margin: 0; min-height: 24px; padding: 0 4px; }
-.tavern.tv-page .tv-item-x { grid-column: 2 / -1; }
+.tavern.tv-page .tv-item-x,
+.tavern.tv-page .tv-item > .tv-alert-action { grid-column: 2 / -1; }
 .tavern.tv-page .tv-item-s .member-estimate { flex-basis: 100%; }
 .tavern.tv-page .tv-ledger { min-width: 0; }
 .tavern.tv-page .tv-lg-h { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--tavern-line); }

@@ -34,6 +34,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- Blocked waypoints show their suggested message and buttons across the row instead of squeezing them into the icon column.
 - Keepers and party members can start on Gemini 4 Neon. Tavern shows the model one input shape per tool and still checks which arguments belong to each action.
 - A Keeper keeps their road while a message waits to be routed. An ask appears by the character without moving them to the left edge.
 - Road tooltips, their accessible labels, and canned character remarks use the quest's short name instead of its full title.

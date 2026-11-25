@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { rpcContract, type BoardQuestDetail } from "../../../src/shared/contract";
 import { registerPageSurfaces } from "../../../src/ui/page/register";
+import { blockedPlacement } from "../fixtures/placement";
 import { railDetail } from "./quest-rail-fixture";
 import * as scenes from "./scenes";
 
@@ -22,6 +23,27 @@ it("shows the per-class scopes in the screenshot fixture without claiming a Wand
   const slot = await mount();
   const party = slot.container.querySelector('[data-fold="quest.party"]')!;
   for (const words of ["scope: worktree · enforced", "scope: open · only protected files guarded", "scope: checker · enforced", "scope: readonly · enforced"]) expect(party.textContent).toContain(words);
+});
+it("keeps a blocked waypoint's action and placement status out of the glyph column", async () => {
+  const detail = structuredClone(railDetail);
+  const waypoint = detail.quest.waypoints.find(w => w.state === "doing" && w.ownerMember)!;
+  waypoint.state = "blocked";
+  waypoint.ownerMember!.placement = blockedPlacement;
+  const slot = await mount(detail);
+  const action = slot.getByText(/^Review the blocked waypoint/);
+  const row = action.closest("li")!;
+  const style = document.createElement("style");
+  style.textContent = ["src/ui/page/page.css", "src/ui/kit/placement.css"].map(path => readFileSync(path, "utf8")).join("\n");
+  document.head.append(style);
+  try {
+    expect(getComputedStyle(row).display).toBe("grid");
+    expect(getComputedStyle(row.querySelector(".tv-item-s")!).gridColumn).toBe("2 / -1");
+    expect(getComputedStyle(within(row).getByRole("group", { name: /^Where .* runs$/ })).gridColumn).toBe("2 / -1");
+    const actionCell = Array.from(row.children).find(child => child.contains(action))!;
+    expect(getComputedStyle(actionCell).gridColumn).toBe("2 / -1");
+  } finally {
+    style.remove();
+  }
 });
 it("caps only the History row text at 100ch, not its card", () => {
   const css = readFileSync("src/ui/page/page.css", "utf8");
