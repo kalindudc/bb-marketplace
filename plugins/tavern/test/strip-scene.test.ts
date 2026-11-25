@@ -11,24 +11,6 @@ const assignment = { revision: "brief-a", at: 30 };
 const base = { member, quest, assignment, assigned: true };
 
 describe("thread workbench", () => {
-  it("puts the active route and only recorded earlier work on the Keeper's road", () => {
-    const current = { ...quest, title: "Restore the lanterns" };
-    const keeper = { ...member, role: "keeper", classId: "keeper" } as const;
-    const route = { kind: "steer", boardQuestId: quest.id, boardQuestIds: [quest.id] } as const;
-    const waypoints = [
-      { id: "w1", title: "Read the log", kind: "read", state: "done" },
-      { id: "w2", title: "Replace the shutters", kind: "make", state: "doing" },
-      { id: "w3", title: "Refit the frame", kind: "make", state: "planned" },
-    ] as const;
-    const input = { member: keeper, quest: current, route, waypoints };
-    expect(stripScene(input).road).toMatchObject({ title: current.title, current: "w2", places: [
-      { kind: "plan", state: "done" }, { id: "w1", kind: "read", state: "done", waypoint: "Read the log" },
-      { id: "w2", kind: "make", state: "active", waypoint: "Replace the shutters" },
-    ] });
-    expect(stripScene({ ...input, route: { ...route, kind: "aside" } }).road).toBeUndefined();
-    expect(stripScene({ ...input, held: true }).road?.places.at(-1)?.state).toBe("held");
-  });
-
   it("omits the optional road title when an errand has no quest", () => {
     const { road } = stripScene({ member, assignment, assigned: true });
     expect(road?.places).toMatchObject([{ id: "work", kind: "make" }]);
@@ -58,10 +40,11 @@ describe("thread workbench", () => {
     const keeper = { classId: "keeper", role: "keeper", state: "working", engagement: "active" } as const;
     const planning = { ...quest, phase: "scout" } as const;
     const route = { kind: "steer", boardQuestId: quest.id, boardQuestIds: [quest.id] } as const;
-    expect(stripScene({ member: keeper, quest: planning }).road).toBeUndefined();
-    expect(stripScene({ member: keeper, quest: planning, route: { ...route, kind: "aside" } }).road).toBeUndefined();
-    expect(stripScene({ member: keeper, quest: planning, route: { ...route, boardQuestIds: [quest.id, "quest-b"] } }).road).toBeUndefined();
-    expect(stripScene({ member: keeper, quest: planning, route }).road?.places[0]?.kind).toBe("plan");
+    expect(stripScene({ member: keeper, quest: planning }).stage).toBe("neutral");
+    expect(stripScene({ member: keeper, quest: planning, route: { ...route, kind: "aside" } }).stage).toBe("neutral");
+    expect(stripScene({ member: keeper, quest: planning, route: { ...route, boardQuestIds: [quest.id, "quest-b"] } }).stage).toBe("neutral");
+    expect(stripScene({ member: keeper, quest: planning, route }).stage).toBe("plan");
+    expect(stripScene({ member: keeper, quest: { ...planning, archivedAt: 30 }, route })).toMatchObject({ stage: "neutral", posture: "clear" });
   });
 
   it("recognizes only current committed quest transitions, not the event name or phase alone", () => {

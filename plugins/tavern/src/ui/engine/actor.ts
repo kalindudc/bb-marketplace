@@ -9,6 +9,7 @@ export type Reaction = (typeof REACTIONS)[number];
 export class Actor {
   readonly body = createBody();
   dark = false;
+  restAtRoadHome = false;
   readonly motionSeed: number;
   moodSince = 0;
   target: number | null = null;
@@ -175,7 +176,7 @@ export class Actor {
     return {
       activity,
       cue: cue?.kind ?? null, progress: cue ? (time - cue.start) / CUE_MS[cue.kind] : 0,
-      t: still ? 0 : time, mood: this.mood, facing: this.facing,
+      t: still ? 0 : time, mood: this.restAtRoadHome && this.atRoadHome ? "resting" : this.mood, facing: this.facing,
       step: activity === "walk" ? Math.floor(8 * this.distance / this.gait.length) : 0,
       motionSeed: this.motionSeed,
       swing: still || (this.small && cue?.kind !== "signature") ? 0 : this.facing * this.body.swing,

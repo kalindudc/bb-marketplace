@@ -1,6 +1,8 @@
 import { currentMoodReport, waypointMoodVerdict } from "../shared/mood";
 import { wasReleased } from "../shared/member-engagement";
-import type { RoadPlace, StripRoad, StripScene } from "../shared/strip-scene";
+import type { BoardQuestSummary } from "../shared/contract";
+import type { KeeperRoad, MemberRoad, QuestSignpost, RoadPlace, StripScene } from "../shared/strip-scene";
+import { verifiedWaypoint } from "../shared/waypoint";
 import type { BoardQuest, JournalEntry, Member, Plan, Report, Route } from "../shared/schema";
 import { askMemberTarget } from "./ask-effects";
 import { askNeedsUser } from "./attention";
@@ -8,6 +10,7 @@ import type { Keeper } from "./keeper/service";
 import type { KeeperStore, Runtime } from "./keeper/store";
 import type { SpeechFacts } from "./pi-speech-prompt";
 import { memberHost } from "./member-engagement";
+import { isOpenQuest } from "./liveness";
 
 type Stamp = { revision: string; at: number };
 type Commit = Stamp & { from: string | null; to: string; version?: number | null };
@@ -86,15 +89,12 @@ function currentRoadWaypoint(waypoints: readonly RoadWaypoint[]) {
   return waypoints.find(w => ["doing", "reported", "rejected", "blocked"].includes(w.state));
 }
 
-function stripRoad(scene: StripScene, input: Input): StripRoad | undefined {
+function stripRoad(scene: StripScene, input: Input): MemberRoad | undefined {
   const { quest, waypointId, waypoints = [], assignment } = input;
   const { role, stage, moment, posture } = scene;
-  if (posture === "gone" || stage === "neutral" || role === "keeper" && stage === "rest" && moment !== "wrapped") return;
+  if (posture === "gone" || stage === "neutral" || role === "keeper") return;
 
-  const assigned = waypoints.find(w => w.id === waypointId);
-  const current = role === "keeper" && stage === "work"
-    ? currentRoadWaypoint(waypoints)
-    : assigned;
+  const current = waypoints.find(w => w.id === waypointId);
   const key = quest?.id ?? assignment?.revision ?? role;
   const places: RoadPlace[] = [];
   const add = (id: string, kind: RoadPlace["kind"], state: RoadPlace["state"], waypoint?: string) => {
@@ -103,8 +103,7 @@ function stripRoad(scene: StripScene, input: Input): StripRoad | undefined {
   };
   const status = posture === "held" || current?.state === "blocked" || current?.state === "rejected" ? "held" : "active";
   const questName = quest?.short || quest?.title;
-  const road = (id: string): StripRoad => ({ key, ...(questName === undefined ? {} : { title: questName }), current: id, places });
-  if (stage === "plan") return road(add("plan", "plan", status));
+  const road = (id: string): MemberRoad => ({ key, ...(questName === undefined ? {} : { title: questName }), current: id, places });
 
   if (quest?.greenlitVersion != null) add("plan", "plan", "done");
   const history = current ? waypoints.slice(0, waypoints.indexOf(current)) : waypoints;
@@ -112,10 +111,6 @@ function stripRoad(scene: StripScene, input: Input): StripRoad | undefined {
     if (w.state !== "done" && w.state !== "verified") continue;
     add(w.id, w.kind, "done", w.title);
     if (w.state === "verified") add(`${w.id}:review`, "review", "done", w.title);
-  }
-  if (role === "keeper" && stage === "work" && !current && waypoints.length) {
-    const last = places.at(-1);
-    return last ? road(last.id) : undefined;
   }
   const kind = role === "ranger" ? "read" : role === "smith" ? "make" : current?.kind ?? "make";
   const id = current?.id ?? "work";
@@ -135,9 +130,33 @@ function stripRoad(scene: StripScene, input: Input): StripRoad | undefined {
   return road(add(id, kind, status, title));
 }
 
+type KeeperQuestFacts = {
+  quests: readonly BoardQuest[];
+  summaryOf: (id: string) => BoardQuestSummary;
+  asked: ReadonlySet<string>;
+};
+
+function keeperRoad(threadId: string, routedId: string | undefined, facts: KeeperQuestFacts): KeeperRoad | undefined {
+  const places: QuestSignpost[] = [];
+  for (const quest of facts.quests) {
+    if (quest.archivedAt != null || quest.deletedAt != null || quest.phase !== "done" && !isOpenQuest(quest)) continue;
+    const { phase, waypoints } = facts.summaryOf(quest.id);
+    const state = phase === "done" ? "sealed"
+      : phase === "held" || facts.asked.has(quest.id) || quest.checkerHandoffHold?.release === null ? "held"
+      : phase === "scout" || phase === "greenlight" ? "planning"
+      : phase === "check" || phase === "wrap" || phase === "closing" ? "checking" : "building";
+    places.push({ kind: "quest", id: quest.id, name: quest.short || quest.title, state,
+      done: waypoints.filter(w => verifiedWaypoint(w) || w.state === "done" || w.state === "accepted").length,
+      total: waypoints.length,
+    });
+  }
+  if (places.length) return { kind: "keeper", key: threadId, current: places.find(p => p.id === routedId)?.id ?? null, places };
+}
+
 type SceneFacts = {
   thread: Runtime; boardQuest: BoardQuest | null; plan: Plan | null; entries: readonly JournalEntry[];
   lastReport?: Report; verdict: ReturnType<typeof waypointMoodVerdict>; held: boolean; archived: boolean;
+  keeperQuests?: KeeperQuestFacts;
 };
 
 function stripQuest(store: KeeperStore, member: Member, thread: Runtime, boardQuest: BoardQuest | null) {
@@ -194,10 +213,10 @@ export function readStripScene(keeper: Keeper, member: Member, known?: SceneFact
     gone: thread.hidden || (known?.archived ?? (host?.archivedAt != null || host?.deletedAt != null)) || wasReleased(member),
   };
   const scene = stripFacts(input);
-  if (!known || scene.stage === "neutral" || scene.posture === "gone") return scene;
-  const roadPlan = quest?.id === boardQuest?.id ? plan : quest ? store.get("plans", `${quest.id}:${quest.planVersion}`) : null;
-  const roadEntries = roadPlan && quest!.id !== boardQuest?.id ? keeper.journal.linkedEntries(quest!.id) : entries;
-  const road = stripRoad(scene, { ...input, waypoints: roadPlan ? roadWaypoints(roadPlan, roadEntries) : undefined });
+  if (!known || scene.posture === "gone") return scene;
+  const road = member.role === "keeper"
+    ? known.keeperQuests && keeperRoad(threadId, scene.stage !== "neutral" ? quest?.id : undefined, known.keeperQuests)
+    : scene.stage !== "neutral" ? stripRoad(scene, { ...input, waypoints: plan ? roadWaypoints(plan, entries) : undefined }) : undefined;
   return road ? { ...scene, road } : scene;
 }
 
@@ -211,9 +230,11 @@ function stripFacts({ member, quest, route, commit, assignment, assigned, report
   const id = member.classId;
   const role = member.role === "keeper" ? "keeper" : id === "smith" || id === "ranger" || id === "warden" || id === "wanderer" ? id : "other";
   const result: StripScene = { revision: "neutral", at: null, role, stage: "neutral", activity: "unknown", moment: "none", posture: "clear" };
-  if (gone || ["released", "archived", "stopped"].includes(member.engagement ?? "") || quest?.archivedAt != null || quest?.deletedAt != null)
+  const questGone = quest?.archivedAt != null || quest?.deletedAt != null;
+  if (gone || ["released", "archived", "stopped"].includes(member.engagement ?? "") || questGone && role !== "keeper")
     return { ...result, posture: "gone" };
-  if (held || quest?.phase === "held" || member.state === "failed" || member.state === "waiting") result.posture = "held";
+  if (held || !questGone && quest?.phase === "held" || member.state === "failed" || member.state === "waiting") result.posture = "held";
+  if (questGone) return result;
   if (quest?.phase === "stopped" || quest?.phase === "stopping") return result;
   const stamp = (stage: StripScene["stage"], moment: StripScene["moment"], fact: Stamp) =>
     ({ ...result, stage, moment, at: fact.at, revision: JSON.stringify([quest?.id, quest?.planVersion, assignment?.revision, fact.revision]) });

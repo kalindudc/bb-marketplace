@@ -209,6 +209,7 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
     character={character} classId={member.classId} classLabel={classLabel} mood={mood} memberId={member.threadId}
     askDisclosure={askDisclosure} keeper={!!data.keeperView} surface={surface} region="widget" mode={motionMode} held={held} quiet={quiet}
     road={workbench?.road} repeatSeconds={data.repeatSeconds}
+    onOpenQuest={(id, sealed) => navigate.toPluginPanel("tavern", { subPath: `${sealed ? "tale" : "quest"}/${id}` })}
     actorMenu={{ mode: motionMode, voice, voiceBeforeOff: data.voiceBeforeOff, quietUntil: quiet ? data.characterQuietUntil : undefined, change, openSheet: () => navigate.toPluginPanel("tavern", { subPath: `character/${character.id}` }) }}
     speech={line && reply?.text ? { ...line, text: reply.text } : line ?? null} canClickSpeak={speechMode !== "off" && speechSlot(mood) && !!character.says?.[contextualSlot ?? mood]?.length}
     onSpeechVisible={contextual ? setSpeechVisible : undefined}

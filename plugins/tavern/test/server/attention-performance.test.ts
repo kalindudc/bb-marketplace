@@ -26,7 +26,7 @@ it("keeps reads, rows, payloads and latency bounded on R9's dataset", async () =
     ledger: async () => { const payload = await handlers.ledger({ threadId: "lead" }); return { payload, attention: payload.attention }; },
     decor: async () => { const payload = await handlers.decor({ threadId: "lead" }); return { payload, attention: payload.keeperView?.attention }; },
   };
-  const limits = { room: { ms: 250, bytes: 300_000, items: 90 }, ledger: { ms: 300, bytes: 400_000, items: 440 }, decor: { bytes: 55_000, items: 90 } };
+  const limits = { room: { ms: 250, bytes: 300_000, items: 90 }, ledger: { ms: 300, bytes: 400_000, items: 440 }, decor: { bytes: 65_000, items: 90 } };
   for (const method of ["room", "ledger", "decor"] as const) {
     await views[method]();
     const samples: number[] = [];

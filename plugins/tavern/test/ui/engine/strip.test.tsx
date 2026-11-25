@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PartyStrip } from "../../../src/ui/engine/strip";
-import type { StripRoad } from "../../../src/shared/strip-scene";
+import type { KeeperRoad, StripRoad } from "../../../src/shared/strip-scene";
 import { stripScene } from "../../../src/server/strip-scene";
 import * as engine from "../../../src/ui/engine/scheduler";
 import * as sprites from "../../../src/ui/engine/sprites";
@@ -292,6 +292,162 @@ it("keeps the road in its own 70px layer and caches equal data and unchanged pai
   const ask = screen.getByRole("button", { name: /open asks/i });
   expect(ask.style.left).toBe("196px");
   expect(screen.getAllByRole("button")).toHaveLength(4);
+});
+
+const keeperRoad: KeeperRoad = { kind: "keeper", key: "keeper", current: "bridge", places: [
+  { id: "bridge", kind: "quest", name: "Bridge repair", state: "building", done: 3, total: 5 },
+] };
+const keeperStrip = { ...wanderer, keeper: true, classId: "keeper", classLabel: "Keeper", road: keeperRoad } as const;
+
+it("describes a signpost, opens its quest, and leaves the camp without focus stops", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(780);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  const open = vi.fn();
+  render(<PartyStrip {...keeperStrip} onOpenQuest={open} />);
+  const words = "Bridge repair · building, 3 of 5 steps done";
+  const signpost = screen.getByRole("button", { name: words });
+  expect(screen.getAllByRole("button")).toEqual([screen.getByRole("button", { name: /Wren, Keeper/ }), signpost]);
+  fireEvent.pointerEnter(signpost, { pointerType: "mouse" });
+  expect(screen.getByRole("tooltip").textContent).toBe(words);
+  fireEvent.click(signpost);
+  expect(open).toHaveBeenCalledWith("bridge", false);
+});
+
+it("keeps the quest tooltip open while the pointer crosses into it, and dismisses it with Escape", () => {
+  vi.useFakeTimers();
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(390);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  try {
+    render(<PartyStrip {...keeperStrip} />);
+    const sign = screen.getByRole("button", { name: /Bridge repair/ });
+    fireEvent.pointerEnter(sign, { pointerType: "mouse" });
+    fireEvent.pointerLeave(sign);
+    act(() => vi.advanceTimersByTime(100));
+    const tip = screen.getByRole("tooltip");
+    fireEvent.pointerEnter(tip);
+    act(() => vi.advanceTimersByTime(1000));
+    expect(screen.getByRole("tooltip")).toBe(tip);
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  } finally { vi.useRealTimers(); }
+});
+
+it("opens an already-held Keeper at the routed signpost when there is no earlier position", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(780);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  vi.spyOn(engine, "observeWorld").mockImplementation((_, world) => {
+    const invalidate = (change?: () => void) => { change?.(); world.refresh?.(); world.draw(true); };
+    invalidate();
+    return { invalidate, remove() {} };
+  });
+  render(<PartyStrip {...keeperStrip} mode="lively" mood="waiting" held askDisclosure={askDisclosure} />);
+  const sign = screen.getByRole("button", { name: /Bridge repair/ });
+  const actor = screen.getByRole("button", { name: /Wren, Keeper/ });
+  expect(actor.style.transform).toMatch(`translate(${parseInt(sign.style.left) + 44}px,`);
+});
+
+it.each([[320, 6], [390, 3], [390, 5], [1400, 16]])("keeps the ask clear of every signpost at %dpx with %d quests", (width, count) => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(width);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  vi.spyOn(engine, "observeWorld").mockImplementation((_, scene) => {
+    const invalidate = (change?: () => void) => { change?.(); scene.refresh?.(); scene.draw(false); };
+    invalidate();
+    return { invalidate, remove() {} };
+  });
+  const places = Array.from({ length: count }, (_, i) => ({
+    ...keeperRoad.places[0]!, id: `q${i}`, name: `Quest ${i}`,
+  }));
+  const road = { ...keeperRoad, places, current: "q1" };
+  const view = render(<PartyStrip {...keeperStrip} road={road} mode="lively" mood="working" />);
+  const actor = screen.getByRole("button", { name: /Wren, Keeper/ });
+  const before = actor.style.transform;
+  const targets = () => Array.from(view.container.querySelectorAll<HTMLButtonElement>(".twalk-place"));
+  const clearTargets = targets().map(el => el.style.left);
+  view.rerender(<PartyStrip {...keeperStrip} road={road} mode="lively" mood="waiting" held askDisclosure={askDisclosure} />);
+  expect(actor.style.transform).toBe(before);
+  const ask = screen.getByRole<HTMLButtonElement>("button", { name: /open asks/i });
+  const x = Number(before.match(/translate\((\d+)/)?.[1]);
+  const askLeft = parseInt(ask.style.left);
+  expect(askLeft).toBe(x + 48);
+  for (const el of targets()) {
+    const left = parseInt(el.style.left), right = left + parseInt(el.style.width);
+    expect(right <= x || left >= askLeft + 44).toBe(true);
+    expect(right).toBeLessThanOrEqual(Math.floor(width * 0.75));
+  }
+  const visible = targets().filter(el => el.dataset.place !== "milestones").map(el => el.getAttribute("aria-label"));
+  const marker = targets().find(el => el.dataset.place === "milestones");
+  if (marker) fireEvent.click(marker);
+  const all = [...visible, ...Array.from(document.querySelectorAll(".twalk-fold button"), el => el.textContent)];
+  expect(all.sort()).toEqual(places.map(place => `${place.name} · building, 3 of 5 steps done`).sort());
+  view.rerender(<PartyStrip {...keeperStrip} road={road} mode="lively" mood="working" />);
+  expect(targets().map(el => el.style.left)).toEqual(clearTargets);
+});
+
+it("allows folded quest names to wrap rather than inherit the link button's nowrap rule", () => {
+  const css = readFileSync("src/ui/engine/engine.css", "utf8");
+  expect(css).toMatch(/\.twalk-fold \.lnk-btn\s*\{[^}]*white-space:\s*normal/);
+});
+
+it("keeps folded signposts keyboard reachable from the milestone marker", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(300);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  const open = vi.fn();
+  const places = [...keeperRoad.places, ...["Gate", "Lanterns", "Mill"].map((name, i) => ({
+    id: `quest-${i}`, kind: "quest" as const, name, state: "sealed" as const, done: 2, total: 2,
+  }))];
+  render(<PartyStrip {...keeperStrip} road={{ ...keeperRoad, places }} onOpenQuest={open} />);
+  const marker = screen.getByRole("button", { name: "Milestones. 3 folded quests" });
+  fireEvent.click(marker);
+  expect(screen.getByRole("group", { name: "Folded quests" })).toBeTruthy();
+  const first = screen.getByRole("button", { name: "Gate · sealed, 2 of 2 steps done" });
+  expect(document.activeElement).toBe(first);
+  fireEvent.keyDown(first, { key: "Escape" });
+  expect(document.activeElement).toBe(marker);
+  expect(screen.queryByRole("group", { name: "Folded quests" })).toBeNull();
+  fireEvent.click(marker);
+  fireEvent.click(screen.getByRole("button", { name: "Gate · sealed, 2 of 2 steps done" }));
+  expect(open).toHaveBeenCalledWith("quest-0", true);
+});
+
+it.each(["lively", "calm", "off", "reduced"] as const)("rests at the hearth with %s motion", mode => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(780);
+  const roadPaints = vi.fn();
+  const ctx = { fillRect() {}, beginPath() {}, rect() {}, clip() {}, clearRect() {}, save() {}, restore() {}, translate() {}, scale() {} };
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
+    return (this.classList.contains("twalk-road") ? { ...ctx, clearRect: roadPaints } : ctx) as unknown as CanvasRenderingContext2D;
+  });
+  const draws = vi.spyOn(Actor.prototype, "frame");
+  const still = mode === "off" || mode === "reduced";
+  vi.spyOn(motion, "getReduced").mockReturnValue(mode === "reduced");
+  let world!: engine.EngineWorld;
+  vi.spyOn(engine, "observeWorld").mockImplementation((_, candidate) => {
+    world = candidate;
+    const invalidate = (change?: () => void) => { change?.(); world.refresh?.(); world.draw(still); };
+    invalidate();
+    return { invalidate, remove() {} };
+  });
+  const props = { ...keeperStrip, mode: mode === "reduced" ? "lively" : mode } as const;
+  const view = render(<PartyStrip {...props} mood="working" />);
+  const actor = screen.getByRole("button", { name: /Wren, Keeper/ });
+  const x = () => Number(actor.style.transform.match(/translate\((\d+)/)?.[1]);
+  const workX = x();
+  view.rerender(<PartyStrip {...props} />);
+  if (mode === "lively") {
+    expect(x()).toBe(workX);
+    expect(draws.mock.results.at(-1)?.value.activity).toBe("walk");
+    for (let step = 0; step < 360; step++) {
+      world.update(1 / 60, 1); world.draw(false);
+    }
+  }
+  expect(x()).toBeGreaterThan(workX);
+  expect(draws.mock.results.at(-1)?.value).toMatchObject({ activity: "stand", mood: "resting" });
+
+  roadPaints.mockClear();
+  for (let step = 0; step < 600; step++) {
+    world.update(0.1, 1); world.draw(still);
+  }
+  if (still) expect(roadPaints).not.toHaveBeenCalled();
+  else expect(roadPaints).toHaveBeenCalled();
 });
 
 it("leaves the host's transcript-to-composer fade and backing alone", () => {

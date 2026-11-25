@@ -78,6 +78,9 @@
   line-height: 1.35;
 }
 .tavern .twalk-place-tip strong { display: block; }
+.tavern .twalk-place-tip { overflow-wrap: anywhere; }
+.tavern .twalk-fold .lnk-btn { display: flex; width: 100%; box-sizing: border-box; text-align: start; white-space: normal; }
+.tavern .twalk-fold .lnk-btn > span { min-width: 0; }
 .tavern .twalk-speech {
   position: absolute;
   z-index: 3;

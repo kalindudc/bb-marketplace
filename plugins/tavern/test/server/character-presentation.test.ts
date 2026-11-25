@@ -1,8 +1,7 @@
 // @vitest-environment node
 import { patchThreadFixture, withMemberFixtures } from "./member-fixture";
 import type { ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
-import { putQuestFixture } from "./support";
-import { seedQuest } from "./support";
+import { planInput, putQuestFixture, seedLegacyQuest, seedQuest, waypointEntry } from "./support";
 import Database from "better-sqlite3";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
@@ -81,15 +80,55 @@ describe("UI-only character presentation", () => {
     const q = await seedQuest(f.k, "lead", "Restore the bridge lanterns", "Bridge lanterns");
     const decor = () => f.rpc.decor({ threadId: "lead" });
     const before = (await decor()).stripScene?.road;
-    expect(before).toMatchObject({ key: q.id, current: "plan" });
+    expect(before).toMatchObject({ kind: "keeper", current: q.id, places: [{ id: q.id, state: "planning" }] });
     f.k.ask("lead", { boardQuestId: q.id, kind: "decision", question: "Which lantern?", why: "Only one is needed",
       options: [{ id: "green", label: "Green", detail: "", recommended: true }], meanwhile: "Wait", holds: [], effect: { type: "decision" } });
     f.k.receiveUser("lead", "I have a follow-up");
     expect(f.k.store.runtime("lead").pending).toHaveLength(1);
     const held = (await decor()).stripScene;
-    expect(held).toMatchObject({ posture: "held", road: { key: q.id, current: before!.current, places: [{ id: "plan", state: "held" }] } });
+    expect(held).toMatchObject({ posture: "held", road: { current: before!.current, places: [{ id: q.id, state: "held" }] } });
     f.k.route("lead", { kind: "aside", summary: "Unrelated", notes: [] });
-    expect((await decor()).stripScene?.road).toBeUndefined();
+    expect((await decor()).stripScene?.road).toMatchObject({ current: null, places: [{ id: q.id, state: "held" }] });
+  });
+
+  it("keeps a signpost for every visible live or sealed quest between turns", async () => {
+    const f = fixture();
+    f.k.bind("lead", "keeper", "moss", "project");
+    const road = async () => threadDecorSchema.parse(await f.rpc.decor({ threadId: "lead" })).stripScene?.road;
+    expect(await road()).toBeUndefined();
+
+    const bridge = await seedQuest(f.k, "lead", "Restore the bridge lanterns", "Bridge lanterns");
+    expect(await road()).toMatchObject({ kind: "keeper", current: bridge.id, places: [
+      { id: bridge.id, kind: "quest", name: "Bridge lanterns", state: "planning", done: 0, total: 0 },
+    ] });
+
+    const gate = seedLegacyQuest(f.k, "lead", "Check the gate", "Gate");
+    const ledger = seedLegacyQuest(f.k, "lead", "Repair the ledger", "Ledger");
+    putQuestFixture(f.k.store, gate.id, { ...gate, phase: "done", endedAt: f.time() });
+    expect(await road()).toMatchObject({ current: ledger.id, places: [
+      { id: bridge.id, state: "planning" }, { id: gate.id, name: "Gate", state: "sealed" }, { id: ledger.id, state: "planning" },
+    ] });
+
+    putQuestFixture(f.k.store, gate.id, { ...gate, phase: "done", endedAt: f.time(), archivedAt: f.time() });
+    putQuestFixture(f.k.store, ledger.id, { ...ledger, deletedAt: f.time() });
+    expect((await road())?.places.map(place => place.id)).toEqual([bridge.id]);
+  });
+
+  it("uses the quest's recorded phase and counts finished steps rather than unreviewed reports", async () => {
+    const f = fixture();
+    const q = await seedQuest(f.k, "lead", "Restore the bridge lanterns", "Bridge lanterns");
+    const input = planInput(q.id), step = input.waypoints[0]!;
+    f.k.plan("lead", { ...input, waypoints: [
+      { ...step, check: "none" }, { ...step, id: "w2", title: "Check the crown", check: "warden" },
+    ] });
+    const greenlight = f.k.store.openAsks("lead", q.id).find(a => a.kind === "greenlight");
+    if (greenlight) f.k.answerAsk(greenlight.id, "approve", null, "page", "user");
+    const first = waypointEntry("maker", q.id);
+    const linked = vi.spyOn(f.k.journal, "linkedEntries").mockReturnValue([first]);
+    const post = async () => (await f.rpc.decor({ threadId: "lead" })).stripScene?.road?.places[0];
+    expect(await post()).toMatchObject({ state: "building", done: 1, total: 2 });
+    linked.mockReturnValue([first, waypointEntry("maker", q.id, "w2", "a2")]);
+    expect(await post()).toMatchObject({ state: "checking", done: 1, total: 2 });
   });
 
   it("marks shipped characters as shipped with no claimed file date and no stats", async () => {

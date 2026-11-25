@@ -197,6 +197,9 @@ export function rpcHandlers(
       const titleOf = (id: string | null) => plan?.waypoints.find(w => w.id === id)?.title ?? null;
       const lastReport = m ? k.store.query("reports", "memberThreadId", threadId, 1)[0] : undefined;
       const snapshot = m?.role === "keeper" ? new AttentionSnapshot(k.store, { keeperThreadId: threadId }) : null;
+      const keeperQuests = snapshot ? k.store.visibleRecords("quests", threadId, -1) : [];
+      const boardSummaries = keeperQuests.slice(0, 100).reverse().map(q => k.summary(q.id));
+      const summaryById = new Map(boardSummaries.map(q => [q.id, q]));
       const host = m ? memberHost(k.store, m) : null;
       const memberAsks = m?.role === "member" && m.keeperThreadId && isLiveMember(k.store, m, "brief") && host?.archivedAt == null && host?.deletedAt == null
         ? k.store.openAsks(m.keeperThreadId, undefined, true).filter(ask => {
@@ -210,6 +213,11 @@ export function rpcHandlers(
       const archived = !!host && (host.archivedAt != null || host.deletedAt != null);
       const scene = m && readStripScene(k, m, { thread, boardQuest, plan, entries, lastReport, verdict, archived,
         held: handBack || memberAsks.length > 0 || !!snapshot?.asks.some(a => a.state === "open"),
+        keeperQuests: snapshot ? {
+          quests: keeperQuests.reverse(),
+          summaryOf: id => summaryById.get(id) ?? k.summary(id),
+          asked: new Set(snapshot.asks.flatMap(a => a.state === "open" && a.boardQuestId ? [a.boardQuestId] : [])),
+        } : undefined,
       });
       return {
         threadId,
@@ -255,7 +263,7 @@ export function rpcHandlers(
           m?.role === "keeper"
             ? {
                 attention: snapshot!.view({ keeperThreadId: threadId }, 50),
-                boardQuests: quests(threadId, snapshot!),
+                boardQuests: boardSummaries.map(q => projectQuest(q, snapshot!)),
                 errands: errands(threadId),
                 openAsks: snapshot!.asks.slice(0, 50),
                 ...snapshot!.calls({ keeperThreadId: threadId }),

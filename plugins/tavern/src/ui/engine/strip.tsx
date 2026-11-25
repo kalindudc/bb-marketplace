@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import type { CharacterDef } from "../../shared/schema";
 import type { StripRoad } from "../../shared/strip-scene";
 import { RoadControls } from "./road-controls";
-import { drawRoad, layoutRoad, PLACE_TARGET, roadSpan, ROAD_BEAT, ROAD_RISE, type RoadLayout } from "./road-places";
+import { catTail, drawRoad, layoutRoad, PLACE_TARGET, roadSpan, ROAD_BEAT, ROAD_RISE, type RoadLayout } from "./road-places";
 import { clockTime } from "../../shared/time";
 import { readPalette, type CharacterPalette } from "../kit/characters";
 import { motion, stuckInView, type Surface } from "../kit/motion";
@@ -58,6 +58,7 @@ type PartyStripProps = {
   canClickSpeak?: boolean;
   askDisclosure?: AskDisclosure;
   onActorClick?: (actorId: string) => void;
+  onOpenQuest?: (id: string, sealed: boolean) => void;
   onMoodCueEnd?: () => void;
   onSpeechVisible?: (visible: boolean) => void;
   onAmbientShown?: (ambientAt: number) => void;
@@ -104,13 +105,15 @@ export function PartyStrip(props: PartyStripProps) {
   const latest = useRef({ ...props, road });
   const highlight = useCallback((id: string | null) => runtime.current?.highlight(id), []);
   const layout = useMemo(() => road && layoutRoad(road, lane, art.width * SCALE), [road, lane, art.width]);
+  const [heldLayout, setHeldLayout] = useState<RoadLayout | null>(null);
+  const shownLayout = props.askDisclosure && road?.kind === "keeper" && heldLayout ? heldLayout : layout;
   const words = !props.held && speech?.actorId === actor.id ? speech.text : null;
 
   useLayoutEffect(() => { latest.current = { ...props, road }; });
   useLayoutEffect(() => {
     const applyMood = () => {
       actor.art = art;
-      if (road && props.mode === "lively" && actor.mood === "working" && mood === "idle") runtime.current?.wander();
+      if (road && road.kind !== "keeper" && props.mode === "lively" && actor.mood === "working" && mood === "idle") runtime.current?.wander();
       return actor.setMood(mood);
     };
     let cue: Cue | null = null;
@@ -145,7 +148,9 @@ export function PartyStrip(props: PartyStripProps) {
     let hovered: string | null = null;
     let roadInput: StripRoad | undefined, roadLayout: RoadLayout | null = null;
     let roadWidth = -1, roadActorWidth = -1;
-    let roadPaint: { layout: RoadLayout; palette: CharacterPalette; hovered: string | null; beat: number; rise: number; spark: boolean } | null = null;
+    let heldLane: { left: number; right: number; base: RoadLayout; layout: RoadLayout } | null = null;
+    let roadPaint: { layout: RoadLayout; palette: CharacterPalette; hovered: string | null; beat: number; rise: number; spark: boolean; flick: boolean } | null = null;
+    let hasCat = false;
     let paceAt = Infinity, paceGap = 0, pacing = false;
     let lastRemark: number | undefined, shownRemark: number | undefined;
     let visit: { key: number; x: number; backAt: number } | null = null;
@@ -154,12 +159,13 @@ export function PartyStrip(props: PartyStripProps) {
       const spriteWidth = actor.art.width * SCALE;
       if (input === roadInput && track === roadWidth && spriteWidth === roadActorWidth) return false;
       const fresh = !!input && input.key !== roadInput?.key;
-      if (!fresh && input && input.current !== roadInput?.current && mode() === "lively" && !holds().held) riseAt = roadTime;
+      if (!fresh && input && input.kind !== "keeper" && input.current !== roadInput?.current && mode() === "lively" && !holds().held) riseAt = roadTime;
       else if (fresh || !input) riseAt = -Infinity;
       roadInput = input;
       roadWidth = track;
       roadActorWidth = spriteWidth;
       roadLayout = input ? layoutRoad(input, track, spriteWidth) : null;
+      hasCat = roadLayout?.camp?.props.some(prop => prop.kind === "cat") ?? false;
       const reach = input ? roadSpan(track, spriteWidth) : walkSpan(track, width, spriteWidth);
       span = Math.floor(reach / SCALE) * SCALE;
       visit = null;
@@ -177,8 +183,12 @@ export function PartyStrip(props: PartyStripProps) {
         held: !!latest.current.askDisclosure || (held ?? current.held) };
     };
     const mode = () => latest.current.quiet ? "off" : scene ? sceneMode : latest.current.mode ?? "calm";
-    const roadHome = () => roadLayout?.items.length ? roadLayout.home : null;
+    const roadHome = () => {
+      if (!roadLayout?.items.length) return null;
+      return roadLayout.camp && (actor.mood !== "working" || roadInput?.current == null) ? roadLayout.camp.home : roadLayout.home;
+    };
     let activeRules = { mode: mode(), ...holds() };
+    const catMoves = () => hasCat && !activeRules.typing && !activeRules.held && !isAttentionMood(actor.mood);
     const mayPace = () => !scene && !latest.current.keeper && roadHome() !== null && actor.mood === "working" &&
       activeRules.mode === "lively" && !activeRules.typing && !activeRules.held && motion.mayLoop(latest.current.surface);
     let painted: { x: number; y: number; key: number; art: typeof art; palette: CharacterPalette; stride: number; glint: number } | null = null;
@@ -190,7 +200,8 @@ export function PartyStrip(props: PartyStripProps) {
         const fresh = syncRoad();
         const home = roadHome();
         if (latest.current.askDisclosure) {
-          askAnchor ??= drawnX ?? home ?? 0;
+          const routedHome = roadInput?.kind === "keeper" && roadInput.current ? roadLayout?.home : null;
+          askAnchor ??= drawnX ?? routedHome ?? home ?? 0;
           askAnchor = Math.min(askAnchor, span);
           riseAt = -Infinity;
         } else askAnchor = null;
@@ -217,6 +228,7 @@ export function PartyStrip(props: PartyStripProps) {
             }
           }
         }
+        actor.restAtRoadHome = !!roadLayout?.camp && (actor.mood === "idle" || actor.mood === "resting");
         const anchored = actor.setRoadHome(askAnchor ?? visit?.x ?? home,
           fresh || activeRules.mode !== "lively" || activeRules.held || isAttentionMood(actor.mood) || motion.getReduced());
         return actor.setRules(activeRules, span) || anchored;
@@ -241,8 +253,9 @@ export function PartyStrip(props: PartyStripProps) {
       nextDraw() {
         const actorDue = actor.nextDraw(span);
         if (actorDue === 0 || roadTime - riseAt < ROAD_RISE) return 0;
-        const hoverDue = hovered ? ROAD_BEAT - (roadTime - hoverAt + 1e-6) % ROAD_BEAT : Infinity;
-        const due = Math.min(actorDue ?? Infinity, hoverDue, paceAt - roadTime, (visit?.backAt ?? Infinity) - roadTime);
+        const hoverDue = hovered && !roadLayout?.camp ? ROAD_BEAT - (roadTime - hoverAt + 1e-6) % ROAD_BEAT : Infinity;
+        const catDue = catMoves() ? catTail(roadTime).next : Infinity;
+        const due = Math.min(actorDue ?? Infinity, hoverDue, catDue, paceAt - roadTime, (visit?.backAt ?? Infinity) - roadTime);
         return Number.isFinite(due) ? due : null;
       },
       draw(still) {
@@ -255,9 +268,22 @@ export function PartyStrip(props: PartyStripProps) {
         const askControl = askButton.current;
         if (askControl) {
           const right = x + spriteWidth + PLACE_TARGET <= width || x < PLACE_TARGET;
-          const left = `${right ? x + spriteWidth : x - PLACE_TARGET}px`;
-          if (askControl.style.left !== left) askControl.style.left = left;
+          const askLeft = right ? x + spriteWidth : x - PLACE_TARGET;
+          if (askControl.style.left !== `${askLeft}px`) askControl.style.left = `${askLeft}px`;
           askControl.toggleAttribute("data-left", !right);
+          if (roadInput?.kind === "keeper" && roadLayout) {
+            const left = Math.min(x, askLeft);
+            const right = Math.max(x + spriteWidth, askLeft + PLACE_TARGET);
+            if (heldLane?.base !== roadLayout || heldLane.left !== left || heldLane.right !== right) {
+              const layout = layoutRoad(roadInput, track, spriteWidth, { left, right });
+              heldLane = { left, right, base: roadLayout, layout };
+              setHeldLayout(layout);
+            }
+          }
+        }
+        if (heldLane && (!askControl || roadInput?.kind !== "keeper")) {
+          heldLane = null;
+          setHeldLayout(null);
         }
         const restY = ground - actor.art.ground * SCALE;
         const y = Math.max(0, restY - (still || actor.small ? 0 : Math.round(actor.body.lift / SCALE) * SCALE));
@@ -301,19 +327,21 @@ export function PartyStrip(props: PartyStripProps) {
           } : null);
         }
         const places = roadCanvas.current;
-        if (roadLayout?.items.length && places) {
-          const beat = !still && hovered ? Math.floor((roadTime - hoverAt + 1e-6) / ROAD_BEAT) : -1;
+        const display = heldLane?.layout ?? roadLayout;
+        if (display?.items.length && places) {
+          const beat = !still && hovered && !display.camp ? Math.floor((roadTime - hoverAt + 1e-6) / ROAD_BEAT) : -1;
+          const flick = !still && catMoves() && catTail(roadTime).flick;
           const rise = still || activeRules.held ? 1 : Math.min(1, Math.max(0, (roadTime - riseAt) / ROAD_RISE));
           const spark = actor.art.signature === "hammer" && (frame.cue === "signature" || frame.cue === "tap") &&
             frame.progress > 0.45 && frame.progress < 0.66;
           if (places.width !== width) { places.width = width; roadPaint = null; }
-          if (roadPaint?.layout !== roadLayout || roadPaint.palette !== palette || roadPaint.hovered !== hovered ||
-              roadPaint.beat !== beat || roadPaint.rise !== rise || roadPaint.spark !== spark) {
+          if (roadPaint?.layout !== display || roadPaint.palette !== palette || roadPaint.hovered !== hovered ||
+              roadPaint.beat !== beat || roadPaint.rise !== rise || roadPaint.spark !== spark || roadPaint.flick !== flick) {
             const back = places.getContext("2d");
             if (back) {
               back.clearRect(0, 0, width, height);
-              drawRoad(back, roadLayout, width, ground - SCALE, palette, palette.hue[latest.current.character.hue], hovered, beat, rise, spark);
-              roadPaint = { layout: roadLayout, palette, hovered, beat, rise, spark };
+              drawRoad(back, display, width, ground - SCALE, palette, palette.hue[latest.current.character.hue], hovered, beat, rise, spark, flick);
+              roadPaint = { layout: display, palette, hovered, beat, rise, spark, flick };
             }
           }
         } else if (places && roadPaint) {
@@ -446,6 +474,8 @@ export function PartyStrip(props: PartyStripProps) {
     };
   }, [actor, scene?.road, props.region, ground, height, !!props.onSpeechVisible]);
 
+  const places = !!shownLayout?.items.length && <RoadControls key={road?.key} items={shownLayout.items} member={character.name}
+    hasAsk={!!props.askDisclosure} title={road?.kind !== "keeper" ? road?.title : undefined} highlight={highlight} openQuest={props.onOpenQuest} />;
   const status = mood === "waiting" && !props.askDisclosure && !scene ? "waiting" : MOOD_WORD[mood];
   const label = `${character.name}, ${classLabel}${keeper ? ", Keeper" : ""}, ${status}`;
   const until = props.actorMenu?.quietUntil;
@@ -455,7 +485,7 @@ export function PartyStrip(props: PartyStripProps) {
     {scene && <span className="twalk-ground" aria-hidden="true" />}
     {road && <canvas ref={roadCanvas} className="twalk-canvas twalk-road" height={height} aria-hidden="true" />}
     <canvas ref={canvas} className="twalk-canvas twalk-sprite" height={height} aria-hidden="true" />
-    {!!layout?.items.length && <RoadControls key={road?.key} items={layout.items} member={character.name} hasAsk={!!props.askDisclosure} title={road?.title} highlight={highlight} />}
+    {road?.kind !== "keeper" && places}
     <button ref={button} type="button" className="tchar twalk-actor" data-actor={actor.id} data-mood={mood}
       data-pose={scene ? "still" : undefined}
       aria-controls={menuTrigger ? menuId : undefined}
@@ -510,6 +540,7 @@ export function PartyStrip(props: PartyStripProps) {
         if (scene) props.onActorClick?.(actor.id);
         else runtime.current?.click();
       }} />
+    {road?.kind === "keeper" && places}
     {props.askDisclosure && <button ref={askButton} type="button" className="twalk-ask-button"
       aria-label={`Open asks for ${character.name}`} aria-expanded={props.askDisclosure.expanded} aria-controls={props.askDisclosure.panelId}
       onClick={event => props.askDisclosure!.open(event.currentTarget)}>

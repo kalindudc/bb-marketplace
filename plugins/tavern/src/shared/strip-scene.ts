@@ -8,14 +8,33 @@ const roadPlaceSchema = z.object({
   state: z.enum(["done", "active", "held"]),
   waypoint: z.string().optional(),
 });
-const stripRoadSchema = z.object({
+const questSignpostSchema = z.object({
+  id: z.string(),
+  kind: z.literal("quest"),
+  name: z.string(),
+  state: z.enum(["planning", "building", "checking", "held", "sealed"]),
+  done: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});
+const keeperRoadSchema = z.object({
+  kind: z.literal("keeper"),
+  key: z.string(),
+  current: z.string().nullable(),
+  places: z.array(questSignpostSchema),
+});
+const memberRoadSchema = z.object({
+  kind: z.undefined().optional(),
   key: z.string(),
   title: z.string().optional(),
   current: z.string(),
   places: z.array(roadPlaceSchema),
 });
+const stripRoadSchema = z.discriminatedUnion("kind", [keeperRoadSchema, memberRoadSchema]);
 
 export type RoadPlace = z.infer<typeof roadPlaceSchema>;
+export type QuestSignpost = z.infer<typeof questSignpostSchema>;
+export type KeeperRoad = z.infer<typeof keeperRoadSchema>;
+export type MemberRoad = z.infer<typeof memberRoadSchema>;
 export type StripRoad = z.infer<typeof stripRoadSchema>;
 
 export const stripSceneSchema = z.object({

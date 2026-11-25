@@ -1,4 +1,4 @@
-import type { RoadPlace, StripRoad } from "../../shared/strip-scene";
+import type { KeeperRoad, QuestSignpost, RoadPlace, StripRoad } from "../../shared/strip-scene";
 import type { CharacterPalette } from "../kit/characters";
 import { plural } from "../kit/primitives";
 import { ISLAND_BANDS, lanternIslands, roundToLightCell, sourceGlow } from "./light";
@@ -15,6 +15,22 @@ const ART = {
     "......owWo........", "......owWo........", "......owWo........",
     "......owWo........", "....GgowWogG......", "...oSsooooosSo....",
   ],
+  questPost: [
+    "..oooo........", "..owWo........", "oooooooooooo..", "ollllllllllloo", "olmmlmmmlllllo", "owwwwwwwwwwwoo", "oooooooooooo..",
+    "..owWo........", "..owWo........", "..owWo........", "..owWo........", "..owWo........", "..owWo........", "..owWo........",
+    "..owWo........", "..owWo........", "..owWo........", "..owWo........", "..owWo........", "..owWo........", ".GgowWogG.....", ".oSsooooSo....",
+  ],
+  brazier: ["..F..F..", ".FfFFfF.", ".fFffFf.", "oEEEEEEo", ".oeeeeo.", "..oWWo.."],
+  lanternMark: ["..oo..", ".oooo.", "oFffFo", "ofFFfo", "oFffFo", ".oooo.", "..oo.."],
+  pennant: ["oo......", "orrrro..", "orrrrrro", "orrrro..", "oo......", "oo......"],
+  sealMark: [".oooo.", "orrrro", "orFrro", "orrrro", ".oooo."],
+  hearth: [
+    "......o.......", ".....oFo......", "....oFfFo.o...", "...oFfFfFoFo..", "...oFfFFfFfo..", "..oEfFFFFfEo..",
+    ".oWWoEEEEoWWo.", "oSsoWWWWWWoSso", "oSsSooooooSsSo",
+  ],
+  barrel: [".oooooo.", "owlwwwwo", "oSSSSSSo", "owlwwwwo", "owlwwwwo", "oSSSSSSo", "owlwwwwo", ".oooooo."],
+  catSleep: [".o.o........", "owowoooooo..", "owowwlWlwwo.", "owwwwwwwwwwo", ".oWwlWwlWwwo", "..ooooooooo."],
+  catFlick: [".o.o......o.", "owowoooooowo", "owowwlWlwwo.", "owwwwwwwwwwo", ".oWwlWwlWwwo", "..ooooooooo."],
   scroll: [
     "oooooooo", "opppppqo", "opmmpmqo",
     "oppmmmqo", "opmpmmqo", "opppppqo",
@@ -100,7 +116,7 @@ const GEAR = {
 } as Record<string, string>;
 
 const PLACE_ART = {
-  plan: "signpost", read: "lectern", make: "forge", review: "gate", seal: "waystone", report: "noticepost", milestones: "milestone",
+  plan: "signpost", read: "lectern", make: "forge", review: "gate", seal: "waystone", report: "noticepost", milestones: "milestone", quest: "questPost",
 } as const;
 
 export const PLACE_TARGET = 44;
@@ -109,15 +125,83 @@ const INSET = 8;
 export const ROAD_BEAT = 160;
 export const ROAD_RISE = 600;
 
-type Milestones = { id: "milestones"; kind: "milestones"; state: "done"; count: number };
-export type RoadItem = { place: RoadPlace | Milestones; x: number; target: number };
-export type RoadLayout = { items: RoadItem[]; home: number };
+type Milestones = { id: "milestones"; kind: "milestones"; state: "done"; count: number; quests?: QuestSignpost[] };
+export type RoadItem = { place: RoadPlace | QuestSignpost | Milestones; x: number; target: number };
+type CampProp = { kind: "hearth" | "cat" | "barrels" | "board"; x: number; width: number };
+export type RoadLayout = { items: RoadItem[]; home: number; camp?: { home: number; props: CampProp[] } };
+type RoadSpace = { left: number; right: number };
 
 export function roadSpan(width: number, actorWidth: number) {
   return Math.max(0, Math.floor(width * 0.75) - actorWidth);
 }
 
-export function layoutRoad(road: StripRoad, width: number, actorWidth: number): RoadLayout {
+function clearKeeperSpace(items: RoadItem[], road: KeeperRoad, zone: number, space: RoadSpace) {
+  const overlaps = (x: number) => x < space.right && x + PLACE_TARGET > space.left;
+  if (!items.some(item => overlaps(item.target))) return items;
+  const clear: RoadItem[] = [];
+  let next = INSET;
+  for (const item of items) {
+    const x = Math.max(item.target, next);
+    const target = overlaps(x) ? space.right : x;
+    if (target + PLACE_TARGET > zone) break;
+    clear.push({ ...item, target, x: item.x + target - item.target });
+    next = target + PLACE_TARGET;
+  }
+  if (clear.length === items.length) return clear;
+
+  let fold = clear.findIndex(item => item.place.kind === "milestones");
+  if (fold < 0) fold = Math.max(0, clear.findIndex(item => item.place.id !== road.current));
+  const target = clear[fold]?.target ?? (overlaps(INSET) ? space.right : INSET);
+  if (target + PLACE_TARGET > zone) return clear;
+  const visible = new Set(clear.filter((_, i) => i !== fold).map(item => item.place.id));
+  const quests = road.places.filter(quest => !visible.has(quest.id));
+  clear[fold] = { place: { id: "milestones", kind: "milestones", state: "done", count: quests.length, quests }, target, x: target };
+  return clear;
+}
+
+function keeperLayout(road: KeeperRoad, width: number, actorWidth: number, space?: RoadSpace): RoadLayout {
+  const end = roadSpan(width, actorWidth);
+  const room = end - INSET;
+  if (room < PLACE_TARGET || !road.places.length) return { items: [], home: 0 };
+  const slot = PLACE_TARGET + actorWidth;
+  const capacity = 1 + Math.floor((room - PLACE_TARGET) / slot);
+  const folding = road.places.length > capacity;
+  const visible = folding ? 1 + Math.floor((room - 2 * PLACE_TARGET) / slot) : capacity;
+  const firstRecent = road.places.length - Math.max(0, visible);
+  const current = road.places.findIndex(quest => quest.id === road.current);
+  const keepCurrent = visible > 0 && current >= 0 && current < firstRecent;
+  const folded: QuestSignpost[] = [];
+  let items: RoadItem[] = [];
+  const offset = INSET + (folding ? PLACE_TARGET : 0);
+  for (const [i, place] of road.places.entries()) {
+    if (keepCurrent && i === current || i >= firstRecent + Number(keepCurrent)) {
+      const target = offset + items.length * slot;
+      items.push({ place, x: target + 8, target });
+    } else folded.push(place);
+  }
+  if (folded.length) items.unshift({ place: { id: "milestones", kind: "milestones", state: "done", count: folded.length, quests: folded }, x: INSET, target: INSET });
+
+  const zone = end + actorWidth;
+  if (space) items = clearKeeperSpace(items, road, zone, space);
+  if (!items.length) return { items, home: 0 };
+  const last = items.at(-1)!.target + PLACE_TARGET;
+  const active = items.find(item => item.place.id === road.current);
+  const home = active ? active.target + PLACE_TARGET : last;
+  const camp: NonNullable<RoadLayout["camp"]> = { home: last, props: [] };
+  const rest = last + 2 * Math.floor(Math.min(76, (end - last - 32) / 3) / 2);
+  if (rest < last + 16) return { items, home, camp };
+  camp.home = rest;
+  let x = rest + actorWidth + 4;
+  for (const [kind, size] of [["hearth", 28], ["cat", 24], ["barrels", 32], ["board", 32]] as const) {
+    if (x + size > zone) break;
+    camp.props.push({ kind, x, width: size });
+    x += size + (kind === "hearth" ? 4 : 12);
+  }
+  return { items, home, camp };
+}
+
+export function layoutRoad(road: StripRoad, width: number, actorWidth: number, space?: RoadSpace): RoadLayout {
+  if (road.kind === "keeper") return keeperLayout(road, width, actorWidth, space);
   const available = roadSpan(width, actorWidth) - INSET - PLACE_TARGET;
   if (available < 0 || !road.places.length) return { items: [], home: 0 };
   const capacity = 1 + Math.floor(available / SLOT);
@@ -146,7 +230,9 @@ const PLACE_ACTION = {
 } as const;
 
 export function placeWords(place: RoadItem["place"], member: string, hasAsk: boolean, title?: string) {
-  if (place.kind === "milestones") return { name: "Milestones", detail: `${plural(place.count, "earlier place")} behind ${member} on this road.` };
+  if (place.kind === "milestones") return { name: "Milestones", detail: place.quests
+    ? plural(place.count, "folded quest") : `${plural(place.count, "earlier place")} behind ${member} on this road.` };
+  if (place.kind === "quest") return { name: place.name, detail: place.total ? `${place.state}, ${place.done} of ${place.total} steps done` : place.state };
   const [active, done] = PLACE_ACTION[place.kind];
   const quest = title ? ` (quest: ${title})` : "";
   const waypoint = place.waypoint ? `, at ${place.waypoint}` : "";
@@ -184,6 +270,18 @@ function drawPlace(ctx: CanvasRenderingContext2D, item: RoadItem, foot: number, 
     case "milestones":
       for (let i = 0; i < Math.min(3, place.count); i++) paint("milestone", i * 12);
       return;
+    case "quest": {
+      paint("questPost");
+      const marks = {
+        planning: ["scroll", 0, -28], building: ["brazier", 0, -30], checking: ["lanternMark", 2, -29],
+        held: ["pennant", 2, -34], sealed: ["sealMark", 10, -27],
+      } as const satisfies Record<QuestSignpost["state"], [keyof typeof ART, number, number]>;
+      const [mark, dx, dy] = marks[place.state];
+      const redMark = mark === "pennant" || mark === "sealMark";
+      paint(mark, dx, dy, redMark && palette.dark ? { r: palette.bad } : undefined);
+      if (place.state === "sealed") paint("ribbon", 6, -17);
+      return;
+    }
     case "plan":
       paint("signpost");
       if (!done) paint("scroll", 6, pulse ? -14 : -12);
@@ -239,10 +337,15 @@ function placeLight(ctx: CanvasRenderingContext2D, { x, place }: RoadItem, foot:
   if (place.state === "done") return;
   const source = place.kind === "make" ? { kind: "ember" as const, dx: 16, dy: -16 }
     : place.kind === "review" ? { kind: "lantern" as const, dx: 24, dy: -36 }
-    : place.kind === "seal" ? { kind: "hearth" as const, dx: 14, dy: -28 } : null;
-  if (!source) return;
-  const { halo, pool } = lanternIslands(roundToLightCell(x + source.dx), roundToLightCell(foot + source.dy), foot);
-  const glow = sourceGlow(source.kind, palette.hearth, place.state === "held" ? 0.13 : 0.24);
+    : place.kind === "seal" ? { kind: "hearth" as const, dx: 14, dy: -28 }
+    : place.kind === "quest" && place.state === "building" ? { kind: "ember" as const, dx: 8, dy: -36 }
+    : place.kind === "quest" && place.state === "checking" ? { kind: "lantern" as const, dx: 8, dy: -36 } : null;
+  if (source) roadLight(ctx, source.kind, x + source.dx, foot + source.dy, foot, palette, place.state === "held" ? 0.13 : 0.24);
+}
+
+function roadLight(ctx: CanvasRenderingContext2D, kind: "ember" | "lantern" | "hearth", x: number, y: number, foot: number, palette: CharacterPalette, intensity: number) {
+  const { halo, pool } = lanternIslands(roundToLightCell(x), roundToLightCell(y), foot);
+  const glow = sourceGlow(kind, palette.hearth, intensity);
   ctx.fillStyle = glow.colour;
   for (const span of [...halo, ...pool]) {
     ctx.globalAlpha = glow.alpha * ISLAND_BANDS[span.band - 1]!;
@@ -251,15 +354,39 @@ function placeLight(ctx: CanvasRenderingContext2D, { x, place }: RoadItem, foot:
   ctx.globalAlpha = 1;
 }
 
-export function drawRoad(ctx: CanvasRenderingContext2D, layout: RoadLayout, width: number, foot: number, palette: CharacterPalette, ribbon: string, hover: string | null, beat: number, rise: number, spark: boolean) {
-  const { items, home } = layout;
+export function catTail(time: number) {
+  const period = 12_000;
+  const phase = (time + 1e-6) % period;
+  const flick = time + 1e-6 >= period && phase < 180;
+  return { flick, next: (flick ? 180 : period) - phase };
+}
+
+export function drawRoad(ctx: CanvasRenderingContext2D, layout: RoadLayout, width: number, foot: number, palette: CharacterPalette, ribbon: string, hover: string | null, beat: number, rise: number, spark: boolean, flick = false) {
+  const { items, home, camp } = layout;
+  const trail = camp ? Math.max(camp.home, (items.at(-1)?.target ?? 0) + PLACE_TARGET) : home;
   ctx.fillStyle = palette.dark ? palette.muted : palette.ink;
   ctx.globalAlpha = palette.dark ? 0.36 : 0.22;
-  ctx.fillRect(0, foot, home, 2);
-  for (let x = home; x < width; x += 12) ctx.fillRect(x, foot, 6, 2);
+  ctx.fillRect(0, foot, trail, 2);
+  for (let x = trail; x < width; x += 12) ctx.fillRect(x, foot, 6, 2);
   ctx.globalAlpha = 1;
+  for (const prop of camp?.props ?? []) {
+    if (prop.kind === "hearth" && palette.dark) roadLight(ctx, "hearth", prop.x + 14, foot - 8, foot, palette, 0.32);
+    else if (!palette.dark && prop.kind !== "cat") {
+      ctx.fillStyle = palette.ink;
+      ctx.globalAlpha = 0.13;
+      ctx.fillRect(prop.x + 4, foot + 2, prop.width, 2);
+      ctx.globalAlpha = 1;
+    }
+    const paint: Paint = (name, dx = 0, dy = 0) => sprite(ctx, name, prop.x + dx, foot + dy, palette.ink, ribbon);
+    switch (prop.kind) {
+      case "hearth": paint("hearth"); break;
+      case "cat": paint(flick ? "catFlick" : "catSleep"); break;
+      case "barrels": paint("barrel"); paint("barrel", 16); paint("barrel", 8, -14); break;
+      case "board": paint("noticepost"); paint("letter", 8, -30); break;
+    }
+  }
   for (const item of items) {
-    const past = item.place.state === "done";
+    const past = !!camp || item.place.state === "done";
     if (!past && rise < 1) {
       const reveal = Math.ceil(rise * 28) * 2;
       ctx.save();
