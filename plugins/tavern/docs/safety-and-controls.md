@@ -27,6 +27,8 @@ Three boundaries stay on in every mode: guarded agents cannot send messages as y
 | Hired Wanderer | `open` | No sandbox; protects sensitive paths and gates consequential shell acts behind a grant after restart. |
 | Direct Wanderer or plain thread | None | Ordinary bb thread with no Tavern scope file. |
 
+Members can use their own `BB_THREAD_STORAGE` and the configured temporary roots. For shared quest scratch on the same local host, use `scratch/<quest id>` under the Keeper's thread storage. Other folders in the Keeper's storage and storage on other hosts aren't implicitly shared. An explicit deny still applies inside any of these locations.
+
 All restrictive presets and hired Wanderers protect `~/.ssh`, `~/.pi/agent/extensions`, `~/.claude`, `~/.agents/tavern/scopes.yml`, and Tavern's scopes directory. Without the macOS sandbox, Tavern cannot see writes inside a running program.
 
 ## Prevention versus detection

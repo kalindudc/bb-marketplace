@@ -14,8 +14,8 @@ const roots: string[] = [];
 afterEach(() => { vi.unstubAllEnvs(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 it.each(["ranger", "wanderer"].flatMap(role => ['echo x > "$BB_THREAD_STORAGE/notes.md"', 'tmp=$(mktemp -d) && cp src/a.ts "$tmp/"', 'echo x > "$(mktemp)"'].map(command => ({ role, command }))))("guard and watcher agree for $role: $command", async ({ role, command }) => {
   const root = mkdtempSync(join(tmpdir(), "tavern-r3-runtime-")); roots.push(root);
-  const storage = join(root, "storage"), target = join(root, "actual-storage");
-  mkdirSync(target); symlinkSync(target, storage);
+  const parent = join(root, "storage"), target = join(root, "actual-storage"), storage = join(parent, "member");
+  mkdirSync(join(target, "member"), { recursive: true }); symlinkSync(target, parent);
   const store = new ScopeStore(root);
   const scope = bindPaths({ ...scopeForClass(role), threadId: "t1", issuedAt: 1 }, { home: root, tmp: [join(root, "scratch")], threadStorage: storage, scopesDir: store.directory }, realPath);
   store.write("t1", scope);

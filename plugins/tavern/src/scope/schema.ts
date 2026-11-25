@@ -28,6 +28,7 @@ export const scopeSchema = z.object({
   mode: z.enum(["enforce", "watch", "off"]).default("enforce"),
   commandTools: patterns.default(["bash", "Bash"]),
   expectedWorktree: z.string().optional(),
+  writeRootIdentity: z.record(z.string(), z.string()).optional(),
   assignedBranch: z.string().min(1).max(1000).optional(),
   pullRequestPolicy: pullRequestPolicySchema.optional(),
   sendTools: sendToolsSchema.optional(),

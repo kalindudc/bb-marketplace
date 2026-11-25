@@ -36,6 +36,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- Scope grants follow the same directory after a rename when the old name still links to it. Members can write to their own thread storage, use `mktemp` under allowed temporary roots, and write to `scratch/<quest id>` under their Keeper's storage on the same local host. Other thread storage is not shared.
 - After routing a rule, question or aside, a Keeper can continue existing quest work, including briefing the party. A steer for another quest still does not apply to this one.
 - Keepers can ask to schedule rounds for permanent members even while they are resting. New rounds still need your approval.
 - Only Rangers see checkpoint fields when filing a report.

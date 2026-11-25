@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { execGitSync } from "../shared/git-safety";
-import { realPath, within } from "./paths";
+import { realPath, within, writeDenials, writeRoots } from "./paths";
 import { checkerWritePaths } from "./checker";
 import { join } from "node:path";
 import type { Scope } from "./schema";
@@ -17,12 +17,12 @@ export function gitWriteRoots(root: string): string[] {
 }
 const regexLiteral = (value: string) => '#"' + value.replaceAll('"', '\\"') + '"';
 function pathFilter(path: string): string {
-  if (!path.includes("*")) return "(subpath " + JSON.stringify(realPath(path)) + ")";
+  if (!path.includes("*")) return "(subpath " + JSON.stringify(path) + ")";
   const regex = "^" + path.split("*").map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$";
   return "(regex " + regexLiteral(regex) + ")";
 }
 export function sandboxProfile(scope: Scope, checking = false, fetchRoots: string[] = []): string {
-  let roots = [...scope.writes.allow, ...fetchRoots];
+  let roots = [...writeRoots(scope), ...fetchRoots];
   const protectedPaths: string[] = [], protectedAncestors: string[] = [], ignoredPaths: string[] = [], ignoredDirectories: string[] = [];
   if (scope.preset === "checker" && scope.checks?.worktree) {
     const root = scope.checks.worktree, policy = checkerWritePaths(scope);
@@ -42,7 +42,7 @@ export function sandboxProfile(scope: Scope, checking = false, fetchRoots: strin
     ...ignoredPaths.map(path => "(allow file-write* (subpath " + JSON.stringify(path) + "))"),
     ...ignoredDirectories.flatMap(path => ["(allow file-write* (regex " + regexLiteral("^" + path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/") + "))", "(allow file-write* (require-all (literal " + JSON.stringify(path) + ") (vnode-type DIRECTORY)))"]),
     '(allow file-write* (regex #"^/dev/tty.*$"))',
-    ...[...scope.writes.deny, ...protectedPaths].map(path => "(deny file-write* " + pathFilter(path) + ")"),
+    ...[...writeDenials(scope), ...protectedPaths].map(path => "(deny file-write* " + pathFilter(path) + ")"),
     ...protectedAncestors.map(path => "(deny file-write-unlink (literal " + JSON.stringify(path) + "))"),
     '(deny file-write* (regex #".*/\\.claude/settings(\\.local)?\\.json$"))',
     '(deny file-write* (regex #".*/\\.agents/tavern/scopes\\.ya?ml$"))',

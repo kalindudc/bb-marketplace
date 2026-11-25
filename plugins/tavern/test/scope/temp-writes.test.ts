@@ -20,13 +20,13 @@ it.each(["keeper", "ranger", "warden", "smith", "wanderer"])("%s writes temp and
     expect(evaluate(scope, { kind: "bash", toolName: "bash", input: { command: `printf x > ${path}` }, cwd: "/repo" }).allow).toBe(true);
   }
 });
-it.each(["ranger", "wanderer"])("keeps exactly the requested temporary subtree when narrowing %s", role => {
+it.each(["ranger", "wanderer"])("narrows temp to the requested subtree while retaining own storage for %s", role => {
   const narrowed = scopeForClass(role, { writes: { allow: ["/tmp/notes/**"] } });
   expect(narrowed.writes.allow).toEqual(["/tmp/notes/**"]);
   const scope = bindPaths(narrowed, { home: "/home/test", tmp: ["/tmp"], threadStorage: "/storage/own", scopesDir: "/scopes" });
   expect(evaluate(scope, { kind: "write", toolName: "write", input: { path: "/tmp/notes/a" }, cwd: "/repo" }).allow).toBe(true);
   expect(evaluate(scope, { kind: "write", toolName: "write", input: { path: "/tmp/other/a" }, cwd: "/repo" }).allow).toBe(false);
-  expect(evaluate(scope, { kind: "write", toolName: "write", input: { path: "/storage/own/a" }, cwd: "/repo" }).allow).toBe(false);
+  expect(evaluate(scope, { kind: "write", toolName: "write", input: { path: "/storage/own/a" }, cwd: "/repo" }).allow).toBe(true);
 });
 it("does not classify already-granted temporary paths as widenings", () => {
   const policy = new ScopePolicy({ home: "/missing-home" });

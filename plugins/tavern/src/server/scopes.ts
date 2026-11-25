@@ -6,6 +6,8 @@ import { existsSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { realPath } from "../scope/paths";
 import {
   registerScopes,
   scopeSchema,
@@ -15,6 +17,7 @@ import {
   type ScopeOverride,
   type ScopeResolution,
   type ScopesDeps,
+  type ScopeThreadPaths,
   type Violation,
 } from "../scope";
 import {
@@ -353,7 +356,7 @@ export class BackendScopes {
     this.runtime.keeper.store.patch(threadId, { scopeAssignedBranch: { environmentId: thread.environmentId, branch } });
     return branch;
   }
-  async paths(threadId: string) {
+  async paths(threadId: string): Promise<ScopeThreadPaths> {
     const bb = this.runtime.bb;
     const thread = await bb.sdk.threads.get({ threadId });
     if (!thread.environmentId) {
@@ -378,17 +381,26 @@ export class BackendScopes {
       this.cwd.set(threadId, environment.path);
       return { remoteOpen };
     }
-    const storage = await bb.sdk.threads.storageLocation({ threadId });
+    const member = this.runtime.keeper.member(threadId);
+    const questId = member?.boardQuestId;
+    const keeperId = questId && /^[a-zA-Z0-9_-]+$/.test(questId) ? member?.keeperThreadId : undefined;
+    const [storage, keeperStorage] = await Promise.all([
+      bb.sdk.threads.storageLocation({ threadId }),
+      keeperId ? bb.sdk.threads.storageLocation({ threadId: keeperId }).catch(() => undefined) : undefined,
+    ]);
     if (storage.hostId !== config.primaryHostId)
       throw new Error("Tavern scopes require server-local thread storage");
     if (environment?.path) this.cwd.set(threadId, environment.path);
     else this.cwd.delete(threadId);
+    const keeperScratch = questId && keeperStorage?.hostId === storage.hostId
+      ? join(realPath(keeperStorage.storageRootPath), "scratch", questId) : undefined;
     return {
       worktree:
         environment?.isWorktree && environment.path
           ? environment.path
           : undefined,
       threadStorage: storage.storageRootPath,
+      ...(keeperScratch ? { keeperScratch } : {}),
     };
   }
   async resolve(classId: string, projectId?: string, override?: ScopeOverride, definition?: import("../shared/schema").ClassDef) {

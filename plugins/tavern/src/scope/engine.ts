@@ -8,7 +8,7 @@ import { shellCommunication } from "./shell-communication";
 import type { CommunicationPreview } from "../shared/communication";
 import { readerFallback } from "./worktree";
 import { checkInvocation } from "./checker";
-import { glob, isSink, normalizeToolPath, within, writeAllowed, writeDenied } from "./paths";
+import { glob, isSink, normalizeToolPath, within, writeAllowed } from "./paths";
 import { normalizeRemote, pushSpec } from "./remote";
 import { awkRead, fileRead, findRead, sedRead, xxdRead } from "./reads";
 import { draftEditKey, githubApiRead } from "./github";
@@ -177,7 +177,7 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
     : "";
   const canWrite = (path: string, cwd: string) => {
     const full = normalizeToolPath(path, cwd);
-    return isSink(full) || (!writeDenied(scope, full, cwd) && writeAllowed(scope, call.resolvedPaths?.[full] ?? full, cwd));
+    return writeAllowed(scope, full, cwd, call.resolvedPaths?.[full]);
   };
   if (isWriteCall(call)) {
     const path = call.input.path ?? call.input.file_path;

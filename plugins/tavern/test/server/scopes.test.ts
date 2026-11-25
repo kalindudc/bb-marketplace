@@ -100,6 +100,22 @@ async function fixture(installGuard = false) {
 }
 
 describe("backend scope integration", () => {
+  it("binds only the local Keeper's storage subtree for the member's quest", async () => {
+    const f = await fixture();
+    const keeperStorage = join(f.root, "keeper-storage");
+    mkdirSync(keeperStorage);
+    let keeperHost = "host";
+    f.bb.sdk.threads.storageLocation = async ({ threadId }) => threadId === "lead"
+      ? { hostId: keeperHost, storageRootPath: keeperStorage }
+      : { hostId: "host", storageRootPath: f.storage };
+    await f.runtime.hire("lead", "project", f.input);
+    const scopes = f.runtime.scopes!;
+    const expected = join(realpathSync(keeperStorage), "scratch", f.q.id);
+    expect(scopes.view("child")?.scope?.writes.allow).toContain(expected);
+    expect(scopes.view("child")?.scope?.writes.allow).not.toContain(realpathSync(keeperStorage));
+    keeperHost = "another-host";
+    expect((await scopes.paths("child")).keeperScratch).toBeUndefined();
+  });
   it("distinguishes a freshly hired member from a session running an older guard", async () => {
     const f = await fixture(true);
     await f.runtime.hire("lead", "project", f.input);

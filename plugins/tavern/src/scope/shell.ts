@@ -90,9 +90,9 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
   const commandAliases = new Map<string, string[]>();
   let unknownLinks = false, directoriesStable = true;
   const values: Record<string, string> = {};
-  const assigned = new Set<string>(), unsafeTemps = new Set<string>(), activeTemps = new Set<string>();
+  const assigned = new Set<string>(), unsafeTemps = new Set<string>(), activeTemps = new Map<string, string | undefined>();
   let dynamicTargets = false, controlDepth = 0;
-  const capture = (value: string) => /^\$\(\s*(?:\/usr\/bin\/)?mktemp(?:\s+(?:-d|--directory|-q|--quiet))*\s*\)$/.test(value);
+  const template = (value: string) => /^\$\(\s*(?:\/usr\/bin\/)?mktemp(?:\s+(?:-d|--directory|-q|--quiet))*(?:\s+(\/[a-zA-Z0-9._/-]+X{3,}))?\s*\)$/.exec(value);
   const markAssigned = (name: string, temporary = false) => { assigned.add(name); delete values[name]; if (!temporary) unsafeTemps.add(name); };
   const taintAll = () => {
     dynamicTargets = true;
@@ -106,12 +106,13 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
       const quoted = raw.slice(0, offset).replace(/\x27[^\x27]*\x27|\\[\s\S]/g, "").split('"').length % 2 === 0;
       if (assigned.has("IFS") && !quoted) return token;
       const name = braced ?? plain;
-      const value = facts.containment === "sandbox" && values[name] !== undefined ? values[name] : activeTemps.has(name) && !unsafeTemps.has(name) ? tempValue(name) : assigned.has(name) ? undefined : name === "PWD" ? loc.known && !loc.alternates?.length ? loc.cwd : undefined : facts.env?.[name];
+      const value = facts.containment === "sandbox" && values[name] !== undefined ? values[name] : activeTemps.has(name) && !unsafeTemps.has(name) ? activeTemps.get(name) ?? tempValue(name) : assigned.has(name) ? undefined : name === "PWD" ? loc.known && !loc.alternates?.length ? loc.cwd : undefined : facts.env?.[name];
       if (value === undefined) return token;
       replacements.push(value); return "\0" + (replacements.length - 1) + "\0";
     });
     const value = unquote(marked).replace(/\0(\d+)\0/g, (_token, index) => replacements[Number(index)]);
-    if (capture(value) && subs.some(sub => sub.kind === "command")) return tempValue("output") ?? value;
+    const temp = subs.some(sub => sub.kind === "command") ? template(value) : null;
+    if (temp) return temp[1] ?? tempValue("output") ?? value;
     if (raw === "~" || raw.startsWith("~/")) return assigned.has("HOME") ? value : (facts.env?.HOME ?? homedir()) + value.slice(1);
     return value;
   };
@@ -127,7 +128,7 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
   };
   const run = (node: Command, loc: Location, text: string, pipeInput = false, pipeText?: string): Location => {
     if (node.type === "function") { controlDepth++; run(node.body, loc, text); controlDepth--; return loc; }
-    let temporaryAssignment: string | undefined;
+    let temporaryAssignment: readonly [string, string | undefined] | undefined;
     if (node.type === "simple") {
       const raw = node.words.map(word => unquote(word.text));
       const mutationBuiltin = ["export", "unset", "declare", "typeset", "local", "read", "mapfile", "readarray"].includes(raw[0]);
@@ -139,11 +140,11 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
         if (i > 0 && mutationBuiltin && !raw[i].startsWith("-") && /[\$`\[]/.test(target)) taintAll();
         const assignment = /^([A-Za-z_]\w*)=/.exec(raw[i]);
         if (assignment) {
-          const temporary = controlDepth === 0 && raw.length === 1 && node.words[i].subs.some(sub => sub.kind === "command") && capture(raw[i].slice(assignment[0].length));
+          const temporary = controlDepth === 0 && raw.length === 1 && node.words[i].subs.some(sub => sub.kind === "command") ? template(raw[i].slice(assignment[0].length)) : null;
           const resolved = facts.containment === "sandbox" && controlDepth === 0 && raw.length === 1 ? valueOf(node.words[i].text.slice(assignment[0].length), loc, node.words[i].subs) : undefined;
-          markAssigned(assignment[1], temporary);
+          markAssigned(assignment[1], !!temporary);
           if (resolved !== undefined && !/[$`]/.test(resolved)) values[assignment[1]] = resolved;
-          if (temporary) temporaryAssignment = assignment[1];
+          if (temporary) temporaryAssignment = [assignment[1], temporary[1]];
           if (["declare", "local", "typeset"].includes(raw[0]) && raw.some(value => /^-[^-]*n/.test(value)) && /^[A-Za-z_]\w*$/.test(raw[i].slice(assignment[0].length))) markAssigned(raw[i].slice(assignment[0].length));
         }
         if (raw.includes("printf") && (raw[i - 1] === "-v" || /^-v.+/.test(raw[i]))) {
@@ -215,7 +216,7 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
         if (scriptInput === "opaque" && input !== undefined && !/[\$`]/.test(input)) { scriptInput = "heredoc"; inspect(input, local); }
       }
       if (argv[0] === "eval") { scriptInput = "inline"; inspect(argv.slice(1).join(" "), local); }
-      if (argv[0] === "mktemp") targets.push(assigned.has("TMPDIR") ? "$TMPDIR" : facts.env?.TMPDIR ?? "$TMPDIR");
+      if (argv[0] === "mktemp" && !argv.at(-1)?.startsWith("/")) targets.push(assigned.has("TMPDIR") ? "$TMPDIR" : facts.env?.TMPDIR ?? "$TMPDIR");
       const redirectIn = facts.captureStdin ? node.redirects.filter(item => item.heredoc || item.op === "<" || item.op === "<<<").at(-1) : undefined;
       const doc = redirectIn?.heredoc;
       const docText = doc ? text.slice(doc.bodyStart, doc.bodyEnd) : undefined;
@@ -243,7 +244,7 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
         if (args.length > 1 || target.startsWith("-") || /[\$`~]/.test(target)) return { ...loc, known: false };
         return { ...changeDirectory(loc, target), stack: argv[0] === "pushd" ? [...loc.stack, loc.cwd] : loc.stack, known: loc.known && !(argv[0] === "pushd" && loc.alternates?.length) };
       }
-      if (temporaryAssignment) activeTemps.add(temporaryAssignment);
+      if (temporaryAssignment) activeTemps.set(...temporaryAssignment);
       return loc;
     }
     if (targets.length) out.push({ argv: [], cwd: loc.cwd, writes: targets, text: "redirection", uncertain: !loc.known, aliases: { ...aliases } });
@@ -268,8 +269,8 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
   const visit = (list: List, initial: Location, text: string): Location => {
     let loc = { ...initial, stack: [...initial.stack] };
     for (const item of list) {
-      const incomingTemps = new Set(activeTemps);
-      const clearTemps = () => { for (const name of activeTemps) if (!incomingTemps.has(name)) activeTemps.delete(name); };
+      const incomingTemps = new Set(activeTemps.keys());
+      const clearTemps = () => { for (const name of activeTemps.keys()) if (!incomingTemps.has(name)) activeTemps.delete(name); };
       const candidates: string[] = [];
       const pipelines = [item.andOr.first, ...item.andOr.rest.map(rest => rest.pipeline)];
       const conditionalTemps = item.background || item.andOr.rest.some(rest => rest.op !== "&&") || pipelines.some(pipeline => pipeline.negated || pipeline.commands.length !== 1);
