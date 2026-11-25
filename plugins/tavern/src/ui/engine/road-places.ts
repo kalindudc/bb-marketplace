@@ -1,5 +1,6 @@
 import type { RoadPlace, StripRoad } from "../../shared/strip-scene";
 import type { CharacterPalette } from "../kit/characters";
+import { plural } from "../kit/primitives";
 import { ISLAND_BANDS, lanternIslands, roundToLightCell, sourceGlow } from "./light";
 import { PROP_COLOURS as P } from "./sprites/palette";
 
@@ -110,22 +111,25 @@ export const ROAD_RISE = 600;
 
 type Milestones = { id: "milestones"; kind: "milestones"; state: "done"; count: number };
 export type RoadItem = { place: RoadPlace | Milestones; x: number; target: number };
-export type RoadLayout = { items: RoadItem[]; home: number; askX: number | null };
+export type RoadLayout = { items: RoadItem[]; home: number };
 
-export function layoutRoad(road: StripRoad, width: number, actorWidth: number, ask: boolean): RoadLayout {
-  const available = width - INSET - PLACE_TARGET;
-  const capacity = Math.floor(available / SLOT);
-  if (capacity < 1) return { items: [], home: 0, askX: null };
-  const folded = road.places.length > capacity && available >= SLOT + PLACE_TARGET;
-  const visible = folded ? Math.floor((available - PLACE_TARGET) / SLOT) : capacity;
+export function roadSpan(width: number, actorWidth: number) {
+  return Math.max(0, Math.floor(width * 0.75) - actorWidth);
+}
+
+export function layoutRoad(road: StripRoad, width: number, actorWidth: number): RoadLayout {
+  const available = roadSpan(width, actorWidth) - INSET - PLACE_TARGET;
+  if (available < 0 || !road.places.length) return { items: [], home: 0 };
+  const capacity = 1 + Math.floor(available / SLOT);
+  const folded = road.places.length > capacity && available >= PLACE_TARGET;
+  const visible = folded ? 1 + Math.floor((available - PLACE_TARGET) / SLOT) : capacity;
   const places = road.places.slice(-visible);
   const count = folded ? road.places.length - places.length : 0;
   const offset = INSET + (count ? PLACE_TARGET : 0);
   const items: RoadItem[] = places.map((place, i) => ({ place, x: offset + i * SLOT + 6, target: offset + i * SLOT }));
   if (count) items.unshift({ place: { id: "milestones", kind: "milestones", state: "done", count }, x: INSET, target: INSET });
   const active = items.find(item => item.place.id === road.current);
-  const home = Math.min(Math.max(0, available + INSET - actorWidth), (active?.target ?? items.at(-1)?.target ?? 0) + PLACE_TARGET);
-  return { items, home, askX: ask ? home + actorWidth : null };
+  return { items, home: (active ?? items[items.length - 1]!).target + PLACE_TARGET };
 }
 
 const PLACE_NAMES = {
@@ -142,7 +146,7 @@ const PLACE_ACTION = {
 } as const;
 
 export function placeWords(place: RoadItem["place"], member: string, hasAsk: boolean, title?: string) {
-  if (place.kind === "milestones") return { name: "Milestones", detail: `${place.count} earlier places behind ${member} on this road.` };
+  if (place.kind === "milestones") return { name: "Milestones", detail: `${plural(place.count, "earlier place")} behind ${member} on this road.` };
   const [active, done] = PLACE_ACTION[place.kind];
   const quest = title ? ` (quest: ${title})` : "";
   const waypoint = place.waypoint ? `, at ${place.waypoint}` : "";

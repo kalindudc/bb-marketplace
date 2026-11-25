@@ -87,7 +87,7 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
   const [cueEnd, setCueEnd] = useState<{ transition: typeof transition; at: number } | null>(null);
   const [last, setLast] = useState<{ text: string; at: number } | null>(null);
   const [tried, setTried] = useState<{ event?: number; ambient?: number }>({});
-  const [bubble, setBubble] = useState<{ line: StripSpeech; transition: typeof transition; at: number; automatic: boolean; revision?: string; request?: DialogueRequest; fallbackShown?: boolean } | null>(null);
+  const [bubble, setBubble] = useState<{ line: StripSpeech; transition: typeof transition; at: number; automatic: boolean; revision?: string; request?: DialogueRequest; fallbackShown?: boolean; shownAt?: number } | null>(null);
   const [speechVisible, setSpeechVisible] = useState(false);
   const [dialogue, setDialogue] = useState<DialogueLine | null>(null);
   const [eventRevision, setEventRevision] = useState<string | null>(null);
@@ -129,8 +129,9 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
   const reply = visible && pending && dialogue?.revision === visible.revision &&
     dialogue?.request?.kind === request?.kind && dialogue?.request?.at === request?.at &&
     dialogue && dialogue.receivedAt < visible.at + SPEECH_REPLY_MS ? dialogue : null;
-  const expiresAt = !visible ? undefined : reply ? Math.max(visible.at, reply.receivedAt) + BUBBLE_MS
-    : visible.at + (pending ? SPEECH_REPLY_MS : BUBBLE_MS);
+  const waitingForDraw = visible?.line.ambientAt !== undefined && visible.shownAt === undefined;
+  const timeout = pending && !reply || waitingForDraw ? SPEECH_REPLY_MS : BUBBLE_MS;
+  const expiresAt = visible && Math.max((visible.shownAt ?? visible.at) + BUBBLE_MS, (reply?.receivedAt ?? visible.at) + timeout);
   const cueEndsAt = cueEnd?.transition === transition ? cueEnd.at : undefined;
   const input = {
     actorId, voice: speechMode, mood, moodSince: transition.since, pageSince, cueEndsAt,
@@ -170,7 +171,8 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
         ?? (ambient ? pickLine(choices, decision.key, null, lineFacts) : null));
       if (text) {
         setLast({ text, at: now });
-        setBubble({ line: { actorId: character.id, text, ...(ambient ? { contextual: true } : {}) }, transition,
+        setBubble({ line: { actorId: character.id, text, ...(scheduled.kind === "ambient" ? { ambientAt: now } : {}),
+          ...(ambient ? { contextual: true } : {}) }, transition,
           at: now, automatic: !click, ...(ambient ? { revision, request: { kind: "ambient", at: now } } : {}) });
       } else if (!click) {
         setTried(prior => ({ ...prior, [scheduled.kind === "ambient" ? "ambient" : "event"]: now }));
@@ -189,7 +191,7 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
   }, [contextual, mayWatch, contextualSlot, eventRevision, revision]);
   useLayoutEffect(() => {
     if (bubble && !visible) setBubble(null);
-    if (!visible || expiresAt === undefined) return;
+    if (!visible || expiresAt === null) return;
     const dismiss = () => setBubble(null);
     const stop = watchSpeechHold(surface, dismiss, visible.automatic ? () => reportSpeechHeld({ now: Date.now(), ...reading() }) : undefined);
     const timer = setTimeout(dismiss, Math.max(0, expiresAt - Date.now()));
@@ -206,10 +208,14 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
     <PartyStrip
     character={character} classId={member.classId} classLabel={classLabel} mood={mood} memberId={member.threadId}
     askDisclosure={askDisclosure} keeper={!!data.keeperView} surface={surface} region="widget" mode={motionMode} held={held} quiet={quiet}
-    road={workbench?.road}
+    road={workbench?.road} repeatSeconds={data.repeatSeconds}
     actorMenu={{ mode: motionMode, voice, voiceBeforeOff: data.voiceBeforeOff, quietUntil: quiet ? data.characterQuietUntil : undefined, change, openSheet: () => navigate.toPluginPanel("tavern", { subPath: `character/${character.id}` }) }}
     speech={line && reply?.text ? { ...line, text: reply.text } : line ?? null} canClickSpeak={speechMode !== "off" && speechSlot(mood) && !!character.says?.[contextualSlot ?? mood]?.length}
     onSpeechVisible={contextual ? setSpeechVisible : undefined}
+    onAmbientShown={ambientAt => {
+      const shownAt = Date.now();
+      setBubble(current => current?.line.ambientAt === ambientAt && current.shownAt === undefined ? { ...current, shownAt } : current);
+    }}
     onActorClick={() => live.current(true)} onMoodCueEnd={() => {
       const at = Date.now();
       setCueEnd(previous => previous && previous.transition.order > transition.order ? previous : { transition, at });

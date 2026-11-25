@@ -92,11 +92,16 @@ export class Actor {
     return changed;
   }
 
+  get atRoadHome() {
+    return this.body.x === this.roadHome && this.detour === null;
+  }
+
   wander(span: number) {
     const home = this.roadHome;
-    if (home === null || this.body.x !== home) return;
+    if (home === null || !this.atRoadHome || this.cue || span <= 0) return false;
     const distance = 20 + this.motionSeed % 10;
     this.detour = home + distance <= span ? home + distance : Math.max(0, home - distance);
+    return this.detour !== home;
   }
 
   setRules(rules: ActorRules, span: number) {

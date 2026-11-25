@@ -145,7 +145,7 @@ type SceneFacts = {
 
 function stripQuest(store: KeeperStore, member: Member, thread: Runtime, boardQuest: BoardQuest | null) {
   const { threadId } = member;
-  const route = member.role === "keeper" && thread.lastRouteId && !thread.pending.length ? store.get("routes", thread.lastRouteId) : null;
+  const route = member.role === "keeper" && thread.lastRouteId ? store.get("routes", thread.lastRouteId) : null;
   const routedQuest = route?.keeperThreadId === threadId && route.boardQuestId && route.boardQuestIds.length <= 1 && (route.kind === "steer" || route.kind === "new-quest") ? store.get("quests", route.boardQuestId) : null;
   return { quest: routedQuest?.keeperThreadId === threadId ? routedQuest : boardQuest, route };
 }

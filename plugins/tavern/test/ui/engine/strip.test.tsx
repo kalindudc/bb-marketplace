@@ -87,6 +87,82 @@ const road: StripRoad = { key: "fixture", title: "Restore the lanterns", current
   { id: "w1", kind: "make", state: "active", waypoint: "Fit the hinges" },
 ] };
 
+function mountRoad() {
+  const clock = fakeEngineClock();
+  vi.spyOn(engine, "observeWorld").mockImplementation((_, candidate) => {
+    const handle = clock.scheduler.register(candidate);
+    handle.setVisible(true);
+    return handle;
+  });
+  vi.spyOn(engine.scheduler, "isActive").mockReturnValue(true);
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(390);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  const props = { ...wanderer, road, classId: "smith", classLabel: "Smith", mood: "working", mode: "lively", repeatSeconds: 3 } as const;
+  const view = render(<PartyStrip {...props} />);
+  const actor = screen.getByRole("button", { name: /Wren, Smith/ });
+  const position = () => Number(actor.style.transform.match(/\d+(?=px)/)?.[0]);
+  Object.defineProperty(actor, "animate", {
+    value: () => ({ finished: new Promise(() => {}), playState: "running", finish() {}, cancel() {} }),
+  });
+  return { ...clock, ...view, props, actor, position };
+}
+
+it("paces locally during work, returns to its station and plays its work cue", () => {
+  const play = vi.spyOn(Actor.prototype, "playCue");
+  const { advance, position } = mountRoad();
+  const home = position();
+  advance(175);
+  expect(position()).toBe(home);
+  const points = Array.from({ length: 175 }, () => { advance(1); return position(); });
+  expect(Math.max(...points.map(x => Math.abs(x - home)))).toBeGreaterThanOrEqual(20);
+  expect(points.every(x => x >= 0 && x + 48 <= Math.floor(390 * 0.75))).toBe(true);
+  expect(position()).toBe(home);
+  expect(play).toHaveBeenCalledWith("signature", true, expect.objectContaining({ mode: "lively" }));
+});
+
+it.each(["calm", "reduced", "held"] as const)("does not pace or give a work cue while %s", state => {
+  const play = vi.spyOn(Actor.prototype, "playCue");
+  const { advance, props, position, rerender, scheduler } = mountRoad();
+  if (state === "reduced") {
+    vi.spyOn(motion, "getReduced").mockReturnValue(true);
+    scheduler.setEnvironment({ hidden: false, reduced: true });
+  } else rerender(<PartyStrip {...props} mode={state === "calm" ? "calm" : "lively"} held={state === "held"} />);
+  const home = position();
+  for (let i = 0; i < 70; i++) { advance(10); expect(position()).toBe(home); }
+  expect(play).not.toHaveBeenCalled();
+});
+
+it("returns from an earlier station after one ambient remark, even if its text is replaced", () => {
+  const { advance, actor, position, props, rerender } = mountRoad();
+  const home = position();
+  const speech = { actorId: character.id, text: "The old road remembers.", ambientAt: 100 };
+  rerender(<PartyStrip {...props} repeatSeconds={60} speech={speech} />);
+  expect(screen.queryByRole("status")).toBeNull();
+  advance(216);
+  expect(position()).toBe(home - 96);
+  expect(screen.getByRole("status").textContent).toBe(speech.text);
+  rerender(<PartyStrip {...props} repeatSeconds={60} speech={{ ...speech, text: "The old road keeps its secrets." }} />);
+  advance(320);
+  expect(position()).toBe(home);
+  advance(250);
+  expect(position()).toBe(home);
+  expect(actor.dataset.activity).toBe("stand");
+});
+
+it("anchors an ask to the Keeper's last drawn spot when the road is absent", () => {
+  const { position, props, rerender, advance } = mountRoad();
+  const keeper = { ...props, classLabel: "Keeper", keeper: true, repeatSeconds: 60 } as const;
+  rerender(<PartyStrip {...keeper} />);
+  const parked = position();
+  expect(parked).toBeGreaterThan(0);
+  rerender(<PartyStrip {...keeper} road={undefined} held mood="waiting" askDisclosure={askDisclosure} />);
+  advance(300);
+  expect(position()).toBe(parked);
+  const ask = screen.getByRole("button", { name: "Open asks for Wren" });
+  expect(ask.style.left).toBe(`${parked + 48}px`);
+  expect(ask.textContent).toBe("!");
+});
+
 it("opens place details and closes them on Escape, outside press and timeout", () => {
   vi.useFakeTimers();
   try {
@@ -94,7 +170,7 @@ it("opens place details and closes them on Escape, outside press and timeout", (
     const view = render(<PartyStrip {...wanderer} road={road} />);
     const forge = screen.getByRole("button", { name: /the forge.*fit the hinges/i });
     const actor = screen.getByRole("button", { name: /wren, wanderer/i });
-    expect(actor.compareDocumentPosition(forge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(forge.compareDocumentPosition(actor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(forge.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(forge);
     expect(screen.getByRole("tooltip").textContent).toContain("Wren is making this part here, at Fit the hinges (quest: Restore the lanterns).");
@@ -148,6 +224,9 @@ it("anchors upward details above both the character and the held ask", () => {
   const tooltipBottom = window.innerHeight - Number.parseFloat(tooltip.style.bottom);
   const actor = screen.getByRole("button", { name: /wren, wanderer/i });
   const ask = screen.getByRole("button", { name: /open asks/i });
+  expect(screen.getAllByRole("button")).toEqual([
+    screen.getByRole("button", { name: /the signpost/i }), screen.getByRole("button", { name: /the forge/i }), actor, ask,
+  ]);
   expect(tooltipBottom).toBe(ask.getBoundingClientRect().top - 4);
   expect(tooltipBottom).toBeLessThan(actor.getBoundingClientRect().top);
   expect(tooltip.textContent).toContain("Wren is waiting on you here, at Fit the hinges (quest: Restore the lanterns).");

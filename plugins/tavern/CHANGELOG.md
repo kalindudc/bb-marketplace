@@ -16,6 +16,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Changed
 
+- In Lively, working members pace at their road stop and play their work cue. A timed remark can take them back to a passed stop before they return. Places and characters use only the first three quarters of the strip, folding older stops into milestones as needed.
 - Reorganized Tavern's documentation into five human-first guides anchored by an architecture overview and diagram, grouped contributor references under `docs/contributing/`, and split the Tavern, Keeper, and Journal agent skills into lean routers with on-demand reference files. The journal tool still returns the complete guide.
 - Answering the Keeper’s ask finishes your move without a journal tick. Declining or choosing another direction keeps the move open. Existing journal entries still work.
 - A plan with only Rangers no longer needs a staffing greenlight if it has no user or outside waypoint. Proposed budgets and weaker checks still need their usual approval.
@@ -31,6 +32,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- A Keeper keeps their road while a message waits to be routed. An ask appears by the character without moving them to the left edge.
 - Road tooltips, their accessible labels, and canned character remarks use the quest's short name instead of its full title.
 - The widget’s Close button matches the other small buttons on desktop. It still has a 44 px touch target on touch screens and in narrow windows, as do the quest rename fields and buttons and the alert test buttons.
 - Contextual remarks now work when Pi refuses to disable extensions. Tavern uses a separate Pi folder that keeps Pi's required extensions and your selected speech extensions without loading your ordinary Pi setup. If Pi still cannot start, Settings can show its startup error.

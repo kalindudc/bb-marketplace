@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import type { CharacterDef } from "../../shared/schema";
 import type { StripRoad } from "../../shared/strip-scene";
 import { RoadControls } from "./road-controls";
-import { drawRoad, layoutRoad, ROAD_BEAT, ROAD_RISE, type RoadLayout } from "./road-places";
+import { drawRoad, layoutRoad, PLACE_TARGET, roadSpan, ROAD_BEAT, ROAD_RISE, type RoadLayout } from "./road-places";
 import { clockTime } from "../../shared/time";
 import { readPalette, type CharacterPalette } from "../kit/characters";
 import { motion, stuckInView, type Surface } from "../kit/motion";
@@ -26,6 +26,7 @@ const LONG_PRESS_TRAVEL_PX = 8;
 const MENU_HINT = "Right-click or Shift+F10 for character settings";
 const SCENE_BURST = 2000;
 const SCENE_GAP = 32_000;
+const REVISIT_PAUSE_MS = 1_200;
 const MOOD_WORD: Record<Mood, string> = {
   idle: "idle", working: "at work", waiting: "needs you", reported: "just reported",
   verified: "verified", blocked: "blocked", resting: "resting", error: "failed",
@@ -35,7 +36,7 @@ export function walkSpan(composerWidth: number | null, stripWidth: number, sprit
   return Math.max(0, Math.min(composerWidth || stripWidth, stripWidth) - spriteWidth);
 }
 
-export type StripSpeech = { actorId: string; text: string; contextual?: boolean; announce?: boolean };
+export type StripSpeech = { actorId: string; text: string; contextual?: boolean; announce?: boolean; ambientAt?: number };
 export type AskDisclosure = { panelId: string; expanded: boolean; open: (button: HTMLButtonElement) => void };
 
 type PartyStripProps = {
@@ -53,11 +54,13 @@ type PartyStripProps = {
   quiet?: boolean;
   speech?: StripSpeech | null;
   road?: StripRoad;
+  repeatSeconds?: number;
   canClickSpeak?: boolean;
   askDisclosure?: AskDisclosure;
   onActorClick?: (actorId: string) => void;
   onMoodCueEnd?: () => void;
   onSpeechVisible?: (visible: boolean) => void;
+  onAmbientShown?: (ambientAt: number) => void;
   actorMenu?: Pick<ComponentProps<typeof CharacterMenu>, "mode" | "voice" | "voiceBeforeOff" | "quietUntil" | "change" | "openSheet">;
 };
 
@@ -100,7 +103,7 @@ export function PartyStrip(props: PartyStripProps) {
   const runtime = useRef<{ invalidate(change?: () => void): void; cue(kind: Cue, auto: boolean, onEnd?: () => void): void; click(): void; wander(): void; highlight(id: string | null): void }>(null);
   const latest = useRef({ ...props, road });
   const highlight = useCallback((id: string | null) => runtime.current?.highlight(id), []);
-  const layout = useMemo(() => road && layoutRoad(road, lane, art.width * SCALE, !!props.askDisclosure), [road, lane, art.width, !!props.askDisclosure]);
+  const layout = useMemo(() => road && layoutRoad(road, lane, art.width * SCALE), [road, lane, art.width]);
   const words = !props.held && speech?.actorId === actor.id ? speech.text : null;
 
   useLayoutEffect(() => { latest.current = { ...props, road }; });
@@ -118,7 +121,7 @@ export function PartyStrip(props: PartyStripProps) {
       if (runtime.current) runtime.current.cue(cue, true, props.onMoodCueEnd);
       else props.onMoodCueEnd?.();
     }
-  }, [actor, art, mood, props.mode, props.held, props.quiet, words, scene, !!props.askDisclosure, road]);
+  }, [actor, art, mood, props.mode, props.held, props.quiet, props.repeatSeconds, words, speech?.ambientAt, scene, !!props.askDisclosure, road]);
 
   useLayoutEffect(() => {
     const el = strip.current!, board = canvas.current!, control = button.current!;
@@ -134,25 +137,33 @@ export function PartyStrip(props: PartyStripProps) {
     let cueNumber = 0;
     let sceneMode: MotionMode = "off";
     let drawnLight: LightAnchor | null = null;
-    let drawnX = 0;
+    let drawnX: number | null = null;
+    let askAnchor: number | null = null;
     let drawnY = 0;
     let inView = false;
     let roadTime = 0, hoverAt = 0, riseAt = -Infinity;
     let hovered: string | null = null;
     let roadInput: StripRoad | undefined, roadLayout: RoadLayout | null = null;
-    let roadWidth = -1, roadAsk = false;
+    let roadWidth = -1, roadActorWidth = -1;
     let roadPaint: { layout: RoadLayout; palette: CharacterPalette; hovered: string | null; beat: number; rise: number; spark: boolean } | null = null;
+    let paceAt = Infinity, paceGap = 0, pacing = false;
+    let lastRemark: number | undefined, shownRemark: number | undefined;
+    let visit: { key: number; x: number; backAt: number } | null = null;
     const syncRoad = () => {
       const input = latest.current.road;
-      const ask = !!latest.current.askDisclosure;
-      if (input === roadInput && track === roadWidth && ask === roadAsk) return false;
+      const spriteWidth = actor.art.width * SCALE;
+      if (input === roadInput && track === roadWidth && spriteWidth === roadActorWidth) return false;
       const fresh = !!input && input.key !== roadInput?.key;
       if (!fresh && input && input.current !== roadInput?.current && mode() === "lively" && !holds().held) riseAt = roadTime;
-      else if (fresh || ask || !input) riseAt = -Infinity;
+      else if (fresh || !input) riseAt = -Infinity;
       roadInput = input;
       roadWidth = track;
-      roadAsk = ask;
-      roadLayout = input ? layoutRoad(input, track, actor.art.width * SCALE, ask) : null;
+      roadActorWidth = spriteWidth;
+      roadLayout = input ? layoutRoad(input, track, spriteWidth) : null;
+      const reach = input ? roadSpan(track, spriteWidth) : walkSpan(track, width, spriteWidth);
+      span = Math.floor(reach / SCALE) * SCALE;
+      visit = null;
+      pacing = false;
       return fresh;
     };
     const speechVisibility = (visible: boolean) => {
@@ -163,10 +174,13 @@ export function PartyStrip(props: PartyStripProps) {
       const { surface, held } = latest.current;
       const current = motion.getHolds(surface);
       return { typing: current.typing || !!latest.current.road && control.matches(":focus-visible"),
-        held: held ?? current.held };
+        held: !!latest.current.askDisclosure || (held ?? current.held) };
     };
     const mode = () => latest.current.quiet ? "off" : scene ? sceneMode : latest.current.mode ?? "calm";
+    const roadHome = () => roadLayout?.items.length ? roadLayout.home : null;
     let activeRules = { mode: mode(), ...holds() };
+    const mayPace = () => !scene && !latest.current.keeper && roadHome() !== null && actor.mood === "working" &&
+      activeRules.mode === "lively" && !activeRules.typing && !activeRules.held && motion.mayLoop(latest.current.surface);
     let painted: { x: number; y: number; key: number; art: typeof art; palette: CharacterPalette; stride: number; glint: number } | null = null;
     const world: EngineWorld = {
       mode,
@@ -174,33 +188,76 @@ export function PartyStrip(props: PartyStripProps) {
         activeRules = { mode: mode(), ...holds() };
         if (latest.current.onSpeechVisible) speechVisibility(inView);
         const fresh = syncRoad();
-        const anchored = actor.setRoadHome(roadLayout?.items.length ? roadLayout.home : null,
-          fresh || activeRules.mode !== "lively" || activeRules.held || isAttentionMood(actor.mood));
+        const home = roadHome();
+        if (latest.current.askDisclosure) {
+          askAnchor ??= drawnX ?? home ?? 0;
+          askAnchor = Math.min(askAnchor, span);
+          riseAt = -Infinity;
+        } else askAnchor = null;
+
+        const allowed = mayPace();
+        const gap = (latest.current.repeatSeconds ?? 20) * 1_000;
+        const remark = latest.current.speech;
+        if (!allowed) {
+          paceAt = Infinity;
+          pacing = false;
+        } else if (paceAt === Infinity || paceGap !== gap) {
+          paceAt = roadTime + gap;
+          paceGap = gap;
+        }
+        if (!allowed || visit?.key !== remark?.ambientAt) visit = null;
+        if (remark?.ambientAt !== undefined && remark.ambientAt !== lastRemark && remark.actorId === actor.id) {
+          lastRemark = remark.ambientAt;
+          if (!fresh && allowed && actor.atRoadHome && roadLayout && home !== null && !stuckInView()) {
+            for (let i = roadLayout.items.length - 1; i >= 0; i--) {
+              const { place, target } = roadLayout.items[i]!;
+              if (target + PLACE_TARGET >= home || place.kind === "milestones" || place.state !== "done") continue;
+              visit = { key: remark.ambientAt, x: target + PLACE_TARGET, backAt: Infinity };
+              break;
+            }
+          }
+        }
+        const anchored = actor.setRoadHome(askAnchor ?? visit?.x ?? home,
+          fresh || activeRules.mode !== "lively" || activeRules.held || isAttentionMood(actor.mood) || motion.getReduced());
         return actor.setRules(activeRules, span) || anchored;
       },
       update(seconds, steps) {
         if (scene && (!motion.mayLoop("page") || stuckInView())) motion.settle(cue => cue.el === control);
         roadTime += seconds * steps * 1_000;
         actor.update(seconds, span, activeRules, steps);
+        if (visit) {
+          if (roadTime + 1e-6 >= visit.backAt) visit = null;
+          else if (actor.body.x === visit.x && visit.backAt === Infinity) visit.backAt = roadTime + REVISIT_PAUSE_MS;
+        }
+        if (pacing && actor.atRoadHome) {
+          pacing = false;
+          if (mayPace()) cue("signature", true, undefined, undefined, true);
+        }
+        if (roadTime + 1e-6 >= paceAt) {
+          paceAt = roadTime + paceGap;
+          if (!visit && mayPace() && !stuckInView()) pacing = actor.wander(span) || pacing;
+        }
       },
       nextDraw() {
         const actorDue = actor.nextDraw(span);
-        if (roadTime - riseAt < ROAD_RISE) return 0;
-        if (!hovered) return actorDue;
-        return Math.min(actorDue ?? Infinity, ROAD_BEAT - (roadTime - hoverAt + 1e-6) % ROAD_BEAT);
+        if (actorDue === 0 || roadTime - riseAt < ROAD_RISE) return 0;
+        const hoverDue = hovered ? ROAD_BEAT - (roadTime - hoverAt + 1e-6) % ROAD_BEAT : Infinity;
+        const due = Math.min(actorDue ?? Infinity, hoverDue, paceAt - roadTime, (visit?.backAt ?? Infinity) - roadTime);
+        return Number.isFinite(due) ? due : null;
       },
       draw(still) {
         const spriteWidth = actor.art.width * SCALE;
         const spriteHeight = actor.art.height * SCALE;
-        const ask = !!latest.current.askDisclosure;
-        const roadHome = roadLayout?.items.length ? roadLayout.home : null;
-        if (still && roadHome !== null) actor.setRoadHome(roadHome, true);
-        const x = roadHome !== null && (still || ask) ? roadHome : ask ? 0
-          : scene && (still || !scene.road) ? Math.max(0, Math.floor((width - spriteWidth) / 2)) : Math.round(actor.body.x / SCALE) * SCALE;
+        const home = roadHome();
+        if (still && home !== null) actor.setRoadHome(askAnchor ?? home, true);
+        const x = askAnchor ?? (scene && (still || !scene.road) ? Math.max(0, Math.floor((width - spriteWidth) / 2))
+          : Math.min(span, Math.round(actor.body.x / SCALE) * SCALE));
         const askControl = askButton.current;
         if (askControl) {
-          const left = roadLayout?.askX == null ? "" : `${roadLayout.askX}px`;
+          const right = x + spriteWidth + PLACE_TARGET <= width || x < PLACE_TARGET;
+          const left = `${right ? x + spriteWidth : x - PLACE_TARGET}px`;
           if (askControl.style.left !== left) askControl.style.left = left;
+          askControl.toggleAttribute("data-left", !right);
         }
         const restY = ground - actor.art.ground * SCALE;
         const y = Math.max(0, restY - (still || actor.small ? 0 : Math.round(actor.body.lift / SCALE) * SCALE));
@@ -209,11 +266,17 @@ export function PartyStrip(props: PartyStripProps) {
         if (speechEl) {
           const left = x - BUBBLE_GAP;
           const right = width - x - spriteWidth - BUBBLE_GAP;
-          speechEl.hidden = Math.max(left, right) < (latest.current.speech?.contextual ? 176 : 48);
+          const speech = latest.current.speech;
+          const hidden = visit?.backAt === Infinity || Math.max(left, right) < (speech?.contextual ? 176 : 48);
+          if (speechEl.hidden !== hidden) speechEl.hidden = hidden;
           const onRight = right >= left;
           speechEl.style.setProperty("--speech-origin", `${onRight ? x + spriteWidth + BUBBLE_GAP : left}px`);
           speechEl.style.setProperty("--speech-room", `${Math.max(left, right)}px`);
           speechEl.dataset.side = onRight ? "right" : "left";
+          if (!hidden && speech?.ambientAt !== undefined && speech.ambientAt !== shownRemark) {
+            shownRemark = speech.ambientAt;
+            latest.current.onAmbientShown?.(shownRemark);
+          }
         }
         const position = scene ? "" : `translate(${x}px, ${y}px)`;
         if (lastPosition !== position) {
@@ -284,7 +347,7 @@ export function PartyStrip(props: PartyStripProps) {
         const { left, top } = el.getBoundingClientRect();
         return [{
           kind: drawnLight.kind,
-          x: window.scrollX + left + drawnX + (drawnLight.x + 0.5) * SCALE,
+          x: window.scrollX + left + (drawnX ?? 0) + (drawnLight.x + 0.5) * SCALE,
           y: window.scrollY + top + drawnY + (drawnLight.y + 0.5) * SCALE,
         }];
       },
@@ -299,8 +362,6 @@ export function PartyStrip(props: PartyStripProps) {
       width = el.clientWidth;
       track = Math.min(width, composer?.clientWidth || width);
       setLane(track);
-      const reach = walkSpan(track, width, actor.art.width * SCALE);
-      span = Math.floor(reach / SCALE) * SCALE;
       if (board.width !== width) { board.width = width; painted = null; }
       if (ctx) ctx.imageSmoothingEnabled = false;
     };
@@ -324,7 +385,7 @@ export function PartyStrip(props: PartyStripProps) {
       handle.invalidate();
     });
     theme.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
-    const cue = (kind: Cue, auto: boolean, onEnd?: () => void, reaction?: Reaction) => {
+    const cue = (kind: Cue, auto: boolean, onEnd?: () => void, reaction?: Reaction, repeat = false) => {
       if (!scheduler.isActive(world)) { onEnd?.(); return; }
       const rules = { mode: world.mode(), ...holds() };
       if (rules.held && !auto && !reaction) return;
@@ -333,7 +394,7 @@ export function PartyStrip(props: PartyStripProps) {
       let ended = false;
       if (reaction) motion.settle(c => c.el === control && c.kind === "character reaction");
       const accepted = motion.cue(surface, control, reaction ? "character reaction" : "character cue", {
-        key: `${actor.id}:${kind}:${++cueNumber}`, auto, ms: CUE_MS[kind], ...(region && !reaction ? { region } : {}),
+        key: `${actor.id}:${kind}:${++cueNumber}`, auto, ms: CUE_MS[kind], repeat, ...(region && !reaction ? { region } : {}),
         // The empty animation keeps the painted cue on the coordinator's pause and settle clock.
         run: el => typeof el.animate === "function" ? [el.animate([], { duration: CUE_MS[kind] })] : [],
         onDone: () => { ended = true; if (cancel) handle.invalidate(cancel); onEnd?.(); },
@@ -394,6 +455,7 @@ export function PartyStrip(props: PartyStripProps) {
     {scene && <span className="twalk-ground" aria-hidden="true" />}
     {road && <canvas ref={roadCanvas} className="twalk-canvas twalk-road" height={height} aria-hidden="true" />}
     <canvas ref={canvas} className="twalk-canvas twalk-sprite" height={height} aria-hidden="true" />
+    {!!layout?.items.length && <RoadControls key={road?.key} items={layout.items} member={character.name} hasAsk={!!props.askDisclosure} title={road?.title} highlight={highlight} />}
     <button ref={button} type="button" className="tchar twalk-actor" data-actor={actor.id} data-mood={mood}
       data-pose={scene ? "still" : undefined}
       aria-controls={menuTrigger ? menuId : undefined}
@@ -453,7 +515,6 @@ export function PartyStrip(props: PartyStripProps) {
       onClick={event => props.askDisclosure!.open(event.currentTarget)}>
       <span className="tchar-need twalk-need" data-tavern-still aria-hidden="true">!</span>
     </button>}
-    {!!layout?.items.length && <RoadControls key={road?.key} items={layout.items} member={character.name} hasAsk={!!props.askDisclosure} title={road?.title} highlight={highlight} />}
     {props.actorMenu && <span id={`${menuId}-hint`} className="sr">{MENU_HINT}</span>}
     {menuTrigger && props.actorMenu && <CharacterMenu id={menuId} trigger={menuTrigger} name={character.name} close={closeMenu} {...props.actorMenu} />}
     {words && <span ref={bubble} className="twalk-speech" data-contextual={speech?.contextual || undefined}

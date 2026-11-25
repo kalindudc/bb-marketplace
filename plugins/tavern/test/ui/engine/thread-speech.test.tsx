@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ThreadDecor } from "../../../src/shared/contract";
 import { CUE_MS } from "../../../src/ui/engine/art";
 import { BUBBLE_MS } from "../../../src/ui/engine/speech";
+import * as engine from "../../../src/ui/engine/scheduler";
+import { fakeEngineClock } from "./fake-clock";
 import { motion } from "../../../src/ui/kit/motion";
 import { ThreadWidget } from "../../../src/ui/thread/composer";
 import { EvidenceList } from "../../../src/ui/kit";
@@ -185,6 +187,34 @@ describe("thread strip speech", () => {
     expect(w.speech()).toBeNull();
   });
 
+  it("gives a canned revisit remark its full time from the first visible draw", async () => {
+    const clock = fakeEngineClock();
+    vi.spyOn(engine, "observeWorld").mockImplementation((_, candidate) => {
+      const handle = clock.scheduler.register(candidate);
+      handle.setVisible(true);
+      return handle;
+    });
+    const w = await widget({ ambientMotion: "lively", repeatSeconds: 120, stripScene: {
+      revision: "work", at: null, role: "smith", stage: "work", activity: "make", moment: "none", posture: "clear",
+      road: { key: "quest-a", current: "forge", places: [
+        { id: "plan", kind: "plan", state: "done" }, { id: "forge", kind: "make", state: "active" },
+      ] },
+    } });
+    vi.useFakeTimers();
+    await w.update({ speechGapMinutes: 1 });
+    for (let elapsed = 0; elapsed < 85_000 && w.actor()?.dataset.activity !== "walk"; elapsed += 100) await tick(100);
+    expect(w.actor()?.dataset.activity).toBe("walk");
+    expect(w.speech()).toBeNull();
+    await tick(3_600);
+    act(() => clock.advance(216));
+    expect(w.actor()?.style.transform).toMatch(/^translate\(52px,/);
+    expect(says.working).toContain(w.speech());
+    await tick(BUBBLE_MS - 1);
+    expect(says.working).toContain(w.speech());
+    await tick(1);
+    expect(w.speech()).toBeNull();
+  });
+
   it.each([false, true])("uses the ambient cadence when contextual speech is %s", async contextualSpeech => {
     const w = await widget({ contextualSpeech, ambientMotion: "off",
       stripScene: { revision: "neutral", at: null, role: "smith", stage: "neutral", activity: "unknown", moment: "none", posture: "clear" } });
@@ -192,7 +222,8 @@ describe("thread strip speech", () => {
     await w.update({ speechGapMinutes: 1 });
     await tick(35_000);
     expect(w.speech()).toBeNull();
-    for (let elapsed = 35_000; elapsed < 84_000 && !w.speech(); elapsed += 500) await tick(500);
+    // The longest ambient gap is 84 seconds, plus up to 1.5 seconds for the contextual fallback.
+    for (let elapsed = 35_000; elapsed < 86_000 && !w.speech(); elapsed += 500) await tick(500);
     expect(says.working).toContain(w.speech());
     if (contextualSpeech) {
       const request = socket.send.mock.lastCall?.[0];

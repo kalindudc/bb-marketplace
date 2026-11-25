@@ -76,6 +76,22 @@ describe("UI-only character presentation", () => {
     expect(characterMood(widgetMoodFacts(decor, f.time()))).toBe("idle");
   });
 
+  it("keeps a Keeper's committed road when an ask arrives while the next message is pending", async () => {
+    const f = fixture();
+    const q = await seedQuest(f.k, "lead", "Restore the bridge lanterns", "Bridge lanterns");
+    const decor = () => f.rpc.decor({ threadId: "lead" });
+    const before = (await decor()).stripScene?.road;
+    expect(before).toMatchObject({ key: q.id, current: "plan" });
+    f.k.ask("lead", { boardQuestId: q.id, kind: "decision", question: "Which lantern?", why: "Only one is needed",
+      options: [{ id: "green", label: "Green", detail: "", recommended: true }], meanwhile: "Wait", holds: [], effect: { type: "decision" } });
+    f.k.receiveUser("lead", "I have a follow-up");
+    expect(f.k.store.runtime("lead").pending).toHaveLength(1);
+    const held = (await decor()).stripScene;
+    expect(held).toMatchObject({ posture: "held", road: { key: q.id, current: before!.current, places: [{ id: "plan", state: "held" }] } });
+    f.k.route("lead", { kind: "aside", summary: "Unrelated", notes: [] });
+    expect((await decor()).stripScene?.road).toBeUndefined();
+  });
+
   it("marks shipped characters as shipped with no claimed file date and no stats", async () => {
     const f = fixture(); vi.mocked(fs.statSync).mockClear();
     const result = await f.read();
