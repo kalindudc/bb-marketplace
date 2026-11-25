@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
 import { execGitSync } from "../shared/git-safety";
 import { realPath, within, writeDenials, writeRoots } from "./paths";
-import { checkerWritePaths } from "./checker";
-import { join } from "node:path";
+import { checkerWorktree, checkerWritePaths } from "./checker";
+import { dirname, join } from "node:path";
+import { controlPaths, projectControl } from "./control-files";
 import type { Scope } from "./schema";
 
 export const shellQuote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
@@ -49,8 +50,27 @@ export function sandboxProfile(scope: Scope, checking = false, fetchRoots: strin
     ...(scope.network === "none" || scope.preset === "checker" && checking ? ["(deny network*)"] : []),
   ].join("\n");
 }
-export function sandboxCommand(scope: Scope, command: string, checking = false, fetchRoots: string[] = []): string {
-  if (!scope.sandbox || scope.mode !== "enforce" || process.platform !== "darwin") return command;
-  if (!existsSync("/usr/bin/sandbox-exec")) throw new Error("macOS sandbox-exec is unavailable");
-  return "/usr/bin/sandbox-exec -p " + shellQuote(sandboxProfile(scope, checking, fetchRoots)) + " /bin/bash -c " + shellQuote(command);
+const sandboxPrefix = "/usr/bin/sandbox-exec -p ";
+const quoted = String.raw`'(?:[^']|'\\'')*'`;
+const wrappedCall = new RegExp(`^${sandboxPrefix}(${quoted}) /bin/bash -c (${quoted})$`);
+export function guardedShellSource(command: string): string {
+  const match = wrappedCall.exec(command);
+  return match ? match[2].slice(1, -1).replaceAll("'\\''", "'") : command;
+}
+
+export function sandboxCommand(scope: Scope, command: string, checking = false, _fetchRoots: string[] = [], file?: string): string {
+  if (process.platform !== "darwin") return command;
+  if (!existsSync("/usr/bin/sandbox-exec")) {
+    if (checking) throw new Error("macOS sandbox-exec is unavailable for this check");
+    return command;
+  }
+  const maker = !checking && checkerWorktree(scope);
+  const roots = [...controlPaths(scope, file), ...(maker ? [maker, ...gitWriteRoots(maker)] : [])], ancestors = new Set<string>();
+  for (const root of roots) for (let parent = dirname(root); parent !== dirname(parent); parent = dirname(parent)) ancestors.add(parent);
+  const profile = [checking ? sandboxProfile(scope, true) : "(version 1)\n(allow default)",
+    ...roots.map(path => "(deny file-write* (subpath " + JSON.stringify(path) + "))"),
+    ...[...ancestors].map(path => "(deny file-write-unlink (literal " + JSON.stringify(path) + "))"),
+    "(deny file-write* (regex " + regexLiteral(projectControl) + "))",
+  ].join("\n");
+  return sandboxPrefix + shellQuote(profile) + " /bin/bash -c " + shellQuote(command);
 }

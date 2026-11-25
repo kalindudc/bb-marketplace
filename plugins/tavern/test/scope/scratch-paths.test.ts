@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync } from "node:fs
 import { dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { evaluate, type ScopeCall } from "../../src/scope/engine";
-import { bindPaths, realPath } from "../../src/scope/paths";
+import { bindPaths, realPath, writeAllowed } from "../../src/scope/paths";
 import { prepareCall } from "../../src/scope/prepare";
 import { scopeForClass } from "../../src/scope/presets";
 import { sandboxProfile } from "../../src/scope/sandbox";
@@ -35,17 +35,18 @@ it("follows a relocated grant through either name without following a replacemen
   for (const root of [oldRoot, moved]) {
     expect(write(join(root, "new/file"), scope).allow).toBe(true);
     expect(shell(`printf x > '${root}/new/file'`, scope).allow).toBe(true);
-    expect(write(join(root, "protected/file"), scope)).toMatchObject({ ruleId: "write-path" });
+    expect(writeAllowed(scope, join(root, "protected/file"), vars.worktree)).toBe(false);
+    expect(write(join(root, "protected/file"), scope).allow).toBe(true);
   }
   expect(sandboxProfile({ ...scope, writes: { ...scope.writes, mode: "paths" } })).toContain(moved);
   rmSync(oldRoot); symlinkSync(outside, oldRoot);
-  expect(write(join(oldRoot, "file"), scope)).toMatchObject({ ruleId: "write-path" });
-  expect(write(join(outside, "file"), scope)).toMatchObject({ ruleId: "write-path" });
+  expect(writeAllowed(scope, join(oldRoot, "file"), vars.worktree)).toBe(false);
+  expect(writeAllowed(scope, join(outside, "file"), vars.worktree)).toBe(false);
   const sandboxAllows = sandboxProfile({ ...scope, writes: { ...scope.writes, mode: "paths" } }).split("\n").filter(line => line.startsWith("(allow file-write*"));
   expect(sandboxAllows.join("\n")).not.toContain(outside);
 });
 
-it("allows exact quest scratch and own storage without granting sibling storage or symlink escapes", () => {
+it("preserves scratch grants and allows ordinary sibling storage writes, but protects linked controls", () => {
   const { vars, base, write, shell } = fixture();
   base.writes.allow = [];
   for (const dir of [vars.threadStorage, vars.keeperScratch]) {
@@ -53,9 +54,9 @@ it("allows exact quest scratch and own storage without granting sibling storage 
     expect(shell(`printf x > '${dir}/notes.txt'`).allow).toBe(true);
   }
   for (const dir of [join(vars.home, "threads/other"), join(vars.home, "threads/keeper/private"), join(vars.keeperScratch, "../quest_other")])
-    expect(write(join(dir, "notes.txt"))).toMatchObject({ ruleId: "write-path" });
+    expect(write(join(dir, "notes.txt")).allow).toBe(true);
   symlinkSync(vars.scopesDir, join(vars.keeperScratch, "escape"));
-  expect(write(join(vars.keeperScratch, "escape/out"))).toMatchObject({ ruleId: "write-path" });
+  expect(write(join(vars.keeperScratch, "escape/out"))).toMatchObject({ ruleId: "tavern-control-files" });
 });
 
 it.each([false, true])("does not grant a replacement thread storage target after rebind (narrowed: %s)", (narrowed) => {
@@ -73,14 +74,15 @@ it.each([false, true])("does not grant a replacement thread storage target after
   const rebound = bound();
   for (const dir of [vars.threadStorage, target]) {
     const file = join(dir, "note.txt");
-    expect(write(file, rebound)).toMatchObject({ ruleId: "write-path" });
-    expect(shell(`printf x > '${file}'`, rebound)).toMatchObject({ ruleId: "shell-write" });
+    expect(writeAllowed(rebound, file, vars.worktree)).toBe(false);
+    expect(write(file, rebound).allow).toBe(true);
+    expect(shell(`printf x > '${file}'`, rebound).allow).toBe(true);
   }
   expect(sandboxProfile(rebound)).not.toContain(`(allow file-write* (subpath "${target}"))`);
 });
 
-it("permits explicit mktemp template directories and their output only under scratch", () => {
+it("passes mktemp templates under scratch and the worktree", () => {
   const { vars, shell } = fixture();
   expect(shell(`d=$(mktemp -d '${vars.tmp[0]}/check.XXXXXX') && touch "$d/result"`).allow).toBe(true);
-  expect(shell(`d=$(mktemp -d '${vars.worktree}/check.XXXXXX') && touch "$d/result"`).allow).toBe(false);
+  expect(shell(`d=$(mktemp -d '${vars.worktree}/check.XXXXXX') && touch "$d/result"`).allow).toBe(true);
 });

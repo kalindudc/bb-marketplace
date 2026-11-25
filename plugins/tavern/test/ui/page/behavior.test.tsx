@@ -692,7 +692,7 @@ describe("Tavern page surfaces", () => {
     const scoped = { ...detail, scopes: [{ threadId: member.threadId, scope: null, error: null, armed: true, pendingAskId: null, mode: "watch" as const, problems: ["A project file tried to widen push to main and was ignored"] }], violations: [{ threadId: member.threadId, providerId: "pi", at: detail.quest.updatedAt, eventId: "e1", seq: 1, ruleId: "git.push", reason: "push to main", stopped: false, latencyMs: 0, mode: "watch" as const }] };
     const slot = await page("quest/vault", { boardQuest: () => scoped });
     const guards = await slot.findByRole("region", { name: /Guardrails/ });
-    expect(guards.textContent).toContain("watch: recorded only");
+    expect(guards.textContent).toContain("Watch");
     expect(guards.textContent).toContain("recorded, not stopped");
     expect(guards.textContent).toContain("tried to widen push to main and was ignored");
   });

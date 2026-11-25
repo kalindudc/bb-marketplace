@@ -10,7 +10,7 @@ import type { ActKind } from "./acts";
 export interface ActAudit { threadId: string; providerId: string; at: number; eventId: string; seq: number; kind: ActKind; call: ScopeCall; mode: "watch" | "enforce" }
 
 export interface ScopeRecord { file: string; scope: Scope | null; template?: Scope; error?: string; mode?: Scope["mode"]; binding?: ScopeControllerBinding; presetProvenance?: { id: Scope["preset"]; version: string } }
-export interface Violation { threadId: string; providerId: string; at: number; eventId: string; seq: number; ruleId: string; reason: string; call?: ScopeCall; latencyMs: number; stopped: boolean; prevented?: true; stopError?: string; mode?: "enforce" | "watch"; act?: ActKind }
+export interface Violation { policy?: "act-list"; threadId: string; providerId: string; at: number; eventId: string; seq: number; ruleId: string; reason: string; call?: ScopeCall; latencyMs: number; stopped: boolean; prevented?: true; stopError?: string; mode?: "enforce" | "watch"; act?: ActKind }
 export const scopeObservationBindingSchema = scopeHostBindingSchema.extend({ hostId: z.string().min(1).max(200), cwd: z.string().min(1).max(32768) }).strict();
 export type ScopeObservationBinding = z.infer<typeof scopeObservationBindingSchema>;
 const observationHoldSchema = z.object({
@@ -18,11 +18,11 @@ const observationHoldSchema = z.object({
   seq: z.number().int().nonnegative(), at: z.number().int().nonnegative(), reason: z.string().min(1).max(16384), binding: scopeObservationBindingSchema.optional(),
 }).strict();
 export type ScopeObservationHold = z.infer<typeof observationHoldSchema>;
-const progressSchema = z.object({ cursor: z.number().int().nonnegative(), pendingStop: z.boolean(), pendingBinding: scopeObservationBindingSchema.optional() }).strict();
+const progressSchema = z.object({ cursor: z.number().int().nonnegative(), pendingStop: z.boolean(), pendingBinding: scopeObservationBindingSchema.optional(), policy: z.literal("act-list").optional() }).strict();
 export interface NativeScopeReceipt { hostBinding: ScopeHostBinding; renderedDigest: string }
 export const scopeArmedSchema = z.object({
   threadId: scopeSchema.shape.threadId, issuedAt: scopeSchema.shape.issuedAt, pid: z.number().int().positive(), at: z.number().int().nonnegative(),
-  clusterWrites: z.literal(1).optional(), mergeGuard: z.literal(1).optional(), sendGuard: z.literal(1).optional(), messagePolicyProblem: z.string().optional(), hostBinding: scopeHostBindingSchema.optional(), renderedDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  policy: z.literal("act-list").optional(), clusterWrites: z.literal(1).optional(), mergeGuard: z.literal(1).optional(), sendGuard: z.literal(1).optional(), messagePolicyProblem: z.string().optional(), hostBinding: scopeHostBindingSchema.optional(), renderedDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict().refine(value => (value.hostBinding === undefined) === (value.renderedDigest === undefined), "A native receipt requires its binding and rendered-byte digest together");
 export const armedFile = (file: string) => file.replace(/\.json$/, "") + ".armed";
 export function atomicWrite(file: string, value: string, check?: () => void): void {
@@ -31,7 +31,7 @@ export function atomicWrite(file: string, value: string, check?: () => void): vo
   finally { rmSync(temp, { force: true }); }
 }
 export function armScope(file: string, scope: Scope, native?: NativeScopeReceipt, at = Date.now(), messagePolicyProblem?: string, mergeGuard = false): void {
-  atomicWrite(armedFile(file), JSON.stringify(scopeArmedSchema.parse({ threadId: scope.threadId, issuedAt: scope.issuedAt, pid: process.pid, at, clusterWrites: 1,
+  atomicWrite(armedFile(file), JSON.stringify(scopeArmedSchema.parse({ threadId: scope.threadId, issuedAt: scope.issuedAt, pid: process.pid, at, policy: "act-list", clusterWrites: 1,
     ...(mergeGuard ? { mergeGuard: 1 } : {}), ...(messagePolicyProblem ? { messagePolicyProblem } : { sendGuard: 1 }), ...native })));
 }
 const messagePolicySchema = z.object({
@@ -187,7 +187,7 @@ export class ScopeStore {
       const record = this.records.get(threadId);
       if (!record?.scope || record.binding) return;
       const marker = scopeArmedSchema.parse(JSON.parse(readFileSync(armedFile(record.file), "utf8")));
-      if (marker.hostBinding || marker.threadId !== threadId || marker.issuedAt !== record.scope.issuedAt || marker.at < record.scope.issuedAt) return;
+      if (marker.policy !== "act-list" || marker.hostBinding || marker.threadId !== threadId || marker.issuedAt !== record.scope.issuedAt || marker.at < record.scope.issuedAt) return;
       process.kill(marker.pid, 0);
       return marker;
     } catch { return; }
@@ -220,14 +220,15 @@ export class ScopeStore {
   clearObservationHold(threadId: string): void { rmSync(this.file(threadId) + ".hold", { force: true }); }
   progress(threadId: string): z.infer<typeof progressSchema> {
     try {
-      return progressSchema.parse(JSON.parse(readFileSync(this.file(threadId) + ".cursor", "utf8")));
+      const progress = progressSchema.parse(JSON.parse(readFileSync(this.file(threadId) + ".cursor", "utf8")));
+      return progress.policy === "act-list" ? progress : { cursor: progress.cursor, pendingStop: false };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       return { cursor: Math.max(0, ...this.violations(threadId).map(row => row.seq)), pendingStop: false };
     }
   }
   saveProgress(threadId: string, cursor: number, pendingStop = this.progress(threadId).pendingStop, pendingBinding?: ScopeObservationBinding): void {
-    atomicWrite(this.file(threadId) + ".cursor", JSON.stringify(progressSchema.parse({ cursor, pendingStop, ...(pendingStop && pendingBinding ? { pendingBinding } : {}) })));
+    atomicWrite(this.file(threadId) + ".cursor", JSON.stringify(progressSchema.parse({ cursor, pendingStop, ...(pendingStop ? { policy: "act-list", ...(pendingBinding ? { pendingBinding } : {}) } : {}) })));
   }
   recordAct(act: ActAudit): void { appendFileSync(join(this.dataDir, "scope-acts.jsonl"), JSON.stringify(act) + "\n", { mode: 0o600 }); }
   acts(threadId?: string): ActAudit[] {

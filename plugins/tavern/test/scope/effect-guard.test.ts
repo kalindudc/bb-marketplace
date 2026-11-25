@@ -23,18 +23,19 @@ function fixture(mode: "watch" | "enforce" = "enforce") {
   extension({ on: (name, handler) => handlers.set(name, handler), getActiveTools: () => ["bash"], setActiveTools: () => {} });
   return { root, scope, emit: (name: string, event: Parameters<Parameters<PiGuardApi["on"]>[1]>[0]) => handlers.get(name)!(event, { cwd: root }) };
 }
-it.skipIf(process.platform !== "darwin")("adds one workspace hint to a sandbox EPERM result, not to ordinary results", () => {
+it.skipIf(process.platform !== "darwin")("does not add general path warnings to a tool result", () => {
   const f = fixture();
   for (const id of ["denied", "ok"]) expect(f.emit("tool_call", { toolName: "bash", toolCallId: id, input: { command: "python3 -c 'print(1)'" } })).toBeUndefined();
   const result = f.emit("tool_result", { toolName: "bash", toolCallId: "denied", content: [{ type: "text", text: "Operation not permitted" }] });
-  expect(result).toMatchObject({ content: [{ type: "text", text: "Operation not permitted" }, { type: "text", text: "Tavern: a Ranger writes only to $BB_THREAD_STORAGE and temp. Save there instead." }] });
+  expect(result).toBeUndefined();
   expect(f.emit("tool_result", { toolName: "bash", toolCallId: "denied", content: [{ type: "text", text: "Operation not permitted" }] })).toBeUndefined();
   expect(f.emit("tool_result", { toolName: "bash", toolCallId: "ok", content: [{ type: "text", text: "ok" }] })).toBeUndefined();
 });
-it("does not wrap or add a containment hint in Watch mode", () => {
+it("keeps only the control-file overlay, not a discretionary hold or hint, in Watch", () => {
   const f = fixture("watch"), input = { command: "git push origin main" };
   expect(f.emit("tool_call", { toolName: "bash", toolCallId: "watch", input })).toBeUndefined();
-  expect(input.command).toBe("git push origin main");
+  expect(input.command.startsWith("/usr/bin/sandbox-exec")).toBe(process.platform === "darwin");
+  expect(input.command).not.toContain("(deny file-write*)");
   expect(f.emit("tool_result", { toolName: "bash", toolCallId: "watch", content: [{ type: "text", text: "Operation not permitted" }] })).toBeUndefined();
 });
 it("allows a Warden fetch metadata root only on the fetch profile, never on a check profile", () => {

@@ -36,6 +36,11 @@ export function agentProgram(argv: string[]): boolean {
 export function nestedCommands(command: ShellCommand): string[] {
   const argv = command.argv, [program] = argv;
   const source = (args: string[]) => args.map(shellQuote).join(" ");
+  if (program === "env" && /^(?:-S|--split-string)(?:=|$)|^-S./.test(argv[1] ?? "")) {
+    const exact = argv[1] === "-S" || argv[1] === "--split-string";
+    const words = exact ? argv[2] : argv[1].replace(/^(?:--split-string=|-S=?)/, "");
+    if (words) return [words + " " + source(argv.slice(exact ? 3 : 2))];
+  }
   if (program === "find") {
     const found: string[] = [];
     for (let i = 1; i < argv.length; i++) if (["-exec", "-execdir", "-ok", "-okdir"].includes(argv[i])) {

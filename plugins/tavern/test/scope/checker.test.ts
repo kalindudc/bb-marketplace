@@ -39,7 +39,7 @@ it.each([
 ])("allows a project check only with check metadata: %s", command => {
   expect(fixture().run(command)).toMatchObject({ allow: true, check: true });
 });
-it.each(["npm publish", "yarn publish", "pnpm publish", "bun publish", "git add .", "git commit -m no", "git push origin topic", "gh pr merge 1", "gh api -X POST repos/o/r/issues", "kubectl apply -f x.yaml", "dev deploy", "terraform apply", "curl -X POST https://example.invalid"])("still refuses consequential commands: %s", command => {
+it.each(["npm publish", "yarn publish", "pnpm publish", "bun publish", "git push origin topic", "gh pr merge 1", "gh api -X POST repos/o/r/issues", "kubectl apply -f x.yaml", "dev deploy", "terraform apply", "curl -X POST https://example.invalid"])("still refuses consequential commands: %s", command => {
   expect(fixture().run(command).allow).toBe(false);
 });
 it.each(["npm install", "npx vitest --update", "npx vitest", "vitest --update", "npx eslint .", "node scripts/verify.mjs", "node node_modules/../fixture.mjs", "npm run build --prefix ../outside", "npm run --prefix ../outside build", "npm --workspace ../outside run test", "npm test --prefix ../outside", "npm --prefix ../outside test"])("does not mark other commands as recognised checks: %s", command => {
@@ -65,16 +65,33 @@ it("requires an explicit maker root, canonical cwd and a proven directory for ch
 it.each(["./gradlew test", "java -version"])("lets an uncontained Warden run %s without a check-runner grant", command => {
   expect(fixture().run(command)).toEqual({ allow: true });
 });
-it("still blocks uncontained Warden Git commits and redirects to tracked files", () => {
-  const f = fixture();
-  writeFileSync(join(f.worktree, "tracked.txt"), "original");
+it("protects the maker from Warden writes, commits and checkouts outside check commands", () => {
+  const f = fixture(), tracked = join(f.worktree, "tracked.txt");
+  writeFileSync(tracked, "original");
   f.git(f.worktree, "add", "tracked.txt");
-  expect(f.run("git commit -m no")).toMatchObject({ allow: false, ruleId: "checker-write" });
-  expect(f.run("printf changed > tracked.txt")).toMatchObject({ allow: false, ruleId: "shell-write" });
+  symlinkSync(f.worktree, join(f.outside, "alias"));
+  for (const mode of ["enforce", "watch", "off"] as const) {
+    f.scope.mode = mode;
+    for (const command of ["git commit -am no", "git checkout -- .", `git -C '${f.worktree}' commit -am no`, "sed -i s/original/changed/ tracked.txt", "printf changed > tracked.txt"])
+      expect(f.run(command), command).toMatchObject({ allow: false, ruleId: "checker-write" });
+    for (const path of [tracked, join(f.outside, "alias", "tracked.txt")])
+      expect(evaluate(f.scope, { kind: "write", toolName: "edit", input: { path }, cwd: f.outside })).toMatchObject({ allow: false, ruleId: "checker-write" });
+    expect(f.run("git status")).toMatchObject({ allow: true });
+    expect(f.run("git commit -am unrelated", f.outside)).toMatchObject({ allow: true });
+    expect(f.run(`printf allowed > '${join(f.scratch, "note")}'`)).toMatchObject({ allow: true });
+  }
 });
-it("keeps native writes in the checker worktree blocked", () => {
-  const f = fixture();
-  expect(evaluate(f.scope, { kind: "write", toolName: "write", input: { path: join(f.worktree, "tracked") }, cwd: f.worktree })).toMatchObject({ allow: false, ruleId: "write-path" });
+it.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec"))("keeps maker checkout and Git metadata read-only in ordinary macOS child processes", () => {
+  const f = fixture(), tracked = join(f.worktree, "tracked.txt"), scratch = join(f.scratch, "note");
+  const gitDir = realPath(f.git(f.worktree, "rev-parse", "--path-format=absolute", "--git-dir").trim()), marker = join(gitDir, "guard-probe");
+  writeFileSync(tracked, "original");
+  f.git(f.worktree, "add", "tracked.txt");
+  const source = `(printf changed > '${tracked}') 2>/dev/null; (printf changed > '${marker}') 2>/dev/null; printf allowed > '${scratch}'`;
+  const result = spawnSync("/bin/bash", ["-c", sandboxCommand(f.scope, source)], { cwd: f.outside, encoding: "utf8" });
+  expect(result.status).toBe(0);
+  expect(readFileSync(tracked, "utf8")).toBe("original");
+  expect(existsSync(marker)).toBe(false);
+  expect(readFileSync(scratch, "utf8")).toBe("allowed");
 });
 it("fails closed rather than allowing a pre-existing hardlink alias to a tracked file", () => {
   const f = fixture(); writeFileSync(join(f.worktree, "tracked"), "original"); writeFileSync(join(f.worktree, ".gitignore"), "coverage/\\n");

@@ -31,7 +31,7 @@ it("arms in the Warden environment but checks and sandboxes against the differen
   expect(handlers.get("tool_call")!(event, { cwd: f.ownCwd })).toBeUndefined();
   if (process.platform === "darwin" && existsSync("/usr/bin/sandbox-exec")) { expect(event.input.command).toContain("/usr/bin/sandbox-exec"); expect(event.input.command).toContain("(deny network*)"); expect(event.input.command).toContain(f.worktree); }
 });
-it("allows byte inspection and runs unclassified programs locally, sandboxed on macOS", () => {
+it("allows byte inspection and runs ordinary programs under only the control-file overlay", () => {
   const f = fixture(); vi.stubEnv("TAVERN_SCOPE_FILE", f.store.file("t1")); vi.stubEnv("BB_THREAD_ID", "t1");
   const handlers = new Map<string, Function>(); extension({ on: (name, fn) => { handlers.set(name, fn); }, getActiveTools: () => ["bash", "read", "journal", "tavern_report"], setActiveTools: vi.fn() });
   handlers.get("session_start")!({}, { cwd: f.ownCwd });
@@ -42,20 +42,22 @@ it("allows byte inspection and runs unclassified programs locally, sandboxed on 
     expect(handlers.get("tool_call")!(call, { cwd: f.ownCwd })).toBeUndefined();
     if (process.platform === "darwin") {
       expect(call.input.command).toMatch(/^\/usr\/bin\/sandbox-exec /);
-      expect(call.input.command).toContain("(deny file-write*)");
+      expect(call.input.command).not.toContain("(deny file-write*)");
     } else {
       expect(call.input.command).toBe(command);
     }
   }
 });
-it("does not create a watcher violation for routine checks, but still contains Git writes", async () => {
+it("records a detected maker Git write without stopping routine checks or unrelated Git writes", async () => {
   const f = fixture(), callbacks = new Map<string, Function>(), stop = vi.fn(), onViolation = vi.fn();
   let rows = [{ id: "r1", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { type: "commandExecution", command: "cd '" + f.worktree + "' && npm test", cwd: f.ownCwd } } }];
   const bb = { events: { on: (name: string, fn: Function) => callbacks.set(name, fn) }, onDispose: vi.fn(), log: { warn: vi.fn() }, sdk: { threads: { stop, events: { list: async () => rows } } } } as unknown as BbPluginApi;
   registerWatcher(bb, f.store, { onViolation }); const emit = (sequence: number) => callbacks.get("experimental_thread.events")!({ thread: { id: "t1", providerId: "codex" }, sequence });
   await emit(1); expect(stop).not.toHaveBeenCalled(); expect(f.store.violations()).toEqual([]);
-  rows = [{ id: "r2", seq: 2, type: "item/started", createdAt: Date.now(), data: { item: { type: "commandExecution", command: "git add .", cwd: f.worktree } } }];
-  await emit(2); expect(stop).toHaveBeenCalledOnce(); expect(f.store.violations()[0]).toMatchObject({ ruleId: "checker-write", stopped: true });
+  rows = [{ id: "r2", seq: 2, type: "item/started", createdAt: Date.now(), data: { item: { type: "commandExecution", command: "git add .", cwd: f.ownCwd } } }];
+  await emit(2); expect(stop).not.toHaveBeenCalled(); expect(f.store.violations()).toEqual([]);
+  rows = [{ id: "r3", seq: 3, type: "item/started", createdAt: Date.now(), data: { item: { type: "commandExecution", command: "git add .", cwd: f.worktree } } }];
+  await emit(3); expect(stop).toHaveBeenCalledOnce(); expect(f.store.violations()[0]).toMatchObject({ ruleId: "checker-write", stopped: true });
 });
 it("persists the maker binding and done-when grants across overrides, mode changes and reload", async () => {
   const f = fixture(), bb = { providers: { experimental_contributeEnv: vi.fn() }, events: { on: vi.fn() }, onDispose: vi.fn() } as unknown as BbPluginApi;

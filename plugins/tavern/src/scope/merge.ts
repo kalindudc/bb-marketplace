@@ -72,6 +72,8 @@ export const explicitMerge = (command: ShellCommand) => {
   return tool === "gh" && action === "api" && !githubApiRead(command.argv) && (command.argv.slice(2).some(arg => prApi.test(arg) || branchApi.test(arg)) ||
     command.argv.some(graphql) && command.argv.some(arg => graphqlMerge.test(arg)));
 };
+export const protectedApiWrite = (command: ShellCommand) =>
+  command.argv[0] === "gh" && command.argv[1] === "api" && explicitMerge(command) || !!networkMerge(command, undefined);
 const simple = (command: ShellCommand) => !command.uncertain && !command.cwdAlternative && !command.gitEnvironment && !command.githubEnvironment;
 
 function inspectPush(command: ShellCommand, read: ReadMerge): MergeCall | undefined {

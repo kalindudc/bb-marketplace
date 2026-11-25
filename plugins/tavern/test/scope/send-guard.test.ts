@@ -63,7 +63,7 @@ it.each(["enforce", "watch", "off"] as const)("uses the rewritten scope for unre
   const rebuilt = new ScopeStore(f.root);
   expect(f.call("bash", { command: "git status" })).toBeUndefined();
   expect(f.call("read", { path: join(f.root, "notes") })).toBeUndefined();
-  expect(f.call("fixture_unrelated")?.block ?? false).toBe(mode === "enforce");
+  expect(f.call("fixture_unrelated")).toBeUndefined();
   const refusal = { block: true, reason: expect.stringMatching(/message policy.*does not match/i) };
   expect(f.call("fixture_post_message", { recipient: "fixture", message: "message" })).toMatchObject(refusal);
   expect(f.call("fixture_create_draft", { recipient: "fixture", message: "draft" })).toMatchObject(refusal);

@@ -20,7 +20,7 @@ it("ignores and records project widening, including keeperMayAllow and class sco
   const f = fixture(); writeFileSync(f.project, "v: 1\nrules:\n - classes:\n     ranger:\n       defaults:\n         allowRules: [git-push, gh-merge]\n         tools: {allow: ['*'], removeDeny: ['*send*', '*post*']}\n         writes: {allow: ['/']}\n       keeperMayAllow: ['write:/']\n");
   const result = f.policy.resolve("ranger", { projectRoot: f.projectRoot }, {}, "open");
   expect(result.scope.preset).toBe("readonly"); expect(result.problems.length).toBeGreaterThan(0);
-  expect(evaluate(result.scope, { kind: "tool", toolName: "slack_post", input: {}, cwd: f.projectRoot }).allow).toBe(false);
+  expect(evaluate(result.scope, { kind: "tool", toolName: "slack_post", input: {}, cwd: f.projectRoot }).allow).toBe(true);
   expect(f.policy.resolve("ranger", { projectRoot: f.projectRoot }, { writes: { allow: ["/"] } }).widenings).toEqual(["write:/"]);
 });
 it("project defaults cannot reset the user's global narrowing", () => {

@@ -18,13 +18,14 @@ export function stripWrappers(words: string[], chdir?: (path: string) => void, w
     argv[0] = basename(argv[0]);
     const wrapper = argv[0];
     if (wrapper === "command" && ["-v", "-V"].includes(argv[1])) return ["which", ...argv.slice(2)];
-    if (!["sudo", "env", "command", "exec", "nohup", "timeout", "gtimeout", "nice", "time", "xargs", "caffeinate", "stdbuf", "unbuffer", "chronic", "ionice", "taskset", "flock", "doas", "runuser", "script"].includes(wrapper)) break;
+    if (!["sudo", "env", "command", "exec", "nohup", "timeout", "gtimeout", "nice", "time", "xargs", "caffeinate", "stdbuf", "unbuffer", "chronic", "ionice", "taskset", "flock", "doas", "runuser", "script", "sandbox-exec"].includes(wrapper)) break;
     if (wrapper === "env" && (argv.length === 1 || argv.slice(1).every(arg => ["-0", "-i", "--null", "--ignore-environment"].includes(arg) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(arg)))) break;
     argv.shift();
-    const takesValue: Record<string, string[]> = { sudo: ["-u", "-g", "-h", "-p", "-D", "--chdir"], env: ["-u", "--unset", "-C", "--chdir"], timeout: ["-k", "--kill-after", "-s", "--signal"], gtimeout: ["-k", "-s"], nice: ["-n"], time: ["-o", "-f"], xargs: ["-I", "-n", "-P", "-L", "-a", "-d", "-E", "-s", "--max-args", "--max-procs", "--max-lines", "--arg-file", "--delimiter"], caffeinate: ["-t", "-w"], stdbuf: ["-i", "-o", "-e", "--input", "--output", "--error"], ionice: ["-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"], flock: ["-w", "--timeout", "-E", "--conflict-exit-code"], doas: ["-u", "-C"], runuser: ["-u", "--user", "-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w", "--whitelist-environment"], script: ["-t", "-I", "-O", "-T"] };
+    const takesValue: Record<string, string[]> = { sudo: ["-u", "-g", "-h", "-p", "-D", "--chdir"], env: ["-u", "--unset", "-C", "--chdir"], timeout: ["-k", "--kill-after", "-s", "--signal"], gtimeout: ["-k", "-s"], nice: ["-n"], time: ["-o", "-f"], xargs: ["-I", "-n", "-P", "-L", "-a", "-d", "-E", "-s", "--max-args", "--max-procs", "--max-lines", "--arg-file", "--delimiter"], caffeinate: ["-t", "-w"], stdbuf: ["-i", "-o", "-e", "--input", "--output", "--error"], ionice: ["-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"], flock: ["-w", "--timeout", "-E", "--conflict-exit-code"], doas: ["-u", "-C"], runuser: ["-u", "--user", "-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w", "--whitelist-environment"], script: ["-t", "-I", "-O", "-T"], "sandbox-exec": ["-p", "-f", "-D", "-n"] };
     while (argv[0]?.startsWith("-")) {
       const option = argv.shift()!;
       if (option === "--") break;
+      if (wrapper === "env" && /^(?:-S|--split-string)(?:=|$)|^-S./.test(option)) return [wrapper, option, ...argv];
       if (["script", "flock", "runuser"].includes(wrapper) && /^(?:-c|--command)(?:=|$)/.test(option)) {
         if (wrapper === "script") write?.(argv[option.includes("=") ? 0 : 1] ?? "typescript");
         return [wrapper, option, ...argv];
@@ -49,7 +50,7 @@ export function normalizeCommand(argv: string[]): { argv: string[]; directory?: 
   let directory: string | undefined, repository: string | undefined;
   const values: Record<string, string[]> = { gcloud: ["--project", "--account", "--configuration", "--impersonate-service-account", "--billing-project", "--access-token-file", "--flags-file"], bb: ["--project", "--host", "--server", "--url", "--token", "--new-machine", "--machine", "--environment-provider"], git: ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"], gh: ["-R", "--repo", "--hostname"], kubectl: ["--context", "--namespace", "-n", "--kubeconfig", "--cluster", "--user", "--server", "-s", "--token"], helm: ["--burst-limit", "--color", "--colour", "--content-cache", "--kube-apiserver", "--kube-as-group", "--kube-as-user", "--kube-ca-file", "--kube-context", "--kube-tls-server-name", "--kube-token", "--kubeconfig", "--namespace", "-n", "--qps", "--registry-config", "--repository-cache", "--repository-config"], terraform: ["-chdir"], kapp: ["-a", "--app", "-n", "--namespace", "--kubeconfig-context", "--kubeconfig"], dev: ["--context", "--namespace", "--project"], dt: ["--cluster", "--context", "-R", "--repo"] };
   const name = argv[0];
-  const flags = /[$`]/.test(name ?? "") ? [...values.kubectl, ...values.helm, ...values.kapp, ...values.terraform] : values[name === "k" ? "kubectl" : name];
+  const flags = /[$`]/.test(name ?? "") ? [...values.kubectl, ...values.helm, ...values.kapp, ...values.terraform] : values[name === "k" ? "kubectl" : name === "tofu" || name === "terragrunt" ? "terraform" : name];
   if (!flags) return { argv };
   if (name === "gh" || name === "dt") {
     const normalized = [name];

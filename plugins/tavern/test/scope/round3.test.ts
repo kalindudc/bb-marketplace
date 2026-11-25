@@ -30,22 +30,24 @@ it.each(["git push origin HEAD", "git status && git push origin HEAD", "git log 
 it.each(["ranger", "smith", "wanderer"])("expands bound storage/tmp variables for %s", role => {
   for (const command of ['echo x > "$BB_THREAD_STORAGE/notes.md"', 'mkdir -p "${BB_THREAD_STORAGE}/review"', 'cat > "$BB_THREAD_STORAGE/r.md" <<\'EOF\'\nx\nEOF', 'echo x > "$TMPDIR/x"', 'cd "$BB_THREAD_STORAGE" && echo x > n.md']) expect(check(command, role).decision.allow, command).toBe(true);
 });
-it.each(["ranger", "smith"])("does not trust assigned, unset or unknown path variables for %s", role => {
-  for (const command of ['TMPDIR=/outside; echo x > "$TMPDIR/x"', 'export BB_THREAD_STORAGE=/outside; mkdir "$BB_THREAD_STORAGE/x"', 'unset TMPDIR; echo x > "$TMPDIR/x"', 'echo x > "$UNKNOWN/x"']) expect(check(command, role).decision.allow, command).toBe(false);
+it.each(["ranger", "smith"])("does not refuse ordinary work with assigned, unset or unknown path variables for %s", role => {
+  for (const command of ['TMPDIR=/outside; echo x > "$TMPDIR/x"', 'export BB_THREAD_STORAGE=/outside; mkdir "$BB_THREAD_STORAGE/x"', 'unset TMPDIR; echo x > "$TMPDIR/x"', 'echo x > "$UNKNOWN/x"']) expect(check(command, role).decision.allow, command).toBe(true);
 });
-it("protects known open-preset roots while permitting unknown paths", () => {
-  expect(check('cp a "$HOME/.ssh/config"', "wanderer").decision.allow).toBe(false);
-  expect(check('cp a "$HOME/.ssh/$UNKNOWN"', "wanderer").decision.allow).toBe(false);
+it("protects known Tavern controls while permitting other paths", () => {
+  expect(check('cp a "$HOME/.agents/tavern/settings.toml"', "wanderer").decision.allow).toBe(false);
+  expect(check('cp a "$HOME/.ssh/$UNKNOWN"', "wanderer").decision.allow).toBe(true);
   expect(check('cp a "$HOME/x"', "wanderer").decision.allow).toBe(true);
   expect(check('echo x > "$UNKNOWN/x"', "wanderer").decision.allow).toBe(true);
   expect(check('echo x > "$PWD/src/x"').decision.allow).toBe(true);
 });
-it.each(["cat <<EOF | bash\ngit push origin main\nEOF", "bash <<< 'git push origin main'", "bash < <(echo git push origin main)", `cd /etc || cd ${cwd}; touch x`, `cd /etc && cd ${cwd}/__scope_missing_directory__; touch x`, "gs dss", "git-spice stack submit", "git-spice dss", "bun publish", "cargo publish", "gem push package.gem", "twine upload dist/*"])("blocks the new Low probes: %s", command => expect(check(command).decision.allow).toBe(false));
+it.each(["cat <<EOF | bash\ngit push origin main\nEOF", "bash <<< 'git push origin main'", "gs dss", "git-spice stack submit", "git-spice dss", "bun publish", "cargo publish", "gem push package.gem", "twine upload dist/*"])("holds recognized acts in shell and package variants: %s", command => expect(check(command).decision.allow).toBe(false));
+it("cannot inspect script input from a process substitution", () =>
+  expect(check("bash < <(echo git push origin main)").decision).toMatchObject({ allow: true, inspectionUnavailable: true }));
 it.each(["git tag -l", "git tag --list 'v*'", "git branch --contains HEAD", "git remote show origin", "awk '/foo|bar/' f", "sed -n '/x/{p;q}' f", "gh api graphql -F owner=o -F name=r -f query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){name}}'", "gh api -X GET search/issues -f q=bug", "kubectl config get-contexts", "curl -fsS -o /dev/null -w '%{http_code}' https://example.org", "tree", "fd foo", "column -t f", "shasum f", "md5 f", "hostname", "mktemp", "node --version", "npm ls", "npm view pkg", "bb flare list"])("allows fresh everyday Ranger reads: %s", command => expect(check(command, "ranger").decision.allow).toBe(true));
 it.each(['cd "$(git rev-parse --show-toplevel)/packages/a" && npm test', 'for ((i=0;i<3;i++)); do echo "$i"; done'])("allows fresh everyday Smith work: %s", command => expect(check(command).decision.allow).toBe(true));
 it.each(["tree -o /outside/file", "fd --exec sh -c bad", "fd -x sh -c bad", "hostname changed", "node --version -e bad", "npm version patch", "awk 'BEGIN{x=1 / system(\"bad\") / 2}'", "sed -n '/x/{p;e bad}'"])("does not classify mutating variants of read additions as reads: %s", command => expect(shellCommands(command, cwd).every(readonlyProgram)).toBe(false));
-it.each(["mktemp /outside/file.XXXX", "gh api graphql -f query='mutation{bad}' -F owner=o", "git branch --contains HEAD -D feature", "git tag --list -d v1", "gh api -X POST search/issues -f q=bug"])("retains Ranger explicit write, Git and GitHub blocks: %s", command => expect(check(command, "ranger").decision.allow).toBe(false));
-it.each(["mkdir '$TMPDIR'", "export PWD=/outside; touch \"$PWD/x\"", "env --unset TMPDIR mkdir \"$TMPDIR/x\"", "env --unset=TMPDIR bash -c 'echo x > \"$TMPDIR/x\"'", "env -i bash -c 'echo x > \"$TMPDIR/x\"'", "for TMPDIR in /outside; do echo x > \"$TMPDIR/x\"; done"])("does not expand quoted or reassigned bindings: %s", command => expect(check(command, "ranger").decision.allow).toBe(false));
+it.each(["gh api graphql -f query='mutation{bad}' -F owner=o", "gh api -X POST search/issues -f q=bug"])("retains Ranger GitHub write blocks: %s", command => expect(check(command, "ranger").decision.allow).toBe(false));
+it.each(["mkdir '$TMPDIR'", "export PWD=/outside; touch \"$PWD/x\"", "env --unset TMPDIR mkdir \"$TMPDIR/x\"", "env --unset=TMPDIR bash -c 'echo x > \"$TMPDIR/x\"'", "env -i bash -c 'echo x > \"$TMPDIR/x\"'", "for TMPDIR in /outside; do echo x > \"$TMPDIR/x\"; done"])("passes ordinary calls with quoted or reassigned bindings: %s", command => expect(check(command, "ranger").decision.allow).toBe(true));
 it.each(["tavern_note", "tavern_gate"])("makes Keeper memory tools available to Rangers too: %s", toolName => {
   for (const role of ["keeper", "ranger"]) expect(evaluate(bindPaths({ ...scopeForClass(role), assignedBranch: "feature" }, paths), { kind: "tool", toolName, cwd, input: {} }).allow).toBe(true);
 });

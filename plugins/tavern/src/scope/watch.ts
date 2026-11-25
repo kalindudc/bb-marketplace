@@ -1,18 +1,19 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { hostContract, type HostOutput } from "../host-contract";
-import { BLOCK_MARKER, HELD_MARKER, blocked, evaluate, isWriteCall, type Decision, type ScopeCall } from "./engine";
+import { BLOCK_MARKER, HELD_MARKER, blocked, evaluate, type Decision, type ScopeCall } from "./engine";
 import { matchedDraftReceipt, observedDraftReceipt } from "./communication-holds";
 import { ACT_KINDS, type ActKind } from "./acts";
 import { actAskKind } from "./act-routing";
 import { scopeObservationBindingSchema, ScopeStore, type ScopeObservationBinding, type ScopeObservationHold, type ScopeRecord, type Violation } from "./store";
 import type { ScopeHostBinding } from "./schema";
 import { prepareCall } from "./prepare";
-import { bindChecks } from "./checker";
+import { scopeForClass } from "./presets";
+import { guardedShellSource } from "./sandbox";
 import { bindWorktree, checkedWorktreeRoot, gitWorktreeRoot, needsWorktree, readerFallback } from "./worktree";
 
 import { matchesActReceipt, observedActReceipt } from "./act-grants";
 import { claimPullRequestGrant, observedPullRequestReceipt, pullRequestGrantAvailable } from "./pr-grants";
-import { forgetShellGrantCall, checkShellGrantReceipt, hasShellGrantGuard, readShellGrants } from "./shell-grants";
+import { forgetShellGrantCall, checkShellGrantReceipt, readShellGrants } from "./shell-grants";
 
 export type RemoteScopeObservation = { kind: "unavailable"; reason: string } | { kind: "open"; reason: string } | {
   kind: "ready"; hostId: string; cwd: string; binding: ScopeHostBinding;
@@ -21,6 +22,7 @@ export type RemoteScopeObservation = { kind: "unavailable"; reason: string } | {
 export interface WatchDeps {
   onViolation(violation: Violation, binding?: ScopeObservationBinding): void | Promise<void>;
   onActObservation?(observation: ActObservation): void;
+  onCallObservation?(observation: CallObservation): void;
   onShellGrantUsed?(threadId: string, grantId: string): void;
   onMergeUsed?(threadId: string, askId: string, eventId: string, succeeded: boolean): boolean;
   onObservedMerge?(threadId: string, command: string, eventId: string, at: number, succeeded: boolean): boolean;
@@ -31,13 +33,14 @@ export interface WatchDeps {
   onObservationHold?(hold: ScopeObservationHold): void | Promise<void>;
 }
 export type ActObservation = Pick<Violation, "threadId" | "eventId" | "at" | "mode"> & { act: ActKind; preflight?: true; command?: string; cwd?: string; resolvedAt?: number };
+export type CallOutcome = "ordinary" | "inspection-unavailable" | "act-allowed" | "prevented" | "detected-after-dispatch" | "stop-failed";
+export type CallObservation = { threadId: string; providerId: string; eventId: string; seq: number; at: number; mode: "enforce" | "watch"; tool: string; outcome: CallOutcome };
 type Item = Record<string, unknown>;
-const emergency = new Set(["tavern_report", "journal", "quest", "tavern_ready"]);
 const identity = (value: Extract<RemoteScopeObservation, { kind: "ready" }>): ScopeObservationBinding => scopeObservationBindingSchema.parse({ ...value.binding, hostId: value.hostId, cwd: value.cwd });
 const sameBinding = (a: ScopeObservationBinding, b: ScopeObservationBinding) => a.placementId === b.placementId && a.generation === b.generation && a.endpointId === b.endpointId && a.revision === b.revision && a.scopeDigest === b.scopeDigest && a.hostId === b.hostId && a.cwd === b.cwd;
 export function callsFromItem(item: Item, fallbackCwd: string): ScopeCall[] {
   const cwd = typeof item.cwd === "string" && item.cwd.startsWith("/") ? item.cwd : fallbackCwd;
-  if (item.type === "commandExecution") return [{ kind: "bash", toolName: "bash", input: { command: item.command }, cwd }];
+  if (item.type === "commandExecution") return [{ kind: "bash", toolName: "bash", input: { command: typeof item.command === "string" ? guardedShellSource(item.command) : item.command }, cwd }];
   if (item.type === "fileRead") return [{ kind: "read", toolName: "read", input: { path: item.path }, cwd }];
   if (item.type === "fileChange") {
     const write = (path?: unknown): ScopeCall => ({ kind: "write", toolName: "write", input: path === undefined ? {} : { path }, cwd });
@@ -86,6 +89,12 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
   const worktrees = new Map<string, { root: string; record: ScopeRecord }>();
   let disposed = false;
   const modeFor = (threadId: string) => store.records.get(threadId)?.mode ?? store.records.get(threadId)?.scope?.mode ?? "enforce";
+  const observe = (threadId: string, providerId: string, event: { id: string; seq: number; createdAt: number }, call: ScopeCall | undefined, outcome: CallOutcome) => {
+    const mode = modeFor(threadId);
+    if (!call || mode === "off") return;
+    const tool = /^[a-z][a-z0-9_]*$/i.test(call.toolName) ? call.toolName : "tool";
+    deps.onCallObservation?.({ threadId, providerId, eventId: event.id, seq: event.seq, at: event.createdAt, mode, tool, outcome });
+  };
   const lookup = (threadId: string): RemoteScopeObservation | undefined => {
     try {
       const value = deps.remoteForThread?.(threadId);
@@ -140,19 +149,13 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
     const at = Date.now();
     const ask = decision.act && actAskKind(decision.act);
     const reason = decision.act && ask ? `${decision.act} needed a ${ask} ask; detected after dispatch.` : decision.reason;
-    const violation: Violation = { threadId, providerId, at, eventId, seq, ruleId: decision.ruleId, reason, ...(decision.act ? { act: decision.act } : {}), call, mode, stopped: mode === "enforce" && !stopError, stopError, latencyMs: Math.max(0, at - createdAt) };
+    const violation: Violation = { policy: "act-list", threadId, providerId, at, eventId, seq, ruleId: decision.ruleId, reason, ...(decision.act ? { act: decision.act } : {}), call, mode, stopped: mode === "enforce" && !stopError, stopError, latencyMs: Math.max(0, at - createdAt) };
     await notify(violation, binding);
     if (mode === "watch" && decision.act) deps.onActObservation?.({ threadId, eventId, at, mode, act: decision.act });
     return violation;
   };
   const check = async (threadId: string, providerId: string, sequence: number) => {
     if (disposed || !store.records.has(threadId) || modeFor(threadId) === "off") return;
-    if (lookup(threadId)?.kind === "open") {
-      stopped.delete(threadId);
-      store.saveProgress(threadId, sequence, false);
-      store.clearObservationHold(threadId);
-      return;
-    }
     const stoppedAt = stopped.get(threadId);
     if (stoppedAt?.record !== store.records.get(threadId)) stopped.delete(threadId);
     else if (stoppedAt) {
@@ -167,7 +170,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
     catch (error) {
       const remote = lookup(threadId);
       if (remote !== undefined) await hold(threadId, providerId, "cursor:" + sequence, sequence, "The event cursor is unreadable; ask the Keeper to reconcile it without guessing which remote events ran.", remote.kind === "ready" ? identity(remote) : undefined);
-      else await contain(threadId, providerId, "cursor:" + sequence, sequence, Date.now(), blocked("scope cursor", "cursor-invalid", "the persisted event cursor is invalid: " + String(error)));
+      else await hold(threadId, providerId, "cursor:" + sequence, sequence, "The persisted event cursor is unreadable; inspection is unavailable.");
       return;
     }
     if (progress.pendingStop && modeFor(threadId) === "enforce") {
@@ -217,7 +220,10 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
         const rawCalls = callsFromItem(item, "");
         const draft = providerId === "pi" ? observedDraftReceipt(resultTexts(item)) : undefined;
         const draftObservation = draft ? draft.askId + " " + draft.observation : undefined;
-        const command = rawCalls.length === 1 && ["bash", "Bash"].includes(rawCalls[0].toolName) ? rawCalls[0].input.command ?? rawCalls[0].input.cmd : undefined;
+        if (!rawCalls.length || row.type !== (providerId === "pi" ? "item/completed" : "item/started")) { advance(); continue; }
+        const original = rawCalls.length === 1 && ["bash", "Bash"].includes(rawCalls[0].toolName) ? rawCalls[0].input.command ?? rawCalls[0].input.cmd : undefined;
+        const command = typeof original === "string" && providerId === "pi" ? guardedShellSource(original) : original;
+        if (typeof command === "string" && original !== command) rawCalls[0].input = { command };
         if (providerId === "pi" && row.type === "item/completed" && (item.status === "blocked" || guardBlocked(item))) {
           const act = modeFor(threadId) === "enforce" && item.approvalStatus !== "denied" && rawCalls.some(call => typeof (call.input.command ?? call.input.cmd) === "string") ? heldAct(item) : undefined;
           if (act) {
@@ -235,48 +241,56 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
               const cwd = call?.cwd || (remote?.kind === "ready" ? remote.cwd : remote ? ""
                 : deps.cwdForThread?.(threadId) || worktrees.get(threadId)?.root || record.scope?.expectedWorktree || record.scope?.checks?.worktree || "");
               const rule = /\nTavern scope rule: ([\w:.-]{1,120})$/.exec(reason);
-              await notify({ threadId, providerId, eventId: row.id, seq: row.seq, at, ruleId: rule?.[1] ?? "guard-preflight", reason: reason.slice(0, rule?.index ?? 2000).slice(0, 2000),
+              await notify({ ...(!remote && !record.binding && store.isArmed(threadId) ? { policy: "act-list" as const } : {}), threadId, providerId, eventId: row.id, seq: row.seq, at, ruleId: rule?.[1] ?? "guard-preflight", reason: reason.slice(0, rule?.index ?? 2000).slice(0, 2000),
                 ...(call ? { call: { ...call, cwd, input: {} } } : {}), mode: "enforce", prevented: true, stopped: false, latencyMs: Math.max(0, at - row.createdAt) });
             }
           }
+          observe(threadId, providerId, row, rawCalls[0], "prevented");
           advance(); continue;
         }
-        if (!rawCalls.length || rawCalls.every(call => emergency.has(call.toolName)) || item.approvalStatus === "denied" || item.status === "denied" || item.status === "blocked") { advance(); continue; }
+        if (item.approvalStatus === "denied" || item.status === "denied" || item.status === "blocked") {
+          observe(threadId, providerId, row, rawCalls[0], "prevented"); advance(); continue;
+        }
         const remote = lookup(threadId);
-        if (remote?.kind === "unavailable") { await hold(threadId, providerId, row.id, row.seq, remote.reason); return; }
-        if (remote?.kind === "open") { advance(); continue; }
+        if (remote?.kind === "unavailable") { observe(threadId, providerId, row, rawCalls[0], "inspection-unavailable"); await hold(threadId, providerId, row.id, row.seq, remote.reason); return; }
+        if (remote?.kind === "open") { observe(threadId, providerId, row, rawCalls[0], "inspection-unavailable"); advance(); continue; }
         if (remote?.kind === "ready") {
-          if (providerId === "pi" ? row.type !== "item/completed" : row.type !== "item/started") { advance(); continue; }
           const expected = identity(remote);
           const clusterObservation = providerId === "pi" ? observedActReceipt(item) : undefined;
-          let violation: Violation | undefined;
+          let violation: Violation | undefined, allowedAct = false, unavailable = false;
           for (const rawCall of rawCalls) {
             const before = lookup(threadId);
-            if (before?.kind !== "ready" || !sameBinding(identity(before), expected)) { await hold(threadId, providerId, row.id, row.seq, "The remote assignment changed before inspection; keep the event pending until the Keeper reconciles its current binding.", expected); return; }
+            if (before?.kind !== "ready" || !sameBinding(identity(before), expected)) { observe(threadId, providerId, row, rawCall, "inspection-unavailable"); await hold(threadId, providerId, row.id, row.seq, "The remote assignment changed before inspection; keep the event pending until the Keeper reconciles its current binding.", expected); return; }
             let reply: HostOutput<"prepareCall">;
             try { reply = hostContract.prepareCall.output.parse(await before.prepare({ ...rawCall, cwd: rawCall.cwd || before.cwd, observationId: observedPullRequestReceipt(item) ?? row.id, ...(clusterObservation === undefined ? {} : { clusterObservation }), ...(providerId !== "pi" || draftObservation === undefined ? {} : { draftObservation }) })); }
-            catch { await hold(threadId, providerId, row.id, row.seq, "Remote scope inspection is unavailable or returned an invalid reply; reconnect or update the host worker before retrying this event.", expected); return; }
+            catch { observe(threadId, providerId, row, rawCall, "inspection-unavailable"); await hold(threadId, providerId, row.id, row.seq, "Remote scope inspection is unavailable or returned an invalid reply; reconnect or update the host worker before retrying this event.", expected); return; }
             const after = lookup(threadId);
             if (disposed || store.records.get(threadId) !== record || after?.kind !== "ready" || !sameBinding(identity(after), expected) || reply.scopeRevision !== expected.revision || reply.scopeDigest !== expected.scopeDigest) {
+              observe(threadId, providerId, row, rawCall, "inspection-unavailable");
               await hold(threadId, providerId, row.id, row.seq, "The remote scope or assignment changed during inspection; keep this event pending and ask the Keeper to reconcile its current binding.", expected); return;
             }
             const source = rawCall.input.command ?? rawCall.input.cmd;
             const observed = !clusterObservation && !reply.decision.allow && reply.decision.ruleId === "merge-approval" && typeof source === "string" &&
               deps.onObservedMerge?.(threadId, source, row.id, row.createdAt, item.exitCode === 0) === true;
+            allowedAct ||= observed || reply.decision.allow && !!reply.decision.acts?.length;
+            unavailable ||= reply.decision.allow && reply.decision.inspectionUnavailable === true;
             if (reply.decision.allow || observed) for (const kind of reply.decision.allow ? (reply.decision.acts ?? []).map(act => act.kind) : ["merge" as const])
               store.recordAct({ threadId, providerId, at: Date.now(), eventId: row.id, seq: row.seq, kind, call: reply.call, mode: modeFor(threadId) === "watch" ? "watch" : "enforce" });
             if (!reply.decision.allow && !observed) { violation = await contain(threadId, providerId, row.id, row.seq, row.createdAt, reply.decision, reply.call, expected); break; }
           }
+          observe(threadId, providerId, row, rawCalls[0], violation ? violation.stopError ? "stop-failed" : "detected-after-dispatch" : allowedAct ? "act-allowed" : unavailable ? "inspection-unavailable" : "ordinary");
           if (violation) { advance(false); if (violation.mode === "enforce") return; }
           else advance();
           continue;
         }
         let acceptedGrant = false;
-        if (providerId === "pi" && row.type === "item/completed" && typeof command === "string") {
+        const guardMissing = providerId === "pi" && !store.isArmed(threadId);
+        if (providerId === "pi" && !guardMissing && typeof command === "string") {
           for (const receipt of resultTexts(item).flatMap(text => [...text.matchAll(/^Tavern shell grant receipt: ([A-Za-z0-9_-]{1,120}) ([a-f0-9-]{36})$/gm)]).reverse()) {
             const scope = checkShellGrantReceipt(record.file, receipt[1], receipt[2], command);
             if (!scope) continue;
             if (scope === "once") deps.onShellGrantUsed?.(threadId, receipt[1]);
+            observe(threadId, providerId, row, rawCalls[0], "act-allowed");
             advance();
             if (scope === "quest") forgetShellGrantCall(record.file, receipt[1], receipt[2]);
             acceptedGrant = true;
@@ -284,18 +298,10 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
           }
         }
         if (acceptedGrant) continue;
-        advance();
         const calls = callsFromItem(item, deps.cwdForThread?.(threadId) || record.scope?.expectedWorktree || record.scope?.checks?.worktree || "");
-        if (providerId === "pi") {
-          if (modeFor(threadId) === "enforce" && !store.isArmed(threadId)) {
-            await contain(threadId, providerId, row.id, row.seq, row.createdAt, blocked("tool call", "guard-not-loaded", "guard not loaded; restart Pi after repairing Tavern's guard"), calls[0]);
-            if (stopped.has(threadId)) break;
-            continue;
-          }
-          if (row.type !== "item/completed") continue;
-        } else if (row.type !== "item/started") continue;
-        let scope = record.error ? null : record.scope;
-        if (!scope) { await contain(threadId, providerId, row.id, row.seq, row.createdAt, blocked("tool call", "scope-invalid", "the scope file is invalid")); continue; }
+        let unavailable = guardMissing || !!record.error || !record.scope, allowedAct = false;
+        let scope = record.error ? scopeForClass("ranger") : record.scope ?? scopeForClass("ranger");
+        let violation: Violation | undefined;
         if (needsWorktree(scope) || scope.writes.mode === "worktree") {
           try {
             const cached = worktrees.get(threadId); let root = cached?.record === record ? cached.root : undefined;
@@ -310,43 +316,39 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
             }
             scope = bindWorktree(scope, root);
             if (!rawCalls[0]?.cwd) for (const call of calls) call.cwd = root;
-          } catch (error) {
-            if (needsWorktree(scope) && !record.binding) scope = readerFallback(scope);
-            else {
-              await contain(threadId, providerId, row.id, row.seq, row.createdAt, blocked("tool call", "worktree-unresolved", "the provisioned worktree could not be resolved: " + String(error)));
-              if (stopped.has(threadId)) break;
-              continue;
-            }
+          } catch {
+            unavailable = true;
+            scope = readerFallback(scope);
           }
         }
         for (const call of calls) {
-          const path = call.input.path ?? call.input.file_path;
-          if (isWriteCall(call) && !call.cwd && typeof path === "string" && path.trim() && !path.includes("\0") &&
-              !/^@?(?:\/|~(?:\/|$)|file:\/\/)/.test(path)) {
-            await contain(threadId, providerId, row.id, row.seq, row.createdAt, blocked(`write to ${path}`, "write-cwd-missing", "no working directory was recorded or bound for this relative target"), call);
-            break;
+          if (providerId === "pi") {
+            const input = call.input.command ?? call.input.cmd;
+            if (typeof input === "string") call.input = { ...call.input, command: guardedShellSource(input) };
           }
           let decision: Decision;
           try {
-            scope = bindChecks(scope);
-            const local = { ...call, cwd: call.cwd || process.cwd(), containment: providerId === "pi" && process.platform === "darwin" && scope.sandbox ? "sandbox" as const : undefined };
+            const local = { ...call, scopeFile: record.file, cwd: call.cwd || process.cwd(), containment: providerId === "pi" && !guardMissing && process.platform === "darwin" && scope.sandbox ? "sandbox" as const : undefined };
             const id = observedPullRequestReceipt(item) ?? row.id;
             const prepared = prepareCall(local, { scope });
-            const receipt = providerId === "pi" ? observedActReceipt(item) : undefined;
+            const receipt = providerId === "pi" && !guardMissing ? observedActReceipt(item) : undefined;
             const source = prepared.input.command ?? prepared.input.cmd;
             const clusterWriteApproved = matchesActReceipt(record.file, threadId, "cluster-write", source, receipt);
-            const mergeObserved = scope.role === "keeper" && (receipt ? matchesActReceipt(record.file, threadId, "merge", source, receipt) &&
+            const mergeObserved = !guardMissing && scope.role === "keeper" && (receipt ? matchesActReceipt(record.file, threadId, "merge", source, receipt) &&
               deps.onMergeUsed?.(threadId, receipt.split(" ")[0]!, row.id, item.exitCode === 0) === true :
               !!prepared.merge && typeof source === "string" && deps.onObservedMerge?.(threadId, source, row.id, row.createdAt, item.exitCode === 0) === true);
-            decision = evaluate(scope, { ...prepared, mergeObserved, draftApproved: matchedDraftReceipt(record.file, call, draftObservation), clusterWriteApproved, ...(clusterWriteApproved ? { clusterObservation: receipt } : {}), shellGrants: modeFor(threadId) === "watch" && providerId === "pi" && !record.binding ? readShellGrants(record.file, scope) : undefined, prGrantAvailable: grant => pullRequestGrantAvailable(record.file, grant, id) },
-              providerId === "pi" && modeFor(threadId) === "enforce" && scope.role === "wanderer" && scope.preset === "open" && !hasShellGrantGuard(record.file, scope));
+            decision = evaluate(scope, { ...prepared, mergeObserved, draftApproved: !guardMissing && matchedDraftReceipt(record.file, call, draftObservation), clusterWriteApproved, ...(clusterWriteApproved ? { clusterObservation: receipt } : {}), shellGrants: modeFor(threadId) === "watch" && providerId === "pi" && !record.binding ? readShellGrants(record.file, scope) : undefined, prGrantAvailable: grant => !guardMissing && pullRequestGrantAvailable(record.file, grant, id) });
             if (decision.allow && decision.prGrant && !claimPullRequestGrant(record.file, decision.prGrant, id) && !pullRequestGrantAvailable(record.file, decision.prGrant, id))
               decision = blocked(call.toolName, "pr-sends-as-you", "the one-use pull request exception was already used");
           }
-          catch (error) { decision = blocked(call.toolName, "path-unresolved", "the call paths could not be resolved: " + String(error)); }
-          if (!decision.allow) { await contain(threadId, providerId, row.id, row.seq, row.createdAt, decision, call); break; }
+          catch { unavailable = true; decision = evaluate(scope, { ...call, scopeFile: record.file }); }
+          if (!decision.allow) { violation = await contain(threadId, providerId, row.id, row.seq, row.createdAt, decision, { ...call, input: {} }); break; }
+          allowedAct ||= !!decision.acts?.length;
+          unavailable ||= decision.inspectionUnavailable === true;
           for (const act of decision.acts ?? []) store.recordAct({ threadId, providerId, at: Date.now(), eventId: row.id, seq: row.seq, kind: act.kind, call, mode: modeFor(threadId) === "watch" ? "watch" : "enforce" });
         }
+        observe(threadId, providerId, row, rawCalls[0], violation ? violation.stopError ? "stop-failed" : "detected-after-dispatch" : unavailable ? "inspection-unavailable" : allowedAct ? "act-allowed" : "ordinary");
+        advance(!violation);
         if (stopped.has(threadId)) break;
       }
       if (stopped.has(threadId) || rows.length < 100 || cursor >= sequence) return;

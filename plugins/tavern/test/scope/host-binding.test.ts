@@ -124,13 +124,14 @@ it("retains host classification across corrupt templates and a missing lookup af
   writeFileSync(join(f.root, "scopes/member.json"), "corrupt"); const restored = f.start(false);
   expect(restored.status().threads[0].binding?.kind).toBe("host"); expect(await f.env()).toEqual([]); expect(f.local).not.toHaveBeenCalled(); expect(() => restored.hostTemplate("member")).toThrow();
 });
-it("rejects controller template files in the pi guard before path/Git probing or arming", async () => {
+it("does not arm a controller template or use it to approve acts", async () => {
   const f = fixture(), scopes = f.start(); await scopes.writeScope("member", scopes.resolve("ranger", {}).scope, { binding });
   vi.stubEnv("TAVERN_SCOPE_FILE", join(f.root, "scopes/member.json")); vi.stubEnv("BB_THREAD_ID", "member");
   vi.spyOn(paths, "realPath").mockImplementation(() => { throw new Error("Guest paths must not be probed"); });
   const handlers = new Map<string, Function>(); extension({ on: (name, fn) => handlers.set(name, fn), getActiveTools: () => ["read", "tavern_ready"], setActiveTools: vi.fn() });
   handlers.get("session_start")!({}, { cwd: f.root });
-  expect(handlers.get("tool_call")!({ toolName: "read", input: {} }, { cwd: f.root })).toMatchObject({ block: true, reason: expect.stringContaining("host-bound") });
+  expect(handlers.get("tool_call")!({ toolName: "read", input: {} }, { cwd: f.root })).toBeUndefined();
+  expect(handlers.get("tool_call")!({ toolName: "bash", input: { command: "git push origin main" } }, { cwd: f.root })).toMatchObject({ block: true });
   expect(handlers.get("tool_call")!({ toolName: "tavern_ready", input: {} }, { cwd: f.root })).toBeUndefined(); expect(new ScopeStore(f.root).isArmed("member")).toBe(false);
 });
 it("holds host-bound tool observations while the remote watcher callback is still unactivated", async () => {

@@ -5,7 +5,7 @@ import { formatExecutionPosture } from "../../src/scope/posture";
 
 const posture: ExecutionPosture = { aggregate: "local-pre-exec", guard: "armed", toolGate: "pi-observed", filesystem: "none", network: "not-enforced", checker: "not-a-checker", watcher: "active", ruleConsentId: "rule-a", warnings: [] };
 it("labels an observed local pi gate without claiming filesystem containment", () => {
-  expect(formatExecutionPosture(posture)).toBe("Local: pre-exec guard");
+  expect(formatExecutionPosture(posture)).toBe("Local: pre-exec act guard");
 });
 it("does not upgrade a prepared or failed guard into session proof", () => {
   expect(formatExecutionPosture({ ...posture, guard: "prepared", toolGate: "not-established" })).toBe("Local: detection only; guard prepared, session not observed");

@@ -20,15 +20,20 @@ const call = (command: string, cwd = "/repo"): ScopeCall => ({ kind: "bash", too
 const roots: string[] = [];
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
-interface ReplayRow { i: number; threadId: string; scope: { preset: Parameters<typeof scopeForClass>[2] }; call: { toolName: string; cwd?: string; input?: Record<string, unknown> } }
+interface ReplayRow { i: number; threadId: string; expectedRule?: string | null; scope: { role?: string; preset: Parameters<typeof scopeForClass>[2] }; call: { toolName: string; cwd?: string; input?: Record<string, unknown> } }
 function replay(rows: ReplayRow[]) {
+  const results = new Map<string, ReturnType<typeof evaluate>>();
   return rows.flatMap(row => {
-    const s = bindPaths(scopeForClass("replay", undefined, row.scope.preset), { home: "/home/fixture", tmp: ["/tmp", "/private/tmp", "/private/var/folders/fixture/T"], threadStorage: `/home/fixture/.bb/thread-storage/${row.threadId}`, scopesDir: "/home/fixture/.bb/plugins/tavern/scopes", worktree: row.i === 0 ? undefined : "/worktree" });
+    const key = JSON.stringify([row.scope, row.threadId, row.call, row.i === 0]);
+    const previous = results.get(key);
+    if (previous) return previous.allow ? [] : [{ i: row.i, rule: previous.ruleId, command: row.call.input?.command ?? row.call.input?.cmd }];
+    const s = bindPaths(scopeForClass(row.scope.role ?? "replay", undefined, row.scope.preset), { home: "/home/fixture", tmp: ["/tmp", "/private/tmp", "/private/var/folders/fixture/T"], threadStorage: `/home/fixture/.bb/thread-storage/${row.threadId}`, scopesDir: "/home/fixture/.bb/plugins/tavern/scopes", worktree: row.i === 0 ? undefined : "/worktree" });
     const input = Object.fromEntries(Object.entries(row.call.input ?? {}).map(([key, value]) => [key, typeof value === "string" ? value.replaceAll("$HOME", "/home/fixture") : value]));
     const command = input.command ?? input.cmd;
     const c: ScopeCall = { kind: typeof command === "string" ? "bash" : "tool", toolName: row.call.toolName, input, cwd: (row.call.cwd ?? "/home/fixture").replaceAll("$HOME", "/home/fixture"), containment: "sandbox" };
     if (typeof command === "string" && /\bgit fetch\b/.test(command)) c.fetchWriteRoots = [c.cwd + "/.git"];
     const decision = evaluate(row.i === 0 ? readerFallback(s) : s, c);
+    results.set(key, decision);
     return decision.allow ? [] : [{ i: row.i, rule: decision.ruleId, command }];
   });
 }
@@ -38,11 +43,15 @@ it("replays 30 hand-written public synthetic shapes with only the main push refu
   const rows = shapes.map((shape: { preset: ReplayRow["scope"]["preset"]; command?: string; tool?: string }, i: number) => ({ i, threadId: "synthetic", scope: { preset: shape.preset }, call: { toolName: shape.tool ?? "bash", cwd: "/workspace", input: shape.command ? { command: shape.command } : {} } }));
   expect(replay(rows)).toEqual([{ i: 1, rule: "git-push-main", command: expect.any(String) }]);
 });
-it.skipIf(!process.env.TAVERN_SCOPE_REPLAY)("opt-in full replay leaves exactly one of 121 flags", () => {
-  const rows = readFileSync(process.env.TAVERN_SCOPE_REPLAY!, "utf8").trim().split("\n").map(line => JSON.parse(line));
-  expect(rows).toHaveLength(121);
-  expect(replay(rows)).toEqual([{ i: 1, rule: "git-push-main", command: expect.any(String) }]);
-  console.info("Opt-in replay: 120 allowed, 1 flag (row 1, push to main).");
+it.skipIf(!process.env.TAVERN_SCOPE_REPLAY)("opt-in replay keeps only the expected act-list refusals", () => {
+  const rows: ReplayRow[] = readFileSync(process.env.TAVERN_SCOPE_REPLAY!, "utf8").trim().split("\n").map(line => JSON.parse(line));
+  const expected = rows.every(row => Object.hasOwn(row, "expectedRule"))
+    ? rows.flatMap(row => row.expectedRule ? [{ i: row.i, rule: row.expectedRule }] : [])
+    : [{ i: 1, rule: "git-push-main" }];
+  expect(rows.length).toBeGreaterThan(0);
+  const refusals = replay(rows);
+  expect(refusals.map(({ i, rule }) => ({ i, rule }))).toEqual(expected);
+  console.info(`Opt-in replay: ${rows.length - refusals.length} allowed, ${refusals.length} refused.`);
 }, 120_000);
 it("allows a Ranger Python heredoc while its profile denies writes outside storage and temp", () => {
   const s = scope();
@@ -70,20 +79,20 @@ it("extends only a read-and-fetch call with the external repository git dir", ()
     const input = call(command, repo);
     const mixed = prepareCall(input, { scope: s });
     expect(mixed.fetchWriteRoots, command).toEqual([]);
-    expect(evaluate(s, mixed), command).toMatchObject({ allow: false, ruleId: "shell-write" });
+    expect(evaluate(s, mixed), command).toMatchObject({ allow: true });
     const uncontained = prepareCall({ ...input, containment: undefined }, { scope: s });
-    expect(evaluate(s, uncontained), command).toMatchObject({ allow: false, ruleId: "shell-write" });
+    expect(evaluate(s, uncontained), command).toMatchObject({ allow: true });
   }
 });
 it("allows unparsable research but retains the raw deploy fallback", () => {
   expect(evaluate(scope(), call("echo 'unfinished")).allow).toBe(true);
   expect(evaluate(scope(), call("terraform apply 'unfinished"))).toMatchObject({ allow: false, ruleId: "cluster-write" });
 });
-it("lets an unbound Smith use reader storage without stopping it or granting repository writes", () => {
+it("lets an unbound Smith do local work without assuming publish authority", () => {
   const s = scope("smith", null);
   expect(evaluate(s, call("cat /repo/a")).allow).toBe(true);
   expect(evaluate(s, call("echo x > $BB_THREAD_STORAGE/x")).allow).toBe(true);
-  expect(evaluate(s, call("echo x > /repo/x")).allow).toBe(false);
+  expect(evaluate(s, call("echo x > /repo/x")).allow).toBe(true);
   expect(evaluate(s, call("git push origin feature")).allow).toBe(false);
 });
 const tools = ["mcp__tool_gateway__tool_gateway_enable_backend", "mcp__tool_gateway__tool_gateway_disable_backend", "mcp__tool_gateway__tool_gateway_list_backends", "mcp__tool_gateway__slack_who_am_i", "incident_get_postmortem", "mcp__x__check_write_access"];
@@ -94,10 +103,10 @@ it("makes all requested tools available in every preset", () => {
     for (const toolName of tools) expect(evaluate(s, { kind: "tool", toolName, input: {}, cwd: "/repo" }).allow).toBe(true);
   }
 });
-it("keeps both direct tool and shell write boundaries and Ranger pushes guarded", () => {
+it("passes ordinary tool and shell writes but keeps Ranger pushes guarded", () => {
   for (const role of ["ranger", "smith"]) {
-    expect(evaluate(scope(role), call("echo x > /outside/x")).allow).toBe(false);
-    expect(evaluate(scope(role), { kind: "write", toolName: "write", cwd: "/repo", input: { path: "/outside/x" } }).allow).toBe(false);
+    expect(evaluate(scope(role), call("echo x > /outside/x")).allow).toBe(true);
+    expect(evaluate(scope(role), { kind: "write", toolName: "write", cwd: "/repo", input: { path: "/outside/x" } }).allow).toBe(true);
   }
   expect(evaluate(scope(), call("git push origin feature")).allow).toBe(false);
   for (const role of ["ranger", "warden", "smith"]) expect(evaluate(scope(role), { ...call("python3 -c 'print(1)'"), containment: undefined }).allow).toBe(true);
@@ -117,6 +126,6 @@ it("applies the same availability and boundary checks to calls emitted from code
     const emit = (toolName: string, input = {}) => handlers.get("tool_call")!({ toolName, input }, { cwd: worktree });
     expect(emit("codemode")).toBeUndefined();
     for (const toolName of tools) expect(emit(toolName)).toBeUndefined();
-    expect(emit("write", { path: join(root, ".ssh/config") })).toMatchObject({ block: true });
+    expect(emit("write", { path: join(store.directory, "t1.json") })).toMatchObject({ block: true });
   }
 });

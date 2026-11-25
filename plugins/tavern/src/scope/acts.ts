@@ -3,7 +3,7 @@ import { selectedAwayGuards } from "./away-policy";
 import type { Scope, ShellRule } from "./schema";
 import { writeAllowed } from "./paths";
 import type { ScopeCall } from "./engine";
-import { agentProgram, bbControlPositionals, bbPositionals } from "./legacy";
+import { bbControlPositionals, bbPositionals } from "./legacy";
 import { draftEditKey, githubApiRead } from "./github";
 import { pushSpec } from "./remote";
 import type { ShellCommand } from "./shell";
@@ -19,10 +19,12 @@ const cliControls = USER_ONLY_CLI.map(command => {
 });
 const controlEnd = String.raw`(?=$|[\s;|&])`;
 const cliFallback = cliControls.map(({ words, option }) => words.join(bbOptions) + controlEnd + (option ? String.raw`[^;\n]*\s${option}(?=$|[\s=;|&])` : "")).join("|");
-const tavernControlFallback = new RegExp(String.raw`\bbb${bbOptions}(?:(?:plugin${bbOptions}run${bbOptions})?tavern${bbOptions}(?:${cliFallback})|plugin${bbOptions}rpc${bbOptions}call${bbOptions}tavern${bbOptions}(?:${[...userMethods].join("|")})${controlEnd})`);
+const tavernControlFallback = new RegExp(String.raw`\bbb${bbOptions}(?:(?:plugin${bbOptions}run${bbOptions})?tavern${bbOptions}(?:${cliFallback})|plugin${bbOptions}rpc${bbOptions}call${bbOptions}tavern${bbOptions}(?:${[...userMethods].join("|")})${controlEnd}|plugin${bbOptions}config${bbOptions}tavern${bbOptions}(?:set|unset)${controlEnd})`);
 export function userControl(command: ShellCommand): boolean {
   const [program, group, verb, action, plugin, method] = bbControlPositionals(command.argv);
   if (program !== "bb") return false;
+  if (group === "plugin" && verb === "config")
+    return action === "tavern" && (plugin === "set" || plugin === "unset");
   if (group === "plugin" && verb === "rpc" && action === "call")
     return plugin === "tavern" && (userMethods.has(method) || /[$`]/.test(method ?? ""));
   if (group !== "tavern") return false;
@@ -41,14 +43,30 @@ export const kubectlRead = (a: string[]) => ["get", "describe", "logs", "events"
   || a[1] === "plugin" && a[2] === "list"
   || a[1] === "rollout" && ["status", "history"].includes(a[2]);
 const kubectlWrites = "apply|create|replace|patch|edit|delete|scale|exec|cp|drain|cordon|uncordon|annotate|label|set|taint|restart|undo|port-forward|proxy|diff|rollout|autoscale|debug|run|certificate";
+export const terraformProgram = /^(?:terraform|tofu|terragrunt)$/;
 const terraformWrites = "apply|destroy|import|refresh|taint|untaint|force-unlock";
+export const terraformArgs = ([program, ...args]: string[]) => program === "terragrunt" && ["run-all", "run"].includes(args[0]) ? args.slice(1).filter(arg => !["--all", "--"].includes(arg)) : args;
+export function terraformStateProblem(command: ShellCommand): string | undefined {
+  if (!terraformProgram.test(command.argv[0])) return;
+  const [verb, ...args] = terraformArgs(command.argv);
+  if (args.includes("--help") || args.includes("-help")) return;
+  if (verb === "force-unlock") return "Do not force-unlock shared state. Report the lock ID and holder instead.";
+  if (verb !== "plan") return;
+  const flags = args.filter(arg => /^--?lock(?:=|$)/.test(arg));
+  if (flags.length !== 1 || flags[0] !== "-lock=false" || !/^\s*(?:env\s+)?TF_CLI_ARGS_plan=(?:-lock=false|'-lock=false'|"-lock=false")\s+(?:[^\s]*\/)?(?:terraform|tofu|terragrunt)\s/.test(command.source ?? ""))
+    return "Shared-state plans must set TF_CLI_ARGS_plan=-lock=false and pass -lock=false.";
+}
+export const terraformStateFallback = /\b(?:terraform|tofu|terragrunt)\s+(?:-chdir=\S+\s+)?(?:(?:run-all|run)\s+(?:--all\s+|--\s+)*)?(?:plan|force-unlock)\b/;
 const helmWrites = "install|upgrade|uninstall|rollback|test";
 const terraformStateWrite = "mv|rm|push|replace-provider";
 const terraformWorkspaceWrite = "new|delete";
 const hasVerb = (pattern: string, verb: string) => pattern.split("|").includes(verb);
 const dynamicClusterVerbs = new Set(["delete", "exec", "cp", "scale", "rollout", "drain", "cordon", "upgrade", "uninstall", "rollback", "destroy", "port-forward"]);
 function clusterWrite(c: ShellCommand): boolean {
-  const [program, verb, sub] = c.argv;
+  const [program] = c.argv;
+  const terraform = terraformProgram.test(program);
+  const args = terraform ? terraformArgs(c.argv) : c.argv.slice(1);
+  const [verb, sub] = args;
   const dynamic = /[$`]/.test(program ?? "");
   const index = dynamic ? c.argv.findIndex((arg, i) => i > 0 && !arg.startsWith("-")) : -1;
   const dynamicVerb = c.argv[index];
@@ -58,7 +76,7 @@ function clusterWrite(c: ShellCommand): boolean {
   return (program === "kubectl" || program === "k") && !!verb && !kubectlRead(c.argv)
     || index > 0 && (dynamicClusterVerbs.has(dynamicVerb) || clusterApply)
     || dynamic && (verb === "state" && hasVerb(terraformStateWrite, sub) || verb === "workspace" && hasVerb(terraformWorkspaceWrite, sub))
-    || program === "terraform" && (hasVerb(terraformWrites, verb) || verb === "state" && hasVerb(terraformStateWrite, sub) || verb === "workspace" && hasVerb(terraformWorkspaceWrite, sub))
+    || terraform && (hasVerb(terraformWrites, verb) || verb === "state" && hasVerb(terraformStateWrite, sub) || verb === "workspace" && hasVerb(terraformWorkspaceWrite, sub) || verb === "init" && args.some(arg => /^-(?:migrate-state|force-copy)(?:=|$)/.test(arg)))
     || program === "helm" && hasVerb(helmWrites, verb)
     || program === "kapp" && ["deploy", "delete"].includes(verb);
 }
@@ -101,17 +119,6 @@ function localHttp(a: string[]): boolean {
 const dangerousPush = (args: string[]) => args.some(arg => /^--(?:force|mirror|delete|all|tags|follow-tags|prune)(?:=|$)/.test(arg) || /^--force-if-includes(?:=|$)/.test(arg) && !args.some(flag => /^--force-with-lease(?:=|$)/.test(flag)) || /^-[^-]*[fd]/.test(arg) || arg.startsWith("+") || arg.startsWith(":"));
 const cloudReads = ["list", "describe", "get-value", "read", "cat", "ls", "info"];
 const cloudWrites = ["cp", "mv", "rm", "rsync", "create", "delete", "update", "set", "reset", "deploy", "apply", "destroy", "import", "install", "uninstall", "remove", "add"];
-function machineRead(command: ShellCommand): boolean {
-  const [program, sub, action, verb] = bbPositionals(command.argv);
-  return program === "bb" && sub === "machine" && (!action || ["providers", "list", "show", "status", "logs", "help"].includes(action) || action === "env" && (!verb || ["list", "help"].includes(verb)));
-}
-export function readerNeedsDecision(command: ShellCommand): boolean {
-  const [program, sub, action] = command.argv;
-  if (["bb", "cortex"].includes(program)) return !agentProgram(command.argv) && !machineRead(command);
-  if (program !== "gcloud" || sub === "config" && action === "set") return false;
-  const verb = command.argv.slice(2).find(arg => cloudReads.includes(arg) || cloudWrites.includes(arg));
-  return !verb || !cloudReads.includes(verb);
-}
 const providerMachineGroup = String.raw`[a-z0-9][a-z0-9-]*-machines`;
 const providerMachineCommand = new RegExp(`^${providerMachineGroup}$`);
 const providerConfigure = "rotate|park|remove";
@@ -123,6 +130,7 @@ function controlAct(command: ShellCommand): "configure" | "delete" | undefined {
     if (["agents", "reset", "restore"].includes(sub)) return "configure";
   }
   if (program === "bb") {
+    if (["thread", "project", "environment", "machine"].includes(sub) && ["delete", "archive", "remove"].includes(action) || providerMachineCommand.test(sub) && action === "remove" || ["automation", "automations"].includes(sub) && action === "delete") return "delete";
     if (sub === "plugin" && ["install", "uninstall", "enable", "disable", "dev", "settings"].includes(action) ||
       sub === "settings" && action === "set" ||
       sub === "lan" && ["on", "off", "pair", "revoke"].includes(action) ||
@@ -131,16 +139,15 @@ function controlAct(command: ShellCommand): "configure" | "delete" | undefined {
       providerMachineCommand.test(sub) && hasVerb(providerConfigure, action) ||
       sub === "machine" && (action === "rotate" || action === "env" && ["set", "unset"].includes(verb)) ||
       sub === "secrets" && action !== "request" || userControl(command) && argv.includes("settings")) return "configure";
-    if (["thread", "project", "environment", "machine"].includes(sub) && ["delete", "archive", "remove"].includes(action)) return "delete";
   }
   if (program === "gcloud" && !cloudWrite(argv)) {
     const cloudVerb = argv.slice(2).find(arg => cloudReads.includes(arg) || cloudWrites.includes(arg));
     if (cloudVerb === "delete" || cloudVerb === "remove") return "delete";
   }
 }
-const deployFallback = /\bgcloud\b[^;\n]*\b(?:run|app|functions)\s+deploy\b|\b(?:dev|dt|quick)\s+deploy\b/;
+const deployFallback = /\bgcloud\b[^;\n]*\b(?:run|app|functions)\s+deploy\b|\b(?:dev|dt|quick|fly|vercel|netlify|wrangler)\s+deploy\b|\bwrangler\s+publish\b/;
 const kubectlWriteFallback = new RegExp(String.raw`\bkubectl\b[^;\n]*\b(?:${kubectlWrites})\b|(?:^|[;&|(\n])[^\S\n]*k[^\S\n]+[^;&|\n]*\b(?:${kubectlWrites})\b`);
-const otherClusterWriteFallback = new RegExp(String.raw`\b(?:terraform\s+(?:-chdir=\S+\s+)?(?:${terraformWrites}|state\s+(?:${terraformStateWrite})|workspace\s+(?:${terraformWorkspaceWrite}))|helm\b[^;\n]*\b(?:${helmWrites})|kapp\b[^;\n]*\b(?:deploy|delete))\b`);
+const otherClusterWriteFallback = new RegExp(String.raw`\b(?:(?:terraform|tofu|terragrunt)\s+(?:-chdir=\S+\s+)?(?:(?:run-all|run)\s+(?:--all\s+|--\s+)*)?(?:${terraformWrites}|state\s+(?:${terraformStateWrite})|workspace\s+(?:${terraformWorkspaceWrite})|init\s+[^;\n]*-(?:migrate-state|force-copy))|helm\b[^;\n]*\b(?:${helmWrites})|kapp\b[^;\n]*\b(?:deploy|delete))\b`);
 const httpWriteFallback = /\b(?:curl|wget)\b[^;\n]*(?:--(?:data|json|form|upload|post|body|method)|-[dFT]|-X\s*(?:POST|PUT|PATCH|DELETE))/;
 const sendFallback = /\b(?:slack|slack-cli|mail|mailx|sendmail|mutt)\b/;
 export const ACT_CATALOGUE: readonly ActDefinition[] = [
@@ -148,12 +155,12 @@ export const ACT_CATALOGUE: readonly ActDefinition[] = [
   ...(["ready", "close", "review"] as const).map(kind => ({ kind, ruleId: "pr-" + kind, why: `Pull request ${kind} needs a grant`, commands: [`gh pr ${kind}`, `dt pr ${kind}`, ...(kind === "review" ? ["dt pr approve"] : [])], matches: (c: ShellCommand) => pr(c, kind === "review" ? ["review", "approve"] : [kind]), fallback: new RegExp(`\\b(?:gh|dt)\\b[^;\\n]*\\bpr\\s+(?:${kind}${kind === "review" ? "|approve" : ""})\\b`) })),
   { kind: "publish", ruleId: "publish", why: "Publishing outside the member's own work needs a grant", commands: ["git push", "gh writes", "dt pr create|edit|comment", "gcloud writes", "package publish", "gs submit"], matches: c => {
     const [p, s, a] = c.argv;
-    return p === "git" && s === "push" || p === "gh" && !githubRead(c.argv) && !(s === "auth" && a === "token") && !pr(c, ["merge", "ready", "close", "review", "approve"]) || pr(c, ["create", "edit", "comment"]) || cloudWrite(c.argv) || ["npm", "yarn", "pnpm", "bun", "cargo"].includes(p) && c.argv.slice(1).includes("publish") || p === "gem" && s === "push" || p === "twine" && s === "upload" || ["gs", "git-spice"].includes(p) && (["ss", "bs", "rs", "us", "uss", "bss", "dss"].includes(s) || ["submit", "sync", "publish", "land"].includes(a));
+    return p === "git" && s === "push" || p === "gh" && !githubRead(c.argv) && !["auth", "config", "alias", "extension", "completion"].includes(s) && !pr(c, ["merge", "ready", "close", "review", "approve"]) || pr(c, ["create", "edit", "comment"]) || cloudWrite(c.argv) || ["npm", "yarn", "pnpm", "bun", "cargo"].includes(p) && c.argv.slice(1).includes("publish") || p === "gem" && s === "push" || p === "twine" && s === "upload" || ["gs", "git-spice"].includes(p) && (["ss", "bs", "rs", "us", "uss", "bss", "dss"].includes(s) || ["submit", "sync", "publish", "land"].includes(a));
   }, fallback: /\bgit\s+push\b|\b(?:gh|dt)\b[^;\n]*\b(?:create|edit|comment|publish|upload|dispatch)\b|\b(?:npm|yarn|pnpm|bun|cargo)\s+publish\b|\b(?:gem\s+push|twine\s+upload)\b|\bgcloud\s+storage\s+(?:cp|mv|rm|rsync)\b/ },
   { kind: "cluster-write", ruleId: "cluster-write", why: "Cluster writes always need the user's answer for the exact command", commands: ["kubectl writes", "terraform writes", "helm writes", "kapp deploy|delete"], matches: clusterWrite, fallback: new RegExp(`${kubectlWriteFallback.source}|${otherClusterWriteFallback.source}`) },
-  { kind: "deploy", ruleId: "deploy", why: "Deployments need a grant", commands: ["dev deploy", "dt deploy", "quick deploy", "gcloud run|app|functions deploy"], matches: c => { const [p, s] = c.argv; return ["dev", "dt"].includes(p) && s === "deploy" || p === "quick" && c.argv.includes("deploy") || p === "gcloud" && ["run", "app", "functions"].includes(s) && c.argv[2] === "deploy"; }, fallback: deployFallback },
+  { kind: "deploy", ruleId: "deploy", why: "Deployments need a grant", commands: ["dev deploy", "dt deploy", "quick deploy", "gcloud run|app|functions deploy"], matches: c => { const [p, s] = c.argv; return ["dev", "dt", "fly", "vercel", "netlify", "wrangler"].includes(p) && s === "deploy" || p === "wrangler" && s === "publish" || p === "quick" && c.argv.includes("deploy") || p === "gcloud" && ["run", "app", "functions"].includes(s) && c.argv[2] === "deploy"; }, fallback: deployFallback },
   { kind: "send", ruleId: "send", why: "Sending as the user needs a grant", commands: ["curl writes", "wget writes", "Slack and mail sends"], matches: c => httpWrite(c.argv) && !localHttp(c.argv) || ["slack", "slack-cli", "mail", "mailx", "sendmail", "mutt"].includes(c.argv[0]) || ["hermes", "gog"].includes(c.argv[0]) && c.argv.some(a => ["send", "post", "publish", "create", "update", "delete"].includes(a)), fallback: new RegExp(`${httpWriteFallback.source}|${sendFallback.source}`) },
-  { kind: "delete", ruleId: "delete", why: "Deleting the user's things needs a grant", commands: ["bb thread|project|environment delete", "bb machine remove", "cortex rm", "gcloud resource delete"], matches: c => controlAct(c) === "delete", fallback: /\bbb\b[^;\n]*\b(?:thread|project|environment|machine)\s+(?:delete|archive|remove)\b|\bcortex\s+(?:rm|delete|remove)\b|\bgcloud\b[^;\n]*\b(?:delete|remove)\b/ },
+  { kind: "delete", ruleId: "delete", why: "Deleting the user's things needs a grant", commands: ["bb thread|project|environment delete", "bb machine remove", "cortex rm", "gcloud resource delete"], matches: c => controlAct(c) === "delete", fallback: /\bbb\b[^;\n]*\b(?:thread|project|environment|machine|[a-z0-9][a-z0-9-]*-machines|automations?)\s+(?:delete|archive|remove)\b|\bcortex\s+(?:rm|delete|remove)\b|\bgcloud\b[^;\n]*\b(?:delete|remove)\b/ },
   { kind: "configure", ruleId: "configure", why: "Changing the user's tools or settings needs a grant", commands: ["bb plugin install|uninstall|enable|disable|dev|settings", "bb settings set", "bb lan on|off|pair|revoke", "bb loom approve|start|land|live|archive|pause|resume", "bb automations create|update|delete|enable|disable", `bb *-machines ${providerConfigure}`, "bb machine rotate|env set|env unset", "bb secrets except request", "cortex agents|reset|restore", "Tavern settings writes"], matches: c => controlAct(c) === "configure", fallback: new RegExp(String.raw`\bbb\b[^;\n]*\b(?:plugin\s+(?:install|uninstall|enable|disable|dev|settings)|loom\s+(?:approve|start|land|live|archive|pause|resume)|automations?\s+(?:create|update|delete|enable|disable)|lan\s+(?:on|off|pair|revoke)|settings\s+set|${providerMachineGroup}\s+(?:${providerConfigure})|machine\s+(?:rotate|env\s+(?:set|unset))|secrets(?!\s+request\b))\b|\bcortex\s+(?:agents|reset|restore)\b`) },
   { kind: "credential", ruleId: "credential", why: "Revealing a credential needs the user's grant", commands: ["gh auth token", "security find-password -w|-g", "vault read|kv get", "gcloud secrets versions access"], matches: c => { const [p, s, a] = c.argv; return p === "gh" && s === "auth" && a === "token" || p === "security" && /^find-.*password$/.test(s ?? "") && c.argv.some(arg => /^-[^-]*[wg]/.test(arg)) || p === "gcloud" && s === "auth" && /^print-(?:access|identity)-token$/.test(a ?? "") || p === "gcloud" && s === "secrets" && a === "versions" && c.argv[3] === "access" || p === "vault" && (c.argv.includes("read") || c.argv.includes("kv") && c.argv.includes("get")); }, fallback: /\bgcloud\b[^;\n]*\bsecrets\s+versions\s+access\b|\bgh\s+auth\s+token\b|\bsecurity\s+find-[^;\n]*-[wg]\b|\bvault\s+(?:read|kv\s+get)\b/ },
   { kind: "tavern-control", ruleId: "tavern-control", why: "Tavern's controls are the user's; ask the user", commands: ["bb tavern user controls", "bb plugin rpc call tavern user controls"], matches: userControl, fallback: tavernControlFallback },
@@ -176,12 +183,15 @@ export const actsForCommand = (command: ShellCommand): Act[] => {
 export const fallbackActs = (source: string): Act[] => ACT_CATALOGUE.filter(act => act.fallback.test(source)).map(({ kind, ruleId, why }) => ({ kind, ruleId, why }));
 const prDraftAct: Act = { kind: "send", ruleId: "pr-sends-as-you", why: "This pull request is not known to belong to the quest; use tavern_pull_request to record the decision or draft it for the user." };
 const ownPrAct: Act = { kind: "publish", ruleId: "pr-owned-write", why: "Managing the quest’s own pull request" };
-const prReadyAct: Act = { kind: "ready", ruleId: "pr-keeper-ready", why: "Only the Keeper marks a verified pull request ready or requests reviewers, through tavern_pull_request." };
-const prCloseAct: Act = { kind: "close", ruleId: "pr-keeper-close", why: "Use tavern_pull_request to close a quest-owned pull request or draft the request for the user." };
+const prReadyAct: Act = { kind: "publish", ruleId: "pr-keeper-ready", why: "Only the Keeper marks a verified pull request ready or requests reviewers, through tavern_pull_request." };
+const prReviewerAct: Act = { ...prReadyAct, kind: "send" };
+const prCloseAct: Act = { kind: "delete", ruleId: "pr-keeper-close", why: "Use tavern_pull_request to close a quest-owned pull request or draft the request for the user." };
+export const typedPullRequestAct = (act: Act) => act.ruleId === prReadyAct.ruleId || act.ruleId === prCloseAct.ruleId;
 export function pullRequestRoute(command: ShellCommand, owned: boolean): Act | undefined {
   if (command.argv.includes("--help") || command.argv.includes("--version")) return;
-  if (pr(command, ["ready"]) || pr(command, ["create", "edit"]) &&
-    command.argv.slice(3).some(arg => /^(?:--(?:add-)?reviewer(?:=|$)|-r)/.test(arg))) return prReadyAct;
+  if (pr(command, ["ready"])) return prReadyAct;
+  if (pr(command, ["create", "edit"]) &&
+    command.argv.slice(3).some(arg => /^(?:--(?:add-)?reviewer(?:=|$)|-r)/.test(arg))) return prReviewerAct;
   const write = pullRequestWrite(command);
   if (!write) return;
   if (write.operation === "close" && owned) return prCloseAct;
@@ -189,7 +199,8 @@ export function pullRequestRoute(command: ShellCommand, owned: boolean): Act | u
   return prDraftAct;
 }
 export function fallbackPullRequestRoute(source: string): Act | undefined {
-  if (/\b(?:gh|dt)\b[^;\n]*\bpr\s+(?:ready\b|(?:create|edit)\b[^;\n]*\s(?:--(?:add-)?reviewer\b|-r\b))/.test(source)) return prReadyAct;
+  if (/\b(?:gh|dt)\b[^;\n]*\bpr\s+ready\b/.test(source)) return prReadyAct;
+  if (/\b(?:gh|dt)\b[^;\n]*\bpr\s+(?:create|edit)\b[^;\n]*\s(?:--(?:add-)?reviewer\b|-r\b)/.test(source)) return prReviewerAct;
   if (/\b(?:gh|dt)\b[^;\n]*\bpr\s+(?:close|comment|edit|review|approve)\b/.test(source)) return prDraftAct;
 }
 export function baselineHolds(scope: Scope, call: ScopeCall, command: ShellCommand, act: Act): boolean {
@@ -198,7 +209,7 @@ export function baselineHolds(scope: Scope, call: ScopeCall, command: ShellComma
   if (scope.role === "wanderer" && scope.preset === "open" && (act.ruleId === "pr-owned-write" || act.ruleId === "pr-sends-as-you" && scope.pullRequestPolicy?.alwaysAsk === false)) return true;
   if (scope.role !== "smith" || scope.preset !== "worktree" || act.kind !== "publish") return false;
   const [p, s, a] = command.argv;
-  if (!writeAllowed(scope, command.cwd, command.cwd)) return false;
+  if (command.uncertain || command.cwdAlternative || command.gitEnvironment || !writeAllowed(scope, command.cwd, command.cwd, call.resolvedPaths?.[command.cwd])) return false;
   if (p === "git" && s === "push") {
     const own = scope.assignedBranch;
     const refs = pushSpec(command.argv)?.refs ?? [];
@@ -218,7 +229,7 @@ export const LEGACY_CATALOGUE_RULES: ShellRule[] = [
   { id: "deploy-fallback", regex: "\\b(terraform\\s+(apply|destroy|import)|helm\\s+(install|upgrade|uninstall)|kapp\\s+deploy|dt\\s+deploy)\\b", why: "Deployments are outside this scope" },
   { id: "git-push", argv: ["git", "push"], why: "This scope does not allow pushes" },
 ];
-export const isCatalogueRule = (rule: ShellRule) => LEGACY_CATALOGUE_RULES.some(legacy => Object.keys(rule).length === Object.keys(legacy).length && Object.entries(legacy).every(([key, value]) => JSON.stringify(rule[key as keyof ShellRule]) === JSON.stringify(value)));
+export const isCatalogueRule = (rule: ShellRule) => LEGACY_CATALOGUE_RULES.some(legacy => Object.keys(legacy).length === Object.keys(rule).length && Object.entries(legacy).every(([key, value]) => JSON.stringify(rule[key as keyof ShellRule]) === JSON.stringify(value)));
 const mainDestination = /^(?:refs\/heads\/)?(?:main|master)$/;
 const mainRef = (ref: string) => mainDestination.test(ref.replace(/^\+/, "").split(":").at(-1)!);
 const onlyMainPush = /^\s*git\s+push\s+(?:--(?:force-with-lease|force-if-includes|force|set-upstream)\s+|-u\s+)*[a-zA-Z0-9_.-]+(?:\s+\+?(?:[\w./-]*:)?(?:refs\/heads\/)?(?:main|master))+\s*$/;
@@ -235,6 +246,7 @@ export function closingAct(scope: Scope, act: Act, command: ShellCommand | strin
   if (act.kind === "merge") return has("merge");
   if (act.kind === "delete") return has("delete");
   if (act.kind === "send") {
+    if (act.ruleId === prReadyAct.ruleId) return has("sends-as-you");
     if (typeof command !== "string") return has(["curl", "wget"].includes(command.argv[0]) ? "other-writes" : "sends-as-you");
     return (has("other-writes") && httpWriteFallback.test(command)) || (has("sends-as-you") && sendFallback.test(command));
   }

@@ -1,6 +1,8 @@
 import { experimental_useRpcMutation, experimental_useRpcQuery } from "@get-bb/plugin-sdk/app";
 import { useMemo, useState } from "react";
 import { rpcContract, type BoardQuestDetail, type Room } from "../../shared/contract";
+import { MODE_WORDS } from "../kit/guard";
+import { CallActivity } from "../kit/call-activity";
 import type { Decision, Member, Report, Rule } from "../../shared/schema";
 import { memberName } from "../../shared/member-name";
 import { voiceShown, CheckIndependence, GuardPosture, Clamp, ExpandsMark, FoldSummary, OpensMark, RULE_SCOPE, guardRecordWords, useToday, isFinished, ReportView, memberReportNames, ruleScopeLabel, useWidenRule } from "../kit";
@@ -112,7 +114,6 @@ export function ReportItem({ report, registry, detail }: { report: Report; regis
   </li>;
 }
 
-const MODE_WORDS = { enforce: "enforce", watch: "watch: recorded only", off: "off" } as const;
 /** Each member's scope (mode, preset, problems) and the rules it tripped; watch mode records without stopping. */
 export function Guardrails({ detail, registry, members, bare = false, compact = false, recheck }: { detail: BoardQuestDetail; registry: Registry; members: Map<string, Member>; bare?: boolean; compact?: boolean; recheck?: () => unknown }) {
   return <ScopeRecords scopes={detail.scopes} observations={detail.violations} keeperThreadId={detail.quest.keeperThreadId} registry={registry}
@@ -139,26 +140,28 @@ export function ScopeRecords({ scopes: input = [], observations = [], keeperThre
   const name = (id: string) => { const m = members.get(id); return m ? characterName(registry, m) : "A member"; };
   const alerts = ended ? [] : scopes.filter(scope => guardAlerts(scope).length > 0);
   const shown = compact && !showEach ? alerts : scopes;
+  const observed = scopes.reduce((count, scope) => count + (scope.callActivity?.count ?? 0), 0);
   const history = violations.length > 0 && <ol className="tv-violations">{(foldViolations ? violations : violations.slice(0, 8)).map(v => <li key={`${v.threadId}-${v.eventId}-${v.seq}`} className="tv-violation">
     <div className="tv-violation-head">
       <span className="tv-violation-status"><span className="tv-violation-member"><PageGlyph name={v.mode === "watch" ? "eye" : v.stopped ? "stop" : "fail"} size={13} /><b>{name(v.threadId)}</b></span>{" "}<span>{v.mode === "watch" ? "tripped a rule · recorded, not stopped" : v.prevented ? "had a call blocked before it ran" : v.stopped ? `was stopped in ${v.latencyMs} ms` : `tripped a rule; the stop failed${v.stopError ? `: ${v.stopError}` : ""}`}</span></span>
       <Ago at={v.at} />
     </div>
-    <code className="tag tv-violation-rule">{v.ruleId}</code>
+    <code className="tag tv-violation-rule">{v.ruleId}</code>{!v.policy && <span className="m"> · Legacy scope rule</span>}
     <Clamp text={v.reason} className="tv-violation-reason" />
   </li>)}</ol>;
   const body = <>
-    {compact && <p className="tv-guard-summary">{plural(scopes.length, "member")} · {alerts.length ? `${alerts.length} need attention` : "no current alerts"} · {plural(violations.length, "violation")}</p>}
+    {compact && <p className="tv-guard-summary">{plural(scopes.length, "member")} · {alerts.length ? `${alerts.length} need attention` : "no current alerts"} · {plural(violations.length, "violation")}{observed > 0 && ` · ${plural(observed, "observed call")}`}</p>}
     {shown.length > 0 && <ul className="tv-card tv-rows tv-guardrows">{shown.map((sc) => {
       const m = members.get(sc.threadId);
       const mode = sc.mode ?? sc.scope?.mode ?? "enforce";
       const record = ended ? guardRecordWords(sc, violations, { now: day }) : null;
       return <li key={sc.threadId} className={`tv-guard m-${mode} ${record ? "ended" : ""}`}>
         {m ? <CrestOf member={m} registry={registry} size={16} /> : <PageGlyph name="shield" />}
-        <span className="tv-guard-t"><b>{name(sc.threadId)}{m && <> <CheckIndependence member={m} /> <GuardPosture member={m} finished={ended} /></>}</b><span className="m">{record ? record.declared : sc.scope ? `${sc.scope.preset} · ${sc.scope.preset === "readonly" ? "writes: checked paths limited to scratch" : `writes ${sc.scope.writes.mode}`} · network ${sc.scope.network} · GitHub ${sc.scope.github}` : "no scope recorded"}</span>
+        <span className="tv-guard-t"><b>{name(sc.threadId)}{m && <> <CheckIndependence member={m} /> <GuardPosture member={m} finished={ended} /></>}</b><span className="m">{record ? record.declared : sc.scope ? sc.scope.preset === "checker" ? "Bound verification checks" : "Recognized sensitive acts" : "no scope recorded"}</span>
           {record && <span className="tv-guard-ev"><StateMark tone={record.evidence.tone} title={record.evidence.title}>{record.evidence.text}</StateMark>{record.now && <span className="m">{record.now}</span>}</span>}</span>
-        {!record && <span className={`tag tv-mode m-${mode}`} title={mode === "watch" ? "Violations are recorded, not stopped" : mode === "off" ? "No guardrail for this member" : "Violations stop the turn"}>{MODE_WORDS[mode]}</span>}
+        {!record && <span className={`tag tv-mode m-${mode}`} title={mode === "watch" ? "Calls are recorded without discretionary holds" : mode === "off" ? "Ordinary recording and discretionary holds are off" : "Recognized acts can be held; other calls are recorded"}>{MODE_WORDS[mode]}</span>}
         {!record && guardAlerts(sc).length > 0 && <span className="tv-guard-p"><GuardAlerts scope={sc} name={name(sc.threadId)} keeperThreadId={keeperThreadId} recheck={recheck} /></span>}
+        {!!sc.callActivity?.count && <div className="tv-guard-p"><CallActivity threadId={sc.threadId} activity={sc.callActivity} /></div>}
       </li>;
     })}</ul>}
     {compact && scopes.length > 0 && <button type="button" className="tv-fold act" aria-expanded={showEach} onClick={() => setShowEach(!showEach)}><ExpandsMark open={showEach} />{showEach ? "Show summary" : "Show each member"}</button>}

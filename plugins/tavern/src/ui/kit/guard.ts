@@ -8,7 +8,8 @@ export type GuardEvidence = { tone: "done" | "warn" | "bad" | "none"; text: stri
 /** A finished member's guardrail, in three parts that never mix: what was asked for, what the run recorded, and the state now. */
 export type GuardRecordWords = { declared: string; evidence: GuardEvidence; now: string | null };
 
-const MODE_ASKED = { enforce: "enforce", watch: "watch, recorded only", off: "off" } as const;
+export const MODE_WORDS = { enforce: "Act guard", watch: "Watch", off: "Off" } as const;
+const LEGACY_MODE = { enforce: "enforce", watch: "watch, recorded only", off: "off" } as const;
 
 /** The command a block names ("Blocked od -c: …"), short enough to sit in parentheses; null when the reason names none. */
 export function blockedWhat(reason: string): string | null {
@@ -31,8 +32,10 @@ export function guardRecordWords(scope: MemberScope, violations: readonly Violat
   const s = scope.scope;
   // No-break spaces inside each part and before each "·": a narrow row breaks only after a separator, so "writes worktree" stays whole.
   const join = (parts: string[]) => parts.map(p => p.replace(/ /g, "\u00a0")).join("\u00a0· ");
-  const declared = s ? `Scope asked for: ${join([s.preset, `writes ${s.writes.mode}`, `network ${s.network}`, `GitHub ${s.github}`, MODE_ASKED[mode]])}` : join(["No scope recorded", `${MODE_ASKED[mode]} asked for`]);
   const own = violations.filter(v => v.threadId === scope.threadId);
+  const guarded = !!scope.callActivity?.count || own.some(v => v.policy === "act-list");
+  const declared = guarded ? `Guard mode: ${MODE_WORDS[mode]}` :
+    s ? `Scope asked for: ${join([s.preset, `writes ${s.writes.mode}`, `network ${s.network}`, `GitHub ${s.github}`, LEGACY_MODE[mode]])}` : join(["No scope recorded", `${LEGACY_MODE[mode]} asked for`]);
   const watched = own.filter(v => v.mode === "watch");
   const enforced = own.filter(v => v.mode !== "watch");
   const blocked = enforced.filter(v => v.stopped || v.prevented), failed = enforced.filter(v => !v.stopped && !v.prevented);

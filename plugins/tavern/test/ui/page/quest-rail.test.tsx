@@ -87,7 +87,7 @@ it("summarises healthy guards and remembers Show each member", async () => {
   expect(guards.querySelectorAll(".tv-guard")).toHaveLength(0);
   fireEvent.click(within(guards).getByRole("button", { name: "Show each member" }));
   expect(guards.querySelectorAll(".tv-guard")).toHaveLength(4);
-  expect(guards.textContent).toContain("readonly · writes: checked paths limited to scratch");
+  expect(guards.textContent).toContain("Recognized sensitive acts");
   expect(guards.textContent).not.toContain("readonly · writes none");
   slot.lifecycle.unmount(); slots.splice(slots.indexOf(slot), 1);
   expect((await mount()).container.querySelectorAll(".tv-guard")).toHaveLength(4);

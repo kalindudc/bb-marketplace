@@ -35,7 +35,7 @@ it.each(["gh api -X POST repos/o/r", "gh api repos/o/r -X POST", "gh api -f quer
   const decision = evaluate(scope, prepareCall({ kind: "bash", toolName: "bash", cwd, input: { command } }));
   expect(decision.allow).toBe(command.includes("graphql"));
 });
-it.each(["find . -exec gh pr merge 1 \\;", "find . -exec kubectl apply -f x \\;", "find . -exec sed -i s/a/b/ x \\;"])("does not treat find executors as unchecked read programs: %s", command => {
+it.each(["find . -exec gh pr merge 1 \\;", "find . -exec kubectl apply -f x \\;"])("holds recognized acts in find executors: %s", command => {
   const scope = bindPaths(scopeForClass("ranger"), { home: cwd, tmp: [cwd + "/scratch"], scopesDir: cwd + "/scopes" });
   expect(evaluate(scope, prepareCall({ kind: "bash", toolName: "bash", cwd, input: { command } })).allow).toBe(false);
 });

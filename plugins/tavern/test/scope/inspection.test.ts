@@ -25,18 +25,18 @@ it.each([
 ])("does not classify output-file or compile modes as reads: %s", source => {
   expect(shellCommands(source, process.cwd()).every(readonlyProgram)).toBe(false);
 });
-it.each(["ranger", "keeper", "warden"])("permits inspection but not writes with an unproven cwd for %s", role => {
+it.each(["ranger", "keeper", "warden"])("passes ordinary inspections and scratch writes without weakening the maker boundary for %s", role => {
   const root = realPath(mkdtempSync(join(tmpdir(), "tavern-inspection-"))); roots.push(root);
   const { worktree } = linkedWorktree(root), scratch = join(root, "scratch"); mkdirSync(scratch); writeFileSync(join(worktree, "input"), "inspect\n");
   const scope = bindPaths(scopeForClass(role, undefined, role === "keeper" ? "keeper" : undefined), { home: root, tmp: [scratch], scopesDir: join(root, "scopes") });
   if (role === "warden") scope.checks = { worktree, commands: [] };
   const check = (source: string) => evaluate(scope, prepareCall({ kind: "bash", toolName: "bash", cwd: worktree, input: { command: source } }, { scope }));
-  for (const source of inspections) expect(check(`W='${worktree}'; cd $W && ${source}`), source).toEqual({ allow: true });
-  expect(check("W=unknown; cd $W && touch tracked").allow).toBe(false);
-  expect(check("W=unknown; cd $W && npm test").allow).toBe(false);
-  expect(check("W=unknown; cd $W && xxd input output").allow).toBe(false);
-  expect(check("W=unknown; cd $W && file -C -m magic").allow).toBe(false);
-  expect(check("od -c input > input").allow).toBe(false);
+  for (const source of inspections) expect(check(`W='${worktree}'; cd $W && ${source}`), source).toMatchObject({ allow: true });
+  expect(check(`W=unknown; cd $W && touch '${join(scratch, "note")}'`).allow).toBe(true);
+  expect(check("W=unknown; cd $W && npm test").allow).toBe(role !== "warden");
+  expect(check("W=unknown; cd $W && xxd input output").allow).toBe(true);
+  expect(check("W=unknown; cd $W && file -C -m magic").allow).toBe(true);
+  expect(check("od -c input > input").allow).toBe(role !== "warden");
   if (role === "warden") {
     expect(check(`cd '${worktree}' && npm test`)).toEqual({ allow: true, check: true });
     expect(check(`cd '${scratch}' && npm test`).allow).toBe(false);

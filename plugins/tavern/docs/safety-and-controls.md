@@ -2,58 +2,45 @@
 
 Use this guide to configure guardrails, step away with Closing time, and pull Stop all. See [How Tavern works](design.md) for the architecture and term definitions.
 
-Scopes guard against agent mistakes and overreach rather than hostile attacks: every agent runs at bb permission mode `full`, and scopes constrain tools, file writes, shell commands, consequential acts, sends as you, and cluster writes on top.
+Tavern's guard catches recognized acts before they run where the provider supports it. It is not a general shell or filesystem sandbox. Review any old custom tool, shell, or path rule you relied on: those rules are kept as data, but no longer block ordinary work.
 
 ## Scope modes and always-on boundaries
 
 Set `scopes.mode` in **Settings** under **Scopes**, or via `bb tavern settings set scopes.mode=<mode> --apply`:
 
-- **`enforce` (default):** Prevents supported violations before execution on guarded local Pi sessions and stops watched sessions after detection.
-- **`watch`:** Records what would have needed a grant without blocking ordinary violations or running the macOS bash sandbox.
-- **`off`:** Disables ordinary scope enforcement and recording.
+- **Act guard (`enforce`, default):** Holds applicable recognized sensitive acts. Ordinary calls are recorded without interruptions.
+- **Watch (`watch`):** Records calls without discretionary holds.
+- **Off (`off`):** Turns off ordinary audit and discretionary holds.
 
-Open **Guardrails** in a Keeper's Ledger to see its scope posture and recorded violations. On hover, the highlight spans the entire header to the card border.
+Open **Guardrails** in the Keeper's Ledger or open a member's scope details to see the call count and recent observations. The activity list has no commands, arguments, paths, or payloads and does not claim a call succeeded. Older violations remain marked as legacy scope rules.
 
-Three boundaries stay on in every mode: guarded agents cannot send messages as you; scoped shells (including Keepers) cannot run user-only Tavern controls (such as `ask`, `guard install`, `backup restore --apply`, guardrail settings edits, rule confirmations, quest stops, or Resume); and party members cannot spawn or archive threads.
+Named sends, user-only Tavern controls, member hiring and archival restrictions, and cluster and shared-state policy are separate boundaries. Tavern settings, rules, scope receipts, and guard files have a narrow write protection rather than a general path grant. On macOS the Pi shell overlay protects those files even inside an ordinary script. On hosts without that overlay, known write targets can be checked, but an arbitrary program running under the same account can still modify them.
 
-## Class presets
-
-| Class | Preset | Allowed in `enforce` mode |
-| --- | --- | --- |
-| Ranger | `readonly` | Runs local programs, pipes, and input redirects; checked writes stay in temp and `BB_THREAD_STORAGE`. Git, GitHub, and cluster writes keep their own checks. |
-| Warden | `checker` | Runs local programs without an allowlist; check runners and verbatim done-when commands must run in the maker's bound worktree. On macOS, checks may write to verified ignored outputs and scratch, not tracked files, Git metadata, or the network. |
-| Smith | `worktree` | Writes to its bound worktree, Git metadata, temp, and `BB_THREAD_STORAGE`; pushes and opens or edits drafts only on its assigned branch. Falls back to `readonly` until bound. |
-| Keeper | `open` | Direct writes and ordinary shell acts except protected paths, user-only Tavern controls, cluster writes, and typed pull request acts. |
-| Hired Wanderer | `open` | No sandbox; protects sensitive paths and gates consequential shell acts behind a grant after restart. |
-| Direct Wanderer or plain thread | None | Ordinary bb thread with no Tavern scope file. |
-
-Members can use their own `BB_THREAD_STORAGE` and the configured temporary roots. For shared quest scratch on the same local host, use `scratch/<quest id>` under the Keeper's thread storage. Other folders in the Keeper's storage and storage on other hosts aren't implicitly shared. An explicit deny still applies inside any of these locations.
-
-All restrictive presets and hired Wanderers protect `~/.ssh`, `~/.pi/agent/extensions`, `~/.claude`, `~/.agents/tavern/scopes.yml`, and Tavern's scopes directory. Without the macOS sandbox, Tavern cannot see writes inside a running program.
+A Warden cannot edit or commit in the bound maker checkout. On macOS the ordinary shell overlay also protects the checkout and its Git metadata from child processes. Guarded check commands can write to verified ignored outputs and scratch, not to tracked files, Git metadata, or the network. Checks on a host without that containment are not described as sandboxed. Smiths keep their assigned-branch and draft ownership conditions; they don't need a path grant for an ordinary file edit. Own storage and quest scratch are conventions, not confinement.
 
 ## Prevention versus detection
 
 | Surface | Guarded local Pi (macOS) | Guarded local Pi (Linux) | Claude Code, Codex, or remote |
 | --- | --- | --- | --- |
-| Native tools and paths | Prevented before execution | Prevented before execution | Detection only (stopped after start) |
-| Bash filesystem writes | OS sandbox (`sandbox-exec`) | Shell parser checks | Detection only |
+| Known Tavern control-file writes | Known targets checked; shell overlay (`sandbox-exec`) | Known targets checked, not arbitrary program effects | Detection only |
+| Warden check isolation | Guarded maker checks are sandboxed | No filesystem or network sandbox | No filesystem or network sandbox |
 | Consequential acts and sends | Prevented before execution | Prevented before execution | Detection only |
 | Environment speed bumps | At launch | At launch | At launch |
 
-Local Pi prevention requires the Pi guard shim (`bb tavern guard install`, `status`, or `uninstall` from a terminal). Scoped hires prefer Pi whenever it offers the model; otherwise the Keeper must request an explicit one-use detection-only ask. Approved non-Pi and remote members carry a **Detection only (not prevented)** label—watchers stop turns roughly one to two seconds after start and cannot undo completed pushes or sends. Guard changes require restarting open sessions, which the Member panel flags.
+Local Pi prevention requires the Pi guard shim (`bb tavern guard install`, `status`, or `uninstall` from a terminal). If the shim cannot load the guard in Act guard mode, it admits only reporting, journal and readiness tools until the guard is repaired. Scoped hires prefer Pi whenever it offers the model; otherwise the Keeper must request an explicit one-use detection-only ask. Approved non-Pi and remote members carry a **Detection only (not prevented)** label—watchers stop turns roughly one to two seconds after start and cannot undo completed pushes or sends. Guard changes require restarting open sessions, which the Member panel flags.
 
 ## Consequential acts, sends, and cluster writes
 
-Tavern classifies shell commands through one catalogue covering merges, publishes, marking ready, closing, reviewing, deploys, cluster writes, sends, drafts, deletes, configuration changes, credentials, Tavern controls, and allocations. Ordinary commands—plugin validation, read-only queries, `git diff`, auth login and config, `bb secrets request`, read-only machine checks, and loopback HTTP writes—are not blocked. Commands ending in `-machines` classify by verb (`rotate`, `park`, and `remove` as configuration; `create` and `enroll` as allocation).
+Tavern holds recognized merges, publishes, deployments, sends, deletions, credential disclosures, and cluster writes. Marking a pull request ready uses publishing authority; comments, reviews and reviewer requests use the existing ownership and send rules. Closing a pull request uses the existing owned or external route. Generic configuration and machine creation are not held during ordinary work, but still wait during Closing time when its stop list applies. The Keeper's authority to act is unchanged.
 
 - **Exact shell grants:** Grant a member one literal command in its directory on the Member panel (once or for the quest, revocable anytime). Grants never cover user-only controls or cluster writes, and backup restores keep history without restoring live grants.
 - **Send guard:** Configure tool patterns or literal shell prefixes marked `send` or `draft` in **Settings** under **Scopes**. Blocked sends leave one handoff with recipient and message text; named-target delegation lets a Keeper approve an exact draft, never a send.
-- **Cluster writes:** Kubernetes mutations (`kubectl apply`, `patch`, `delete`, `scale`, `exec`, `cp`, `port-forward`, `helm install`, `helm upgrade`, `kapp deploy`, including `--dry-run`) and Terraform applies can never be granted by scope or delegation. Each run needs your approval plus a separate immediate confirmation on the same card for one run within 15 minutes by default.
+- **Cluster writes:** Kubernetes mutations (`kubectl apply`, `patch`, `delete`, `scale`, `exec`, `cp`, `port-forward`, `helm install`, `helm upgrade`, `kapp deploy`, including `--dry-run`) and Terraform applies can never be granted by scope or delegation. Each run needs approval plus a separate immediate confirmation for the exact command. Follow stricter production rules where they apply. Terraform, OpenTofu, and Terragrunt plans must set `TF_CLI_ARGS_plan=-lock=false` and pass `-lock=false`. On a locked state, report the lock ID and holder rather than running force-unlock.
 - **macOS Git sandbox:** Tavern's own Git calls run inside an OS sandbox restricting writes to the target checkout and Git metadata and allowing network only for fetch, push, and remote discovery. Forge commands and `gh` run outside it while inheriting Tavern's Git safety overrides.
 
 ## Policy files (`scopes.yml`)
 
-Rules resolve in order: shipped class preset and class file narrowings, user-global `~/.agents/tavern/scopes.yml` (trusted; may narrow or authorize remote-qualified Git push widenings), project `<project>/.agents/tavern/scopes.yml` (narrowing only; widenings are ignored and flagged), and per-hire updates.
+Remote-qualified Git push rules remain available in user-global `~/.agents/tavern/scopes.yml`. Saved class, project, and per-hire values are kept for history; a general tool or path rule is not an act approval.
 
 To let a Smith push to `main` on personal repositories, add a rule to `~/.agents/tavern/scopes.yml` (checked against the actual normalized push target):
 

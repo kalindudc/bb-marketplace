@@ -38,7 +38,7 @@ it.each(smithReads)("allows ordinary Smith work without an act: %s", command => 
   expect(evaluate(scope(), call(command)).allow).toBe(true);
   for (const role of ["ranger", "warden"]) {
     const s = bindPaths(scopeForClass(role), { home: "/home/me", tmp: ["/tmp"], scopesDir: "/scopes", worktree: "/repo" });
-    expect(evaluate(s, call(command))).toMatchObject({ allow: false, ruleId: "legacy-act" });
+    expect(evaluate(s, call(command))).toMatchObject({ allow: true });
   }
 });
 it.each([
@@ -46,8 +46,9 @@ it.each([
   ["configure", "bb plugin dev x"], ["configure", "bb plugin settings x"],
   ...["off", "pair", "revoke"].map(verb => ["configure", "bb lan " + verb]),
   ...["start", "land", "live", "archive", "pause", "resume"].map(verb => ["configure", "bb loom " + verb + " p"]),
-  ...["update", "delete", "enable", "disable"].map(verb => ["configure", "bb automations " + verb + " a"]),
-  ...["park", "remove"].map(verb => ["configure", "bb sample-machines " + verb + " m"]),
+  ...["update", "enable", "disable"].map(verb => ["configure", "bb automations " + verb + " a"]),
+  ["delete", "bb automations delete a"],
+  ["configure", "bb sample-machines park m"], ["delete", "bb sample-machines remove m"],
   ["configure", "bb machine env unset TOKEN"], ["configure", "bb secrets"],
   ["configure", "cortex reset"], ["configure", "cortex restore"],
   ["deploy", "gcloud run deploy service"], ["deploy", "gcloud app deploy"], ["deploy", "gcloud functions deploy function"],
@@ -58,8 +59,8 @@ it.each([
   expect(shellCommands(command, "/repo").flatMap(actsForCommand).map(act => act.kind)).toEqual([kind]);
   for (const role of ["ranger", "warden", "smith"]) {
     const s = bindPaths(scopeForClass(role), { home: "/home/me", tmp: ["/tmp"], scopesDir: "/scopes", worktree: "/repo" });
-    expect(evaluate(s, call(command)).allow).toBe(false);
-    expect(evaluate(s, call(command + " 'unterminated")).allow).toBe(false);
+    expect(evaluate(s, call(command)).allow).toBe(kind === "configure");
+    expect(evaluate(s, call(command + " 'unterminated")).allow).toBe(kind === "configure");
   }
 });
 it.each(["localhost", "127.0.0.1", "127.2.3.4", "[::1]"])("local HTTP writes are not sends: %s", host => {
@@ -103,25 +104,25 @@ it.each(["ranger", "warden", "smith"])("retains the %s control-plane floor throu
   const s = bindPaths(scopeForClass(role), { home: "/home/me", tmp: ["/tmp"], scopesDir: "/scopes", worktree: "/repo" });
   for (const command of ["bb loom approve project", "bb automations create --name fixture", "bb lan on", "bb settings set x y", "bb sample-machines rotate", "cortex agents reset", "gcloud compute instances delete vm", "bb machine env set TOKEN fixture"]) {
     expect(shellCommands(command, "/repo").flatMap(actsForCommand).map(act => act.kind)).toEqual([command.includes(" delete ") ? "delete" : "configure"]);
-    for (const mode of ["watch", "enforce"] as const) expect(evaluate({ ...s, mode }, call(command)).allow).toBe(false);
+    for (const mode of ["watch", "enforce"] as const) expect(evaluate({ ...s, mode }, call(command)).allow).toBe(!command.includes(" delete "));
   }
-  if (role !== "smith") for (const command of research.slice(0, 5)) expect(evaluate(s, call(command)).allow).toBe(false);
+  for (const command of research.slice(0, 5)) expect(evaluate(s, call(command)).allow).toBe(true);
   for (const command of ["gcloud compute instances list", "gcloud config get-value project", "bb status", "cortex update 17 -m fixture"]) expect(evaluate(s, call(command)).allow).toBe(true);
 });
 it.each(["bb loom approve project", "bb automations create --name fixture", "bb lan on", "bb settings set x y", "bb sample-machines rotate", "bb machine env set TOKEN fixture", "cortex agents reset", "gcloud compute instances delete vm"])("retains catalogue refusal when parsing fails: %s", command => {
   for (const role of ["ranger", "warden", "smith"]) {
     const s = bindPaths(scopeForClass(role), { home: "/home/me", tmp: ["/tmp"], scopesDir: "/scopes", worktree: "/repo" });
-    expect(evaluate(s, call(command + " 'unterminated")).allow).toBe(false);
+    expect(evaluate(s, call(command + " 'unterminated")).allow).toBe(!command.includes(" delete "));
   }
 });
-it("resolves a draft creation redirect through a symlink before allowing the command", () => {
+it("keeps ownership checks but allows an ordinary draft log redirect", () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "sc2-redirect-"))); roots.push(root);
   const repo = join(root, "repo"), outside = join(root, "outside");
   mkdirSync(repo); mkdirSync(outside); symlinkSync(outside, join(repo, "link"));
   const s = { ...scope(), writes: { mode: "paths" as const, allow: [repo], deny: [] } };
   const prepared = prepareCall({ ...call("gh pr create --draft > link/out"), cwd: repo }, { scope: s, readCommand: () => "assigned" });
   expect(prepared.resolvedPaths?.[join(repo, "link/out")]).toBe(join(outside, "out"));
-  expect(evaluate(s, prepared)).toMatchObject({ allow: false, ruleId: "shell-write" });
+  expect(evaluate(s, prepared)).toMatchObject({ allow: true });
 });
 it("keeps the author check even on the assigned head", () => {
   const s = scope();
@@ -136,10 +137,10 @@ it("records allowed acts separately from violations and attention inputs", () =>
   expect(new ScopeStore(root).acts("t1")).toHaveLength(1);
   expect(store.violations("t1")).toEqual([]);
 });
-it("preserves a running legacy Wanderer's open baseline without permitting an unverified pull request edit", () => {
+it("does not assume a legacy Wanderer's unverified guard granted a protected act", () => {
   const s = bindPaths(scopeForClass("wanderer"), { home: "/home/me", tmp: ["/tmp"], scopesDir: "/scopes" });
   for (const command of ["git push origin feature", "gh pr merge 1", "curl -X POST https://remote.test", "gh pr merge 1 'unterminated"]) {
-    expect(evaluate(s, call(command), true).allow, command).toBe(true);
+    expect(evaluate(s, call(command), true).allow, command).toBe(false);
     expect(evaluate(s, call(command)).allow, command).toBe(false);
   }
   expect(evaluate(s, call("gh pr edit 1 --body x"), true)).toMatchObject({ allow: false, ruleId: "pr-sends-as-you" });

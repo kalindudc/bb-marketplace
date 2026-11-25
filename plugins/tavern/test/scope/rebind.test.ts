@@ -52,7 +52,7 @@ it("keeps the scope file readable by pi and does not change its identity on a no
   const handlers = new Map<string, Function>(); extension({ on: (name, fn) => { handlers.set(name, fn); }, getActiveTools: () => ["read", "bash", "journal", "tavern_report"], setActiveTools: vi.fn() });
   handlers.get("session_start")!({}, { cwd: f.root }); expect(handlers.get("tool_call")!({ toolName: "read", input: {} }, { cwd: f.root })).toBeUndefined();
 });
-it("never drops TAVERN_SCOPE_FILE on bind failure and makes the guard fail closed; retry repairs it", async () => {
+it("retains scope identity on failure and refuses sensitive acts until repaired", async () => {
   const f = fixture(), scopes = f.start(); await scopes.writeScope("t1", scopes.resolve("ranger", {}).scope);
   f.setPaths(() => { throw new Error("storage unavailable"); });
   const env = await f.envs.get("pi")!({ threadId: "t1" }); expect(env.some((entry: any) => entry.name === "TAVERN_SCOPE_FILE")).toBe(true);
@@ -60,7 +60,8 @@ it("never drops TAVERN_SCOPE_FILE on bind failure and makes the guard fail close
   const restored = f.start(); expect(restored.status().threads[0].error).toContain("storage unavailable");
   vi.stubEnv("TAVERN_SCOPE_FILE", join(f.root, "scopes/t1.json")); vi.stubEnv("BB_THREAD_ID", "t1");
   const handlers = new Map<string, Function>(); extension({ on: (name, fn) => { handlers.set(name, fn); }, getActiveTools: () => ["read", "journal", "tavern_report"], setActiveTools: vi.fn() });
-  expect(handlers.get("tool_call")!({ toolName: "read", input: {} }, { cwd: f.root })).toMatchObject({ block: true });
+  expect(handlers.get("tool_call")!({ toolName: "read", input: {} }, { cwd: f.root })).toBeUndefined();
+  expect(handlers.get("tool_call")!({ toolName: "bash", input: { command: "git push origin main" } }, { cwd: f.root })).toMatchObject({ block: true });
   f.setPaths(() => ({ threadStorage: join(f.root, "storage") })); await f.envs.get("pi")!({ threadId: "t1" }); expect(restored.status().threads[0].error).toBeUndefined();
 });
 it("does not resurrect a released scope when an awaited path lookup finishes", async () => {

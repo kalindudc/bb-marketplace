@@ -70,7 +70,7 @@ const scopeCall = z.object({
   ownedPrs: z.array(z.string()).optional(), questOwnedPrs: z.array(z.string()).optional(), observationId: id.optional(), clusterObservation: z.string().max(160).optional(), draftObservation: z.string().max(160).optional(),
 }).strict();
 export const scopeDecisionSchema = z.discriminatedUnion("allow", [
-  z.object({ allow: z.literal(true), check: z.boolean().optional(), prGrant: id.optional(), acts: z.array(z.object({ kind: z.enum(ACT_KINDS), ruleId: id, why: text }).strict()).optional() }).strict(),
+  z.object({ allow: z.literal(true), check: z.boolean().optional(), inspectionUnavailable: z.literal(true).optional(), prGrant: id.optional(), acts: z.array(z.object({ kind: z.enum(ACT_KINDS), ruleId: id, why: text }).strict()).optional() }).strict(),
   z.object({ allow: z.literal(false), ruleId: id, reason: text, act: z.enum(ACT_KINDS).optional() }).strict(),
 ]);
 const empty = z.object({}).strict();

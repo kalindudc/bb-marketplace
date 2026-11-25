@@ -2,12 +2,13 @@ import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { z } from "zod";
-import { actsForCommand, pullRequestRoute } from "./acts";
+import { actsForCommand, pullRequestRoute, terraformProgram, typedPullRequestAct } from "./acts";
 import { shellGrantActSchema, type ShellGrantTarget } from "../shared/shell-grant";
 import type { ScopeCall } from "./engine";
 import { parseScript } from "./parser";
 import { realPath } from "./paths";
 import { prUrl } from "./pr-policy";
+import { protectedApiWrite } from "./merge";
 import { pushSpec } from "./remote";
 import { prGrantIdSchema, type Scope } from "./schema";
 import { shellCommands, type ShellCommand } from "./shell";
@@ -45,6 +46,7 @@ function sessionCapability(file: string, binding: Binding) {
     active = scopeArmedSchema.parse(JSON.parse(readFileSync(armedFile(file), "utf8")));
     if (active.hostBinding || binding.threadId !== active.threadId || binding.issuedAt !== active.issuedAt || active.at < binding.issuedAt) return null;
     process.kill(active.pid, 0);
+    if (active.policy !== "act-list") return {};
   } catch { return null; }
   try {
     const meta = capabilitySchema.parse(JSON.parse(readFileSync(capabilityFile(file), "utf8")));
@@ -79,11 +81,12 @@ export function shellGrantTarget(call: ScopeCall, parsed?: ShellCommand): ShellG
     const [command] = parsed ? [parsed] : shellCommands(source, call.cwd);
     if (!command || command.uncertain || command.cwdAlternative || command.repository || command.gitEnvironment || command.githubEnvironment || realPath(command.cwd) !== realPath(call.cwd)) return null;
     const [program, group, verb] = command.argv;
-    if (simple.words[0]?.text !== program || ["kubectl", "terraform", "helm", "kapp"].includes(program) || simple.words.some(word => /(?:[?*\[\]{}]|^~)/.test(word.text.replace(/'[^']*'|"[^"]*"/g, "")))) return null;
+    if (simple.words[0]?.text !== program || (["kubectl", "k", "helm", "kapp"].includes(program) || terraformProgram.test(program)) || simple.words.some(word => /(?:[?*\[\]{}]|^~)/.test(word.text.replace(/'[^']*'|"[^"]*"/g, "")))) return null;
+    if (protectedApiWrite(command)) return null;
     const route = pullRequestRoute(command, false);
     const acts = route ? [route] : actsForCommand(command);
     const act = acts[0];
-    if (acts.length !== 1 || !act) return null;
+    if (acts.length !== 1 || !act || typedPullRequestAct(act) || act.kind === "configure" || act.kind === "allocate") return null;
     const kind = shellGrantActSchema.safeParse(act.kind);
     if (!kind.success) return null;
     if (["gh", "dt"].includes(program) && group === "pr" && verb !== "create") {

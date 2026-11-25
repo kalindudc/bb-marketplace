@@ -32,7 +32,7 @@ export async function classExecutionFacts(runtime: TavernRuntime, input: ClassEx
       out.fields.push({ ...fileField(field, role[key]), ...(override && Object.hasOwn(override, key) ? { source: "settings" as const } : {}), ...(!role[key] ? { source: field === "provider" && input.mode === "hire" ? "keeper" as const : "provider-default" as const, ...(field === "provider" ? input.mode === "hire" ? { varies: "keeper" as const } : { rule: "Uses the provider selected in the composer." } : {}) } : {}) });
     }
     if (role.id === "warden" && input.mode === "hire" && !input.makerThreadId) Object.assign(out.fields.find(field => field.field === "model")!, { varies: "maker", rule: "Keeps the configured model when it is already a different family from the maker; otherwise chooses a known different-family model, or labels the unestablished check." });
-    out.fields.push({ ...fileField("permission", forcePermission ? "full" : role.permission), ...(forcePermission ? { source: "forced" as const, rule: "Hire scopes limit commands while the provider runs at full permission." } : {}) }, { field: "scope", value: requestedPreset, source: role.scope ? source : "preset" },
+    out.fields.push({ ...fileField("permission", forcePermission ? "full" : role.permission), ...(forcePermission ? { source: "forced" as const, rule: "The provider runs at full permission. Act guard checks recognized acts, not general tool access." } : {}) }, { field: "scope", value: requestedPreset, source: role.scope ? source : "preset" },
       { ...fileField("environment", input.mode === "hire" ? role.environment : null), ...(input.mode === "start" ? { source: "role" as const, rule: "Uses the environment selected in the composer; class worktree preference applies only to hires." } : {}) },
       { ...fileField("role prompt", `${out.body.bytes} bytes`), rule: classRules(kind) },
       { field: "tools", value: kind === "keeper" ? ["journal", ...runtime.toolNames.filter(name => !["tavern_report", "tavern_request_sources"].includes(name))].join(", ") : kind === "member" ? "journal, tavern_memory, tavern_report, tavern_request_sources" : "journal, tavern_memory", source: "role" },
@@ -72,7 +72,7 @@ export async function classExecutionFacts(runtime: TavernRuntime, input: ClassEx
       scopeField.source = "preset";
       scopeField.substitution = { from: requestedPreset, to: preset, reason: "Class files may only narrow the shipped scope preset." };
     }
-    out.requiresPi = scoped && preset !== "open" && runtime.config().scopes.mode === "enforce";
+    out.requiresPi = scoped && (preset === "checker" || runtime.config().scopes.mode === "enforce" && preset !== "open");
     if (out.requiresPi) {
       const provider = out.fields.find(field => field.field === "provider")!;
       provider.value = "pi";
@@ -102,7 +102,7 @@ export async function classExecutionFacts(runtime: TavernRuntime, input: ClassEx
       fact.value = value;
       if (field === "model" && modelLabel) fact.valueLabel = modelLabel;
       if (value && value !== configured) {
-        fact.substitution = { from: configured ?? "provider default", to: value, reason: notes.join(" ") || (field === "permission" ? "Scoped execution uses full provider permission; the scope limits commands." : "Resolved against the provider catalog.") };
+        fact.substitution = { from: configured ?? "provider default", to: value, reason: notes.join(" ") || (field === "permission" ? "Scoped execution uses full provider permission; Act guard checks recognized acts." : "Resolved against the provider catalog.") };
         fact.source = (field === "provider" && out.requiresPi) || (field === "permission" && forcePermission) ? "forced" : "catalog-default";
       }
     }

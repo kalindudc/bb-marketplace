@@ -9,6 +9,31 @@ import { reserveStaffing, settleStaffing } from "../../src/server/staffing";
 import { setup } from "./runtime-fixture";
 import { seedQuest } from "./support";
 
+it("pages observed calls without repeating a page when a new event arrives or inspection resumes", () => {
+  const db = new Database(":memory:");
+  try {
+    db.exec(MIGRATIONS.join(";\n"));
+    const store = new KeeperStore(db);
+    const save = (seq: number, outcome: "ordinary" | "inspection-unavailable" = "ordinary", memberThreadId = "member") => {
+      const eventId = `event-${seq}`;
+      store.put("scopeCallObservations", JSON.stringify([memberThreadId, "pi", eventId]), {
+        memberThreadId, boardQuestId: "quest", threadId: memberThreadId, providerId: "pi", eventId, seq,
+        at: seq, mode: "enforce", tool: "bash", outcome,
+      });
+    };
+    save(1); save(2, "inspection-unavailable"); save(3); save(4, "ordinary", "other");
+    expect(store.scopeCallActivity("member")).toMatchObject({ count: 3, unavailable: 1 });
+    const first = store.scopeCallPage("member", undefined, 2);
+    expect(first.recent.map(call => call.seq)).toEqual([3, 2]);
+    expect(first.next).not.toBeNull();
+    save(5); save(2);
+    const next = store.scopeCallPage("member", first.next!, 2);
+    expect(next.recent.map(call => call.seq)).toEqual([1]);
+    expect(next.next).toBeNull();
+    expect(store.scopeCallActivity("member")).toMatchObject({ count: 4, unavailable: 0 });
+  } finally { db.close(); }
+});
+
 it("can grow a cached class allocation without changing the prior row", async () => {
   const { k } = setup();
   try {

@@ -24,17 +24,17 @@ describe("scope engine", () => {
     for (const name of ["read", "quest", "tavern_report", "flare", "mcp__tool_gateway__slack_read_thread"]) expect(evaluate(scope("ranger"), { kind: "tool", toolName: name, input: {}, cwd: "/repo" }).allow).toBe(true);
     for (const role of ["ranger", "smith", "keeper"]) for (const name of ["mcp__tool_gateway__slack_post_message", "slack_send", "other_write_file", "spawn"]) expect(evaluate(scope(role), { kind: "tool", toolName: name, input: {}, cwd: "/repo" }).allow).toBe(name !== "spawn" || role === "keeper");
   });
-  it("keeps Keeper domain writes out, but permits Tavern coordination", () => {
+  it("allows ordinary Keeper writes and Tavern coordination", () => {
     expect(evaluate(scope("keeper"), { kind: "tool", toolName: "tavern_hire", input: {}, cwd: "/repo" }).allow).toBe(true);
     expect(evaluate(scope("keeper"), { kind: "write", toolName: "write", input: { path: "/tmp/note" }, cwd: "/repo" }).allow).toBe(true);
     expect(bash("keeper", "git status && ls src").allow).toBe(true);
     expect(bash("keeper", "npm test")).toEqual({ allow: true });
-    expect(bash("keeper", "npm test > result.txt")).toMatchObject({ allow: false, ruleId: "shell-write" });
+    expect(bash("keeper", "npm test > result.txt")).toMatchObject({ allow: true });
   });
-  it("limits writes by root, not string prefix, and protects guard files", () => {
-    for (const path of ["src/a.ts", "/tmp/a"]) expect(evaluate(scope("smith"), { kind: "write", toolName: "write", input: { path }, cwd: "/repo" }).allow).toBe(true);
-    for (const path of ["/repo-other/a", "../outside", "/data/scopes/t.json", "/home/me/.pi/agent/extensions/a", "/repo/.claude/settings.local.json", "/repo/.agents/tavern/scopes.yml"]) expect(evaluate(scope("smith"), { kind: "write", toolName: "edit", input: { path }, cwd: "/repo" }).allow).toBe(false);
-    expect(evaluate(scope("ranger"), { kind: "write", toolName: "write", input: { path: "a" }, cwd: "/repo" }).allow).toBe(false);
+  it("protects only Tavern control files, not other paths", () => {
+    const edit = (path: string) => evaluate(scope("smith"), { kind: "write", toolName: "edit", input: { path }, cwd: "/repo" });
+    for (const path of ["src/a.ts", "/repo-other/a", "../outside", "/repo/.claude/settings.local.json"]) expect(edit(path).allow).toBe(true);
+    for (const path of ["/data/scopes/t.json", "/home/me/.pi/agent/extensions/tavern-guard/index.ts", "/repo/.agents/tavern/scopes.yml"]) expect(edit(path)).toMatchObject({ allow: false, ruleId: "tavern-control-files" });
   });
   it.each([
     "git push origin feature", "sudo env X=1 timeout 10 git -C /repo push origin feature", "bash -lc 'git push origin feature'", "xargs -I {} git push origin feature", "echo $(git push origin feature)", "for x in a; do git push origin feature; done", "gh pr create --draft", "gh api repos/a/b -f title=x", "gh api -X POST repos/a/b", "kubectl --context staging apply -f a.yaml", "helm upgrade x y", "terraform apply", "dev deploy", "terraform -chdir=/tmp apply", "kapp --app foo deploy", "helm --kube-context staging install a b"
@@ -43,11 +43,8 @@ describe("scope engine", () => {
   it.each(["./tool --flag", "printf x | ./tool", "./tool < input.txt", "bash < input.sh"])("lets an uncontained Ranger run %s", command => {
     expect(bash("ranger", command)).toMatchObject({ allow: true });
   });
-  it.each(["./tool > outside.txt", "tee outside.txt", "cp input.txt outside.txt", "mv input.txt outside.txt", "rm outside.txt", "git commit -m fixture"])("keeps uncontained Ranger writes guarded: %s", command => {
-    expect(bash("ranger", command)).toMatchObject({ allow: false, ruleId: "shell-write" });
-  });
-  it("keeps Git writes blocked even from Ranger scratch", () => {
-    expect(bash("ranger", "git -C /tmp commit -m fixture")).toMatchObject({ allow: false, ruleId: "shell-write" });
+  it.each(["./tool > outside.txt", "tee outside.txt", "cp input.txt outside.txt", "mv input.txt outside.txt", "rm outside.txt", "git commit -m fixture"])("passes ordinary Ranger writes: %s", command => {
+    expect(bash("ranger", command)).toMatchObject({ allow: true });
   });
   it.each([
     ["a | b", ["a", "b"]],
@@ -58,19 +55,13 @@ describe("scope engine", () => {
     expect(shellCommands(command, "/repo").map(part => part.argv[0])).toEqual(programs);
     expect(bash("warden", command)).toMatchObject({ allow: true });
   });
-  it("explains an uncontained Smith shell parse refusal", () => {
-    const command = 'echo "unfinished > tracked.txt';
-    const result = bash("smith", command);
-    expect(result).toMatchObject({ allow: false, ruleId: "shell-parse", reason: expect.stringContaining("unterminated double quote") });
-    if (!result.allow) expect(result.reason).toContain(JSON.stringify(command));
-  });
-  it("keeps opaque script input blocked for an uncontained Smith", () => {
-    expect(bash("smith", "bash < input.sh")).toMatchObject({ allow: false, ruleId: "shell-input" });
+  it.each(['echo "unfinished > tracked.txt', "bash < input.sh"])("marks incomplete inspection without refusing %s", command => {
+    expect(bash("smith", command)).toMatchObject({ allow: true, inspectionUnavailable: true });
   });
   it.each([
-    "git push origin main", "git push origin HEAD:master", "git push origin HEAD:refs/notes/test", "git push origin tag v1", "git push --follow-tags origin feature", "git push --prune origin feature", "git push origin +HEAD:topic", "git push origin :topic", "git push --mirror origin", "git push origin", "git push", "gh pr create --title x", "gh pr create --draft=false", "gh pr ready 1", "gh pr merge 1", "gh api repos/a/b -X PATCH", "kubectl rollout restart deployment/a", "echo x > ../outside", "cd /outside && touch x", "tee /outside/a < a", "git -C /outside checkout x", "git -C /outside branch topic", "git -C /outside remote add upstream url", "git config --global user.email x@y"
+    "git push origin main", "git push origin HEAD:master", "git push origin HEAD:refs/notes/test", "git push origin tag v1", "git push --follow-tags origin feature", "git push --prune origin feature", "git push origin +HEAD:topic", "git push origin :topic", "git push --mirror origin", "git push origin", "git push", "gh pr create --title x", "gh pr create --draft=false", "gh pr ready 1", "gh pr merge 1", "gh api repos/a/b -X PATCH", "kubectl rollout restart deployment/a"
   ])("blocks Smith overreach: %s", command => expect(bash("smith", command).allow).toBe(false));
-  it.each(["git push origin HEAD:refs/heads/topic", "git push -u origin feature", "gh pr create --draft --title x", "git add src && git commit -m test", "echo x > src/a", "mkdir -p build", "npm test"])("allows Smith work: %s", command => expect(bash("smith", command).allow).toBe(true));
+  it.each(["git push origin HEAD:refs/heads/topic", "git push -u origin feature", "gh pr create --draft --title x", "git add src && git commit -m test", "echo x > ../outside", "cd /outside && touch x", "tee /outside/a < a", "git -C /outside checkout x", "git -C /outside branch topic", "git -C /outside remote add upstream url", "git config --global user.email x@y", "echo x > src/a", "mkdir -p build", "npm test"])("allows Smith work: %s", command => expect(bash("smith", command).allow).toBe(true));
   it("checks named exceptions without bypassing unrelated deny rules", () => {
     const s = scope("ranger");
     s.shell.allow.push({ id: "git-push", argv: ["git", "push", "origin", "safe"], why: "specific exception" });
@@ -85,10 +76,10 @@ describe("scope engine", () => {
       expect(result.reason).toContain('Held command: "gh pr merge 1"');
     }
   });
-  it("preserves late worktree bindings but refuses evaluation until bound and rejects widening", () => {
+  it("preserves late worktree bindings without stopping ordinary calls", () => {
     const late = bindPaths(scopeForClass("smith"), { home: "/home/me", tmp: ["/tmp"], scopesDir: "/data/scopes" });
     expect(late.writes.allow).toContain("${worktree}");
-    expect(evaluate(late, { kind: "write", toolName: "write", input: { path: "/repo/file" }, cwd: "/repo" })).toMatchObject({ allow: false, ruleId: "worktree-unresolved" });
+    expect(evaluate(late, { kind: "write", toolName: "write", input: { path: "/repo/file" }, cwd: "/repo" })).toMatchObject({ allow: true });
     expect(scopeForClass("ranger", { tools: { allow: ["spawn"] } }).tools.allow).toEqual(["spawn"]);
   });
 });

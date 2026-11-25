@@ -1,10 +1,20 @@
 import { dirname, isAbsolute, join } from "node:path";
+import { targetsProtectedPath } from "./control-files";
 import { readFileSync, statSync } from "node:fs";
 import { execGitSync } from "../shared/git-safety";
 import { realPath, within } from "./paths";
 import { gitWorktreeRoot } from "./worktree";
 import type { Scope } from "./schema";
 import type { ShellCommand } from "./shell";
+
+export function checkerWorktree(scope: Scope): string | undefined {
+  return scope.preset === "checker" ? scope.checks?.worktree : undefined;
+}
+
+export function targetsMakerWorktree(scope: Scope, paths: string[], cwd: string, destructive = false): boolean {
+  const root = checkerWorktree(scope);
+  return !!root && targetsProtectedPath(paths, cwd, scope.env.variables.HOME, target => within(target, root) || destructive && within(root, target));
+}
 
 export function bindChecks(scope: Scope): Scope {
   if (scope.preset !== "checker" || !scope.checks?.worktree) return scope;

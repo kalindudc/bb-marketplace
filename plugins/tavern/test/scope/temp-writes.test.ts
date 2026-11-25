@@ -20,12 +20,12 @@ it.each(["keeper", "ranger", "warden", "smith", "wanderer"])("%s writes temp and
     expect(evaluate(scope, { kind: "bash", toolName: "bash", input: { command: `printf x > ${path}` }, cwd: "/repo" }).allow).toBe(true);
   }
 });
-it.each(["ranger", "wanderer"])("narrows temp to the requested subtree while retaining own storage for %s", role => {
+it.each(["ranger", "wanderer"])("keeps the saved temp and own-storage policy as data for %s", role => {
   const narrowed = scopeForClass(role, { writes: { allow: ["/tmp/notes/**"] } });
   expect(narrowed.writes.allow).toEqual(["/tmp/notes/**"]);
   const scope = bindPaths(narrowed, { home: "/home/test", tmp: ["/tmp"], threadStorage: "/storage/own", scopesDir: "/scopes" });
   expect(evaluate(scope, { kind: "write", toolName: "write", input: { path: "/tmp/notes/a" }, cwd: "/repo" }).allow).toBe(true);
-  expect(evaluate(scope, { kind: "write", toolName: "write", input: { path: "/tmp/other/a" }, cwd: "/repo" }).allow).toBe(false);
+  expect(evaluate(scope, { kind: "write", toolName: "write", input: { path: "/tmp/other/a" }, cwd: "/repo" }).allow).toBe(true);
   expect(evaluate(scope, { kind: "write", toolName: "write", input: { path: "/storage/own/a" }, cwd: "/repo" }).allow).toBe(true);
 });
 it("does not classify already-granted temporary paths as widenings", () => {
@@ -51,20 +51,20 @@ it("refuses threads storage spellings without a bound thread storage root", () =
     "write:${threadStorage}/**",
   ]);
 });
-it("keeps Keeper writes out of the repository and includes temp roots in its sandbox", () => {
+it("passes Keeper worktree edits independently of scratch roots", () => {
   const scope = bound("keeper");
-  expect(evaluate(scope, { kind: "write", toolName: "write", input: { path: "/repo/record" }, cwd: "/repo" }).allow).toBe(false);
+  expect(evaluate(scope, { kind: "write", toolName: "write", input: { path: "/repo/record" }, cwd: "/repo" }).allow).toBe(true);
   expect(sandboxProfile(scope)).toContain('(allow file-write* (subpath "/storage/own"))');
 });
-it("refuses a canonicalized temporary symlink escaping to protected files or the repository", () => {
+it("refuses a temp symlink into Tavern scopes, not a repository", () => {
   const root = mkdtempSync(join(tmpdir(), "tavern-temp-test-")); dirs.push(root);
   const home = join(root, "home"), repo = join(root, "repo"), temp = join(root, "tmp");
-  mkdirSync(join(home, ".ssh"), { recursive: true }); mkdirSync(repo); mkdirSync(temp);
+  mkdirSync(join(root, "scopes"), { recursive: true }); mkdirSync(repo); mkdirSync(temp);
   const scope = bindPaths(scopeForClass("keeper", undefined, "keeper"), { home, tmp: [temp], threadStorage: join(root, "storage"), scopesDir: join(root, "scopes") }, realPath);
-  for (const [name, target] of [["secret", join(home, ".ssh")], ["repo", repo]]) {
+  for (const [name, target] of [["control", join(root, "scopes")], ["repo", repo]]) {
     symlinkSync(target, join(temp, name));
     const path = join(temp, name, "record");
-    expect(evaluate(scope, { kind: "write", toolName: "write", input: { path }, cwd: repo, resolvedPaths: { [path]: realPath(path) } }).allow).toBe(false);
+    expect(evaluate(scope, { kind: "write", toolName: "write", input: { path }, cwd: repo, resolvedPaths: { [path]: realPath(path) } }).allow).toBe(name !== "control");
   }
 });
 it.each(["any", "paths"] as const)("allows Pip's own-storage path with write mode %s", mode => {

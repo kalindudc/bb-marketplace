@@ -39,12 +39,13 @@ it.each(commands)("recognises %s: %s for every class", (kind, command) => {
   for (const role of ["ranger", "warden", "smith", "wanderer", "keeper"]) {
     const decision = evaluate(scope(role), call(command));
     const managed = ["ready", "close", "review"].includes(kind) || /\bpr (?:comment|edit)\b/.test(command);
+    const ordinary = kind === "configure" || kind === "allocate";
     const requiresReceipt = kind === "merge" || kind === "cluster-write";
-    expect(decision.allow, role).toBe(!requiresReceipt && !managed && role === "keeper");
+    expect(decision.allow, role).toBe(ordinary || !requiresReceipt && !managed && role === "keeper");
     if (role === "keeper" && kind === "merge") expect(decision).toMatchObject({ ruleId: "merge-approval" });
-    if (role === "keeper" && !managed && !requiresReceipt) expect(decision).toMatchObject({ acts: expect.arrayContaining([expect.objectContaining({ kind })]) });
+    if (!ordinary && role === "keeper" && !managed && !requiresReceipt) expect(decision).toMatchObject({ acts: expect.arrayContaining([expect.objectContaining({ kind })]) });
     if (kind === "review" || /\bpr comment\b/.test(command)) expect(decision).toMatchObject({ ruleId: "send-guard", reason: expect.stringContaining("Agents do not send as you") });
-    else if (managed && role === "keeper" && kind !== "ready") expect(decision).toMatchObject({ reason: expect.stringContaining("tavern_pull_request") });
+    else if (managed && role === "keeper" && kind !== "ready" && !ordinary) expect(decision).toMatchObject({ reason: expect.stringContaining("tavern_pull_request") });
   }
 });
 it.each(["kubectl --context x get pods", "kubectl describe pod web", "kubectl logs web", "kubectl events", "kubectl auth can-i get pods", "kubectl rollout status deployment/demo", "kubectl rollout history deployment/demo", "helm template release ./chart", "cortex update 1175 -m hi", "bb thread spawn --task hi"])("does not catalogue coordination or reads: %s", command => {
@@ -53,12 +54,12 @@ it.each(["kubectl --context x get pods", "kubectl describe pod web", "kubectl lo
   if (/^(kubectl|helm|terraform) /.test(command)) expect(evaluate(scope("ranger"), call(command)).allow).toBe(true);
 });
 it.each(["sample-machines", "other-fleet-machines"])("classifies machine writes without a named provider: %s", provider => {
-  for (const [kind, verbs] of [["configure", ["rotate", "park", "remove"]], ["allocate", ["create", "enroll"]]] as const) {
+  for (const [kind, verbs] of [["configure", ["rotate", "park"]], ["allocate", ["create", "enroll"]], ["delete", ["remove"]]] as const) {
     for (const verb of verbs) {
       const command = `bb --host demo ${provider} ${verb} fixture`;
       expect(acts(command)).toContain(kind);
       expect(fallbackActs(command + " 'unterminated").map(act => act.kind)).toContain(kind);
-      expect(evaluate(scope("smith"), call(command)).allow).toBe(false);
+      expect(evaluate(scope("smith"), call(command)).allow).toBe(kind !== "delete");
       expect(evaluate(narrowAwayScope(scope("keeper"), closed), call(command)).allow).toBe(false);
     }
   }
@@ -68,7 +69,7 @@ it.each(["sample-machines", "other-fleet-machines"])("classifies machine writes 
   }
 });
 it("allows an uncontained Ranger to run Terraform plan without a cluster-write ask", () => {
-  const command = "terraform plan";
+  const command = "TF_CLI_ARGS_plan=-lock=false terraform plan -lock=false";
   expect(acts(command)).toEqual([]);
   expect(evaluate(scope("ranger"), { ...call(command), containment: undefined })).toMatchObject({ allow: true });
 });
@@ -93,7 +94,7 @@ it("allows only lease-protected own branch rewrites", () => {
   for (const command of ["git push --force origin feature", "git push --force-with-lease origin main", "git push --force-with-lease origin other", "git push origin other"]) expect(evaluate(scope("smith"), { ...call(command) }).allow).toBe(false);
   expect(evaluate({ ...scope("smith"), assignedBranch: undefined }, call("git push origin feature")).allow).toBe(false);
 });
-it.each(commands)("refuses %s during Closing time for every class: %s", (_kind, command) => {
+it.each(commands)("keeps the Closing time hold for %s: %s", (_kind, command) => {
   expect(new Set(commands.map(([kind]) => kind)).size).toBe(ACT_CATALOGUE.filter(act => act.kind !== "tavern-control").length);
   for (const role of ["keeper", "smith", "ranger", "warden", "wanderer"]) expect(evaluate(narrowAwayScope(scope(role), closed), call(command)).allow, role + command).toBe(false);
 });
@@ -111,10 +112,10 @@ it.each(["gh", "dt"])("grants %s comments and title/body edits only with verifie
   }
   expect(evaluate(scope("smith"), call(program + " pr create --draft --head someone-else")).allow).toBe(false);
 });
-it("keeps project narrowing even when it reuses a legacy rule id", () => {
+it("does not interpret a custom ordinary command deny as deploy authority", () => {
   const s = scope("smith");
   s.shell.deny.push({ id: "deploy", argv: ["npm", "test"], why: "Project-specific restriction" });
-  expect(evaluate(s, call("npm test")).allow).toBe(false);
+  expect(evaluate(s, call("npm test")).allow).toBe(true);
 });
 it.each([
   ["dt pr merge 1", "merge", "merge"],

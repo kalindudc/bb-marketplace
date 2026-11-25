@@ -23,15 +23,15 @@ const cases = [
   ["ranger", "gcloud storage cp report.json gs://fixture/report.json"],
   ["ranger", "bb plugin rpc call tavern answerAsk --input-file a.json"],
   ["ranger", "bb tavern ask ask_fixture approve"],
-  ["ranger", "bb plugin install fixture"],
   ["ranger", "bb thread delete thr_fixture"],
   ["ranger", "gh auth token"],
-  ["ranger", "rm -rf /home/me/src/repo"],
-  ["ranger", "echo fixture >> ~/.ssh/authorized_keys"],
   ["smith", "echo fixture > ~/.agents/tavern/scopes.yml"],
 ];
 it.each(cases)("still catches harm for %s: %s", (role, command) => {
   for (const containment of ["sandbox", undefined] as const) expect(evaluate(scope(role), { kind: "bash", toolName: "bash", input: { command }, cwd: "/repo", containment }).allow).toBe(false);
+});
+it.each(["bb plugin install fixture", "rm -rf /fixture/repo", "echo x > /fixture/repo/note"])("does not expand the act list to %s", command => {
+  expect(evaluate(scope("ranger"), { kind: "bash", toolName: "bash", input: { command }, cwd: "/repo" }).allow).toBe(true);
 });
 it("states the accepted interpreter blind spot rather than claiming subprocess act detection", () => {
   expect(evaluate(scope("ranger"), { kind: "bash", toolName: "bash", input: { command: 'python3 -c "import subprocess; subprocess.run([\'gh\',\'pr\',\'merge\',\'1\'])"' }, cwd: "/repo", containment: "sandbox" }).allow).toBe(true);

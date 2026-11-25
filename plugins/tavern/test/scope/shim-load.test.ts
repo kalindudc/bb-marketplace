@@ -26,14 +26,14 @@ it.skipIf(!existsSync(jiti))("loads the shim with pi's actual jiti: no-op budget
       if (hooks.length) throw new Error("Unscoped loader registered hooks");
       process.env.TAVERN_SCOPE_FILE = ${JSON.stringify(join(root, "missing-scope.json"))};
       const stale = await jiti.import(${JSON.stringify(shim)}, { default: true }); await stale(pi);
-      const staleResult = hooks.find(([name]) => name === "tool_call")[1]({ toolName: "bash" });
+      const staleResult = hooks.find(([name]) => name === "tool_call")[1]({ toolName: "bash", input: { command: "git push origin main" } });
       hooks.length = 0;
       const current = await jiti.import(${JSON.stringify(real)}, { default: true }); await current(pi);
       const currentResult = hooks.find(([name]) => name === "tool_call")[1]({ toolName: "bash", input: { command: "ls" } }, { cwd: ${JSON.stringify(root)} });
       console.log(JSON.stringify({ times, staleResult, currentResult }));
     `;
     const report = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", source], { encoding: "utf8", timeout: 30000 }));
-    expect(report.staleResult.block).toBe(true); expect(report.currentResult.block).toBe(true);
+    expect(report.staleResult).toMatchObject({ block: true }); expect(report.currentResult).toBeUndefined();
     const warm = report.times.shim.slice(1).sort((a: number, b: number) => a - b)[1];
     expect(warm).toBeLessThan(100);
     if (process.env.TAVERN_TIMING_REPORT) writeFileSync(process.env.TAVERN_TIMING_REPORT, JSON.stringify(report.times));

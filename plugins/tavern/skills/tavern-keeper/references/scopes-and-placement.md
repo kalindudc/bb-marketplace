@@ -10,10 +10,9 @@ Use this reference for scoped hire rules, detection-only exceptions, scope adjus
 
 ## Scope rules and violations
 
-- `tools.allow` accepts tool names or patterns, NEVER shell commands.
-- Narrowings and user-policy grants from `~/.agents/tavern/scopes.yml` apply immediately through `tavern_scope`. All other widenings open a consequential, never-defaulting `scope` ask.
-- In `enforce` mode, scope violations appear on your next tick and open a blocker with evidence. NEVER route around a block with another interpreter or tool.
-- Repair a bad worktree binding instead of widening a checker's scope. For a missing local Pi guard, request `repairGuard: true` only when the user must restart it.
+- Act guard (`enforce`) holds recognized merges, publishes, deploys, sends, deletions, credential disclosures and cluster writes. Ordinary calls are recorded, not refused. Do not ask to widen a member's tool or path scope for ordinary work.
+- Use the existing typed decision for a held act. NEVER route around it with another interpreter or tool.
+- Repair a bad maker binding instead of widening a checker's scope. Ask the user to restart a missing Pi guard only when prevention is needed.
 
 ## Cross-repo machine placement
 

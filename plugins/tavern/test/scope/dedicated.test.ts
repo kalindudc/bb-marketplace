@@ -32,20 +32,20 @@ function guard() {
   const pi = { on: (name: string, fn: Function) => handlers.set(name, fn), getActiveTools: () => tools, setActiveTools: (value: string[]) => { tools = value; } };
   return { pi, emit: (name: string, input: unknown, cwd: string) => handlers.get(name)?.(input, { cwd }) };
 }
-it("retains authenticated readiness when an absent scope fails closed", () => {
+it("retains readiness and ordinary calls when scope inspection is unavailable", () => {
   const f = fixture(); vi.stubEnv("TAVERN_SCOPE_FILE", join(f.root, "missing.json")); vi.stubEnv("BB_THREAD_ID", "member");
   const runtime = guard(); extension(runtime.pi); runtime.emit("session_start", {}, f.workspace);
   expect(runtime.pi.getActiveTools()).toContain("tavern_ready");
   expect(runtime.emit("tool_call", { toolName: "tavern_ready", input: {} }, f.workspace)).toBeUndefined();
-  expect(runtime.emit("tool_call", { toolName: "bash", input: { command: "pwd" } }, f.workspace)).toMatchObject({ block: true });
+  expect(runtime.emit("tool_call", { toolName: "bash", input: { command: "pwd" } }, f.workspace)).toBeUndefined();
 });
-it("retains readiness in the missing guard-artifact loader without opening other tools", async () => {
+it("keeps readiness available even when a missing guard artifact fails closed", async () => {
   const f = fixture(); vi.stubEnv("TAVERN_SCOPE_FILE", join(f.root, "missing.json"));
   const load = Function("fs", guardLoaderSource(join(f.root, "absent.mjs")).replaceAll('await import("node:fs")', "fs").replace("export default", "return"))(fs);
   const runtime = guard(); await load(runtime.pi); runtime.emit("session_start", {}, f.workspace);
   expect(runtime.pi.getActiveTools()).toContain("tavern_ready");
   expect(runtime.emit("tool_call", { toolName: "tavern_ready", input: {} }, f.workspace)).toBeUndefined();
-  expect(runtime.emit("tool_call", { toolName: "write", input: { path: "file" } }, f.workspace)).toMatchObject({ block: true });
+  expect(runtime.emit("tool_call", { toolName: "write", input: { path: "file" } }, f.workspace)).toMatchObject({ block: true, reason: expect.stringContaining("Guard could not load") });
 });
 it("permits readiness with a pending worktree binding for every default class", () => {
   for (const role of ["ranger", "warden", "smith", "keeper", "wanderer"]) {
@@ -59,16 +59,18 @@ it("accepts a trusted dedicated primary checkout while leaving legacy linked-onl
   const runtime = guard(); extension(runtime.pi); runtime.emit("session_start", {}, f.workspace);
   expect(f.store.isArmed("member")).toBe(true);
   expect(runtime.emit("tool_call", { toolName: "write", input: { path: "owned-file" } }, f.workspace)).toBeUndefined();
-  expect(runtime.emit("tool_call", { toolName: "write", input: { path: join(f.root, "outside") } }, f.workspace)).toMatchObject({ block: true });
+  expect(runtime.emit("tool_call", { toolName: "write", input: { path: join(f.root, "outside") } }, f.workspace)).toBeUndefined();
   f.store.write("member", f.makeScope());
-  expect(runtime.emit("tool_call", { toolName: "write", input: { path: "owned-file" } }, f.workspace)).toMatchObject({ block: true });
+  expect(runtime.emit("tool_call", { toolName: "write", input: { path: "owned-file" } }, f.workspace)).toBeUndefined();
+  expect(runtime.emit("tool_call", { toolName: "bash", input: { command: "git push origin main" } }, f.workspace)).toMatchObject({ block: true });
 });
 it("requires the dedicated checkout to match its trusted expected root", () => {
   const f = fixture(); vi.spyOn(process, "cwd").mockReturnValue(f.workspace); vi.stubEnv("TAVERN_SCOPE_FILE", f.store.file("member")); vi.stubEnv("BB_THREAD_ID", "member");
   for (const expectedWorktree of [undefined, join(f.root, "wrong")]) {
     f.store.write("member", scopeSchema.parse({ ...f.makeScope(), workspaceKind: "dedicated-machine", ...(expectedWorktree ? { expectedWorktree } : {}) }));
     const runtime = guard(); extension(runtime.pi);
-    expect(runtime.emit("tool_call", { toolName: "write", input: { path: "file" } }, f.workspace)).toMatchObject({ block: true });
+    expect(runtime.emit("tool_call", { toolName: "write", input: { path: "file" } }, f.workspace)).toBeUndefined();
+    expect(runtime.emit("tool_call", { toolName: "bash", input: { command: "git push origin main" } }, f.workspace)).toMatchObject({ block: true });
     expect(runtime.emit("tool_call", { toolName: "tavern_ready", input: {} }, f.workspace)).toBeUndefined();
   }
 });
@@ -79,7 +81,7 @@ it("binds dedicated checker commands to the checker-local carried root", () => {
   expect(bound.checks?.worktree).toBe(f.workspace);
   expect(evaluate(bound, { kind: "bash", toolName: "bash", input: { command: "node --test" }, cwd: f.workspace })).toEqual({ allow: true, check: true });
   expect(() => bindChecks({ ...scoped, checks: { worktree: f.root, commands: [] } })).toThrow();
-  expect(evaluate(bound, { kind: "bash", toolName: "bash", input: { command: "git add ." }, cwd: f.workspace })).toMatchObject({ allow: false });
+  expect(evaluate(bound, { kind: "bash", toolName: "bash", input: { command: "git add ." }, cwd: f.workspace })).toMatchObject({ allow: false, ruleId: "checker-write" });
 });
 it("does not stop a bootstrap readiness call for an unarmed pending Pi scope", async () => {
   const f = fixture(); f.store.write("member", f.makeScope());

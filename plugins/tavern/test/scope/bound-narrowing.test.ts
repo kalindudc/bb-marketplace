@@ -32,8 +32,8 @@ it("applies a local final-copy overlay and removes it on rebind without losing t
   expect(f.read().shell.allow).toEqual(original.shell.allow);
   vi.stubEnv("TAVERN_SCOPE_FILE", f.file); vi.stubEnv("BB_THREAD_ID", "member"); const handlers = new Map<string, Function>();
   extension({ on: (name, fn) => handlers.set(name, fn), getActiveTools: () => ["read", "journal"], setActiveTools: vi.fn() });
-  expect(handlers.get("tool_call")!({ toolName: "read", input: {} }, { cwd: f.root })).toMatchObject({ block: true });
-  expect(handlers.get("tool_call")!({ toolName: "bash", input: { command: "node --version" } }, { cwd: f.root })).toMatchObject({ block: true, reason: expect.stringContaining("Wait for the user to return") });
+  expect(handlers.get("tool_call")!({ toolName: "read", input: {} }, { cwd: f.root })).toBeUndefined();
+  expect(handlers.get("tool_call")!({ toolName: "bash", input: { command: "node --version" } }, { cwd: f.root })).toBeUndefined();
   away = false; await f.scopes.rebindScope("member"); expect(f.read().bindingTemplate).toEqual(original); expect(f.read().tools.deny).not.toContain("read");
   expect(handlers.get("tool_call")!({ toolName: "read", input: {} }, { cwd: f.root })).toBeUndefined();
   expect(handlers.get("tool_call")!({ toolName: "bash", input: { command: "node --version" } }, { cwd: f.root })).toBeUndefined();

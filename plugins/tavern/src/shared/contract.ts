@@ -143,12 +143,19 @@ export const mapHistorySchema = z.object({ keepers: z.array(z.object({ threadId:
 export type MapHistory = z.infer<typeof mapHistorySchema>;
 
 // added by Builder B: scope state and evidence are additive so older UI fixtures remain valid.
+const callObservationSchema = z.object({
+  eventId: z.string(), seq: z.number(), at: z.number(), tool: z.string(), providerId: z.string(),
+  mode: z.enum(["enforce", "watch"]),
+  outcome: z.enum(["ordinary", "inspection-unavailable", "act-allowed", "prevented", "detected-after-dispatch", "stop-failed"]),
+});
+const scopeCallPageSchema = z.object({ recent: z.array(callObservationSchema), next: z.number().int().positive().nullable() });
 export const memberScopeSchema = z.object({
   threadId, scope: scopeSchema.nullable(), error: z.string().nullable(), armed: z.boolean(), pendingAskId: id.nullable(),
   guardPosture: memberSchema.shape.guardPosture,
   shellGrants: z.array(shellGrantSchema.extend({ usable: z.boolean() })).optional(),
   restartNeeded: z.string().nullable().optional(),
   guardCheckFailed: z.boolean().optional(),
+  callActivity: scopeCallPageSchema.extend({ count: z.number(), unavailable: z.number() }).optional(),
   live: z.boolean().optional(),
   repairAskId: id.optional(),
   clusterGuard: z.enum(["armed", "ready", "restart", "not-prevented"]).optional(),
@@ -161,7 +168,7 @@ export const scopeViolationSchema = z.object({
   threadId, providerId: z.string(), at: z.number(), eventId: z.string(), seq: z.number(), ruleId: z.string(), reason: z.string(),
   stopped: z.boolean(), prevented: z.literal(true).optional(), stopError: z.string().optional(), latencyMs: z.number(), call: z.unknown().optional(),
   // added by Builder B: watch observations are not enforced violations or blocker asks.
-  mode: z.enum(["enforce", "watch"]).optional(), act: z.enum(ACT_KINDS).optional(),
+  mode: z.enum(["enforce", "watch"]).optional(), act: z.enum(ACT_KINDS).optional(), policy: z.literal("act-list").optional(),
 });
 
 // added by Builder B: counts and snapshot watermarks keep clipped decision lists honest and bulk acknowledgement race-safe.
@@ -544,6 +551,7 @@ export const rpcContract = defineContract({
   delegateQuest: { input: z.discriminatedUnion("kind", [delegateRequestSchema.options[0].extend(delegateContext), delegateRequestSchema.options[1].extend(delegateContext)]), output: ok },
   preapproveQuest: { input: preapprovalInputSchema.extend({ boardQuestId: id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
   revokeQuestAuthority: { input: z.object({ boardQuestId: id, id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
+  scopeCallPage: { input: z.object({ threadId, before: z.number().int().positive() }).strict(), output: scopeCallPageSchema },
   revokeShellGrant: { input: z.object({ threadId, id }).strict(), output: ok },
   updateMemberSchedule: { input: scheduleControlSchema.extend({ threadId }), output: ok },
   clusterRunStatus: { input: z.object({ askId: id }).strict(), output: z.object({ guarded: z.boolean() }), tags: () => [tags.room()] },

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { communicationAuthoritySchema, sendToolsSchema } from "../shared/communication";
 import { gitOidSchema, workspaceKindSchema } from "../shared/placement";
 
+export const scopeModeSchema = z.enum(["enforce", "watch", "off"]);
 export const PRESETS = ["readonly", "checker", "worktree", "keeper", "open"] as const;
 const patterns = z.array(z.string().min(1).max(1000)).max(200);
 const regex = z.string().max(2000).refine(value => {
@@ -25,7 +26,7 @@ export const scopeSchema = z.object({
   preset: z.enum(PRESETS),
   issuedAt: z.number().int().nonnegative(),
   failClosed: z.literal(true),
-  mode: z.enum(["enforce", "watch", "off"]).default("enforce"),
+  mode: scopeModeSchema.default("enforce"),
   commandTools: patterns.default(["bash", "Bash"]),
   expectedWorktree: z.string().optional(),
   writeRootIdentity: z.record(z.string(), z.string()).optional(),
@@ -35,6 +36,7 @@ export const scopeSchema = z.object({
   communicationAuthority: communicationAuthoritySchema.optional(),
   workspaceKind: workspaceKindSchema.optional(),
   checks: z.object({ worktree: z.string().min(1).optional(), commands: z.array(z.string().min(1).max(8000)).max(100) }).strict().optional(),
+  controlRoots: z.array(z.string()).optional(),
   enforceFrom: z.number().int().nonnegative().optional(),
   writes: z.object({ mode: z.enum(["none", "worktree", "paths", "any"]), allow: patterns, deny: patterns }).strict(),
   tools: z.object({ allow: patterns, deny: patterns, hide: z.boolean() }).strict(),

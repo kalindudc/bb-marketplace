@@ -12,7 +12,7 @@ import { envForScope, registerEnv } from "./env";
 import { hostTemplate as originalHostTemplate, readHostScope, type HostScopeLookup, type HostScopeState, type ScopeWriteOptions } from "./host-env";
 import { registerWatcher, type WatchDeps } from "./watch";
 import { bindWorktree, needsWorktree } from "./worktree";
-import { ensureGuardInstalled, guardStatus, type GuardOptions } from "./install";
+import { ensureGuardInstalled, guardStatus, piAgentDir, type GuardOptions } from "./install";
 import { ScopePolicy, type PolicyOptions, type ProjectContext } from "./policy";
 import { bindChecks } from "./checker";
 
@@ -62,6 +62,9 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
   const extensionCandidates = ["../../adapters/pi/extension.ts", "../adapters/pi/extension.ts", "./adapters/pi/extension.ts"].map(path => fileURLToPath(new URL(path, import.meta.url)));
   const guard = { entryPath: extensionCandidates.find(path => existsSync(path)) ?? extensionCandidates[0], ...deps.guard };
   const installation = deps.installGuard === false ? "disabled" : ensureGuardInstalled(guard);
+  const database = deps.dataDir ? undefined : bb.storage.database().name;
+  const controlRoots = [join(guard.agentDir ?? piAgentDir(), "extensions/tavern-guard"), guard.entryPath,
+    ...(database ? [database, database + "-wal", database + "-shm", database + "-journal"] : [])];
   const updates = new Map<string, Promise<unknown>>();
   const enqueue = <T>(threadId: string, work: (check: (bindingChanged?: boolean) => void) => Promise<T>) => {
     let revision = store.revision(threadId);
@@ -131,7 +134,7 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
     let scope = bindChecks(bindPaths(prepared, {
       home: deps.policyOptions?.home ?? homedir(),
       tmp: process.platform === "darwin" ? [...new Set(["/private/tmp", realPath(tmpdir())])] : [tmpdir()],
-      scopesDir: store.directory, ...paths,
+      scopesDir: store.directory, ...paths, controlRoots,
     }, realPath));
     if (scope.checks) template = { ...template, checks: scope.checks };
     if (scope.expectedWorktree) template = { ...template, expectedWorktree: scope.expectedWorktree };

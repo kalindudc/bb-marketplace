@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { gitFixtureTemplate } from "../git-fixture-template";
 import { hostContract, type Authority, type HostInput } from "../../src/host-contract";
@@ -60,7 +60,7 @@ it("issues only to an armed native cluster guard and revokes an outstanding gran
   const input = f.input();
   const ack = await f.service.bindScope(input);
   const status = { ...f.authority, revision: ack.revision, scopeDigest: ack.scopeDigest };
-  const command = "kubectl apply -f sample.yaml", now = Date.now();
+  const command = "kubectl --context fixture -n app apply -f sample.yaml", now = Date.now();
   const grant = { threadId: "member", act: "cluster-write", targetDigest: digest(command), target: command, scope: "once" as const, askId: "ask-1", issuedAt: now, expiresAt: now + 60_000, usedAt: null };
   await expect(f.service.issueClusterGrant({ ...status, grant })).rejects.toThrow(/not prevented/);
   const pi = guarded(ack.scopeFile, f.repo);
@@ -217,10 +217,10 @@ it("does not return a decision after release at the final promise boundary", asy
   vi.spyOn(engine, "evaluate").mockImplementation((scope, call) => { const result = original(scope, call); queueMicrotask(() => { void f.service.releaseScope(f.authority); }); return result; });
   await expect(f.service.prepareCall({ ...f.authority, scopeRevision: 1, call: { kind: "read", toolName: "read", input: {}, cwd: f.repo } })).rejects.toThrow(/scope|released|bound/i);
 });
-it("native call preparation discards forged path facts and denies a real symlink escape", async () => {
-  const f = await fixture(), ack = await f.service.bindScope(f.input()), outside = join(f.root, "outside"); mkdirSync(outside); symlinkSync(outside, join(f.repo, "escape"));
+it("native call preparation discards forged path facts and denies a symlink into actual scope state", async () => {
+  const f = await fixture(), ack = await f.service.bindScope(f.input()), outside = dirname(ack.scopeFile); symlinkSync(outside, join(f.repo, "escape"));
   const path = join(f.repo, "escape/file"), result = await f.service.prepareCall({ ...f.authority, scopeRevision: 1, call: { kind: "write", toolName: "write", input: { path, content: "data" }, cwd: f.repo, resolvedPaths: { [path]: join(f.repo, "forged") }, ownedDraftPrs: ["forged"] } });
-  expect(result).toMatchObject({ scopeRevision: 1, scopeDigest: ack.scopeDigest, decision: { allow: false, ruleId: "write-path" } });
+  expect(result).toMatchObject({ scopeRevision: 1, scopeDigest: ack.scopeDigest, decision: { allow: false, ruleId: "tavern-control-files" } });
   expect(result.call.resolvedPaths?.[path]).toBe(join(outside, "file")); expect(result.call.ownedDraftPrs).not.toContain("forged");
 });
 it("native call preparation uses native push remotes and branch rather than caller-supplied facts", async () => {
@@ -228,9 +228,9 @@ it("native call preparation uses native push remotes and branch rather than call
   const result = await f.service.prepareCall({ ...f.authority, scopeRevision: 1, call: { kind: "bash", toolName: "bash", input: { command: "git push origin HEAD" }, cwd: f.repo, pushTargets: { fake: ["forged"] }, pushHeads: { fake: "main" }, gitRoots: { fake: "/forged" }, directories: ["/forged"], ownedDraftPrs: ["forged"] } });
   expect(result.decision).toMatchObject({ allow: true, acts: [expect.objectContaining({ kind: "publish" })] }); expect(Object.values(result.call.pushTargets!)).toEqual([["https://github.com/owner/repo.git"]]); expect(Object.values(result.call.pushHeads!)).toContain("tavern/member"); expect(JSON.stringify(result)).not.toContain("forged");
 });
-it("native call preparation evaluates denied tools against the rendered effective policy", async () => {
+it("native call preparation does not turn a legacy ordinary tool deny into an act", async () => {
   const f = await fixture(); await f.service.bindScope(f.input());
-  expect(await f.service.prepareCall({ ...f.authority, scopeRevision: 1, call: { kind: "read", toolName: "private_tool", input: {}, cwd: f.repo } })).toMatchObject({ decision: { allow: false, ruleId: "tool" } });
+  expect(await f.service.prepareCall({ ...f.authority, scopeRevision: 1, call: { kind: "read", toolName: "private_tool", input: {}, cwd: f.repo } })).toMatchObject({ decision: { allow: true } });
 });
 it("native call preparation rejects altered bytes instead of returning a policy decision", async () => {
   const f = await fixture(), ack = await f.service.bindScope(f.input()); writeFileSync(ack.scopeFile, readFileSync(ack.scopeFile, "utf8") + "\n");

@@ -88,7 +88,7 @@ export class NativeScopes {
       ...(template.checks ? { checks: { ...template.checks, worktree: endpoint.realRoot } } : {}),
       writes: { ...template.writes, deny: [...template.writes.deny, join(native.piAgentDir, "extensions")] },
     };
-    const scope = scopeSchema.parse(bindPaths(bindWorktree(core, endpoint.realRoot), { home: realpathSync(native.home), tmp: native.tmp, scopesDir: this.registry.dataDir, worktree: endpoint.realRoot, ...(threadStorage ? { threadStorage } : {}) }, realPath));
+    const scope = scopeSchema.parse(bindPaths(bindWorktree(core, endpoint.realRoot), { home: realpathSync(native.home), tmp: native.tmp, scopesDir: this.registry.dataDir, controlRoots: [join(native.piAgentDir, "extensions/tavern-guard")], worktree: endpoint.realRoot, ...(threadStorage ? { threadStorage } : {}) }, realPath));
     nativeScopeVariablesSchema.parse(scope.env.variables);
     const entries = envForScope(new Map([[scope.threadId, { file: this.registry.scopeStatePath(authority, "scope.json"), scope }]]), scope.threadId);
     if (entries.length > 32 || new Set(entries.map(entry => entry.name)).size !== entries.length)
@@ -229,7 +229,7 @@ export class NativeScopes {
       const currentScope = this.intact(authority, record, error => { mismatch = error; });
       const mismatchedAct = mismatch && (communicationAct(currentScope, call) || mismatch.sendTools?.length && communicationAct({ ...currentScope, sendTools: mismatch.sendTools }, call));
       let decision = mismatchedAct ? blocked(toolName, "message-policy-mismatch", mismatch!.message)
-        : evaluate(currentScope, { ...call, draftApproved: !mismatch && matchedDraftReceipt(file, call, input.call.draftObservation), clusterWriteApproved, ...(clusterWriteApproved ? { clusterObservation: receipt } : {}), prGrantAvailable: id => !!observationId && pullRequestGrantAvailable(file, id, observationId) });
+        : evaluate(currentScope, { ...call, scopeFile: file, draftApproved: !mismatch && matchedDraftReceipt(file, call, input.call.draftObservation), clusterWriteApproved, ...(clusterWriteApproved ? { clusterObservation: receipt } : {}), prGrantAvailable: id => !!observationId && pullRequestGrantAvailable(file, id, observationId) });
       if (decision.allow && decision.prGrant && !claimPullRequestGrant(file, decision.prGrant, observationId!) && !pullRequestGrantAvailable(file, decision.prGrant, observationId))
         decision = blocked(call.toolName, "pr-sends-as-you", "the one-use pull request exception was already used");
       check();
@@ -266,7 +266,7 @@ export class NativeScopes {
       if (!status.isFile() || status.isSymbolicLink() || status.size > 16_384) return "stale" as const;
       marker = scopeArmedSchema.parse(JSON.parse(readFileSync(file, "utf8")));
     } catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" as const : "stale" as const; }
-    if (!marker.hostBinding || marker.threadId !== scope.threadId || marker.issuedAt !== scope.issuedAt || JSON.stringify(marker.hostBinding) !== JSON.stringify(record.binding) || marker.renderedDigest !== record.renderedDigest) return "stale" as const;
+    if (marker.policy !== "act-list" || !marker.hostBinding || marker.threadId !== scope.threadId || marker.issuedAt !== scope.issuedAt || JSON.stringify(marker.hostBinding) !== JSON.stringify(record.binding) || marker.renderedDigest !== record.renderedDigest) return "stale" as const;
     try { process.kill(marker.pid, 0); } catch { return "stale" as const; }
     return marker;
   }

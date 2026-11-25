@@ -24,19 +24,21 @@ function host(tools?: string[]) {
 it("does absolutely nothing unless TAVERN_SCOPE_FILE is set", () => {
   vi.stubEnv("TAVERN_SCOPE_FILE", undefined); const { pi } = host(); extension(pi); expect(pi.on).not.toHaveBeenCalled();
 });
-it("fails closed when scoped file is missing or invalid, while keeping report, journal and its quest alias", () => {
+it("does not authorize protected acts with a missing scope, while keeping ordinary work open", () => {
   const file = join(temp(), "missing.json"); vi.stubEnv("TAVERN_SCOPE_FILE", file);
   const { pi, emit } = host(); extension(pi); emit("session_start");
-  expect(emit("tool_call", { toolName: "read", input: {} })).toMatchObject({ block: true, reason: expect.stringContaining("scope file") });
+  expect(emit("tool_call", { toolName: "read", input: {} })).toBeUndefined();
   for (const toolName of ["journal", "quest", "tavern_report"]) expect(emit("tool_call", { toolName, input: {} })).toBeUndefined();
-  writeFileSync(file, "{}"); expect(emit("tool_call", { toolName: "bash", input: { command: "ls" } })).toMatchObject({ block: true });
-  expect(pi.setActiveTools).toHaveBeenCalledWith(["journal", "quest", "tavern_report"]);
+  writeFileSync(file, "{}"); expect(emit("tool_call", { toolName: "bash", input: { command: "ls" } })).toBeUndefined();
+  expect(emit("tool_call", { toolName: "bash", input: { command: "git push origin main" } })).toMatchObject({ block: true });
+  expect(pi.setActiveTools).not.toHaveBeenCalled();
 });
-it("arms, keeps tools visible, checks symlink escapes and reloads policy on every call", () => {
+it("arms, keeps tools visible, and protects a symlink to control files", () => {
   const root = temp(), { worktree } = linkedWorktree(root), outside = temp();
   vi.spyOn(process, "cwd").mockReturnValue(worktree);
-  symlinkSync(outside, join(worktree, "escape"));
   const store = new ScopeStore(root);
+  symlinkSync(store.directory, join(worktree, "escape"));
+  symlinkSync(outside, join(worktree, "ordinary"));
   const scope = bindPaths({ ...scopeForClass("smith"), threadId: "t1", issuedAt: Date.now() - 1, sandbox: false }, { home: root, tmp: [join(root, "scratch")], worktree, scopesDir: store.directory }, realPath);
   store.write("t1", scope); vi.stubEnv("TAVERN_SCOPE_FILE", store.file("t1")); vi.stubEnv("BB_THREAD_ID", "t1");
   const { pi, emit } = host(); extension(pi); emit("session_start", {}, worktree);
@@ -45,7 +47,7 @@ it("arms, keeps tools visible, checks symlink escapes and reloads policy on ever
   expect(emit("tool_call", { toolName: "bash", input: { command: "echo x > escape/new/file" } }, worktree)).toMatchObject({ block: true });
   expect(emit("tool_call", { toolName: "write", input: { path: "ok" } }, worktree)).toBeUndefined();
   scope.tools.deny.push("write"); store.write("t1", scope);
-  expect(emit("tool_call", { toolName: "write", input: { path: "ok" } }, worktree)).toMatchObject({ block: true });
+  expect(emit("tool_call", { toolName: "write", input: { path: "ordinary/file" } }, worktree)).toBeUndefined();
 });
 it.each(["ranger", "warden"])("keeps renderer checks and other tools visible for %s", role => {
   const root = temp(), store = new ScopeStore(root);
@@ -60,7 +62,7 @@ it.each(["ranger", "warden"])("keeps renderer checks and other tools visible for
     expect(emit("tool_call", { toolName, input: {} })).toBeUndefined();
   }
   for (const toolName of ["slack_post", "other_write_file", "spawn"]) expect(pi.getActiveTools()).toContain(toolName);
-  expect(emit("tool_call", { toolName: "write", input: { path: "/repo/not-writable" } })).toMatchObject({ block: true });
+  expect(emit("tool_call", { toolName: "write", input: { path: "/repo/notes" } })).toBeUndefined();
 });
 it("keeps every Keeper tool visible and permits direct work except protected paths", () => {
   const root = temp(), store = new ScopeStore(root);
@@ -71,7 +73,7 @@ it("keeps every Keeper tool visible and permits direct work except protected pat
   extension(pi); emit("session_start");
   expect(pi.getActiveTools()).toEqual(["read", "check_ui", "ui_examples", "slack_post", "write"]);
   expect(emit("tool_call", { toolName: "write", input: { path: "/repo/direct-work" } })).toBeUndefined();
-  expect(emit("tool_call", { toolName: "write", input: { path: join(root, ".ssh/config") } })).toMatchObject({ block: true });
+  expect(emit("tool_call", { toolName: "write", input: { path: join(root, ".ssh/config") } })).toBeUndefined();
   expect(emit("tool_call", { toolName: "write", input: { path: join(root, ".agents/tavern/scopes.yml") } })).toMatchObject({ block: true });
 });
 it("late-binds a saved Smith scope from process.cwd git toplevel, not ctx.cwd, and retains the template", () => {
@@ -85,9 +87,9 @@ it("late-binds a saved Smith scope from process.cwd git toplevel, not ctx.cwd, a
   const { pi, emit } = host(); extension(pi); emit("session_start", {}, outside);
   expect(store.isArmed("t1")).toBe(true);
   expect(emit("tool_call", { toolName: "write", input: { path: join(worktree, "file") } }, outside)).toBeUndefined();
-  expect(emit("tool_call", { toolName: "write", input: { path: join(outside, "file") } }, outside)).toMatchObject({ block: true });
+  expect(emit("tool_call", { toolName: "write", input: { path: join(outside, "file") } }, outside)).toBeUndefined();
   scope.tools.deny.push("write"); store.write("t1", scope);
-  expect(emit("tool_call", { toolName: "write", input: { path: join(worktree, "file") } }, nested)).toMatchObject({ block: true });
+  expect(emit("tool_call", { toolName: "write", input: { path: join(worktree, "file") } }, nested)).toBeUndefined();
   expect(JSON.parse(readFileSync(store.file("t1"), "utf8")).writes.allow).toContain("${worktree}");
 });
 it("arms as a reader when an unbound Smith has no git repository", () => {
@@ -98,7 +100,7 @@ it("arms as a reader when an unbound Smith has no git repository", () => {
   const { pi, emit } = host(); extension(pi); emit("session_start");
   expect(store.isArmed("t1")).toBe(true);
   expect(emit("tool_call", { toolName: "read", input: {} })).toBeUndefined();
-  expect(emit("tool_call", { toolName: "write", input: { path: join(root, "outside") } })).toMatchObject({ block: true });
+  expect(emit("tool_call", { toolName: "write", input: { path: join(root, "outside") } })).toBeUndefined();
   expect(emit("tool_call", { toolName: "tavern_report", input: {} })).toBeUndefined();
 });
 it("refuses root, HOME and roots that are missing or escape through a worktree-relative allowance", () => {

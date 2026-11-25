@@ -27,7 +27,7 @@ it("does not lend environment speed bumps to a new provider even for legacy scop
   const names = envForScope(store.records, "member").map(entry => entry.name);
   expect(names).toEqual(["TAVERN_SCOPE_FILE", "TAVERN_SCOPE_MODE"]);
 });
-it("a running guard uses the rewritten scope on its next command", () => {
+it("a running guard uses rewritten act authority on its next call", () => {
   const { root, store, scope, file } = fixture();
   const current = bindPaths(scope, { home: root, tmp: [tmpdir()], threadStorage: root, scopesDir: store.directory });
   store.write("member", current);
@@ -36,10 +36,10 @@ it("a running guard uses the rewritten scope on its next command", () => {
   const handlers = new Map<string, Parameters<PiGuardApi["on"]>[1]>();
   try {
     guard({ on: (key, handler) => handlers.set(key, handler), getActiveTools: () => ["bash"], setActiveTools: () => {} });
-    const call = () => handlers.get("tool_call")!({ toolName: "bash", toolCallId: "fixture", input: { command: "ls" } }, { cwd: root });
+    const call = () => handlers.get("tool_call")!({ toolName: "bash", toolCallId: "fixture", input: { command: "npm publish" } }, { cwd: root });
+    expect(call()).toMatchObject({ block: true });
+    store.write("member", { ...current, shell: { ...current.shell, allow: [...current.shell.allow, { id: "publish", argv: ["npm", "publish"], why: "Fixture policy changed" }] } });
     expect(call()).toBeUndefined();
-    store.write("member", { ...current, shell: { ...current.shell, deny: [...current.shell.deny, { id: "fixture-policy", argv: ["ls"], why: "Fixture policy changed" }] } });
-    expect(call()).toMatchObject({ block: true, reason: expect.stringContaining("Fixture policy changed") });
   } finally { vi.unstubAllEnvs(); }
 });
 

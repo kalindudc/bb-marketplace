@@ -237,6 +237,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     saveClass: () => call("saveClass", { classId: "smith", projectId: null, target: "global", edit: { label: "Mason" }, revision: "stale" }),
     removeClassOverride: () => call("removeClassOverride", { classId: "smith", projectId: null, target: "global", revision: "stale" }),
     typing: () => call("typing", { threadId: "lead" }),
+    scopeCallPage: () => call("scopeCallPage", { threadId: "lead", before: 1 }),
     placementModelFailures: () => call("placementModelFailures", {}),
     placementModelFailureClear: () => call("placementModelFailureClear", { id: "missing" }),
     settings: () => call("settings", null),

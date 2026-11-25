@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { defineContract } from "./define-contract";
 import { sendToolsSchema } from "./communication";
+import { scopeModeSchema } from "../scope/schema";
 import { gitProgramSettingSchema, piProgramSettingSchema } from "./git-program";
 import { placementSettingsSchema, placementSettingsPatchSchema, placementPolicyReadSchema, settingsJsonValueSchema } from "./placement-settings";
 
@@ -141,7 +142,7 @@ const sections = {
     staleStrikes: z.number().int().min(1).max(4), alwaysAsk: alwaysAskSchema, ...numberFields(KNOB_FIELDS.keepers) }).strict(),
   classes: z.record(classId, z.object({ provider: providerSetting.optional(), model: modelSetting.optional(),
     reasoning: reasoningSetting.nullable().optional() }).strict()),
-  scopes: z.object({ mode: z.enum(["enforce", "watch", "off"]), sendTools: sendToolsSchema }).strict(),
+  scopes: z.object({ mode: scopeModeSchema, sendTools: sendToolsSchema }).strict(),
   journal: z.object({ journalReminders: z.boolean(), journalQuietMinutes: z.number().int().min(1).max(120), ...numberFields(KNOB_FIELDS.journal) }).strict(),
   data: z.object({ historyDays: z.number().int().min(0).max(3650).describe("Retains optional Insights samples only. Zero keeps them forever; orchestration records are never pruned."), autoArchiveDays: z.number().int().min(0).max(3650), backupKeep: z.number().int().min(0).max(365).describe("Saved backups to keep. Zero keeps every backup; this never prunes live Tavern records.") }).strict(),
   tuning: z.object({ mode: z.enum(["apply", "suggest", "off"]), ...numberFields(KNOB_FIELDS.tuning) }).strict(),

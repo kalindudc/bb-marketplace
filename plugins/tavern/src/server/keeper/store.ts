@@ -80,6 +80,7 @@ export interface Records {
   };
   scopeRequests: ScopeRequest;
   scopeViolations: Violation;
+  scopeCallObservations: import("../../scope/watch").CallObservation & { memberThreadId: string; boardQuestId: string | null };
   scopeActObservations: import("../../scope/watch").ActObservation & { keeperThreadId: string; boardQuestId: string | null };
   shellGrants: import("../../shared/shell-grant").ShellGrant;
   scopeInputs: { initial?: ScopeOverride; fingerprint?: string; changes: { override: ScopeOverride; approved?: string[] }[] };
@@ -350,6 +351,8 @@ type StoreView = {
 };
 const views = new WeakMap<Database, StoreView>();
 
+const recordPageSize = 200;
+
 export class KeeperStore {
   private readonly view: StoreView;
   log?: (level: "info" | "warn", message: string) => void;
@@ -427,7 +430,7 @@ export class KeeperStore {
     kind: K,
     field: "keeperThreadId" | "boardQuestId" | "memberThreadId" | "parentKeeperThreadId" | "owner",
     value: string,
-    limit = 200,
+    limit = recordPageSize,
   ): Records[K][] {
     const rows = this.db
       .prepare(
@@ -546,6 +549,20 @@ export class KeeperStore {
       )
       .all(JSON.stringify(ids)) as { data: string }[];
     return rows.map((row) => JSON.parse(row.data) as Violation).reverse();
+  }
+  scopeCallPage(memberThreadId: string, before?: number, limit = recordPageSize) {
+    const rows = this.db.prepare(`SELECT rowid AS cursor, data FROM tavern_records
+      WHERE kind='scopeCallObservations' AND json_extract(data, '$.memberThreadId')=? AND (? IS NULL OR rowid<?)
+      ORDER BY rowid DESC LIMIT ?`).all(memberThreadId, before ?? null, before ?? null, limit + 1) as { cursor: number; data: string }[];
+    return {
+      recent: rows.slice(0, limit).map(row => this.decode("scopeCallObservations", row.data)),
+      next: rows.length > limit ? rows[limit - 1].cursor : null,
+    };
+  }
+  scopeCallActivity(memberThreadId: string) {
+    const aggregate = this.db.prepare(`SELECT count(*) AS count, count(CASE WHEN json_extract(data,'$.outcome')='inspection-unavailable' THEN 1 END) AS unavailable
+      FROM tavern_records WHERE kind='scopeCallObservations' AND json_extract(data, '$.memberThreadId')=?`).get(memberThreadId) as { count: number; unavailable: number };
+    return { ...aggregate, ...this.scopeCallPage(memberThreadId) };
   }
   pendingScopeRequests(keeperThreadId: string) {
     const rows = this.db

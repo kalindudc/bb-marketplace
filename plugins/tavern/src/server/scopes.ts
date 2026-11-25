@@ -126,6 +126,14 @@ export class BackendScopes {
       communicationPolicy: threadId => communicationPolicy(runtime.keeper, threadId, runtime.config().scopes.sendTools, this.api?.localScopeRecord(threadId)?.file, runtime.away.store.snapshot().status.closed),
       drainCommunication: (threadId, idle) => this.drainCommunication(threadId, idle),
       onActObservation: (observation) => this.observeAct(observation),
+      onCallObservation: observation => {
+        const k = runtime.keeper, member = k.member(observation.threadId);
+        if (!member) return;
+        const key = JSON.stringify([observation.threadId, observation.providerId, observation.eventId]);
+        const previous = k.store.get("scopeCallObservations", key);
+        if (!previous || previous.outcome === "inspection-unavailable" && observation.outcome !== previous.outcome)
+          k.store.put("scopeCallObservations", key, { ...observation, memberThreadId: member.threadId, boardQuestId: member.boardQuestId });
+      },
       onMergeUsed: (threadId, askId, eventId, succeeded) => {
         const k = runtime.keeper;
         const accepted = recordMergeUse(k, threadId, askId, eventId, succeeded);
@@ -1086,6 +1094,7 @@ export class BackendScopes {
           scope: row.scope,
           live,
           guardCheckFailed,
+          callActivity: store.scopeCallActivity(threadId),
           ...(repairAskId ? { repairAskId } : {}),
           restartNeeded: local ? scopeRestartReason(local.file, local.scope) : null,
           shellGrants: grants.map(grant => ({
@@ -1152,7 +1161,7 @@ export async function registerScopeSettings(
       options: ["enforce", "watch", "off"],
       default: DEFAULT_SETTINGS.scopes.mode,
       experimental_optionLabels: {
-        enforce: "Enforce guardrails",
+        enforce: "Act guard",
         watch: "Watch only (no blocking)",
         off: "Off (retain scopes)",
       },

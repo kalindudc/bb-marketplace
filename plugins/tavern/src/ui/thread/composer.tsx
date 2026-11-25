@@ -10,6 +10,8 @@ import { rpcContract, type ThreadDecor } from "../../shared/contract";
 import type { Ask, CheckerHandoffHold, ClassDef, Phase as QuestPhase } from "../../shared/schema";
 import type { ClassNotice } from "../../shared/class-execution-contract";
 import { AskCard, Crest, KeeperNoteRows, PhaseStrip, StatusPill, DecidedForYou, useDecisionSeen, ExpandsMark, Glyph, IconButton, OpensMark, QueryState, Skeleton, SkCrest, SkLine, TimeAgo, Vocabulary, memberIdentity, plural, useRegistry, useSkeletonCount, useSkeletonDelay, type Registry, glowVars, QuietNotice, useArmedNewQuest, activeHold, heldQuests, releaseWords, Clamp, localTime, useNow } from "../kit";
+import { MODE_WORDS } from "../kit/guard";
+import { CallActivity } from "../kit/call-activity";
 import { PHASE_STEPS, phaseIndex, phaseWord } from "../kit/phase";
 import { LEDGER_TAB } from "./tabs";
 import { pathProgress, summaryCountWords } from "../kit/rows";
@@ -555,15 +557,14 @@ function ScopePanel({ data, name, recheck }: { data: ThreadDecor; name: string; 
   const revoke = experimental_useRpcMutation({ contract: rpcContract, method: "revokeShellGrant" });
   const [grantError, setGrantError] = useState<unknown>(null);
   const ms = data.scope; if (!ms) return <p className="m">No scope details are recorded for this member.</p>;
-  const mode = ms.mode ?? "enforce"; const sc = ms.scope; const observations = data.violations ?? [];
+  const mode = ms.mode ?? "enforce"; const observations = data.violations ?? [];
   const watch = watchActWords(observations);
   const otherWatch = observations.filter(v => v.mode === "watch" && !v.act).length;
   const violations = observations.filter(v => v.mode !== "watch");
   return <section className="tw-scope" aria-label="Scope (guardrails)">
     <h4>Scope details</h4>
-    <p className="m small">The act catalogue checks shell commands, not non-shell tool actions or commands inside an interpreter.</p>
+    <p className="m small">{MODE_WORDS[mode]} · The guard recognizes listed shell acts and configured tools. It cannot infer every side effect of a program.</p>
     <div className="tv-guard-p"><GuardAlerts scope={ms} name={name} keeperThreadId={data.keeper?.threadId ?? null} recheck={recheck} local={!!data.keeper} /></div>
-    {sc && mode !== "off" && <ul className="tw-sfacts">{sc.writes.allow.length > 0 && <li>Allowed write paths: {sc.writes.allow.join(", ")}</li>}{sc.shell.deny.length > 0 && <li>{plural(sc.shell.deny.length, "blocked command rule")}</li>}</ul>}
 
     {ms.shellGrants?.length ? <div className="tw-shell-grants">
       <h4>Shell grants</h4>
@@ -578,7 +579,8 @@ function ScopePanel({ data, name, recheck }: { data: ThreadDecor; name: string; 
     </div> : null}
     {watch && <p className="m small">{watch}</p>}
     {otherWatch > 0 && <p className="m small">{plural(otherWatch, "other Watch observation")}. Nothing was stopped.</p>}
-    {violations.length > 0 && <ul className="tw-viol" aria-label="Rule breaks">{violations.map(v => <li key={`${v.eventId}-${v.seq}`} className={v.prevented || v.stopped ? "stopped" : "missed"}><span className="vs">{v.prevented ? "Blocked before running" : v.stopped ? "Stopped" : "Not stopped"}</span><span className="vr">{v.reason} <code>{v.ruleId}</code>{v.stopError ? <span className="m"> · {v.stopError}</span> : null}</span><TimeAgo at={v.at} /></li>)}</ul>}
+    {violations.length > 0 && <ul className="tw-viol" aria-label="Rule breaks">{violations.map(v => <li key={`${v.eventId}-${v.seq}`} className={v.prevented || v.stopped ? "stopped" : "missed"}><span className="vs">{v.prevented ? "Blocked before running" : v.stopped ? "Stopped" : "Not stopped"}</span><span className="vr">{v.reason} <code>{v.ruleId}</code>{!v.policy && <span className="m"> · Legacy scope rule</span>}{v.stopError ? <span className="m"> · {v.stopError}</span> : null}</span><TimeAgo at={v.at} /></li>)}</ul>}
+    <CallActivity threadId={ms.threadId} activity={ms.callActivity} />
     {ms.restartNeeded ? <p className="m small"><b>Restart needed.</b> {ms.restartNeeded}</p> : <p className="m small">A scope change applies to the next guarded call.</p>}
   </section>;
 }

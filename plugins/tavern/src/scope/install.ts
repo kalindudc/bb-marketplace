@@ -23,21 +23,24 @@ export default async function (pi) {
     ${artifact ? `const { pathToFileURL } = await import("node:url");` : ""}
     return await (await import(${artifact ? "pathToFileURL(TARGET).href" : "TARGET"})).${artifact?.exportName ?? "default"}(pi);
   } catch (error) {
-    const { readFileSync } = await import("node:fs");
+    const { existsSync, readFileSync, rmSync } = await import("node:fs");
+    const armed = process.env.TAVERN_SCOPE_FILE.replace(/\\.json$/, "") + ".armed";
+    if (existsSync(armed)) rmSync(armed, { force: true });
     const enforcing = () => {
       try { return !["watch", "off"].includes(JSON.parse(readFileSync(process.env.TAVERN_SCOPE_FILE, "utf8")).mode); }
       catch { return !["watch", "off"].includes(process.env.TAVERN_SCOPE_MODE); }
     };
     const permitted = ["journal", "quest", "tavern_report", "tavern_ready"];
     const hidden = new Set();
-    const hide = () => {
+    const refresh = () => {
       const current = pi.getActiveTools(), candidates = [...new Set([...current, ...hidden])];
       const active = candidates.filter(name => !enforcing() || permitted.includes(name));
-      hidden.clear(); for (const name of candidates) if (!active.includes(name)) hidden.add(name);
+      hidden.clear();
+      for (const name of candidates) if (!active.includes(name)) hidden.add(name);
       if (current.join() !== active.join()) pi.setActiveTools(active);
     };
-    pi.on("session_start", hide);
-    pi.on("before_agent_start", hide);
+    pi.on("session_start", refresh);
+    pi.on("before_agent_start", refresh);
     pi.on("tool_call", event => !enforcing() || permitted.includes(event.toolName) ? undefined : {
       block: true,
       reason: "[Tavern scope blocked] Guard could not load: " + String(error) + ". Nothing was done. Ask your Keeper to repair the guard and carry on with other work."

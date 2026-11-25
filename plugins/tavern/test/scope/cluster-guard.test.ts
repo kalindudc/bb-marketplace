@@ -74,7 +74,7 @@ it("checks remote acts without treating remote writes as local paths", () => {
   expect(call("ssh fixture 'kubectl apply -f sample'")).toMatchObject({ allow: false, ruleId: "cluster-write" });
   expect(call("ssh fixture 'dev deploy'")).toMatchObject({ allow: false });
   expect(call("ssh fixture 'mail fixture@example.invalid'")).toMatchObject({ allow: false });
-  expect(call("ssh fixture 'git pull' > /srv/local-copy")).toMatchObject({ allow: false, ruleId: "shell-write" });
+  expect(call("ssh fixture 'git pull' > /srv/local-copy")).toMatchObject({ allow: true });
 });
 
 it("retains script and flock output paths, including a script with no command", () => {
@@ -83,7 +83,7 @@ it("retains script and flock output paths, including a script with no command", 
   for (const source of ["script -q /srv/out.log", "script -q /srv/out.log echo hi", "script -q -c 'echo hi' /srv/out.log", "flock -x /srv/out.lock echo hi", "flock -x /srv/out.lock -c 'echo hi'"]) {
     const path = source.includes("out.log") ? "/srv/out.log" : "/srv/out.lock";
     expect(shellCommands(source, cwd).flatMap(commandWritePaths), source).toContain(path);
-    expect(evaluate(scope, { kind: "bash", toolName: "bash", input: { command: source }, cwd }), source).toMatchObject({ allow: false });
+    expect(evaluate(scope, { kind: "bash", toolName: "bash", input: { command: source }, cwd }), source).toMatchObject({ allow: true });
   }
   const wrapped = shellCommands("script -q capture.log git -C /srv status", cwd);
   expect(wrapped.flatMap(commandWritePaths)).toContain(join(cwd, "capture.log"));

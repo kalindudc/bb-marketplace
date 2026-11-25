@@ -90,8 +90,8 @@ function fixture(parentProvider: "git-worktree" | "project-checkout" = "git-work
     const call = (toolName: string, input: Record<string, unknown>) =>
       handlers.get("tool_call")!({ toolName, input }, { cwd: worktree });
     const read = call("read", { path: join(worktree, "README.md") });
-    if (bindingReady) expect(read).toBeUndefined();
-    else expect(read).toMatchObject({ block: true });
+    expect(read).toBeUndefined();
+    if (!bindingReady) expect(call("bash", { command: "git push origin main" })).toMatchObject({ block: true });
     expect(call("write", { path: file, content: "tamper" })).toMatchObject({ block: true });
     threads.set(threadId, makeThreadResponse({ id: threadId, status: "active", environmentId: "env" }));
     await runtime.threadStarted(threads.get(threadId)!);
@@ -192,7 +192,7 @@ describe("scope admission across provisioning", () => {
     const { scope, call } = await f.firstTurn(restarted, "child");
     expect(scope.writes.allow).toContain(f.storage);
     expect(scope.writes.deny).toContain(join(f.worktree, "restricted"));
-    expect(call("write", { path: join(f.worktree, "restricted/file"), content: "no" })).toMatchObject({ block: true });
+    expect(call("write", { path: join(f.worktree, "restricted/file"), content: "no" })).toBeUndefined();
   });
 
   it("keeps the original spawn brief queued behind an exact scope ask and never sends it twice", async () => {
@@ -284,7 +284,7 @@ describe("scope admission across provisioning", () => {
     expect(f.bb.sdk.threads.spawn).toHaveBeenCalledOnce();
   });
 
-  it("retains the guard environment and blocks the first domain tool when final storage binding fails", async () => {
+  it("retains the guard environment and holds a protected act when final storage binding fails", async () => {
     const f = fixture();
     f.pending("unbound");
     expect(await f.runtime.dispatch(dispatch049({

@@ -40,21 +40,22 @@ function mountGuard(file: string, cwd: string) {
 }
 it.each([
   ["git push origin feature", "publish"], ["gh issue create --title t --body b", "publish"], ["curl -X POST https://example.test -d a", "send"],
-])("records a legacy Wanderer's %s without stopping; the new guard holds it", async (command, kind) => {
-  const f = setup("pi");
-  const scope = bindPaths({ ...scopeForClass("wanderer"), threadId: "t1", issuedAt: 1 }, { home: f.root, tmp: [tmpdir()], scopesDir: f.store.directory });
+])("records %s after dispatch in Watch and holds it before dispatch in Act guard", async (command, kind) => {
+  const f = setup("pi", "watch");
+  const scope = bindPaths({ ...scopeForClass("wanderer"), threadId: "t1", issuedAt: 1, mode: "watch" }, { home: f.root, tmp: [tmpdir()], scopesDir: f.store.directory });
   f.store.write("t1", scope); f.store.arm(scope);
   const row = { ...f.started, id: "completed", seq: 2, type: "item/completed", data: { item: { ...f.started.data.item, command, cwd: f.root, status: "completed" } } };
   f.setRows([row]); await f.emit(2);
   expect(f.stops()).toBe(0);
-  expect(f.store.violations()).toEqual([]);
-  expect(f.store.acts()).toMatchObject([{ kind, mode: "enforce" }]);
+  expect(f.store.violations()).toMatchObject([{ act: kind, mode: "watch", stopped: false }]);
+  expect(f.store.acts()).toEqual([]);
+  f.store.setMode("t1", "enforce");
   const installed = mountGuard(f.store.file("t1"), f.root);
   const held = installed.call({ command });
   expect(held).toMatchObject({ block: true, reason: expect.stringContaining(JSON.stringify(command)) });
   const observe = vi.fn();
   registerWatcher(f.bb, f.store, { onViolation: f.onViolation, onActObservation: observe });
-  f.setRows([{ ...row, id: "held", seq: 3, data: { item: { ...row.data.item, status: "failed", aggregatedOutput: (held as { reason: string }).reason } } }]);
+  f.setRows([{ ...row, id: "held", seq: 3, createdAt: Date.now(), data: { item: { ...row.data.item, id: "call2", status: "failed", aggregatedOutput: (held as { reason: string }).reason } } }]);
   await f.emit(3);
   expect(observe).toHaveBeenCalledWith(expect.objectContaining({ act: kind, command, cwd: f.root }));
   expect(f.stops()).toBe(0);
@@ -174,14 +175,22 @@ it("watch records but never stops or invokes a blocking callback; off does neith
   const watch = setup("codex", "watch"); watch.setRows([watch.started]); await watch.emit(1); expect(watch.stops()).toBe(0); expect(watch.store.violations()).toHaveLength(1); expect(watch.onViolation).not.toHaveBeenCalled();
   const off = setup("codex", "off"); off.setRows([off.started]); await off.emit(1); expect(off.stops()).toBe(0); expect(off.store.violations()).toEqual([]);
 });
-it("the unscoped shim is lightweight and a missing scoped target fails closed", async () => {
+it("the unscoped shim is lightweight and a missing guard stays unarmed and fails closed in Act guard", async () => {
   const fn = Function("fs", guardLoaderSource("/missing/tavern.ts").replaceAll('await import("node:fs")', "fs").replace("export default", "return"))(fs);
   const pi = { on: vi.fn(), setActiveTools: vi.fn(), getActiveTools: () => ["bash", "quest"] };
   vi.stubEnv("TAVERN_SCOPE_FILE", undefined);
   const start = performance.now(); for (let n = 0; n < 100; n++) await fn(pi);
   expect(performance.now() - start).toBeLessThan(100); expect(pi.on).not.toHaveBeenCalled();
-  vi.stubEnv("TAVERN_SCOPE_FILE", "/missing/scope.json"); await fn(pi);
-  const guard = pi.on.mock.calls.find(call => call[0] === "tool_call")![1];
-  expect(guard({ toolName: "bash" })).toMatchObject({ block: true, reason: expect.stringContaining("Nothing was done. Ask your Keeper") });
-  expect(guard({ toolName: "bash" }).reason).not.toContain("tavern_report"); expect(guard({ toolName: "tavern_report" })).toBeUndefined();
+  const f = setup("pi"), file = f.store.file("t1");
+  f.store.arm(f.scope);
+  vi.stubEnv("TAVERN_SCOPE_FILE", file); await fn(pi);
+  expect(f.store.isArmed("t1")).toBe(false);
+  const guard = pi.on.mock.calls.find(call => call[0] === "tool_call")?.[1];
+  expect(guard).toBeTypeOf("function");
+  expect(guard({ toolName: "bash", input: { command: "git push origin main" } })).toMatchObject({ block: true, reason: expect.stringContaining("Guard could not load") });
+  expect(guard({ toolName: "journal" })).toBeUndefined();
+  for (const mode of ["watch", "off"] as const) {
+    f.store.setMode("t1", mode);
+    expect(guard({ toolName: "bash" })).toBeUndefined();
+  }
 });

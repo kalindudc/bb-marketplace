@@ -22,7 +22,7 @@ function createFakePluginHost(options: { pluginId: string; sdk: Record<string, a
   } as unknown as BbPluginApi;
   return { bb, harness: { behavior: { async emitThreadEvent(name: string, payload: unknown) { for (const fn of handlers.get(name) ?? []) await fn(payload); } }, inspection: { sdk: { callsTo: (method: string) => calls.filter(call => call.method === method) } }, lifecycle: { async dispose() { for (const fn of dispose) await fn(); } } } };
 }
-import { ScopeStore } from "../../src/scope/store";
+import { armedFile, ScopeStore } from "../../src/scope/store";
 import { envForScope } from "../../src/scope/env";
 import { registerWatcher } from "../../src/scope/watch";
 import { scopeForClass } from "../../src/scope/presets";
@@ -47,7 +47,18 @@ describe("scope persistence and env", () => {
     store.arm(s); expect(store.isArmed("t1")).toBe(true);
     store.clear("t1"); expect(store.records.has("t1")).toBe(false); expect(store.isArmed("t1")).toBe(false);
   });
-  it("retains corrupt scopes as scoped, so the resolver and watcher fail closed", () => {
+  it("keeps legacy scope history without re-enforcing its old stop or trusting its old arm marker", () => {
+    const { store, s } = fixture();
+    const file = store.file("t1");
+    writeFileSync(armedFile(file), JSON.stringify({ threadId: "t1", issuedAt: s.issuedAt, pid: process.pid, at: Date.now(), clusterWrites: 1 }));
+    writeFileSync(file + ".cursor", JSON.stringify({ cursor: 3, pendingStop: true }));
+    store.record({ threadId: "t1", providerId: "pi", at: Date.now(), eventId: "old", seq: 3, ruleId: "shell-write", reason: "Legacy path rule", latencyMs: 10, stopped: false });
+    const restarted = new ScopeStore(store.dataDir);
+    expect(restarted.isArmed("t1", true)).toBe(false);
+    expect(restarted.progress("t1")).toEqual({ cursor: 3, pendingStop: false });
+    expect(restarted.violations("t1")[0]).not.toHaveProperty("policy");
+  });
+  it("retains corrupt scopes as scoped so the resolver can refuse sensitive acts", () => {
     const { store } = fixture();
     writeFileSync(store.file("t1"), "invalid");
     const recovered = new ScopeStore(store.dataDir);
@@ -67,10 +78,26 @@ describe("scope persistence and env", () => {
   });
 });
 describe("provider-neutral watcher", () => {
+  it.each([["pi", "enforce"], ["codex", "watch"], ["pi", "off"]] as const)("records one redacted ordinary call in %s/%s even when delivered twice", async (providerId, mode) => {
+    const { store, s } = fixture();
+    store.write("t1", { ...s, mode });
+    const item = { id: "call-1", type: "commandExecution", command: "echo payload-secret > /outside/file", cwd: store.dataDir };
+    const rows = ["item/started", "item/completed"].map((type, i) => ({ id: `evt-${i}`, type, seq: i + 1, createdAt: Date.now(), data: { item } }));
+    const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { events: { list: async () => rows }, stop: async () => ({}) }, environments: {} } });
+    const onViolation = vi.fn(), onCallObservation = vi.fn(), onObservationHold = vi.fn(), onActObservation = vi.fn();
+    registerWatcher(bb, store, { onViolation, onCallObservation, onObservationHold, onActObservation });
+    for (const sequence of [1, 2, 2]) await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: { id: "t1", providerId }, sequence });
+    expect(onCallObservation).toHaveBeenCalledTimes(mode === "off" ? 0 : 1);
+    if (mode !== "off") expect(onCallObservation).toHaveBeenCalledWith(expect.objectContaining({ threadId: "t1", providerId, tool: "bash", outcome: providerId === "pi" ? "inspection-unavailable" : "ordinary" }));
+    expect(JSON.stringify(onCallObservation.mock.calls)).not.toMatch(/payload-secret|outside/);
+    for (const spy of [onViolation, onObservationHold, onActObservation]) expect(spy).not.toHaveBeenCalled();
+    expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
+    await harness.lifecycle.dispose();
+  });
   it.each([
     { type: "fileChange", changes: [{ path: "draft.txt" }] },
     { type: "commandExecution", command: "rm draft.txt" },
-  ])("identifies readonly workspace writes and how to proceed: %j", async item => {
+  ])("does not turn ordinary workspace writes into violations: %j", async item => {
     const { store, s } = fixture();
     store.write("t1", { ...s, writes: { ...s.writes, allow: [join(store.dataDir, "scratch")] } });
     const rows = [{ id: "write", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { ...item, cwd: store.dataDir } } }];
@@ -79,7 +106,8 @@ describe("provider-neutral watcher", () => {
     }, environments: {} } });
     registerWatcher(bb, store, { onViolation: vi.fn() });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1" }), sequence: 1 });
-    expect(store.violations()[0]?.reason).toMatch(/draft\.txt.*readonly.*shell write.*write-path.*tell your Keeper/is);
+    expect(store.violations()).toEqual([]);
+    expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
     await harness.lifecycle.dispose();
   });
   it.each([["enforce", true], ["watch", true], ["enforce", false]] as const)("records Keeper acts without stopping in %s only with approval (approved=%s)", async (mode, approved) => {
@@ -101,7 +129,7 @@ describe("provider-neutral watcher", () => {
     expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(approved ? 0 : 1);
     await harness.lifecycle.dispose();
   });
-  it("binds a late worktree from SDK environment data once and checks relative writes against it", async () => {
+  it("binds a late worktree once without confining ordinary writes", async () => {
     const store = new ScopeStore(temp()), { worktree } = linkedWorktree(temp()), outside = temp();
     store.write("t1", bindPaths({ ...scopeForClass("smith"), threadId: "t1", issuedAt: Date.now() - 1 }, { home: temp(), tmp: [join(store.dataDir, "scratch")], scopesDir: store.directory }));
     let rows = [{ id: "e1", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { type: "fileChange", cwd: "", changes: [{ path: "inside" }] } } }];
@@ -113,13 +141,13 @@ describe("provider-neutral watcher", () => {
     expect(store.violations()).toEqual([]);
     rows = [{ ...rows[0], id: "e2", seq: 2, data: { item: { type: "fileChange", cwd: "", changes: [{ path: join(outside, "outside") }] } } }];
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1" }), sequence: 2 });
-    expect(store.violations()[0]).toMatchObject({ ruleId: "write-path", call: { cwd: worktree } });
+    expect(store.violations()).toEqual([]);
     expect(harness.inspection.sdk.callsTo("threads.get")).toHaveLength(1);
     expect(harness.inspection.sdk.callsTo("environments.get")).toHaveLength(1);
     expect(store.records.get("t1")?.scope?.writes.allow).toContain("${worktree}");
     await harness.lifecycle.dispose();
   });
-  it.each(["relative", "absolute", "file URL", "@absolute"] as const)("checks a %s write with no member directory", async target => {
+  it.each(["relative", "absolute", "file URL", "@absolute"] as const)("does not refuse an ordinary %s write with no member directory", async target => {
     const { store } = fixture();
     const absolute = join(store.dataDir, "draft.txt");
     const path = target === "relative" ? "draft.txt" : target === "file URL" ? "file://" + absolute : target === "@absolute" ? "@" + absolute : absolute;
@@ -131,12 +159,10 @@ describe("provider-neutral watcher", () => {
       } }] } } } });
     registerWatcher(bb, store, { onViolation: vi.fn() });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1" }), sequence: 1 });
-    expect(store.violations()).toEqual(target === "relative"
-      ? [expect.objectContaining({ ruleId: "write-cwd-missing", reason: expect.stringMatching(/draft\.txt.*no working directory/) })]
-      : []);
+    expect(store.violations()).toEqual([]);
     await harness.lifecycle.dispose();
   });
-  it.each([null, "/", homedir(), "lookup-error"])("allows reader work when late worktree resolution fails, but still catches writes: %s", async path => {
+  it.each([null, "/", homedir(), "lookup-error"])("does not stop ordinary reads or writes when worktree resolution fails: %s", async path => {
     const store = new ScopeStore(temp());
     let writing = false;
     store.write("t1", bindPaths({ ...scopeForClass("smith"), threadId: "t1", issuedAt: 1 }, { home: temp(), tmp: [join(store.dataDir, "scratch")], scopesDir: store.directory }));
@@ -151,7 +177,8 @@ describe("provider-neutral watcher", () => {
     expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
     writing = true;
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1" }), sequence: 2 });
-    expect(store.violations()[0]).toMatchObject({ ruleId: "write-path", stopped: true });
+    expect(store.violations()).toEqual([]);
+    expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
     await harness.lifecycle.dispose();
   });
   it.each(["pi", "claude-code", "codex"])("stops and records a %s violation through the fake host", async providerId => {
@@ -169,20 +196,20 @@ describe("provider-neutral watcher", () => {
     const { store, s } = fixture(); store.arm(s);
     const onViolation = vi.fn();
     const item = { type: "toolCall", tool: "write", arguments: {}, status: "failed",
-      result: "[Tavern scope blocked] Blocked write: could not read the write target from the call.\nTavern scope rule: write-target-missing" };
+      result: "[Tavern scope blocked] Blocked file change: Tavern settings, rules, receipts and guard files are protected.\nTavern scope rule: tavern-control-files" };
     const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { stop: async () => ({}), events: { list: async () => [
       { id: "e1", seq: 1, type: "item/completed", createdAt: Date.now(), data: { item } },
     ] } } } });
     registerWatcher(bb, store, { onViolation });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1", providerId: "pi" }), sequence: 1 });
-    expect(onViolation).toHaveBeenCalledWith(expect.objectContaining({ prevented: true, stopped: false, ruleId: "write-target-missing", reason: expect.stringContaining("could not read the write target") }), undefined);
+    expect(onViolation).toHaveBeenCalledWith(expect.objectContaining({ prevented: true, stopped: false, ruleId: "tavern-control-files", reason: expect.stringContaining("guard files are protected") }), undefined);
     expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
     await harness.lifecycle.dispose();
   });
   it.each([
     { type: "fileChange", status: "completed", changes: [] },
     { type: "toolCall", status: "completed", tool: "write", arguments: {} },
-  ])("refuses a Pi file change without a recorded path: %j", async item => {
+  ])("does not claim a violation for a Pi file change without a recorded target: %j", async item => {
     const { store } = fixture();
     const scope = bindPaths({ ...scopeForClass("wanderer"), threadId: "t1", issuedAt: 1 }, { home: temp(), tmp: [tmpdir()], scopesDir: store.directory });
     store.write("t1", scope); store.arm(scope);
@@ -192,24 +219,27 @@ describe("provider-neutral watcher", () => {
     ] } } } });
     registerWatcher(bb, store, { onViolation });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1", providerId: "pi" }), sequence: 1 });
-    expect(store.violations()).toEqual([expect.objectContaining({ ruleId: "write-target-missing", stopped: true, reason: expect.stringContaining("could not read the write target from the call") })]);
-    expect(store.violations()[0]!.reason).not.toMatch(/undefined|outside allowed roots/);
+    expect(store.violations()).toEqual([]);
+    expect(onViolation).not.toHaveBeenCalled();
     await harness.lifecycle.dispose();
   });
-  it("stops pi's first tool item when the guard has not armed, but not phase-2 providers", async () => {
+  it("does not stop a Pi turn for an ordinary read without an armed guard", async () => {
     const { store } = fixture();
     const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { stop: async () => ({}), events: { list: async () => [{ id: "e1", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { type: "fileRead", path: "/tmp/x" } } }] } } } });
     registerWatcher(bb, store, { onViolation: vi.fn() });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1", providerId: "pi" }), sequence: 1 });
-    expect(store.violations()[0].ruleId).toBe("guard-not-loaded");
+    expect(store.violations()).toEqual([]);
+    expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
     await harness.lifecycle.dispose();
   });
-  it("contains a binding failure even when the previous bound scope allowed the call", async () => {
+  it("does not escalate a binding failure on an ordinary call", async () => {
     const { store } = fixture(); store.failBinding("t1", new Error("storage unavailable"));
     const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { stop: async () => ({}), events: { list: async () => [{ id: "e1", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { type: "fileRead", path: "/tmp/x" } } }] } } } });
     registerWatcher(bb, store, { onViolation: vi.fn() });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1", providerId: "codex" }), sequence: 1 });
-    expect(store.violations()[0]).toMatchObject({ ruleId: "scope-invalid", stopped: true }); await harness.lifecycle.dispose();
+    expect(store.violations()).toEqual([]);
+    expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
+    await harness.lifecycle.dispose();
   });
   it.each(["dt pr merge 17", "dt pr comment 17 -b fixture", "quick deploy ./site example-site", "security find-generic-password -s fixture -w", "vault read secret/fixture", "echo 'git push origin main' | sh", "find . -exec git push origin main \\;", "parallel gh pr merge ::: 17", "watch -n1 gh pr merge 17"])("records legacy acts in Watch without stopping the Pi member: %s", async command => {
     const { store, s } = fixture(); store.setMode("t1", "watch"); store.arm(s);
@@ -224,9 +254,9 @@ describe("provider-neutral watcher", () => {
     await harness.lifecycle.dispose();
   });
   it("does not read unscoped events, deduplicates notifications and measures event-to-stop latency", async () => {
-    const { store, s } = fixture(); s.tools.deny.push("mcp__tool_gateway__slack_post_message"); store.write("t1", s); store.arm(s);
+    const { store, s } = fixture(); s.sendTools = [{ pattern: "send_notice", act: "send" }]; store.write("t1", s); store.arm(s);
     const start = Date.now();
-    const rows = [{ id: "e1", seq: 1, type: "item/started", createdAt: start, data: { item: { type: "toolCall", tool: "mcp__tool_gateway__slack_post_message", arguments: { text: "not sent" } } } }];
+    const rows = [{ id: "e1", seq: 1, type: "item/started", createdAt: start, data: { item: { type: "toolCall", tool: "send_notice", arguments: { text: "not sent" } } } }];
     const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { stop: async () => ({}), events: { list: async () => rows } } } });
     registerWatcher(bb, store, { onViolation: vi.fn() });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "unscoped" }), sequence: 1 });

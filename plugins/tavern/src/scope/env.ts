@@ -11,10 +11,10 @@ export function envForScope(records: ReadonlyMap<string, ScopeRecord>, threadId:
   const hosted = !!original.binding || context?.hostScope !== undefined;
   const record = hosted ? checkedHostRecord(original, context?.hostScope, context?.hostId) : original;
   if (!record) return [];
-  const entries: EnvEntry[] = [{ name: "TAVERN_SCOPE_FILE", value: record.file, reason: "Tavern per-thread scope; fail closed if unreadable" }];
+  const entries: EnvEntry[] = [{ name: "TAVERN_SCOPE_FILE", value: record.file, reason: "Tavern per-thread guard policy; unreadable policy cannot authorize an act" }];
   const scope = record.scope;
   for (const [name, value] of Object.entries(scope?.env.variables ?? {})) if (name !== "PWD") entries.push({ name, value, reason: "Tavern bound scope environment" });
-  entries.push({ name: "TAVERN_SCOPE_MODE", value: record.mode ?? scope?.mode ?? "enforce", reason: "Tavern scope enforcement mode" });
+  entries.push({ name: "TAVERN_SCOPE_MODE", value: record.mode ?? scope?.mode ?? "enforce", reason: "Tavern Act guard, Watch, or Off" });
   if (hosted && (entries.length > 32 || new Set(entries.map(entry => entry.name)).size !== entries.length)) return [];
   return entries;
 }

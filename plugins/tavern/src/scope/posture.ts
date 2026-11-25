@@ -20,7 +20,6 @@ export function formatExecutionPosture(posture: ExecutionPosture): string {
       label = "Local: pre-exec guard and sandboxed checks";
       label += posture.network === "macos-check-deny" ? "; check network denied" : "; network not enforced";
     } else label = "Local: pre-exec checks only, no containment";
-  } else label = posture.filesystem === "macos-sandbox"
-    ? "Local: pre-exec guard and macOS sandbox" : "Local: pre-exec guard";
+  } else label = "Local: pre-exec act guard";
   return label + (posture.watcher === "degraded" ? "; watcher degraded" : "");
 }

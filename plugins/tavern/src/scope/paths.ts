@@ -47,6 +47,7 @@ export interface ScopePaths {
   home: string;
   tmp: string[];
   scopesDir: string;
+  controlRoots?: string[];
   worktree?: string;
   threadStorage?: string;
   keeperScratch?: string;
@@ -147,7 +148,8 @@ export function bindPaths(scope: Scope, vars: ScopePaths, nativePath?: (path: st
     } catch (error) { if (root !== keeperScratch) throw error; }
     return root;
   });
-  return { ...scope, ...(nativePath ? { writeRootIdentity } : {}), env: { ...scope.env, variables: { ...scope.env.variables, HOME: vars.home, ...(vars.tmp.length ? { TMPDIR: vars.tmp.at(-1)! } : {}), ...(vars.threadStorage ? { BB_THREAD_STORAGE: vars.threadStorage } : {}) } }, writes: { ...scope.writes, allow, deny: [...new Set(denied)] } };
+  const controls = [vars.scopesDir, ...vars.controlRoots ?? []];
+  return { ...scope, controlRoots: [...new Set(controls.flatMap(path => [resolve(path), canonicalize(path)]))], ...(nativePath ? { writeRootIdentity } : {}), env: { ...scope.env, variables: { ...scope.env.variables, HOME: vars.home, ...(vars.tmp.length ? { TMPDIR: vars.tmp.at(-1)! } : {}), ...(vars.threadStorage ? { BB_THREAD_STORAGE: vars.threadStorage } : {}) } }, writes: { ...scope.writes, allow, deny: [...new Set(denied)] } };
 }
 export function writeAllowed(scope: Scope, path: string, cwd: string, canonical?: string): boolean {
   const full = normalizeToolPath(path, cwd);

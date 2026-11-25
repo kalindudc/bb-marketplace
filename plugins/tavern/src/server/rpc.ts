@@ -583,6 +583,7 @@ export function rpcHandlers(
       k.authority.revoke(boardQuestId, id, receipt ? { ...receipt, surface: `${via} (client, unattested)` } : receipt!);
       return { ok: true as const };
     },
+    scopeCallPage: ({ threadId, before }) => runtime.keeper.store.scopeCallPage(threadId, before),
     revokeShellGrant: ({ threadId, id }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
       requireUserAct(context, "revokeShellGrant");
       if (!runtime.scopes) throw new Error("Shell grants are unavailable.");

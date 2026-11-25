@@ -49,7 +49,7 @@ describe("Closing time local scope integration", () => {
     await expect(f.runtime.tell("lead", "child", "Keep watching")).resolves.toMatchObject({ status: "delivered" });
     const scope = f.runtime.scopes!.view("child")!.scope!;
     expect(hasAwayDenials(scope, result.state.window!)).toBe(true);
-    for (const [command, ruleId] of [["gh pr merge 1", /^closing-act$/], ["mail recipient@example.test", /^send-guard$/], ["fly deploy", /^away:.*:deploy$/]] as const)
+    for (const [command, ruleId] of [["gh pr merge 1", /^closing-act$/], ["mail recipient@example.test", /^send-guard$/], ["fly deploy", /^closing-act$/]] as const)
       expect(evaluate(scope, { kind: "bash", toolName: "bash", input: { command }, cwd: f.work })).toMatchObject({ allow: false, ruleId: expect.stringMatching(ruleId) });
     await f.runtime.undoDecision(exemption.id);
     expect(f.k.member("child")?.permanent?.closingExemption).toBeUndefined();

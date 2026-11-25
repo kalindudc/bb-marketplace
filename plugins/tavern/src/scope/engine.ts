@@ -1,26 +1,25 @@
 import type { Scope } from "./schema";
 import { agentProgram, bbPositionals, nestedCommands } from "./legacy";
-import { actsForCommand, baselineHolds, isCatalogueRule, closingAct, fallbackActs, fallbackPullRequestRoute, pullRequestRoute, readerNeedsDecision, userControl, kubectlRead, type Act, type ActKind } from "./acts";
+import { actsForCommand, baselineHolds, closingAct, clusterCommandTarget, fallbackActs, fallbackPullRequestRoute, isCatalogueRule, pullRequestRoute, terraformStateFallback, terraformStateProblem, typedPullRequestAct, userControl, kubectlRead, type Act, type ActKind } from "./acts";
 import { actAskKind } from "./act-routing";
 import { shellGrantTarget, type ShellGrantProjection } from "./shell-grants";
 import { namedCommunication } from "./communication";
 import { shellCommunication } from "./shell-communication";
 import type { CommunicationPreview } from "../shared/communication";
-import { readerFallback } from "./worktree";
-import { checkInvocation } from "./checker";
+import { targetsControlFile } from "./control-files";
+import { checkInvocation, targetsMakerWorktree } from "./checker";
 import { glob, isSink, normalizeToolPath, within, writeAllowed } from "./paths";
 import { normalizeRemote, pushSpec } from "./remote";
 import { awkRead, fileRead, findRead, sedRead, xxdRead } from "./reads";
 import { draftEditKey, githubApiRead } from "./github";
 import { prCommandDigest, pullRequestOwned } from "./pr-policy";
 import { commandWritePaths, ruleMatches, shellCommands, type ShellCommand } from "./shell";
-import { ShellSyntaxError } from "./parser";
 import { memoryCommandRule, runsMemoryCommand } from "./memory-policy";
-import { explicitMerge, inspectMerge, type MergeCall } from "./merge";
+import { explicitMerge, inspectMerge, protectedApiWrite, type MergeCall } from "./merge";
 import type { ActTarget } from "../shared/quest-authority";
 
-export interface ScopeCall { draftApproved?: boolean; merge?: MergeCall | null; mergeMatches?: boolean; mergeHeadChanged?: boolean; mergeObserved?: boolean; clusterWriteApproved?: boolean; clusterObservation?: string; containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; shellGrants?: readonly ShellGrantProjection[]; prGrantAvailable?(id: string): boolean }
-export type Decision = { allow: true; check?: boolean; acts?: Act[]; prGrant?: string; shellGrant?: string } | { allow: false; ruleId: string; reason: string; act?: ActKind };
+export interface ScopeCall { scopeFile?: string; draftApproved?: boolean; merge?: MergeCall | null; mergeMatches?: boolean; mergeHeadChanged?: boolean; mergeObserved?: boolean; clusterWriteApproved?: boolean; clusterObservation?: string; containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; shellGrants?: readonly ShellGrantProjection[]; prGrantAvailable?(id: string): boolean }
+export type Decision = { allow: true; check?: boolean; inspectionUnavailable?: true; acts?: Act[]; prGrant?: string; shellGrant?: string } | { allow: false; ruleId: string; reason: string; act?: ActKind };
 const allowed: Decision = { allow: true };
 export const BLOCK_MARKER = "[Tavern scope blocked]";
 export const HELD_MARKER = BLOCK_MARKER + " Held ";
@@ -41,11 +40,6 @@ export function mergeBlock(merge: MergeCall, target?: ActTarget, staleVerdict = 
   const next = staleVerdict ? `Get a current Warden verdict on ${target?.commit}.` : merge.issue ? "Name one exact repository, source, target branch and head revision." :
     "Ask the user with tavern_ask; for an open ask use its mergeAskId and action ask-user.";
   return { allow: false as const, ruleId: "merge-approval", reason: `${BLOCK_MARKER} ${merge.description} to ${where} (${branch}): ${why}. ${next}` };
-}
-export function toolAllowed(scope: Scope, name: string, input: Record<string, unknown> = {}): boolean {
-  const awaySend = scope.tools.deny.includes("*send*") && scope.shell.deny.some(rule => rule.id.startsWith("away:") && rule.id.endsWith(":send"));
-  const except = awaySend && namedCommunication(scope.sendTools, { toolName: name, input })?.act === "draft" ? scope.tools.deny.lastIndexOf("*send*") : -1;
-  return !scope.tools.deny.some((pattern, index) => index !== except && glob(pattern, name)) && scope.tools.allow.some(pattern => glob(pattern, name));
 }
 const gitReads = ["status", "diff", "show", "log", "blame", "grep", "ls-files", "ls-tree", "rev-parse", "rev-list", "for-each-ref", "cat-file", "describe", "merge-base", "name-rev", "shortlog", "version", "--version", "--help", "help", "ls-remote", "show-ref", "check-ignore", "whatchanged", "count-objects"];
 function gitRead(argv: string[]): boolean {
@@ -124,22 +118,48 @@ export function communicationDecision(scope: Scope, call: ScopeCall): Decision |
   if (act?.act === "send") return { allow: false, ruleId: "send-guard", act: "send", reason: `${BLOCK_MARKER} Agents do not send as you. Draft instead for the user to post. Nothing was sent.` };
   if (act?.act === "draft" && !call.draftApproved) return { allow: false, ruleId: "draft-guard", act: "draft", reason: `${BLOCK_MARKER} This draft needs approval. Nothing was drafted.` };
 }
-export function authorityDecision(scope: Scope, call: ScopeCall): Decision | undefined {
+export function authorityDecision(scope: Scope, call: ScopeCall, remote = false): Decision | undefined {
   const communication = communicationDecision(scope, call);
   if (communication) return communication;
   if (scope.role !== "keeper" && ["spawn", "bb_workflow_run"].includes(call.toolName)) return { allow: false, ruleId: "member-spawn", reason: "Members don't start threads; ask your Keeper to hire." };
+  if (!remote && isWriteCall(call)) {
+    const paths = [call.input.path, call.input.file_path, call.input.new_path].filter((path): path is string => typeof path === "string");
+    if (typeof call.input.patch === "string")
+      for (const match of call.input.patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)) paths.push(match[1].trim());
+    if (targetsControlFile(paths, call.cwd, scope, call.scopeFile)) return controlBlock();
+    if (targetsMakerWorktree(scope, paths, call.cwd)) return makerBlock();
+  }
   const source = call.input.command ?? call.input.cmd;
   if (typeof source !== "string") return;
   const closing = !call.clusterObservation && scope.shell.deny.some(rule => rule.id.startsWith("away:") || rule.id === "cluster-write-while-away");
   let commands: ShellCommand[];
-  try { commands = shellCommands(source, call.cwd); } catch {
+  try { commands = shellCommands(source, call.cwd, { env: scope.env.variables, gitRoots: call.gitRoots, directories: call.directories }); } catch {
+    if (terraformStateFallback.test(source)) return stateBlock("The Terraform command could not be checked for shared-state locks.");
     const acts = fallbackActs(source);
-    if ((closing || !call.clusterWriteApproved) && acts.some(act => act.kind === "cluster-write")) return clusterWriteBlock(source, closing, scope.role);
+    if (acts.some(act => act.kind === "cluster-write")) return clusterWriteBlock(source, closing, scope.role);
     if (acts.some(act => act.kind === "tavern-control")) return { allow: false, ruleId: "tavern-control", reason: "Tavern's controls are the user's; ask the user." };
     return;
   }
   for (const command of commands) {
-    if ((closing || !call.clusterWriteApproved) && actsForCommand(command).some(act => act.kind === "cluster-write")) return clusterWriteBlock(source, closing, scope.role);
+    const stateProblem = terraformStateProblem(command);
+    if (stateProblem) return stateBlock(stateProblem);
+    if (!remote) {
+      let paths: string[];
+      try { paths = commandWritePaths(command); } catch { paths = command.writes; }
+      const destructive = ["rm", "mv", "rmdir"].includes(command.argv[0]);
+      if (targetsControlFile(paths, command.cwd, scope, call.scopeFile, destructive)) return controlBlock();
+      if (targetsMakerWorktree(scope, paths, command.cwd, destructive) ||
+          command.argv[0] === "git" && !gitRead(command.argv) && targetsMakerWorktree(scope, [command.cwd], command.cwd))
+        return makerBlock();
+    }
+    if (actsForCommand(command).some(act => act.kind === "cluster-write")) {
+      if (closing || !call.clusterWriteApproved) return clusterWriteBlock(source, closing, scope.role);
+      if (["kubectl", "k"].includes(command.argv[0]) || /[$`]/.test(command.argv[0] ?? "")) {
+        const target = clusterCommandTarget(command);
+        if (!target?.context || !target.namespace || /[$`]/.test(target.context + target.namespace))
+          return blocked("Kubernetes write", "cluster-target", "the exact command must explicitly name a literal cluster context and namespace");
+      }
+    }
     if (userControl(command)) return { allow: false, ruleId: "tavern-control", reason: "Tavern's controls are the user's; ask the user." };
     const words = bbPositionals(command.argv);
     if (scope.role !== "keeper" && words[0] === "bb" && words[1] === "thread") {
@@ -147,65 +167,51 @@ export function authorityDecision(scope: Scope, call: ScopeCall): Decision | und
       if (words[2] === "archive" && !agentProgram(command.argv)) return { allow: false, ruleId: "member-archive", reason: "Members don't archive threads; ask your Keeper." };
     }
     for (const source of nestedCommands(command)) {
-      const decision = authorityDecision(scope, { ...call, input: { command: source } });
+      const decision = authorityDecision(scope, { ...call, input: { command: source }, cwd: command.cwd }, remote || command.argv[0] === "ssh");
       if (decision) return !decision.allow && ["cluster-write", "closing-act"].includes(decision.ruleId) ? clusterWriteBlock(String(call.input.command ?? call.input.cmd), decision.ruleId === "closing-act", scope.role) : decision;
     }
   }
 }
+const controlBlock = () => blocked("file change", "tavern-control-files", "Tavern settings, rules, receipts and guard files are protected");
+const makerBlock = () => blocked("file change", "checker-write", "the maker's checkout is read-only for its Warden");
+const stateBlock = (why: string) => blocked("shared-state command", "terraform-state", why);
+
 export const isWriteCall = (call: ScopeCall) =>
   call.kind === "write" || ["write", "edit", "apply_patch", "multiedit"].includes(call.toolName.toLowerCase());
 
-export function evaluate(scope: Scope, call: ScopeCall, legacyWanderer = false): Decision {
-  return evaluateShell(scope, call, legacyWanderer, false);
+const isGuardedAct = (act: Act) => act.kind !== "configure" && act.kind !== "allocate";
+
+export function evaluate(scope: Scope, call: ScopeCall, _legacyWanderer = false): Decision {
+  return evaluateShell(scope, call, false);
 }
 
-function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, remote: boolean): Decision {
-  const olderOpenBaseline = legacyWanderer && scope.role === "wanderer" && scope.preset === "open";
-  const authority = authorityDecision(scope, call);
+function evaluateShell(scope: Scope, call: ScopeCall, remote: boolean): Decision {
+  const authority = authorityDecision(scope, call, remote);
   if (authority) return authority;
-  const sourceForMerge = call.input.command ?? call.input.cmd;
-  if (scope.role === "keeper" && !call.mergeObserved && typeof sourceForMerge === "string") {
-    const merge = call.merge === undefined ? inspectMerge(sourceForMerge, call.cwd, undefined) : call.merge;
+  const source = call.input.command ?? call.input.cmd;
+  if (typeof source !== "string") return call.kind === "bash" ? { allow: true, inspectionUnavailable: true } : allowed;
+  if (scope.role === "keeper" && scope.mode !== "off" && !call.mergeObserved) {
+    const merge = call.merge === undefined ? inspectMerge(source, call.cwd, undefined) : call.merge;
     if (merge && !call.mergeMatches) return mergeBlock(merge);
   }
   const contained = call.containment === "sandbox" && scope.sandbox && ["bash", "Bash"].includes(call.toolName);
-  if (contained) scope = readerFallback(scope);
-  if ([...scope.writes.allow, ...scope.writes.deny].some(path => path.includes("${")) && !["tavern_report", "journal", "quest", "tavern_ready"].includes(call.toolName)) return blocked(call.toolName, "worktree-unresolved", "the worktree root must be bound from the provisioned environment");
-  if (!toolAllowed(scope, call.toolName, call.input)) return blocked(`tool ${call.toolName}`, "tool", "the thread's scope does not allow this tool");
-  const writeScope = scope.preset === "readonly"
-    ? "; this readonly member cannot write to the workspace through shell writes or write-path tools. Allowed scratch and thread storage still work"
-    : "";
-  const canWrite = (path: string, cwd: string) => {
-    const full = normalizeToolPath(path, cwd);
-    return writeAllowed(scope, full, cwd, call.resolvedPaths?.[full]);
-  };
-  if (isWriteCall(call)) {
-    const path = call.input.path ?? call.input.file_path;
-    if (typeof path !== "string" || !path.trim() || path.includes("\0")) return blocked(call.toolName, "write-target-missing", "could not read the write target from the call; a valid path is required");
-    if (!canWrite(path, call.cwd)) return blocked(`write to ${path}`, "write-path", "the write target is outside allowed roots, protected or cannot be checked" + writeScope);
-  }
-  const source = call.input.command ?? call.input.cmd;
-  if (typeof source !== "string") return call.kind === "bash" ? blocked("shell call", "shell-input", "the command cannot be checked") : allowed;
-  if (scope.preset !== "open" && !(scope.commandTools ?? ["bash", "Bash"]).includes(call.toolName)) return blocked(call.toolName, "command-tool", "command-running tools require an explicit scope allowlist and a guarded execution backend");
   const memoryRule = memoryCommandRule(scope);
   const memoryPaths = memoryRule?.argv?.[0];
   let commands;
-  try { commands = shellCommands(source, call.cwd, { temporaryRoot: temporaryRoot(scope), isRead: contained ? containmentRead : readonlyProgram, gitRoots: call.gitRoots, directories: call.directories, env: scope.env.variables, containment: contained ? "sandbox" : undefined }); } catch (error) {
+  try { commands = shellCommands(source, call.cwd, { temporaryRoot: temporaryRoot(scope), isRead: contained ? containmentRead : readonlyProgram, gitRoots: call.gitRoots, directories: call.directories, env: scope.env.variables, containment: contained ? "sandbox" : undefined }); } catch {
     const route = fallbackPullRequestRoute(source);
     const acts = route ? [route, ...fallbackActs(source)] : fallbackActs(source);
-    const refused = (route && (route.kind !== "send" || scope.pullRequestPolicy?.alwaysAsk !== false) ? route : undefined) ?? acts.find(act => closingAct(scope, act, source) || (!olderOpenBaseline && scope.role !== "keeper") || act.kind === "tavern-control");
+    const guarded = acts.filter(isGuardedAct);
+    const refused = acts.find(act => closingAct(scope, act, source)) ?? guarded.find(act => scope.mode !== "off" &&
+      (act === route ? typedPullRequestAct(act) || act.kind !== "send" || scope.pullRequestPolicy?.alwaysAsk !== false : scope.role !== "keeper" || act.kind === "merge"));
     if (refused) return closingAct(scope, refused, source)
       ? blocked("shell command", "closing-act", "Closing time: " + refused.kind + " waits for your return")
-      : blockedAct(source, refused, refused.kind === "deploy" ? "deploy-fallback" : refused.ruleId);
+      : typedPullRequestAct(refused) ? blocked("pull request command", refused.ruleId, refused.why)
+        : blockedAct(source, refused, refused.kind === "deploy" ? "deploy-fallback" : refused.ruleId);
     if (memoryRule && Array.isArray(memoryPaths) && memoryPaths.some(path => source.includes(path))) return blocked("shell command", memoryRule.id, memoryRule.why);
-    if (remote || scope.preset === "open") return acts.length ? { allow: true, acts } : allowed;
-    for (const rule of scope.shell.deny) if (rule.regex && new RegExp(rule.regex).test(source)) return blocked("shell command", rule.id, rule.why);
-    if (contained) return allowed;
-    return blocked("shell command", "shell-parse", error instanceof ShellSyntaxError
-      ? `${error.message} near ${JSON.stringify(source.slice(0, 200))}`
-      : "unsupported shell syntax cannot be checked safely");
+    return { allow: true, inspectionUnavailable: true, ...(guarded.length ? { acts: guarded } : {}) };
   }
-  let checking = false, prGrant: string | undefined, shellGrant: string | undefined;
+  let checking = false, inspectionUnavailable = false, prGrant: string | undefined, shellGrant: string | undefined;
   const grantTarget = call.shellGrants?.length && commands.length === 1 ? shellGrantTarget(call, commands[0]) : null;
   const grant = grantTarget && call.shellGrants?.find(g => g.digest === grantTarget.digest);
   const matchesGrant = (act: Act) => !!grant && grantTarget?.act === act.kind;
@@ -214,19 +220,25 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
     if (memoryRule && Array.isArray(memoryPaths) && runsMemoryCommand(memoryPaths, command, call.resolvedPaths))
       return blocked(command.text, memoryRule.id, memoryRule.why);
     for (const source of nestedCommands(command)) {
-      const result = evaluateShell(scope, { ...call, input: { command: source }, cwd: command.cwd, prGrantAvailable: undefined, shellGrants: undefined }, legacyWanderer, remote || command.argv[0] === "ssh");
+      const result = evaluateShell(scope, { ...call, input: { command: source }, cwd: command.cwd, prGrantAvailable: undefined, shellGrants: undefined }, remote || command.argv[0] === "ssh");
       if (!result.allow) return result;
+      checking ||= result.check === true;
+      inspectionUnavailable ||= result.inspectionUnavailable === true;
       observed.push(...result.acts ?? []);
     }
     const read = (contained ? containmentRead : readonlyProgram)(command), check = !remote && checkInvocation(scope, command, source, read);
     if (check) {
+      if (["git", "curl", "wget"].includes(command.argv[0]) && !read)
+        return blocked(command.text, "checker-write", "verification commands cannot write to Git or the network");
       const root = scope.checks?.worktree, location = call.resolvedPaths?.[normalizeToolPath(command.cwd, call.cwd)] ?? command.cwd;
       if (!root?.startsWith("/") || root === "/" || root === scope.env.variables.HOME || !within(location, root) || command.uncertain) return blocked(command.text, "checker-worktree", "checks must run in the trusted maker worktree; ask the Keeper to bind checks.worktree or use that directory");
       checking = true;
     }
+    inspectionUnavailable ||= command.scriptInput === "opaque" || command.uncertain === true;
     const argv = command.argv;
-    const [program, sub, action] = argv;
-    const excepted = (id: string) => id !== "cluster-write" && scope.shell.allow.some(rule => {
+    const closingLocal = scope.shell.deny.find(rule => /^away:.*:(?:delete|find-delete|git-delete|merge)$/.test(rule.id) && ruleMatches(rule, command));
+    if (closingLocal) return blocked("shell command", closingLocal.id, closingLocal.why);
+    const excepted = (id: string) => !["cluster-write", "deploy"].includes(id) && scope.shell.allow.some(rule => {
       if (rule.id !== id || !ruleMatches(rule, command)) return false;
       if (!rule.remote) return true;
       const push = pushSpec(argv);
@@ -234,11 +246,16 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
       const targets = call.pushTargets?.[command.cwd + "\0" + push.remote];
       return !!targets?.length && targets.every(target => glob(rule.remote!, normalizeRemote(target)));
     });
+    if (scope.role !== "keeper" && protectedApiWrite(command)) {
+      const act: Act = { kind: "merge", ruleId: "merge-approval", why: "Use the exact protected merge approval, not a publishing grant" };
+      if (closingAct(scope, act, command)) return blocked("protected API write", "closing-act", "Closing time: merge waits for your return");
+      if (scope.mode !== "off") return blockedAct(source, act);
+    }
     const smithOwned = Boolean(call.ownedPrs?.includes(draftEditKey(command)));
     const questOwned = pullRequestOwned(command, scope.pullRequestPolicy?.owned ?? [], call.questOwnedPrs ?? []);
     const route = scope.role === "keeper" && (call.mergeMatches || call.mergeObserved) && explicitMerge(command) ? undefined : pullRequestRoute(command, smithOwned || questOwned);
-    if (route && (route.kind === "ready" || route.kind === "close")) return blocked(command.text, route.ruleId, route.why);
-    if (route?.kind === "send") {
+    if (route && typedPullRequestAct(route) && scope.mode !== "off") return blocked(command.text, route.ruleId, route.why);
+    if (route?.kind === "send" && scope.mode !== "off") {
       const prException = commands.length === 1 && !command.githubEnvironment && scope.pullRequestPolicy?.grants.find(g => g.digest === prCommandDigest(source) && call.prGrantAvailable?.(g.id));
       if (!prException && scope.pullRequestPolicy?.alwaysAsk !== false) {
         if (closingAct(scope, route, command)) return blocked(command.text, "closing-act", "Closing time: " + route.kind + " waits for your return");
@@ -247,39 +264,23 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
       }
       if (prException) prGrant = prException.id;
     }
-    const commandActs = route && !smithOwned ? [route] : scope.pullRequestPolicy?.alwaysAsk === false && route?.kind === "send" ? [route] : actsForCommand(command);
+    const commandActs = (route && !smithOwned ? [route] : scope.pullRequestPolicy?.alwaysAsk === false && route?.kind === "send" ? [route] : actsForCommand(command));
     if ((call.mergeMatches || call.mergeObserved) && !commandActs.some(act => act.kind === "merge"))
       commandActs.push({ kind: "merge", ruleId: "merge-approval", why: "Uses the recorded approval for this protected write" });
     const approvedClusterWrite = call.clusterWriteApproved && commandActs.some(act => act.kind === "cluster-write");
     for (const act of commandActs) {
-      observed.push(act);
       const isApprovedClusterAct = approvedClusterWrite && act.kind === "cluster-write";
       if (!(isApprovedClusterAct && call.clusterObservation) && closingAct(scope, act, command)) return blocked(command.text, "closing-act", "Closing time: " + act.kind + " waits for your return");
-      if (!isApprovedClusterAct && !olderOpenBaseline && !baselineHolds(scope, call, command, act) && !excepted(act.ruleId)) {
+      if (!isGuardedAct(act)) continue;
+      observed.push(act);
+      if (scope.mode !== "off" && !isApprovedClusterAct && !baselineHolds(scope, call, command, act) && !excepted(act.ruleId)) {
         if (!matchesGrant(act)) return blockedAct(source, act);
         shellGrant = grant!.id;
       }
     }
-    if (remote) continue;
-    for (const rule of scope.shell.deny) if (!isCatalogueRule(rule) && ruleMatches(rule, command) && !excepted(rule.id)) return blocked(command.text, rule.id, rule.why);
-    const paths = commandWritePaths(command);
-    if (scope.preset !== "open" && command.gitEnvironment) return blocked(command.text, "git-environment", "GIT_DIR and GIT_WORK_TREE can redirect writes outside the bound checkout");
-    if (scope.preset === "checker" && (program === "git" || ["curl", "wget"].includes(program)) && !read && !(contained && program === "git" && sub === "fetch" && call.fetchWriteRoots?.length)) return blocked(command.text, "checker-write", "checker permissions do not allow Git or network writes, even in done-when commands");
-    if (scope.preset !== "open" && program === "git") {
-      const known = [...gitReads, "config", "branch", "remote", "stash", "push", "add", "commit", "checkout", "switch", "restore", "reset", "fetch", "pull", "merge", "rebase", "cherry-pick", "revert", "tag", "clean", "rm", "mv", "worktree", "init", "clone", "reflog", "apply", "am", "submodule", "lfs", "format-patch", "bisect"];
-      if (!known.includes(sub)) return blocked(command.text, "git-alias", "unknown git subcommands or aliases cannot be checked");
-      if (sub === "config" && argv.some(arg => ["--global", "--system"].includes(arg)) && !gitRead(argv)) return blocked(command.text, "git-global-config", "global git configuration is outside the member worktree");
-      if (!gitRead(argv) && sub !== "push" && !(contained && sub === "fetch" && call.fetchWriteRoots?.length)) {
-        if (!contained && scope.preset === "readonly") return blocked(command.text, "shell-write", "this readonly member cannot make Git changes");
-        paths.push(command.cwd);
-      }
-    }
-    for (const path of paths) if (!(contained && (/[$`]/.test(path) || command.uncertain || command.cwdAlternative)) && !isSink(normalizeToolPath(path, command.cwd)) && (scope.preset !== "open" && (/[\$`]/.test(path) || path.startsWith("~") || command.uncertain) || !canWrite(path, command.cwd))) return blocked(`shell write to ${path}`, "shell-write", "the write target is protected, outside allowed roots or cannot be proven" + writeScope);
-    if (scope.preset === "open") continue;
-    if (!contained && scope.preset !== "readonly" && command.fedInput && command.scriptInput === "opaque") return blocked(command.text, "shell-input", "shell input from a pipe or redirect cannot be inspected");
-    if (!contained && scope.preset === "worktree" && command.cwdAlternative && !readonlyProgram(command) && !canWrite(command.cwd, command.cwd)) return blocked(command.text, "shell-location", "one possible working directory is outside allowed roots");
-    if (!contained && command.uncertain && !readonlyProgram(command)) return blocked(command.text, "shell-location", "the command's working directory or symlinks cannot be proven");
-    if (contained && scope.writes.mode === "none" && !shellGrant && readerNeedsDecision(command)) return blocked(command.text, "legacy-act", "this consequential command requires a scope decision");
+    if (scope.mode !== "off" && commandActs.some(isGuardedAct))
+      for (const rule of scope.shell.deny)
+        if (!isCatalogueRule(rule) && ruleMatches(rule, command) && !excepted(rule.id)) return blocked(command.text, rule.id, rule.why);
   }
-  return { allow: true, ...(checking ? { check: true } : {}), ...(observed.length ? { acts: observed } : {}), ...(prGrant ? { prGrant } : {}), ...(shellGrant ? { shellGrant } : {}) };
+  return { allow: true, ...(checking ? { check: true } : {}), ...(inspectionUnavailable ? { inspectionUnavailable: true } : {}), ...(observed.length ? { acts: observed } : {}), ...(prGrant ? { prGrant } : {}), ...(shellGrant ? { shellGrant } : {}) };
 }
