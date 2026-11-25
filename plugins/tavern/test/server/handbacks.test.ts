@@ -29,14 +29,15 @@ it("creates the three notes advertised in the registered tool description", asyn
   const tool = registered.mock.calls.find(([spec]) => spec.name === "tavern_note")![0];
   const examples = [...tool.description.matchAll(/\{"op":"add",[^{}]+\}/g)].map(([json]) => JSON.parse(json));
   expect(examples.map(note => note.kind)).toEqual(["fact", "commitment", "waiting-on-user"]);
-  expect(tool.parameters).toMatchObject({ type: "object", oneOf: [
-    { oneOf: [
-      { required: expect.arrayContaining(["op", "kind", "text"]) },
-      { required: expect.arrayContaining(["op", "kind", "text", "dueAt"]) },
-      { required: expect.arrayContaining(["op", "kind", "text", "action", "need"]) },
-    ] },
-    { required: ["op", "noteId"] },
-  ] });
+  expect(tool.parameters).toMatchObject({ type: "object", required: ["op"], properties: {
+    op: { enum: ["add", "done"] },
+    kind: { description: expect.stringContaining("Required for add/") },
+    text: { description: expect.stringContaining("Required for add/") },
+    dueAt: { description: "Required for add/commitment. Optional for add/fact, add/waiting-on-user." },
+    action: { description: "Required for add/waiting-on-user. Optional for add/fact, add/commitment." },
+    need: { description: expect.stringContaining("Required for add/waiting-on-user.") },
+    noteId: { description: "Required for done." },
+  } });
   for (const note of examples) {
     const result = await f.harness.behavior.invokeAgentTool("tavern_note", note, { threadId: "lead" });
     expect(JSON.parse(result as string)).toMatchObject({ kind: note.kind, text: note.text });

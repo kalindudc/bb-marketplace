@@ -35,6 +35,7 @@ import { managePullRequest, pullRequestActionSchema } from "../pull-request-rule
 import { refreshQuestPullRequests } from "../conclude-pull-requests";
 import { memoryToolInput } from "../../shared/memory";
 import { argumentError, decideInput, judgeInput, memberInput } from "./arguments";
+import { toolInput } from "./parameters";
 
 const id = z.string().min(1).max(120);
 const optionalQuest = id.nullish();
@@ -62,11 +63,13 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     ) => unknown | Promise<unknown>,
     role: "keeper" | "member" | ((input: z.output<S>, threadId: string) => void) = "keeper",
     inputError?: (error: z.ZodError, input: unknown) => Error,
+    operations?: readonly string[],
   ) => {
+    const inputSpec = toolInput(parameters, operations);
     bb.agents.registerTool({
       name,
       description,
-      parameters: z.toJSONSchema(parameters, { io: "input" }),
+      parameters: inputSpec.parameters,
       presentation: { label: { pending: label, completed: label } },
       async execute(input, ctx) {
         if (ctx.signal.aborted)
@@ -75,7 +78,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         const done = runtime.succession.track(ctx.threadId);
         let result: unknown;
         try {
-          const parsed = parameters.safeParse(input);
+          const parsed = inputSpec.parse(input);
           if (!parsed.success) throw inputError?.(parsed.error, input) ?? parsed.error;
           if (typeof role === "function") role(parsed.data, ctx.threadId);
           result = await action(parsed.data, ctx.threadId, ctx.projectId, ctx.signal);
@@ -322,6 +325,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     (input, threadId) => { if ("member" in input) k.require(threadId, "keeper"); },
     (error, input) => input && typeof input === "object" && "confirmRetirement" in input
       ? argumentError(error) : new Error("Give member (name or thread id) and reason, or confirmRetirement:true."),
+    ["release", "confirm-retirement"],
   );
   register(
     "tavern_scope",
@@ -344,6 +348,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         input.reason,
       );
     },
+    "keeper", undefined, ["override", "repair-guard"],
   );
   register(
     "tavern_tell",
@@ -480,6 +485,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         return `Merge ask ${ask.id} is in the Keeper lane, not shown to the user. Use tavern_decide with source keeper after the Warden verdict, or hand it to the user with tavern_ask: mergeAskId "${ask.id}", action "ask-user", and reason.`;
       return `Ask recorded. Continue the work that does not depend on it. Write on its own line:\n::tavern-ask{id="${ask.id}"}`;
     },
+    "keeper", undefined, ["open", "held-message", "merge"],
   );
   register(
     "tavern_decide",

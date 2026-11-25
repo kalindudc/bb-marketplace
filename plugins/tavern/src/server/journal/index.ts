@@ -1,4 +1,3 @@
-import { z } from "zod";
 import type { PluginAgentToolContext, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import type { RegisterJournal } from "../ports";
 import { actionSchema, openSummary, planLine } from "./engine";
@@ -6,6 +5,7 @@ import { dispatchCheck, watchRequests } from "./requests";
 import { createJournalStore } from "./store";
 import { watchOwners } from "./owners";
 import { PlacementReview } from "../placement/review";
+import { toolInput } from "../tools/parameters";
 
 export const JOURNAL_INSTRUCTIONS = [
   "The journal is this thread's live plan. The user can edit it too. A board quest is a goal a Keeper holds; your journal is your own checklist.",
@@ -30,7 +30,7 @@ export const registerJournal: RegisterJournal = (bb, db, deps) => {
     instructions: JOURNAL_INSTRUCTIONS,
     presentation: { label: { pending: "Updating the journal", completed: "Updated the journal" } },
     // JSON Schema is the public SDK escape hatch when its bundled Zod differs from the package's Zod.
-    parameters: z.toJSONSchema(actionSchema, { io: "input" }),
+    parameters: toolInput(actionSchema).parameters,
     async execute(params: unknown, { threadId }: PluginAgentToolContext): Promise<PluginAgentToolResult> {
       try {
         const result = await store.runTool(threadId, actionSchema.parse(params));

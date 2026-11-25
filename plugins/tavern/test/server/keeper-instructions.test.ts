@@ -32,8 +32,10 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const checkpointDelta = Buffer.byteLength(reportSchema) - Buffer.byteLength(reportSchema.replace(',"checkpoint"', "").replace(/,"checkpoint":\{"type":"object".*?"additionalProperties":false\}/, ""));
   expect(checkpointDelta).toBeGreaterThan(0);
   const judgeBytes = Buffer.byteLength(JSON.stringify(judge.parameters));
-  const releaseSchema = JSON.stringify(release.parameters);
-  const replacementSchemaDelta = Buffer.byteLength(releaseSchema) - Buffer.byteLength(releaseSchema.replace(',"replace":{"type":"boolean"}', ""));
+  const releaseSchema = (release.parameters as { properties: Record<string, unknown> }).properties;
+  const { replace, ...withoutReplacement } = releaseSchema;
+  expect(replace).toMatchObject({ type: "boolean" });
+  const replacementSchemaDelta = Buffer.byteLength(JSON.stringify(releaseSchema)) - Buffer.byteLength(JSON.stringify(withoutReplacement));
   expect(replacementSchemaDelta).toBeGreaterThan(0);
   const opening = z.toJSONSchema(z.object({ title: z.string().min(1).max(200), short: z.string().min(1).max(40) }), { io: "input" });
   const source = read("src/server/tools/index.ts");
@@ -43,18 +45,18 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const noteLabel = typeof note.presentation?.label === "object" ? note.presentation.label.pending : note.presentation?.label;
   const noteMetadata = note.name + (noteLabel ?? "") + note.description;
   const ask = registered.mock.calls.find(([tool]) => tool.name === "tavern_ask")![0];
-  const askSchemas = (ask.parameters as { anyOf: Array<{ properties: { target?: { properties: Record<string, unknown> }; waypointId?: unknown; completeOn?: unknown } }> }).anyOf;
-  const mergeAskSchema = askSchemas.at(-1);
-  expect(mergeAskSchema).toMatchObject({ required: ["mergeAskId", "action", "reason"] });
-  const { waypointId, completeOn, ...previousAsk } = askSchemas[0]!.properties;
+  const askProperties = (ask.parameters as { properties: Record<string, unknown> & { target: { properties: Record<string, unknown> } } }).properties;
+  const { waypointId, completeOn, operation, mergeAskId, action, reason, ...previousAsk } = askProperties;
+  expect(operation).toMatchObject({ enum: expect.arrayContaining(["merge"]) });
+  for (const field of [mergeAskId, action, reason]) expect(field).toMatchObject({ description: "Required for merge." });
   expect(waypointId).toBeDefined();
   expect(completeOn).toBeDefined();
-  const waypointAskDelta = Buffer.byteLength(JSON.stringify(askSchemas[0]!.properties)) - Buffer.byteLength(JSON.stringify(previousAsk));
-  const targetProperties = askSchemas[0]!.properties.target!.properties;
+  const waypointAskDelta = Buffer.byteLength(JSON.stringify({ waypointId, completeOn, ...previousAsk })) - Buffer.byteLength(JSON.stringify(previousAsk));
+  const targetProperties = askProperties.target.properties;
   const { merge, ...priorTarget } = targetProperties;
   expect(merge).toMatchObject({ required: ["repository", "targetBranch"] });
   const mergeTargetDelta = Buffer.byteLength(JSON.stringify(targetProperties)) - Buffer.byteLength(JSON.stringify(priorTarget));
-  const mergeAskSchemaDelta = 1 + Buffer.byteLength(JSON.stringify(mergeAskSchema)) + mergeTargetDelta;
+  const mergeAskSchemaDelta = 1 + Buffer.byteLength(JSON.stringify({ operation, mergeAskId, action, reason })) + mergeTargetDelta;
   const structure = Buffer.byteLength(JSON.stringify(keep)) - Buffer.byteLength(keep.name + keep.description + "Kept a resting member")
     + Buffer.byteLength(JSON.stringify(refresh)) - Buffer.byteLength(refresh.name + refresh.description + "Requested Keeper refresh");
   const briefWarning = briefSteerFact("Wren XVIII", { at: 0, excerpt: "x".repeat(160), memberThreadId: "thr_abcdefghij" });

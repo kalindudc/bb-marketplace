@@ -32,6 +32,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- Keepers and party members can start on Gemini 4 Neon. Tavern shows the model one input shape per tool and still checks which arguments belong to each action.
 - A Keeper keeps their road while a message waits to be routed. An ask appears by the character without moving them to the left edge.
 - Road tooltips, their accessible labels, and canned character remarks use the quest's short name instead of its full title.
 - The widget’s Close button matches the other small buttons on desktop. It still has a 44 px touch target on touch screens and in narrow windows, as do the quest rename fields and buttons and the alert test buttons.
