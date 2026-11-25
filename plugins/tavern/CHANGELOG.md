@@ -6,6 +6,8 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Added
 
+- Permanent members can take daily or weekly rounds after you approve their duties. Tavern wakes them when they are idle and work is allowed. See their next run in the party and Ledger, and pause or remove a schedule from the member’s row.
+
 - Keepers can mark a planned slot or a current member as permanent for ongoing work. Permanent members skip rest reminders and stale alarms but can still be released, stopped or archived when the quest closes. A Keeper can exempt one from an explicit Closing time Pause if its guard can still enforce closing rules. The Closing time sheet and confirmation show how many exempt members keep working. A quest left out still holds. See the reasons and undo the decisions in the Ledger.
 
 - Search Tavern Settings by label, help text or setting key. Matches open their sections without changing your folds, and Escape clears the search.

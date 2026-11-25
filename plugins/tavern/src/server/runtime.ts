@@ -13,6 +13,8 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { restingEngagement, restingMember, restingParty, restingContext, reuseRule } from "./resting";
 import { localClock } from "./clock";
+import { startSchedules, updateMemberSchedule } from "./member-schedules";
+import type { ScheduleControl, ScheduleInput } from "../shared/schema";
 import type {
   BbPluginApi,
   MessageDispatchHookContext,
@@ -1503,7 +1505,7 @@ export class TavernRuntime {
         if (remaining <= 0) return this.admitHumanFallback(ctx, binding, (error instanceof Error ? error.message : String(error)).slice(0, 1000));
         return { action: "wait" as const, reason: "Tavern could not safely admit this message", sendAt: this.keeper.now() + Math.min(LIMITS.registryKeeperRetryMs, remaining) };
       }
-      return protectedThread || this.loop.isTick(ctx)
+      return protectedThread || this.loop.isTick(ctx) || this.loop.roundInputs(ctx).length
         ? { action: "wait" as const, reason: "Tavern could not safely admit this message", sendAt: this.keeper.now() + LIMITS.retryMs }
         : { action: "proceed" as const };
     }
@@ -1514,6 +1516,9 @@ export class TavernRuntime {
       if (state.archivedAt != null || state.deletedAt != null || ctx.thread.archivedAt !== null || ctx.thread.deletedAt !== null)
         return { action: "reject" as const, message: "Tavern dropped a tick for an archived or deleted Keeper." };
     }
+    const rounds = this.loop.roundInputs(ctx);
+    const roundCheck = this.loop.admitRound(ctx, rounds);
+    if (roundCheck) return roundCheck;
     const noteCheck = this.keeper.journal.dispatchCheck(ctx);
     if (noteCheck) return { action: "reject" as const, message: noteCheck };
     const { data, hireToken, classId, defaulted } = binding;
@@ -1545,7 +1550,7 @@ export class TavernRuntime {
     const tavernBrief = !!hire && (state.initialBriefAt === undefined || text === hire.initialInput)
       || ctx.originPluginId === this.bb.pluginId && isRebrief(text)
       || ctx.queuedMessages.some(row => row.originPluginId === this.bb.pluginId && isRebrief(inputText(row.content)));
-    if (tavernBrief && questId && !(await this.spend.allows(questId)))
+    if ((tavernBrief || rounds.length) && questId && !(await this.spend.allows(questId)))
       return { action: "wait" as const, reason: "The quest reached its measured spend budget; only you can raise or remove it." };
     const keeperStart = !hireToken && (isKeeperIdentity(this.keeper.store, member) || classId === "keeper");
     const soloStart = !keeperStart && this.humanThread(ctx, binding);
@@ -1687,7 +1692,7 @@ export class TavernRuntime {
           this.bb.log.warn(`Tavern metadata mirror: ${String(error)}`),
         );
     }
-    return { action: "proceed" as const };
+    return this.loop.admitRound(ctx, rounds, true) ?? { action: "proceed" as const };
   }
   private async prepareHiredScope(member: Member, token: string, intent: HireIntent) {
     if (intent.scopePrepared) return;
@@ -2138,7 +2143,7 @@ export class TavernRuntime {
     brief += `\n\n${requestSourcePacket(this.keeper, requestSources)}`;
     const mark = slot?.permanent;
     const plannedPermanent = !errand && mark?.decisionId && greenlitPermanent.has(mark.decisionId)
-      ? { why: mark.why, decisionId: mark.decisionId } : undefined;
+      ? { why: mark.why, decisionId: mark.decisionId, ...(mark.schedules ? { schedules: startSchedules(this.keeper, mark.schedules) } : {}) } : undefined;
     const intent: HireIntent = {
       ...(plannedPermanent ? { permanent: plannedPermanent } : {}),
       initialInput: brief,
@@ -2475,6 +2480,28 @@ export class TavernRuntime {
     } else if (!await this.preserveEngagement(member, operation)) {
       throw new Error(memberDetails(this.keeper.store, threadId).operation?.error ?? "Cancelled hire preservation remains pending");
     }
+  }
+  keepSchedules(threadId: string, reference: string, why: string, schedules: ScheduleInput[]) {
+    this.stopAll.assertRunning();
+    this.keeper.require(threadId, "keeper");
+    const member = this.keeper.resolvePartyMember(threadId, reference), mark = member.permanent;
+    if (!member.boardQuestId || !mark || !isLiveMember(this.keeper.store, member, "work")) throw new Error("Schedules need an active permanent member.");
+    this.keeper.assertQuestNotHeld(member.boardQuestId);
+    this.keeper.guard(threadId, member.boardQuestId);
+    if ((mark.schedules?.length ?? 0) + schedules.length > 3) throw new Error("A member can have at most three schedules.");
+    const open = this.keeper.store.openAsks(threadId, member.boardQuestId).find(ask => ask.effect?.type === "member-schedules" && ask.effect.memberThreadId === member.threadId);
+    if (open) throw new Error(`A schedule request already awaits an answer: ${open.id}`);
+    return this.keeper.ask(threadId, { boardQuestId: member.boardQuestId, kind: "decision", question: `Schedule rounds for ${this.keeper.name(member)}?`,
+      why: why.slice(0, 200), holds: [], meanwhile: "No new rounds run until you approve.",
+      effect: { type: "member-schedules", memberThreadId: member.threadId, permanentDecisionId: mark.decisionId, schedules },
+      options: [{ id: "approve", label: "Add schedules", detail: "Let Tavern wake this member for the listed duties.", recommended: false },
+        { id: "deny", label: "Do not add schedules", detail: "Keep this member's current schedules.", recommended: false }],
+    }, {}, true);
+  }
+  narrowSchedule(threadId: string, reference: string, control: ScheduleControl) {
+    this.keeper.require(threadId, "keeper");
+    const member = this.keeper.resolvePartyMember(threadId, reference);
+    updateMemberSchedule(this.keeper, member.threadId, control, threadId);
   }
   keep(threadId: string, reference: string, until: number | undefined, why: string, permanent = false, closingExempt = false) {
     this.stopAll.assertRunning();
@@ -3263,7 +3290,9 @@ export class TavernRuntime {
     await this.maintain("Scope refresh", null, [{ name: "scopes", run: () => this.scopes?.refreshLiveScopes() }]);
     await this.maintain("Keeper succession maintenance", null, [{ name: "sweep", run: () => this.succession.sweep() }]);
     await this.maintain("Closing time maintenance", null, [{ name: "sweep", run: () => this.away.sweep() }]);
-    const keepers = this.keeper.store.all("members").filter(m => isKeeperIdentity(this.keeper.store, m));
+    const members = this.keeper.store.all("members");
+    await this.maintain("Scheduled member rounds", null, [{ name: "sweep", run: () => this.loop.sweepRounds(members) }]);
+    const keepers = members.filter(m => isKeeperIdentity(this.keeper.store, m));
     try { this.reviewCache = this.readReview(); }
     catch (error) { this.bb.log.warn(`Tavern review cache: ${String(error)}`); }
     try {

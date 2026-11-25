@@ -5,7 +5,7 @@ const pullRequest = { level: "keeper", proof: "receipt on a quest-owned pull req
 const invariant = { level: "tavern", proof: "invariant" } as const;
 export const AUTHORITY = {
   delegateQuest: explicit, preapproveQuest: explicit, revokeQuestAuthority: explicit, revokeShellGrant: explicit,
-  answerAsk: explicit, greenlight: explicit, conclude: explicit, closeEarly: explicit,
+  answerAsk: explicit, greenlight: explicit, conclude: explicit, closeEarly: explicit, updateMemberSchedule: explicit,
   resolveHandBack: explicit,
   releaseCheckerHandoff: explicit, awayClose: explicit, awayReturn: explicit,
   addRule: explicit, widenRule: explicit, confirmRule: explicit, undoDecision: explicit, resetUndoLane: explicit,

@@ -5,6 +5,7 @@ import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_use
 import { PlacementFacts } from "../kit/placement";
 import { PlanChanges } from "../kit/plan-changes";
 import { memberName } from "../../shared/member-name";
+import { scheduleLabel } from "../../shared/member-schedule";
 import { SHAPE_PATHS } from "../../shared/heraldry";
 import { rpcContract, type BoardQuestDetail } from "../../shared/contract";
 import { checkName, doneParts, sentences } from "../../shared/plan-text";
@@ -119,7 +120,7 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
           <PlanDoneWhen key={plan.version} text={plan.doneWhen} />
           <section className="qm-party" aria-label={sealed ? "Formed party (team)" : "Proposed party (team)"}>
             <h4><Vocabulary word="party" /> · {sealed ? "formed" : "proposed"}</h4>
-            <ul>{plan.party.map((p, i) => { const cls = registry.data?.classes.find(c => c.id === p.classId); const character = registry.data?.characters.find(c => c.id === p.characterId); return <li key={i} style={{ ["--i" as string]: i }}>{cls && character ? <Crest cls={cls} character={character} size={18} /> : <svg className="wp-mark open" width={16} height={16} viewBox="0 0 24 24" aria-hidden="true"><path d={SHAPE_PATHS[cls?.shape ?? "shield"]} /></svg>}<span className="pn" data-content><b>{character?.name ?? cls?.label ?? p.classId}</b>{character ? <span className="anc"> {cls ? `${cls.label} · ${cls.plain}` : p.classId}</span> : <span className="m"> · On hire</span>}{p.permanent && <span className="qm-permanent m small">Permanent: {p.permanent.why}</span>}</span><span className="pw m" data-content>{p.waypointIds.map(w => w.replace(/^w/, "")).join(", ")}</span></li>; })}</ul>
+            <ul>{plan.party.map((p, i) => { const cls = registry.data?.classes.find(c => c.id === p.classId); const character = registry.data?.characters.find(c => c.id === p.characterId); return <li key={i} style={{ ["--i" as string]: i }}>{cls && character ? <Crest cls={cls} character={character} size={18} /> : <svg className="wp-mark open" width={16} height={16} viewBox="0 0 24 24" aria-hidden="true"><path d={SHAPE_PATHS[cls?.shape ?? "shield"]} /></svg>}<span className="pn" data-content><b>{character?.name ?? cls?.label ?? p.classId}</b>{character ? <span className="anc"> {cls ? `${cls.label} · ${cls.plain}` : p.classId}</span> : <span className="m"> · On hire</span>}{p.permanent && <span className="qm-permanent m small">Permanent: {p.permanent.why}</span>}{p.permanent?.schedules?.map((schedule, index) => <span className="qm-permanent m small" key={index}>{scheduleLabel(schedule)} (server time) · {schedule.duty}</span>)}</span><span className="pw m" data-content>{p.waypointIds.map(w => w.replace(/^w/, "")).join(", ")}</span></li>; })}</ul>
           </section>
         </div>
         <div className="qm-leaf" data-part="PlanRoad">

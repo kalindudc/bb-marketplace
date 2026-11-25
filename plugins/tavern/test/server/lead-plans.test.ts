@@ -66,6 +66,18 @@ it("only the immediate parent can approve a fitting exact child plan, without a 
   await expect(f.runtime.hire(f.lead.threadId, "project", { classId: "smith", boardQuestId: f.child.id, waypointId: "w1", title: "Start the approved track", brief })).resolves.toMatchObject({ classId: "smith" });
 });
 
+it("requires the user's greenlight for a fitting child plan with a scheduled permanent slot", async () => {
+  const f = await fixture();
+  const schedule = { cadence: "weekly", weekday: 1, at: "09:30", duty: "Read the public tracker" } as const;
+  const plan = f.k.plan(f.lead.threadId, { ...planInput(f.child.id), reversible: true,
+    party: [{ ...workSlot(1), permanent: { why: "Standing duty", schedules: [schedule] } }] });
+  await expect(f.decide(f.decision(plan.version))).rejects.toThrow(/user's answer/);
+  const ask = f.k.store.openAsks(f.lead.threadId, f.child.id)[0]!;
+  expect(ask.effect).toMatchObject({ type: "lead-plan", request: { scheduledSlots: [{ slot: 1, schedules: [schedule] }] } });
+  await f.answer(ask.id);
+  expect(f.k.quest(f.child.id).greenlitVersion).toBe(plan.version);
+});
+
 it("keeps a pending plan answerable after either quest is renamed and shows both new names", async () => {
   const f = await fixture();
   const plan = f.propose(2);

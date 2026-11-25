@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { leadPlanRecordSchema, type BoardQuest, type Decision, type LeadLink, type LeadPlanRecord, type LeadPlanReview, type Plan } from "../../shared/schema";
 import { waypointCheck } from "../../shared/waypoint";
+import { scheduledSlots } from "../../shared/member-schedule";
 import { readUndoLanes } from "../undo-record";
 import { assertChainPlan, assertLeadPathOpen, leadAncestors, subtreeSeats } from "./leads";
 import { approvedPartyReceipt, transitionQuest } from "./quest-lifecycle";
@@ -36,7 +37,9 @@ function review(k: Keeper, child: BoardQuest, plan: Plan, path: LeadLink[], why:
   const previous = k.store.get("plans", planId(child.id, plan.version - 1));
   const diff = previous && planDiff(previous, plan);
   const changed = diff && new Set(diff.waypoints.changed.map(w => w.id));
+  const schedules = scheduledSlots(plan);
   return { childQuestId: child.id, version: plan.version, parentQuestId: first.parent.id, parentWaypointId: primary.parentWaypointId,
+    ...(schedules.length ? { scheduledSlots: schedules } : {}),
     parentTitle: first.parent.title, approved: first.approved, requested: first.requested, changes: comparisons.flatMap(item => item.wide ? [item.wide] : []), why,
     ...(previous && diff && changed ? { planChanges: { fromVersion: previous.version, fields: Object.keys(diff.fields),
       addedWaypoints: diff.waypoints.added.map(w => w.title), removedWaypoints: diff.waypoints.removed.map(w => w.title),
@@ -57,6 +60,7 @@ export function proposeLeadPlan(k: Keeper, child: BoardQuest, plan: Plan, path: 
   if (before?.state === "pending") k.store.put("leadPlans", planId(child.id, child.planVersion), { ...before, state: "superseded" });
   const request = review(k, child, plan, path, "");
   const why = request.changes.length ? "The lead is asking to change the parent-approved limits."
+    : request.scheduledSlots?.length ? "The plan would give permanent members scheduled duties."
     : requiresUser(plan) ? "This plan has a question, a user decision or work that is not reversible."
     : readUndoLanes(k.store, parent.keeperThreadId).some(lane => lane.kind === "lead-plan") ? "You took these decisions back after undoing earlier lead-plan calls." : "";
   const record = leadPlanRecordSchema.parse({ request: { ...request, why }, linkId: link.id, generation: link.generation,

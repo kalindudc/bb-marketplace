@@ -18,6 +18,8 @@ import {
   summaryDraftSchema,
   gateInputSchema,
   questNamesSchema,
+  scheduleControlSchema,
+  schedulesInputSchema,
 } from "../../shared/schema";
 import type { TavernRuntime } from "../runtime";
 import { LIMITS } from "../limits";
@@ -271,10 +273,18 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_keep",
     "Kept a resting member",
-    "Keep a resting member by name or id until Unix milliseconds, or use permanent:true with why and no deadline; Use closingExempt:true only on a permanent member; the Pause exemption requires a working guard.",
-    memberInput({ until: z.number().int().nonnegative().optional(), why: z.string().trim().min(1).max(500), permanent: z.literal(true).optional(), closingExempt: z.literal(true).optional() })
-      .refine(input => input.permanent ? input.until === undefined : input.until !== undefined && !input.closingExempt, "Use either until, or permanent:true with optional closingExempt:true"),
+    "Keep until Unix ms or mark permanent:true. closingExempt needs a guard. For an active permanent member, schedules asks for approval (server time; weekly uses 0=Sun). Pause or remove by schedule id.",
+    memberInput({ until: z.number().int().nonnegative().optional(), why: z.string().trim().min(1).max(500), permanent: z.literal(true).optional(), closingExempt: z.literal(true).optional(),
+      schedules: schedulesInputSchema.optional(), schedule: scheduleControlSchema.optional() })
+      .refine(input => input.schedule ? !input.schedules && !input.permanent && !input.closingExempt && input.until === undefined
+        : input.permanent ? input.until === undefined && !(input.schedules && input.closingExempt) : input.until !== undefined && !input.closingExempt && !input.schedules,
+      "Use either until, permanent:true (optionally closingExempt or schedules), or one schedule control"),
     (input, threadId) => {
+      if (input.schedule) {
+        runtime.narrowSchedule(threadId, input.member, input.schedule);
+        return `Schedule ${input.schedule.action === "pause" ? "paused" : "removed"}.`;
+      }
+      if (input.schedules) return keeperCallAsk(runtime.keepSchedules(threadId, input.member, input.why, input.schedules).id);
       const decision = runtime.keep(threadId, input.member, input.until, input.why, input.permanent, input.closingExempt);
       return input.permanent ? `${decision.text}: ${decision.why}` : `Kept ${input.member} until ${localClock(input.until!)}: ${input.why}`;
     },
@@ -390,7 +400,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_plan",
     "Wrote the quest map",
-    "Map owners, done-when, dependencies, lead times, review load, party and at most three questions. Set reversible:true only for fully reversible work. List acts for pre-approval: read/workspace-write need relative paths; check needs a recognised command. Check: warden, keeper or none (agent), you (user mark), keeper (outside, tavern_gate). Warden slots name one maker's waypoints or your subjects (owner: your thread ID). Follow Tavern's explicit greenlight, Ranger exception or by-size approval for one party slot. Permanent slots need explicit greenlight. For a reversible check change, fromSteer cites the user's routed steer. Limit waypoint titles to 200 and changeNote to 500 characters. Emit the returned quest-map directive verbatim.",
+    "Map owners, done-when, dependencies, lead times, review load, party and at most three questions. Set reversible:true only for fully reversible work. List acts for pre-approval: read/workspace-write need relative paths; check needs a recognised command. Check: warden, keeper or none (agent), you (user mark), keeper (outside, tavern_gate). Warden slots name one maker's waypoints or your subjects (owner: your thread ID). Follow Tavern's explicit greenlight, Ranger exception or by-size approval for one party slot. Permanent slots need explicit greenlight. Schedules use server time and weekly weekdays 0=Sun to 6=Sat. For a reversible check change, fromSteer cites the user's routed steer. Limit waypoint titles to 200 and changeNote to 500 characters. Emit the returned quest-map directive verbatim.",
     planInputSchema,
     async (input, threadId) => {
       const plan = await runtime.plan(threadId, input);

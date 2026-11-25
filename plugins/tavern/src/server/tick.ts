@@ -1,5 +1,8 @@
 import type { MessageDispatchHookContext } from "@get-bb/plugin-sdk";
-import type { Member, TavernEvent } from "../shared/schema";
+import type { Member, MemberSchedule, TavernEvent } from "../shared/schema";
+import { scheduleLabel } from "../shared/member-schedule";
+import { isLiveKeeper, isOpenQuest } from "./liveness";
+import { nextScheduleAt } from "./member-schedules";
 import type { TavernRuntime } from "./runtime";
 import type { TickBatch } from "./keeper/store";
 import { inputText, tickId } from "./dispatch";
@@ -10,13 +13,15 @@ import { boundedData, dataFence, LEDGER_OVERFLOW, ledgerHeading } from "./instru
 import { eventMoments, MOMENT_CARD_BYTES, momentKey, readWaypointProgress, renderKeeperCards, type MomentCard } from "./keeper/cards";
 import { isNewsEvent } from "./news";
 import { isDefiniteTickRefusal, isNotFound } from "./host-errors";
-import { isLiveKeeper } from "./liveness";
 import { briefSteers } from "./request-sources";
 import { LoopTimeout, loopCall } from "./loop-call";
 import { agentData } from "./agent-data";
 
 export type TickOrigin = "sweep" | "wake";
 const RETRY_SUFFIX = "\nDelivery retry of the same tick id. Ignore it if you have already seen or acted on this id.";
+const ROUND_PREFIX = "[Tavern schedule]";
+const roundText = (schedule: MemberSchedule) => `Scheduled round (${scheduleLabel(schedule)}): ${schedule.duty}`;
+const roundInput = (schedule: MemberSchedule) => `${ROUND_PREFIX} ${schedule.id} ${schedule.nextAt}\n${roundText(schedule)}`;
 
 export function briefSteerFact(name: string, warning: { at: number; excerpt: string | null; memberThreadId: string }) {
   const { at, excerpt, memberThreadId } = warning;
@@ -30,6 +35,73 @@ export class TickLoop {
   constructor(private runtime: TavernRuntime) {}
   private get k() {
     return this.runtime.keeper;
+  }
+
+  roundInputs(ctx: MessageDispatchHookContext) {
+    const inputs = ctx.queuedMessages.length
+      ? ctx.queuedMessages.map(row => row.originPluginId === this.runtime.bb.pluginId ? inputText(row.content) : "")
+      : [ctx.originPluginId === this.runtime.bb.pluginId ? ctx.input.text : ""];
+    return inputs.flatMap(text => text.startsWith(ROUND_PREFIX) ? [text] : []);
+  }
+
+  private roundBlock(member: Member) {
+    const { boardQuestId, threadId } = member;
+    const quest = boardQuestId ? this.k.store.get("quests", boardQuestId) : null;
+    const state = this.k.store.runtime(threadId);
+    if (member.role !== "member" || !["active", "resting"].includes(member.engagement ?? "") ||
+        state.archivedAt != null || state.deletedAt != null || !isOpenQuest(quest))
+      return { action: "reject" as const, message: "The member or quest is no longer open." };
+    if (this.runtime.stopAll.reason() || this.runtime.config().tavern.paused || state.manualStopAt != null || quest.phase === "held" ||
+        this.runtime.away.blocked(threadId) || this.runtime.spend.held(boardQuestId))
+      return { action: "wait" as const, reason: "Tavern is holding this scheduled round.", sendAt: this.k.now() + LIMITS.retryMs };
+    return null;
+  }
+
+  admitRound(ctx: MessageDispatchHookContext, inputs: string[], commit = false) {
+    if (!inputs.length) return null;
+    if (inputs.length !== 1 || ctx.queuedMessages.length > 1)
+      return { action: "wait" as const, reason: "Ungroup the scheduled round to send these messages separately.", sendAt: undefined };
+    const member = this.k.member(ctx.thread.id);
+    const now = this.k.now();
+    const schedule = member?.permanent?.schedules?.find(row => !row.paused && row.nextAt <= now && roundInput(row) === inputs[0]);
+    if (!member || !schedule || ctx.thread.archivedAt !== null || ctx.thread.deletedAt !== null)
+      return { action: "reject" as const, message: "Tavern dropped an inactive or already admitted scheduled round." };
+    const block = this.roundBlock(member);
+    if (block) return block;
+    if (ctx.thread.status !== "idle" || ctx.attempt !== "start-turn")
+      return { action: "wait" as const, reason: "Tavern waits for the member to go idle.", sendAt: now + LIMITS.sweepMs };
+    if (!commit) return null;
+    const permanent = member.permanent!;
+    const nextAt = nextScheduleAt(schedule, now);
+    // Claim the occurrence before bb starts the turn, so a crash never repeats it.
+    this.k.store.atomic(() => {
+      this.k.store.put("members", member.threadId, { ...member, permanent: { ...permanent,
+        schedules: permanent.schedules!.map(row => row.id === schedule.id ? { ...row, lastAt: now, nextAt } : row),
+      } });
+      this.k.store.event(now, member.keeperThreadId, member.boardQuestId, "member.schedule-round", `${this.k.name(member)}: ${roundText(schedule)}`,
+        { memberThreadId: member.threadId, scheduleId: schedule.id, dueAt: schedule.nextAt, nextAt }, { kind: "tavern" });
+    });
+    this.k.changed(member.threadId, member.boardQuestId);
+    return { action: "proceed" as const };
+  }
+
+  async sweepRounds(members: Member[]) {
+    const now = this.k.now();
+    for (const member of members) {
+      const schedule = member.permanent?.schedules?.find(row => !row.paused && row.nextAt <= now);
+      if (!schedule || this.roundBlock(member)) continue;
+      const { threadId, boardQuestId } = member;
+      try {
+        const thread = await loopCall(this.runtime.bb.sdk.threads.get({ threadId }), "scheduled member lookup");
+        if (thread.status !== "idle" || thread.archivedAt !== null || thread.deletedAt !== null) continue;
+        if ((await loopCall(this.runtime.bb.sdk.threads.queuedMessages.list({ threadId }), "scheduled member queue")).length || !await this.runtime.spend.allows(boardQuestId)) continue;
+        const current = this.k.member(threadId);
+        if (!current || this.roundBlock(current) || !current.permanent?.schedules?.some(row => row.id === schedule.id && !row.paused && row.nextAt === schedule.nextAt)) continue;
+        await loopCall(this.runtime.bb.sdk.threads.send({ threadId, mode: "queue-if-active",
+          input: [{ type: "text", text: roundInput(schedule), mentions: [] }],
+        }), "scheduled member round");
+      } catch (error) { this.runtime.bb.log.warn(`Tavern scheduled round ${threadId}: ${String(error)}`); }
+    }
   }
 
   isTick(ctx: MessageDispatchHookContext) {

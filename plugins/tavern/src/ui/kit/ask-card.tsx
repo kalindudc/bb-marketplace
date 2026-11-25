@@ -9,6 +9,7 @@ import { QuestAuthority } from "./quest-authority";
 import { useRegistry } from "./registry";
 import { isCloseEffect, type PullRequestChoices } from "../../shared/closing";
 import { WaiverRows } from "./waiver-rows";
+import { scheduleLabel } from "../../shared/member-schedule";
 
 const KIND: Record<Ask["kind"], string> = { greenlight: "Greenlight", decision: "Decision", conclude: "Conclude", production: "Production", "cluster-write": "Cluster write", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", "drafts-as-you": "Draft as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
 const VIA: Record<string, string> = { banner: "in the thread", page: "in the common room", phone: "on the phone", chat: "in the chat", cli: "from the CLI", timer: "by its default", tavern: "by Tavern" };
@@ -137,6 +138,13 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
     <section className={`tavern ask k-${ask.kind}`} aria-label={`Ask: ${ask.question}`} data-ask>
       {headless ? ask.why && <p className="ask-why">Yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</p> : <><div className="ask-h"><span className="kind">{early ? "Close early" : KIND[ask.kind]}</span>{ask.createdAt > 0 && <span>asked <TimeAgo at={ask.createdAt} /></span>}{ask.why && <span>· yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</span>}</div><h3 className="ask-q">{ask.question}</h3></>}
       {ask.kind === "greenlight" && <p className="m small">Cluster writes always ask you, even after you approve the quest map.</p>}
+      {ask.effect?.type === "member-schedules" && <dl className="sendbox" aria-label="Schedules to approve">
+        {ask.effect.schedules.map((schedule, index) => <Fragment key={index}><dt>{scheduleLabel(schedule)} (server time)</dt><dd data-content>{schedule.duty}</dd></Fragment>)}
+      </dl>}
+      {(ask.effect?.type === "greenlight" ? ask.effect.scheduledSlots : lead?.scheduledSlots)?.map(slot => <dl className="sendbox" aria-label={`Schedules for party slot ${slot.slot}`} key={slot.slot}>
+        <dt>Slot {slot.slot}</dt><dd data-content>{slot.purpose}</dd>
+        {slot.schedules.map((schedule, index) => <Fragment key={index}><dt>{scheduleLabel(schedule)} (server time)</dt><dd data-content>{schedule.duty}</dd></Fragment>)}
+      </dl>)}
       {lead && <><LeadPlanBounds request={lead} /><p className="m small">This answer approves the plan, not any separate permission or consequential act.</p></>}
       {!lead && ask.kind === "greenlight" && ask.boardQuestId && <QuestAuthority questId={ask.boardQuestId} via={via} />}
       {cluster && ask.clusterApproval && <h3>Run it now?</h3>}

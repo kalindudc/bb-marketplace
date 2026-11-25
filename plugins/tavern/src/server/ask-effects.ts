@@ -39,6 +39,7 @@ export const ASK_EFFECTS: Record<AskEffect["type"], { act: Act; handler: keyof E
   "release-hold": { act: "releaseCheckerHandoff", handler: "release-hold" },
   "settle-waypoint": { act: "answerAsk", handler: "settle-waypoint" },
   "user-waypoint": { act: "answerAsk", handler: "user-waypoint" },
+  "member-schedules": { act: "answerAsk", handler: "member-schedules" },
   "soft-limit": { act: "answerAsk", handler: "soft-limit" },
   "communication-hold": { act: "answerAsk", handler: "communication-hold", answerOnly: true },
   "pull-request-draft": { act: "answerAsk", handler: "pull-request-draft", answerOnly: true },

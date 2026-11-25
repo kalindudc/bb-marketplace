@@ -1,5 +1,6 @@
 import { memberIdentityFacts, memberIdentityLabel } from "../shared/identity";
 import { memberHost } from "./member-engagement";
+import { updateMemberSchedule } from "./member-schedules";
 import { memberBriefRows, rangerCheckpointRows } from "./status";
 import { wasReleased } from "../shared/member-engagement";
 import { askHistory } from "./ask-history";
@@ -344,6 +345,7 @@ export function rpcHandlers(
         keeperThreadId: threadId,
         memberBriefs,
         rangerCheckpoints: rangerCheckpointRows(k, threadId),
+        scheduledRounds: k.store.recentScheduledRounds(threadId),
         keeperBlocks,
         succession: runtime.succession.view(threadId),
         undoLanes: readUndoLanes(k.store, threadId),
@@ -585,6 +587,10 @@ export function rpcHandlers(
       requireUserAct(context, "revokeShellGrant");
       if (!runtime.scopes) throw new Error("Shell grants are unavailable.");
       runtime.scopes.revokeGrant(threadId, id, receipt);
+      return { ok: true };
+    },
+    updateMemberSchedule: ({ threadId, ...control }) => {
+      updateMemberSchedule(k, threadId, control);
       return { ok: true };
     },
     clusterRunStatus: ({ askId }) => {

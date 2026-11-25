@@ -82,6 +82,7 @@ it("keeps the normal-reply limit and per-quest re-anchor instructions", () => {
 it("keeps permanent-member instructions in the scouting card within its boot budget", () => {
   const card = renderKeeperCards(parseKeeperCards(skill), [{ moment: "scouts", questId: null }]);
   expect(card).toContain("permanent:true");
+  expect(card).toMatch(/standing duty.*permanent member.*schedule.*not an automation/i);
   const bytes = Buffer.byteLength(card);
   if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_SCOUT_CARD_BYTES=${bytes}\n`);
   expect(bytes).toBeLessThanOrEqual(MOMENT_CARD_BYTES);

@@ -183,6 +183,12 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
       f.k.store.put("shellGrants", "fixture", { id: "fixture", keeperThreadId: "lead", memberThreadId: "member", boardQuestId: f.q.id, target: { act: "publish", command: "npm publish", cwd: "/repo", digest: "a".repeat(64) }, scope: "quest", state: "issued", by: "user", issuedAt: 1, changedAt: 1 });
       return call("revokeShellGrant", { threadId: "member", id: "fixture" });
     },
+    updateMemberSchedule: () => {
+      const member = f.k.member("member")!;
+      f.k.store.put("members", member.threadId, { ...member, permanent: { why: "Watch", decisionId: f.decision.id,
+        schedules: [{ id: "watch", cadence: "daily", at: "07:00", duty: "Read", nextAt: Date.now() }] } });
+      return call("updateMemberSchedule", { threadId: "member", id: "watch", action: "pause" });
+    },
     clusterRunStatus: () => call("clusterRunStatus", { askId: f.ask.id }),
     answerAsk: () => call("answerAsk", { askId: f.ask.id, optionId: "yes", via: "page" }),
     olderSummaries: () => call("olderSummaries", { boardQuestId: f.q.id, beforeId: "absent" }),

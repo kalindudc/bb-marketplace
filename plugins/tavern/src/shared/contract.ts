@@ -47,6 +47,7 @@ import {
   ROUTE_KINDS,
   routeSchema,
   ruleSchema,
+  scheduleControlSchema,
   WAYPOINT_STATES,
   waypointSchema,
 } from "./schema";
@@ -307,6 +308,7 @@ export const ledgerSchema = z.object({
   keeperBlocks: z.array(askSchema.pick({ id: true, question: true, why: true })).optional(),
   memberBriefs: z.array(memberBriefRowSchema).optional(),
   rangerCheckpoints: z.array(z.object({ memberThreadId: threadId, boardQuestId: z.string().nullable(), name: z.string(), reportId: z.string(), state: z.string() })).optional(),
+  scheduledRounds: z.array(eventSchema).max(20).optional(),
   succession: successionViewSchema.nullable().optional(),
   asksNextCursor: z.string().nullable().optional(),
   attention: attentionSchema.optional(),
@@ -543,6 +545,7 @@ export const rpcContract = defineContract({
   preapproveQuest: { input: preapprovalInputSchema.extend({ boardQuestId: id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
   revokeQuestAuthority: { input: z.object({ boardQuestId: id, id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
   revokeShellGrant: { input: z.object({ threadId, id }).strict(), output: ok },
+  updateMemberSchedule: { input: scheduleControlSchema.extend({ threadId }), output: ok },
   clusterRunStatus: { input: z.object({ askId: id }).strict(), output: z.object({ guarded: z.boolean() }), tags: () => [tags.room()] },
   answerAsk: {
     input: z.object({ askId: id, optionId: z.string(), note: z.string().max(2000).nullable().default(null), via: z.enum(["banner", "page", "phone", "chat"]), pullRequestChoices: pullRequestChoicesSchema.optional() }).strict(),

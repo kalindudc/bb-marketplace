@@ -434,6 +434,12 @@ export class KeeperStore {
       .all(kind, value, limit) as { data: string }[];
     return rows.map((row) => this.decode(kind, row.data)).reverse();
   }
+  latestPermanentOccupant(boardQuestId: string, decisionId: string): Member | null {
+    const row = this.db.prepare(`SELECT data FROM tavern_records WHERE kind='members'
+      AND json_extract(data, '$.boardQuestId')=? AND json_extract(data, '$.permanent.decisionId')=?
+      ORDER BY rowid DESC LIMIT 1`).get(boardQuestId, decisionId) as { data: string } | undefined;
+    return row ? this.decode("members", row.data) : null;
+  }
   pendingMemberBriefs(keeperThreadId: string, boardQuestId?: string, memberThreadId?: string) {
     const rows = this.db.prepare(`SELECT m.data AS member, json_extract(r.data,'$.memberEngagement.delivery') AS brief
       FROM tavern_records m JOIN tavern_runtime r ON r.thread_id=m.id
@@ -1080,6 +1086,10 @@ export class KeeperStore {
       AND type IN ('scope.violation','blocker.moved') AND coalesce(json_extract(data,'$.mode'),'enforce') <> 'watch'
       AND (type='scope.violation' OR json_extract(data,'$.effectType')='scope-blocker')
       ${questId ? "AND board_quest_id=?" : ""} AND ${visibleEventSql} ORDER BY id DESC LIMIT ?`, [...owners, ...(questId ? [questId] : []), limit]);
+  }
+  recentScheduledRounds(keeperThreadId: string) {
+    const owners = this.keeperEventOwners(keeperThreadId);
+    return this.readEvents(`WHERE keeper_thread_id IN (${owners.map(() => "?").join(",")}) AND type='member.schedule-round' AND ${visibleEventSql} ORDER BY id DESC LIMIT 20`, owners);
   }
   momentEvents(keeperThreadId: string, ids: number[]) {
     if (!ids.length) return [];

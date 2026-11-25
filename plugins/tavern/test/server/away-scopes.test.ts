@@ -58,6 +58,26 @@ describe("Closing time local scope integration", () => {
     expect(f.stop).toHaveBeenCalledExactlyOnceWith({ threadId: "child" });
   });
 
+  it("delivers a scheduled round to an exempt guarded member during Pause", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    f.runtime.keep("lead", "child", undefined, "Ongoing watch", true);
+    f.runtime.keep("lead", "child", undefined, "Watch overnight", true, true);
+    const ask = f.runtime.keepSchedules("lead", "child", "Check the tracker", [{ cadence: "daily", at: "07:00", duty: "Read the tracker" }]);
+    f.k.answerAsk(ask.id, "approve", null, "page", "user", undefined, {}, { act: "answerAsk", surface: "page", attribution: "client" });
+    f.advance(f.k.member("child")!.permanent!.schedules![0]!.nextAt - f.time());
+    await f.runtime.away.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: f.q.id, endState: "pause" }] });
+    const rounds: string[] = [];
+    f.bb.sdk.threads.send = async ({ threadId, input }) => {
+      const text = typeof input === "string" ? input : input.map(block => block.type === "text" ? block.text : "").join("\n");
+      if (threadId === "child" && (await f.runtime.dispatch(dispatch049({ threadId, text, pluginId: "tavern" }))).action === "proceed") rounds.push(text);
+      return { ok: true, delivery: "sent" };
+    };
+    await f.runtime.sweep();
+    expect(rounds).toEqual([expect.stringContaining("Scheduled round (daily 07:00): Read the tracker")]);
+    expect(f.runtime.away.snapshot().status.closed).toBe(true);
+  });
+
   it("holds a left-out quest even if its permanent member is exempt, guarded and watched work is allowed", async () => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);

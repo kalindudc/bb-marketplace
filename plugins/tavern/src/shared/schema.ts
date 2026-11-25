@@ -219,11 +219,23 @@ export const guardPostureSchema = z.object({
   providerId: z.string(), mode: z.enum(["pre-exec", "detection-only"]), label: z.string(), approvalAskId: id.nullable(),
 });
 const permanentReason = z.string().trim().min(1).max(500);
-const plannedPermanent = z.object({ why: permanentReason }).strict();
-const recordedPermanent = plannedPermanent.extend({ decisionId: id });
+const scheduleFields = z.object({ cadence: z.enum(["daily", "weekly"]), at: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM"),
+  weekday: z.number().int().min(0).max(6).optional(), duty: z.string().trim().min(1).max(300) }).strict();
+const validWeekday = (s: z.infer<typeof scheduleFields>) => (s.cadence === "weekly") === (s.weekday !== undefined);
+export const scheduleInputSchema = scheduleFields.refine(validWeekday, "Set weekday only for a weekly schedule");
+export const schedulesInputSchema = z.array(scheduleInputSchema).min(1).max(3);
+export type ScheduleInput = z.infer<typeof scheduleInputSchema>;
+const scheduleSchema = scheduleFields.extend({ id, nextAt: epochMs, lastAt: epochMs.optional(), paused: z.literal(true).optional() })
+  .refine(validWeekday);
+export type MemberSchedule = z.infer<typeof scheduleSchema>;
+export const scheduleControlSchema = z.object({ id, action: z.enum(["pause", "remove"]) }).strict();
+export type ScheduleControl = z.infer<typeof scheduleControlSchema>;
+const scheduledSlotsSchema = z.array(z.object({ slot: z.number().int().positive(), purpose: z.string(), schedules: schedulesInputSchema })).max(8);
+const plannedPermanent = z.object({ why: permanentReason, schedules: schedulesInputSchema.optional() }).strict();
+const recordedPermanent = z.object({ why: permanentReason, decisionId: id });
 
 export const memberSchema = z.object({
-  permanent: recordedPermanent.extend({ closingExemption: recordedPermanent.optional() }).optional(),
+  permanent: recordedPermanent.extend({ closingExemption: recordedPermanent.optional(), schedules: z.array(scheduleSchema).max(3).optional() }).optional(),
   repo: z.string().min(1).optional(),
   draftPush: z.object({ branch: z.string(), remote: z.string(), memberHead: z.string(), homeHead: z.string(), profile: z.string() }).optional(),
   engagement: engagementSchema.optional(),
@@ -506,6 +518,7 @@ export const leadPlanDecisionSchema = z.object({
   action: z.enum(["approve", "refuse"]),
 }).strict();
 export const leadPlanReviewSchema = z.object({
+  scheduledSlots: scheduledSlotsSchema.optional(),
   childQuestId: id,
   version: z.number().int().positive(),
   parentQuestId: id,
@@ -534,12 +547,13 @@ export type LeadPlanRecord = z.infer<typeof leadPlanRecordSchema>;
 
 export const askEffectSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("lead-plan"), request: leadPlanReviewSchema }),
-  z.object({ type: z.literal("greenlight"), planVersion: z.number().int().nonnegative(), requiresExplicit: z.literal(true).optional() }),
+  z.object({ type: z.literal("greenlight"), planVersion: z.number().int().nonnegative(), requiresExplicit: z.literal(true).optional(), scheduledSlots: scheduledSlotsSchema.optional() }),
   z.object({ type: z.literal("conclude"), draft: concludeDraftSchema }),
   z.object({ type: z.literal("close-early"), draft: closeEarlyDraftSchema }),
   z.object({ type: z.literal("release-hold"), holdId: id }),
   settleWaypointSchema.omit({ boardQuestId: true }).extend({ type: z.literal("settle-waypoint"), planVersion: z.number().int().positive() }),
   z.object({ type: z.literal("user-waypoint"), waypointId: id, planVersion: z.number().int().positive(), completeOn: z.array(askOptionSchema.shape.id).min(1).max(5) }),
+  z.object({ type: z.literal("member-schedules"), memberThreadId: threadId, permanentDecisionId: id, schedules: schedulesInputSchema }),
   z.object({ type: z.literal("soft-limit"), limit: z.enum(["party", "rangers"]), text: z.string().min(1).max(400), reason: z.string().max(600) }),
   z.object({ type: z.literal("pull-request-draft"), operation: pullRequestDraftOperationSchema }),
   z.object({ type: z.literal("communication-hold"), hold: communicationHoldSchema, keeperReview: z.literal(true).optional() }).strict(),

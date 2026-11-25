@@ -39,9 +39,11 @@ Finished members rest rather than being released on a timer. Keepers must reuse 
 
 For ongoing duties, a Keeper can mark a planned slot or active member as permanent with a recorded reason. Permanent members skip rest reminders and stale alarms while staying subject to release, Stop all, and quest cleanup. A Keeper can also exempt a locally guarded permanent member from an explicit Closing time Pause so it keeps running under the window's stop list.
 
+A permanent member can have up to three daily or weekly schedules, set in the server’s local time. Approve them in the plan or in a separate ask for an active permanent member. Tavern waits for the member to be idle, runs at most one overdue round per schedule, and respects Stop all, Closing time, quest holds and spend caps. The member row and Ledger show the next run. Use the member row to pause or remove a schedule.
+
 ## Spend, review, and party limits
 
-- **Spend budget:** Set a dollar cap on the quest page or approve one with the plan. At the cap, Tavern holds new hires and briefs until you raise or remove it. Budgets count only measured spend (guarded local Pi receipts and Burn-reported sessions); uncovered remote sessions show as unknown, and already-admitted work can push spend past the cap.
+- **Spend budget:** Set a dollar cap on the quest page or approve one with the plan. At the cap, Tavern holds new hires, briefs and scheduled rounds until you raise or remove it. Budgets count only measured spend (guarded local Pi receipts and Burn-reported sessions); uncovered remote sessions show as unknown, and already-admitted work can push spend past the cap.
 - **Review budget:** Caps open review-bound items (default 3). When full, builder hires pause until reviews clear or you click **Allow one more review** on the quest page.
 - **Party limits:** Settings enforce a hard per-Keeper party ceiling (default 5). Class limits and concurrent Ranger limits (default 3) are soft caps a Keeper can exceed by one with an undoable decision, never past the hard ceiling.
 

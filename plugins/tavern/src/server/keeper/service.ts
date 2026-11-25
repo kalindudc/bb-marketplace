@@ -99,6 +99,8 @@ export const routeQuestIds = (
 ];
 
 import { localClock } from "../clock";
+import { scheduledSlots } from "../../shared/member-schedule";
+import { startSchedules } from "../member-schedules";
 import { moveTime } from "../../shared/time";
 import { assertQuestTransition, transitionQuest, displayStage, nextNewsBy, storedPhase, partyFits, checksFit, approvedPartyReceipt } from "./quest-lifecycle";
 import { keeperSubject, rangerOnlyPlan, settled, verifiedWaypoint, waypointCheck } from "../../shared/waypoint";
@@ -257,8 +259,13 @@ export class Keeper {
       return existing;
     }
     const state = "idle";
-    const permanent = hire?.permanent;
+    let permanent = hire?.permanent;
     const permanentDecision = permanent && this.store.get("decisions", permanent.decisionId);
+    if (permanent && owner?.boardQuestId && permanentDecision && !permanentDecision.undone) {
+      // Read at bind: users can pause or remove schedules while a reserved hire is starting.
+      const prior = this.store.latestPermanentOccupant(owner.boardQuestId, permanent.decisionId)?.permanent;
+      if (prior) permanent = { ...permanent, schedules: prior.schedules };
+    }
     const m: Member = {
       ...(permanentDecision && !permanentDecision.undone ? { permanent } : {}),
       threadId,
@@ -967,8 +974,9 @@ export class Keeper {
     for (const slot of plan.party) {
       if (!slot.permanent) continue;
       const prior = [...priorSlots].find(candidate => candidate.classId === slot.classId && candidate.characterId === slot.characterId &&
-        candidate.permanent!.why === slot.permanent!.why && isDeepStrictEqual([...candidate.waypointIds].sort(), [...slot.waypointIds].sort()));
-      slot.permanent = { why: slot.permanent.why, decisionId: prior?.permanent?.decisionId };
+        candidate.permanent!.why === slot.permanent!.why && isDeepStrictEqual(candidate.permanent!.schedules, slot.permanent!.schedules) &&
+        isDeepStrictEqual([...candidate.waypointIds].sort(), [...slot.waypointIds].sort()));
+      slot.permanent = { ...slot.permanent, decisionId: prior?.permanent?.decisionId };
       if (prior) priorSlots.delete(prior);
     }
     const approved =
@@ -1089,8 +1097,9 @@ export class Keeper {
     return message;
   }
   private askGreenlight(q: BoardQuest, plan: Plan, why: string, requiresExplicit = false) {
+    const schedules = scheduledSlots(plan);
     return this.ask(q.keeperThreadId, {
-      effect: { type: "greenlight", planVersion: plan.version, ...(requiresExplicit ? { requiresExplicit: true } : {}) },
+      effect: { type: "greenlight", planVersion: plan.version, ...(requiresExplicit ? { requiresExplicit: true } : {}), ...(schedules.length ? { scheduledSlots: schedules } : {}) },
       boardQuestId: q.id,
       kind: "greenlight",
       question: requiresExplicit ? `Approve the updated checks for ${q.title}, plan v${plan.version}?` : `Form the party for ${q.title}, plan v${plan.version}?`,
@@ -1410,7 +1419,7 @@ export class Keeper {
     if (input.kind === "greenlight" && input.effect.type !== "greenlight" && (input.effect.type !== "lead-plan" || !trusted))
       throw new Error("A greenlight ask needs its typed plan version; propose the plan instead.");
     if (input.kind === "conclude" && !isCloseEffect(input.effect)) throw new Error("A conclude ask needs its typed draft; tell the quest result instead.");
-    if (["placement-blocker", "communication-hold", "repair-guard"].includes(input.effect.type) && !trusted) throw new Error("Only Tavern may open this typed ask");
+    if (["placement-blocker", "communication-hold", "repair-guard", "member-schedules"].includes(input.effect.type) && !trusted) throw new Error("Only Tavern may open this typed ask");
     if (input.kind === "drafts-as-you" && input.effect.type !== "communication-hold") throw new Error("Call the draft tool first so Tavern can record the exact arguments.");
     if (input.kind === "sends-as-you" && input.effect.type === "decision") input = { ...input,
       options: [{ id: "acknowledge", label: "I have the draft", detail: "Records your answer. The agent does not send anything.", recommended: false }, { id: "deny", label: "Dismiss", detail: "Nothing is sent.", recommended: false }],
@@ -1616,6 +1625,10 @@ export class Keeper {
     if (ask.kind === "cluster-write" && by === "user" && (receipt?.act !== "answerAsk" || via === "timer" || via === "cli")) throw new Error("Cluster writes require your explicit answer on the card.");
     if (ask.effect?.type === "user-waypoint" && (by !== "user" || receipt?.act !== "answerAsk" || receipt.threadId || via === "cli" || via === "timer"))
       throw new Error("This waypoint needs your explicit answer on the card.");
+    const scheduleApproval = ask.effect?.type === "greenlight" ? ask.effect.scheduledSlots : ask.effect?.type === "lead-plan" ? ask.effect.request.scheduledSlots : undefined;
+    if ((ask.effect?.type === "member-schedules" || scheduleApproval?.length) &&
+        (by !== "user" || receipt?.act !== "answerAsk" || receipt.threadId || via === "cli" || via === "timer"))
+      throw new Error("Schedules need your explicit answer on the card.");
     if (ask.state !== "open") {
       if (ask.answer?.optionId === optionId) {
         if (by === "user") this.userAction(ask.keeperThreadId);
@@ -1734,6 +1747,17 @@ export class Keeper {
         },
         "lead-plan": effect => {
           if (effect.type === "lead-plan") answerLeadPlan(this, effect.request, ask.id, optionId);
+        },
+        "member-schedules": effect => {
+          if (effect.type !== "member-schedules" || optionId !== "approve") return;
+          const member = this.member(effect.memberThreadId), permanent = member?.permanent;
+          if (!member || member.role !== "member" || !isLiveMember(this.store, member, "work") || !permanent ||
+              member.keeperThreadId !== ask.keeperThreadId || member.boardQuestId !== ask.boardQuestId || permanent.decisionId !== effect.permanentDecisionId)
+            throw new Error("This ask no longer names an active permanent member.");
+          const current = permanent.schedules ?? [];
+          if (current.length + effect.schedules.length > 3) throw new Error("A member can have at most three schedules.");
+          this.store.put("members", member.threadId, { ...member, permanent: { ...permanent, schedules: [...current, ...startSchedules(this, effect.schedules)] } });
+          this.changed(member.threadId, member.boardQuestId);
         },
         greenlight: effect => {
           if (effect.type !== "greenlight" || optionId !== "approve") return;
