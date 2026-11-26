@@ -71,8 +71,9 @@ describe("re-briefs after routing a user message", () => {
     expect(told(f)).toHaveLength(0);
   });
 
-  it("still refuses a quest brief with an unrouted message pending", async () => {
+  it("still refuses a quest brief with an unrouted message on a legacy multi-quest thread", async () => {
     const f = await questParty();
+    seedLegacyQuest(f.k, "lead", "Document", "Document");
     f.k.receiveUser("lead", "Thanks");
     f.k.route("lead", { kind: "aside", summary: "Thanks", notes: [] });
     f.k.receiveUser("lead", "Check the new requirement");
@@ -187,7 +188,7 @@ describe("member re-brief delivery through the strict host", () => {
     expect(f.k.member("child")?.state).toBe("working");
     expect(runtimeFixture(f.k.store, "child")).toMatchObject({ pendingBrief: null, briefVersion: 2 });
     expect(told(f).map(event => event.data.delivery)).toEqual(["queued", "delivered"]);
-    expect(send).toHaveBeenCalledOnce();
+    expect(briefSends(send)).toHaveLength(1);
   });
 
   it("opens one blocker at the fifth failed attempt and never claims automatic retry after exhaustion", async () => {

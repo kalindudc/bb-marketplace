@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { requestSourcesSchema, type RequestSources } from "../shared/request-source";
 import { routeSchema, type BoardQuest, type Member, type Route } from "../shared/schema";
 import { isLiveMember, isOpenQuest } from "./liveness";
-import type { Keeper } from "./keeper/service";
+import { routeQuestIds, type Keeper } from "./keeper/service";
 
 const INLINE_CHARS = 4000;
 const PAGE_CHARS = 2000;
@@ -49,10 +49,19 @@ export function briefSteers(k: Keeper, quest: BoardQuest, members: readonly Memb
   });
 }
 
-export function captureRequestSources(k: Keeper, keeperId: string, questId: string | null): RequestSources {
+export function forwardedSteer(k: Keeper, keeperId: string, questId: string, routeId: string) {
+  const route = k.store.get("routes", routeId);
+  if (!route || k.succession.current(route.keeperThreadId) !== keeperId || route.kind !== "steer" ||
+      !routeQuestIds(route).includes(questId) || route.classSelectionOnly || !route.sourceMessageId ||
+      !k.store.messageReceipt(keeperId, route.sourceMessageId, true) || k.store.messageWasCancelled(route.sourceMessageId))
+    throw new Error("Name an accepted user steer routed to this parent quest.");
+  return route;
+}
+
+export function captureRequestSources(k: Keeper, keeperId: string, questId: string | null, selectedRoute?: Route): RequestSources {
   k.require(keeperId, "keeper");
   if (questId !== null) k.owned(keeperId, questId);
-  const routes = questId === null ? k.applicableRoutes(keeperId).filter(route => route.kind === "question" && route.boardQuestId === null)
+  const routes = selectedRoute ? [selectedRoute] : questId === null ? k.applicableRoutes(keeperId).filter(route => route.kind === "question" && route.boardQuestId === null)
     : questRequestRoutes(k, keeperId, questId);
   const seen = new Set<string>();
   const sources = routes.flatMap(route => {
@@ -63,7 +72,7 @@ export function captureRequestSources(k: Keeper, keeperId: string, questId: stri
     const text = receipt(k, keeperId, sourceMessageId);
     return [{ routeId: route.id, sourceMessageId, messageAt: route.messageAt, chars: text === undefined ? null : text.length, sha256: text === undefined ? null : hash(text) }];
   });
-  const data = { version: 1 as const, keeperThreadId: keeperId, boardQuestId: questId, openingMissing: questId !== null && !routes.some(route => route.kind === "new-quest"), sources };
+  const data = { version: 1 as const, keeperThreadId: keeperId, boardQuestId: questId, openingMissing: !selectedRoute && questId !== null && !routes.some(route => route.kind === "new-quest"), sources };
   return requestSourcesSchema.parse({ ...data, id: `requests_${hash(JSON.stringify(data))}` });
 }
 function sourceText(k: Keeper, manifest: RequestSources, source: RequestSources["sources"][number]): string | undefined {

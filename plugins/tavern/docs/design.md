@@ -12,7 +12,7 @@ Every thread in bb also gets a Journal, which is a live checklist with steps, ev
 
 ## The Keeper
 
-A Keeper is a lead thread that holds one or more goals for you. Keepers delegate by default and act directly only for tiny one-turn work or when you ask.
+A Keeper is a lead thread that holds one goal for you. Keepers delegate by default and act directly only for tiny one-turn work or when you ask.
 
 A Keeper opens one board quest. Tavern records whether your message is a steer, a question, an aside, a new goal or a standing rule. A new goal in an occupied Keeper thread gets a placement card, not another quest in that thread. Refreshing a Keeper moves its existing quests and open requests to the new thread. Existing threads with multiple quests keep them.
 
@@ -34,7 +34,7 @@ You can customize classes from the Classes page or through Markdown override fil
 
 A quest is a goal tracked on Tavern's board through scouting, approval, building, closing, and completion. Before planned building starts, the Keeper proposes a quest map naming what done means, the ordered deliverables called waypoints, who owns each one, and how each one is checked. Only a Warden verdict counts as verified work; Keeper reviews, outside gates, and report-only waypoints are labelled distinctly.
 
-When a Keeper briefs a member, Tavern attaches your exact opening request and routed steers so builders and checkers read your literal words. A quest never closes itself: the Keeper asks to Conclude or Close early, and your answer writes the tale (verified results, open pull requests, and lasting character credits) and archives the party. Sending a finished quest to the Cellar archives it while preserving its history and credits.
+When a Keeper briefs a member, Tavern attaches your exact opening request and routed steers. For a side quest, the placement choice supplies the opening goal and each forwarded steer cites its original message. The side Keeper reports to its hiring Keeper. Reports do not prove a waypoint; only a settled child conclusion submits the result for the parent’s own check. A quest never closes itself. You conclude a root quest or approve an early close; the hiring Keeper can receive a settled child result. Sending a finished quest to the Cellar archives it while preserving its history and credits.
 
 ## Asks and greenlights
 

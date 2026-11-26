@@ -51,7 +51,7 @@ export function partyFits(plan: Plan, approved: Plan) {
       (!leadEnvelope || approved.party.some(previous =>
         previous.classId === classId && previous.waypointIds[0] === waypointIds[0] &&
         previous.leadEnvelope && previous.leadEnvelope.members >= leadEnvelope.members &&
-        previous.leadEnvelope.rangers >= leadEnvelope.rangers && previous.leadEnvelope.depth >= leadEnvelope.depth)));
+        previous.leadEnvelope.rangers >= leadEnvelope.rangers)));
 }
 export function checksFit(plan: Plan, approved: Plan, earlier: Plan | null = null, isSettled: (waypointId: string) => boolean = () => false) {
   const strength = { none: 0, keeper: 1, you: 2, warden: 3 };

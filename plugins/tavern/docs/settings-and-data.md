@@ -9,7 +9,7 @@ Configure Tavern on the **Settings** page or with `bb tavern` commands. Search S
 | **Setup** | Start a guided setup agent thread and review pending setup proposals. |
 | **Tavern** | Pause every Keeper, choose a default class, set a direct local Git path (empty uses `PATH`), and control whether agents may edit non-guardrail settings. |
 | **Your attention** | Review budget (default 3), notifications (`consequential`, `all`, or `none`), quiet hours, and **Send a test alert** to verify device delivery. |
-| **Keepers and decisions** | Plan greenlight (`explicit` or `by-size`), Always ask kinds, party ceiling (default 5), chain depth (1) and linked party ceiling (12), resting reminder, stale strikes, cluster expiry (15 minutes), refresh wait, and memory limits. |
+| **Keepers and decisions** | Plan greenlight (`explicit` or `by-size`), Always ask kinds, party ceiling (default 5), linked party ceiling (12), resting reminder, stale strikes, cluster expiry (15 minutes), refresh wait, and memory limits. |
 | **Classes and models** | Per-class provider, model, and reasoning overrides, plus Warden reopen counts and rates by model. |
 | **Scopes** | Scope mode (`enforce`, `watch`, or `off`) and `scopes.send_tools` patterns or prefixes. |
 | **Where work runs** | Remote maker and checker slots (default 2 each), machine placement rules, and forge profiles. |

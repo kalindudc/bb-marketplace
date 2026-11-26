@@ -94,22 +94,21 @@ export function subtreeSeats(store: KeeperStore, rootId: string, plan?: Plan) {
   return count(rootId);
 }
 
-function assertDepth(k: Keeper, questId: string, depth: number) {
-  if (depth > k.settings(questId).keepers.chainDepth) throw new Error("This lead exceeds the chain depth in Settings.");
+export function assertMayHireKeeper(k: Keeper, keeperId: string) {
+  if (k.member(keeperId)?.leadLinkId) throw new Error("A side Keeper cannot hire another Keeper or plan another side seat.");
 }
 
 export function assertChainPlan(k: Keeper, quest: BoardQuest, plan: Plan) {
   const path = leadAncestors(k.store, quest.id);
   if (path[0]) assertLeadPathOpen(k.store, path[0]);
   const leads = plan.party.filter(slot => slot.classId === "keeper" || slot.leadEnvelope !== undefined);
+  if (leads.length) assertMayHireKeeper(k, quest.keeperThreadId);
   const waypoints = new Set<string>();
   for (const slot of leads) {
     const waypoint = plan.waypoints.find(w => w.id === slot.waypointIds[0]);
     if (!slot.leadEnvelope || slot.waypointIds.length !== 1 || !waypoint || waypoint.actor !== "agent" || waypoints.has(waypoint.id))
-      throw new Error("Every lead needs its own agent waypoint and member, Ranger and depth limits in the plan.");
+      throw new Error("Every side seat needs its own agent waypoint and member and Ranger limits in the plan.");
     waypoints.add(waypoint.id);
-    assertDepth(k, quest.id, Math.max(path.length + 1, slot.leadEnvelope.depth));
-    if (slot.leadEnvelope.depth < path.length + 1) throw new Error("This lead's envelope depth cannot exclude its own layer.");
   }
   const rootId = path.at(-1)?.parentQuestId ?? quest.id;
   if ((path.length || leads.length || k.store.leadLinksBy("parentQuestId", rootId).some(holdsLeadSeat)) &&
@@ -120,10 +119,7 @@ export function assertChainPlan(k: Keeper, quest: BoardQuest, plan: Plan) {
 export function assertChainHire(k: Keeper, questId: string, classId: string, lead: boolean) {
   const path = leadAncestors(k.store, questId);
   if (path[0]) assertLeadPathOpen(k.store, path[0]);
-  if (lead) {
-    assertDepth(k, questId, path.length + 1);
-    if (path.some(link => path.length + 1 > link.envelope.depth)) throw new Error("This hire exceeds an approved lead chain depth.");
-  }
+  if (lead) assertMayHireKeeper(k, k.quest(questId).keeperThreadId);
   const rootId = path.at(-1)?.parentQuestId ?? questId;
   if ((lead || path.length || k.store.leadLinksBy("parentQuestId", rootId).some(holdsLeadSeat)) &&
       subtreeSeats(k.store, rootId).members >= k.settings(rootId).keepers.chainMembers)
@@ -150,12 +146,32 @@ export function leadAuthorization(k: Keeper, quest: BoardQuest, classId: string,
   return { parentPlan: { version: approved.version, receipt: { kind: receipt.kind, id: receipt.id }, check: waypointCheck(waypoint), acts: waypoint.acts }, envelope: slot.leadEnvelope };
 }
 
-export function reserveLead(k: Keeper, quest: BoardQuest, input: { classId: string; waypointId: string; token: string }, authorization: ReturnType<typeof leadAuthorization>) {
+export function sideQuestChoice(k: Keeper, quest: BoardQuest, askId: string) {
+  const ask = k.store.get("asks", askId), effect = ask?.effect;
+  if (!ask || effect?.type !== "quest-start" || ask.keeperThreadId !== quest.keeperThreadId || ask.boardQuestId !== quest.id || effect.parentQuestId !== quest.id ||
+      ask.state !== "answered" || ask.answer?.by !== "user" || ask.answer.optionId !== "side-quest")
+    throw new Error("Name the Side quest card answered for this parent quest.");
+  const route = k.store.get("routes", effect.routeId);
+  const message = k.store.messageReceipt(quest.keeperThreadId, effect.sourceMessageId, true);
+  if (!route || k.succession.current(route.keeperThreadId) !== quest.keeperThreadId || route.kind !== "new-quest" || route.sourceMessageId !== effect.sourceMessageId ||
+      message?.text !== effect.goal || k.store.messageWasCancelled(effect.sourceMessageId))
+    throw new Error("The Side quest card no longer matches its accepted user goal.");
+  return route;
+}
+
+export function reserveLead(k: Keeper, quest: BoardQuest, input: { classId: string; waypointId: string; token: string; sideQuestAskId?: string }, authorization: ReturnType<typeof leadAuthorization>) {
+  assertMayHireKeeper(k, quest.keeperThreadId);
+  if (input.sideQuestAskId) {
+    sideQuestChoice(k, quest, input.sideQuestAskId);
+    if (k.store.leadLinksBy("parentQuestId", quest.id).some(link => link.sideQuestAskId === input.sideQuestAskId &&
+        (link.state !== "cancelled" || link.parentWaypointId !== input.waypointId)))
+      throw new Error("This Side quest card already reserved a side seat.");
+  }
   if (k.store.leadLinksBy("parentQuestId", quest.id).some(link => link.parentWaypointId === input.waypointId && holdsLeadSeat(link)))
     throw new Error("This waypoint already has a live or reserved lead.");
   if (!isDeepStrictEqual(leadAuthorization(k, quest, input.classId, input.waypointId), authorization))
     throw new Error("The approved lead envelope changed before this hire was reserved; retry.");
-  const link: LeadLink = { id: k.store.id("lead"), hireToken: input.token, parentKeeperThreadId: quest.keeperThreadId, parentQuestId: quest.id,
+  const link: LeadLink = { id: k.store.id("lead"), hireToken: input.token, ...(input.sideQuestAskId ? { sideQuestAskId: input.sideQuestAskId } : {}), parentKeeperThreadId: quest.keeperThreadId, parentQuestId: quest.id,
     parentWaypointId: input.waypointId, childKeeperThreadId: null, childQuestId: null, generation: 1, ...authorization, state: "reserved" };
   saveLead(k, link, "lead.reserved", { kind: "agent", threadId: quest.keeperThreadId });
   return link.id;
@@ -177,5 +193,5 @@ export function cancelLead(k: Keeper, token: string, hire: HireIntent) {
 
 export function saveLead(k: Keeper, link: LeadLink, type: "lead.reserved" | "lead.bound" | "lead.opened" | "lead.cancelled", actor: Actor) {
   k.store.put("leadLinks", link.id, link);
-  k.store.event(k.now(), link.parentKeeperThreadId, link.parentQuestId, type, `Lead for ${link.parentWaypointId}: ${type.slice(5)}.`, { leadLinkId: link.id, waypointId: link.parentWaypointId, memberThreadId: link.childKeeperThreadId, childQuestId: link.childQuestId, receipt: { kind: "hire", id: link.hireToken } }, actor);
+  k.store.event(k.now(), link.parentKeeperThreadId, link.parentQuestId, type, `Lead for ${link.parentWaypointId}: ${type.slice(5)}.`, { leadLinkId: link.id, waypointId: link.parentWaypointId, memberThreadId: link.childKeeperThreadId, childQuestId: link.childQuestId, ...(link.sideQuestAskId ? { sideQuestAskId: link.sideQuestAskId } : {}), receipt: { kind: "hire", id: link.hireToken } }, actor);
 }

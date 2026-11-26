@@ -63,7 +63,7 @@ Your **Always ask** list in Settings sets which kinds come to you by default. Ev
 
 When a Keeper's context grows long, click **Refresh Keeper** on its Common room card. Tavern moves its quests and open asks to a fresh Keeper thread and records the handover in the Ledger. Keep the old thread unarchived until its members finish. If bb never confirms the new thread in time, control returns to the original Keeper.
 
-A Keeper can also hire another Keeper as a child lead for one greenlit waypoint. The lead holds one party seat, opens a linked child quest, and shares chain depth (default 1, maximum 3), linked party size (default 12), and the parent quest's spend cap. The hiring Keeper approves child plans that fit those limits; wider plans come to you on one card. Stopping a parent quest stops from the deepest child back up.
+If you choose **Side quest**, the hiring Keeper reserves a greenlit waypoint and briefs another Keeper with your exact goal. The side Keeper holds one party seat and shares the linked party ceiling and the parent spend cap. It cannot hire another Keeper. The hiring Keeper approves fitting plans; wider or user-only decisions keep their original card. Keep talking to the hiring Keeper. It forwards the exact steer and posts the answer with a link to the child result. Stop a side quest to stop only its party and Keeper; stop the parent to stop both. The parent cannot return while a side quest is still running.
 
 ## Classes, characters, and service records
 

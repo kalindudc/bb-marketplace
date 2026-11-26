@@ -4,7 +4,7 @@ import { IntakeLimits } from "../../shared/limits";
 
 export const reportInput = (limit: IntakeLimits) => reportFields(limit)
   .pick({ status: true, evidence: true, artifacts: true, wait: true, checkpoint: true })
-  .extend({ outcome: z.string().min(1), headline: z.string().trim().min(1).optional(), confidence: reportSchema.shape.confidence.default(null) });
+  .extend({ outcome: z.string().min(1), headline: z.string().trim().min(1).optional(), confidence: reportSchema.shape.confidence.default(null), sourceRouteId: reportSchema.shape.sourceRouteId });
 const defaultReportInput = reportInput(new IntakeLimits());
 const memberReportParameters = z.toJSONSchema(defaultReportInput.omit({ checkpoint: true })
   .extend({ status: defaultReportInput.shape.status.exclude(["checkpoint"]) }), { io: "input" });

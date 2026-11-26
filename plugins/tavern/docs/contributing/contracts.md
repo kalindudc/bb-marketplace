@@ -51,7 +51,6 @@ Effective values resolve in order (later wins): code defaults (`DEFAULT_SETTINGS
 | `knobs.rangerTimeboxMaxMinutes` | `30` min | `3–30` | No |
 | `knobs.ledgerRefreshMinutes` | `10` min | `2–60` | No |
 | `keepers.partyMax` / `chainMembers` | `5` / `12` | `1–1,000` | No |
-| `keepers.chainDepth` | `1` | `1–3` | No |
 | `keepers.restMinutes` / `decisionTimerMax` | `30` / `10,080` min | `1–10,080` | No |
 | `keepers.keepMaxHours` | `168` h | `1–168` | No |
 | `keepers.restatementBytes` / `tickFactChars` | `28,000` / `14,000` | `8,000–32,000` / `4,000–32,000` | Never tuned down |

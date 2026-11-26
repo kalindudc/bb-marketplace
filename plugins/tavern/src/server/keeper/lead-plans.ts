@@ -20,17 +20,16 @@ function review(k: Keeper, child: BoardQuest, plan: Plan, path: LeadLink[], why:
   const work = plan.waypoints.filter(w => w.actor === "agent");
   const check = work.map(waypointCheck).reduce((weakest, next) => checkRank[next] < checkRank[weakest] ? next : weakest, requirements(primary).check);
   const acts = work.flatMap(w => w.acts ?? []).filter((act, i, all) => all.findIndex(previous => sameAct(previous, act)) === i);
-  const depth = Math.max(path.length, ...plan.party.flatMap(slot => slot.leadEnvelope ? [slot.leadEnvelope.depth] : []));
   const comparisons = path.map(link => {
     const parent = k.quest(link.parentQuestId);
     const limits = requirements(link);
     const actual = subtreeSeats(k.store, link.childQuestId!, plan);
     const approved = { ...link.envelope, ...limits };
-    const requested = { ...actual, depth, check: checkRank[check] < checkRank[limits.check] ? check : limits.check, acts };
+    const requested = { ...actual, depth: approved.depth, check: checkRank[check] < checkRank[limits.check] ? check : limits.check, acts };
     const addedActs = acts.filter(act => !limits.acts.some(previous => sameAct(previous, act)));
-    const wider = actual.members > approved.members || actual.rangers > approved.rangers || depth > approved.depth || requested.check !== approved.check || addedActs.length > 0;
+    const wider = actual.members > approved.members || actual.rangers > approved.rangers || requested.check !== approved.check || addedActs.length > 0;
     const amended = { members: Math.max(approved.members, actual.members), rangers: Math.max(approved.rangers, actual.rangers),
-      depth: Math.max(approved.depth, depth), check: requested.check, acts: [...approved.acts, ...addedActs] };
+      depth: approved.depth, check: requested.check, acts: [...approved.acts, ...addedActs] };
     return { parent, wide: wider ? { linkId: link.id, questTitle: parent.title, approved, requested: amended } : null, approved, requested };
   });
   const first = comparisons[0]!;
@@ -147,8 +146,8 @@ export function answerLeadPlan(k: Keeper, request: LeadPlanReview, askId: string
     throw new Error("This answer does not match the exact lead plan and amendment.");
   if (optionId === "approve") for (const change of request.changes) {
     const link = path.find(item => item.id === change.linkId)!;
-    const { members, rangers, depth, check, acts } = change.requested;
-    k.store.put("leadLinks", link.id, { ...link, envelope: { members, rangers, depth }, amendedRequirements: { check, acts }, amendedBy: askId });
+    const { members, rangers, check, acts } = change.requested;
+    k.store.put("leadLinks", link.id, { ...link, envelope: { ...link.envelope, members, rangers }, amendedRequirements: { check, acts }, amendedBy: askId });
     k.store.event(k.now(), link.parentKeeperThreadId, link.parentQuestId, "lead.envelope-amended", "You approved new limits for the lead.", { ...change, askId }, { kind: "user" });
   }
   settle(k, child, record, { kind: "ask-answer", id: askId }, optionId === "approve", { kind: "user" });

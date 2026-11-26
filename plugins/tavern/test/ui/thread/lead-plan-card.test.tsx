@@ -20,8 +20,8 @@ it("shows the current and requested limits before sending one explicit answer", 
     expect(slot.getByText("Approved")).toBeTruthy();
     expect(slot.container.querySelector("time")).toBeNull();
     expect(slot.getByText("Requested")).toBeTruthy();
-    expect(slot.getByText(/2 members, 0 Rangers, depth 1/)).toBeTruthy();
-    expect(slot.getByText(/4 members \(was 2\), 1 Ranger \(was 0\), depth 1/)).toBeTruthy();
+    expect(slot.getByText(/2 members, 0 Rangers/)).toBeTruthy();
+    expect(slot.getByText(/4 members \(was 2\), 1 Ranger \(was 0\)/)).toBeTruthy();
     expect(slot.getByText("New scope act: read")).toBeTruthy();
     expect(slot.getByText("Changes since plan v1")).toBeTruthy();
     expect(slot.getByText(/Changed waypoint: Service check/)).toBeTruthy();

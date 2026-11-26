@@ -23,6 +23,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Changed
 
+- A Keeper can hire another Keeper for an approved side seat and forward your exact steers. The side Keeper reports back without marking work done, and the hiring Keeper posts the linked answer. Side Keepers cannot hire another Keeper. Older class files and settings still load; Keeper hiring no longer has a class switch or a chain depth setting.
 - A Keeper thread opens one quest. Existing threads with several quests keep them. If you bring an outside goal to a Keeper, choose a side quest under the named parent or open an editable draft for a new Keeper. The choice alone starts nothing.
 - Member reports deliver news without changing waypoint progress. Use the journal to submit, check, skip or reopen work. Ranger check-ins still go to the Keeper, and Keeper status shows the latest journal round for permanent duties.
 - The quest page, plan card and widget read waypoint progress from the journal. Keeper checks, optional skips, qualifying user answers and outside replies are recorded there. Proof survives release, and ambiguous old completions stay open for another check. Blocked waypoints show the blocking line, not the whole running note.

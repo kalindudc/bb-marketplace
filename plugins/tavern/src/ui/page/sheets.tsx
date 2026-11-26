@@ -109,7 +109,7 @@ export function CharacterSheetEditor({ character, registry, room }: { character:
 export function ClassesList({ registry }: { registry: Registry }) {
   const navigate = useBbNavigate();
   const startable = registry.classes.filter((c) => c.startable).length;
-  const hireable = registry.classes.filter((c) => c.hireable).length;
+  const hireable = registry.classes.filter((c) => c.id === "keeper" || c.hireable).length;
   const facts = useClassExecutions();
   /** Fields a project file could change, across every class, while the page has no project. */
   const projectFields = [...new Set((facts.data?.classes ?? []).flatMap((e) => [...e.hire.fields, ...e.start.fields]).filter((f) => f.dependsOnProject).map((f) => f.field))];
@@ -128,7 +128,7 @@ export function ClassesList({ registry }: { registry: Registry }) {
         return <button type="button" key={cls.id} className="tv-ct-row act" onClick={() => navigate.toPluginPanel("tavern", { subPath: `class/${cls.id}` })} title={`Open the ${cls.label} class`}>
           <span className="tv-ct-name"><b>{cls.label}</b> <span className="anc">{cls.plain}</span><span className="tv-ct-src" title={cls.source}>{cls.source}</span></span>
           <span>{cls.startable ? <PageGlyph name="done" className="tv-yes" /> : <span className="m">no</span>}<span className="sr">{cls.startable ? "startable" : "not startable"}</span></span>
-          <span>{cls.hireable ? <PageGlyph name="done" className="tv-yes" /> : <span className="m">no</span>}<span className="sr">{cls.hireable ? "hireable" : "not hireable"}</span></span>
+          <span>{cls.id === "keeper" ? "Side quests" : <>{cls.hireable ? <PageGlyph name="done" className="tv-yes" /> : <span className="m">no</span>}<span className="sr">{cls.hireable ? "hireable" : "not hireable"}</span></>}</span>
           <span className="tv-ct-lens">{cls.description}</span>
           <ModelCell cls={cls} entry={facts.data?.classes.find((e) => e.classId === cls.id)} failure={facts.error?.message ?? null} />
           <span className="tv-ct-chars">{chars.length ? chars.slice(0, 5).map((c) => <Crest key={c.id} cls={cls} character={c} size={20} />) : <span className="m small">drawn at first start</span>}</span>
@@ -164,7 +164,7 @@ function ClassDetailView({ cls, registry }: { cls: Registry["classes"][number]; 
   return <div className="tv-classd">
     <header className="tv-sheet-head tv-card lit" style={glowVars(`class:${cls.id}`)}>
       {chars[0] ? <Crest cls={cls} character={chars[0]} size={64} level={levelFor(registry, chars[0].id, cls.id)?.level} /> : <PageGlyph name="file" size={32} />}
-      <div className="tv-sh-t"><h1>{cls.label} <span className="anc">{cls.plain}</span></h1><p className="tv-cc-r">{cls.description}</p><div className="tv-facts"><span>{cls.startable ? "startable" : "not startable"}</span><span>{cls.hireable ? "hireable" : "not hireable"}</span><span>{plural(chars.length, "character")}</span></div></div>
+      <div className="tv-sh-t"><h1>{cls.label} <span className="anc">{cls.plain}</span></h1><p className="tv-cc-r">{cls.description}</p><div className="tv-facts"><span>{cls.startable ? "startable" : "not startable"}</span><span>{cls.id === "keeper" ? "hireable for side quests" : cls.hireable ? "hireable" : "not hireable"}</span><span>{plural(chars.length, "character")}</span></div></div>
       <code className="tv-sh-src" title={cls.source}>{cls.source}</code>
       <button type="button" ref={opener} data-class-edit-opener={cls.id} className="btn pri" onClick={edit} aria-expanded={inline || undefined} title="Opens the class editor in the side panel, beside this page"><PageGlyph name="file" /><span>Edit the {cls.label} class</span><OpensMark /></button>
       <RegistryExport kind="class" id={cls.id} name={`the ${cls.label} class`} />
@@ -173,7 +173,7 @@ function ClassDetailView({ cls, registry }: { cls: Registry["classes"][number]; 
     <div className="tv-ggrid">
       <section className="tv-card tv-cdsec" aria-labelledby="tv-cd-lens"><header className="tv-colh"><h2 id="tv-cd-lens">Role prompt <span className="anc">lens</span></h2></header><pre className="tv-code">{cls.body}</pre></section>
       <aside className="tv-col" aria-label="Model, tools and hiring">
-        {entry ? <ClassFacts key={cls.id} entry={entry} registry={registry} label={cls.label} hireable={cls.hireable} startable={cls.startable} project={facts.project} />
+        {entry ? <ClassFacts key={cls.id} entry={entry} registry={registry} label={cls.label} hireable={cls.id === "keeper" || cls.hireable} startable={cls.startable} project={facts.project} />
           : <RecordFold id={`class:${cls.id}.facts`} title="What it gets" open>{facts.data ? <p className="m small">Tavern has no facts for this class in this project.</p> : <FoldLoad error={facts.error} retry={facts.refetch} label="what it gets" lines={6} />}</RecordFold>}
         <RecordFold id={`class:${cls.id}.hiring`} title="Hiring" count={plural(cls.hires.length, "class")} open={false} preview={<p className="m small">May hire {cls.hires.join(", ") || "nobody"}{cls.greenlight === "explicit" ? <> · staffing needs your OK</> : cls.greenlight ? <> · {cls.greenlight}</> : null}</p>}>
           <dl className="tv-dl"><dt>May hire</dt><dd>{cls.hires.join(", ") || "Nobody"}</dd><dt>Staffing</dt><dd>{cls.greenlight === "explicit" ? <>Explicit <Vocabulary word="map" /></> : cls.greenlight ?? "No staffing policy"}</dd></dl>

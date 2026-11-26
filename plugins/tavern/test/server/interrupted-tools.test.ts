@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { runtimeFixture } from "./member-fixture";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { registerTools } from "../../src/server/tools";
 import { setup } from "./runtime-fixture";
@@ -34,6 +34,7 @@ async function fixture() {
 describe("Keeper tools and routing across Stop", () => {
   it("replays B1: preserves the unrouted Luc fact, then routes Carry on separately after Stop", async () => {
     const f = await fixture();
+    seedLegacyQuest(f.k, "lead", "Earlier unrelated work", "Earlier work");
     f.event("turn/started", {}, "old");
     await f.observe();
     f.advance(10);

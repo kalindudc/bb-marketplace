@@ -190,7 +190,7 @@ export function ClassEditForm({ classId, registry, focusOnOpen = false }: { clas
       <label className="tv-field wide">Description<textarea className="tv-inp" maxLength={400} value={draft.description ?? ""} onChange={(e) => set({ description: e.target.value })} /></label>
       <div className="tv-field wide tv-ce-flags"><span>Starting and hiring</span>
         <label className="tv-chk"><input type="checkbox" checked={!!draft.startable} onChange={(e) => set({ startable: e.target.checked })} /><span>Startable: you can start a thread as {cls.label}</span></label>
-        <label className="tv-chk"><input type="checkbox" checked={!!draft.hireable} onChange={(e) => set({ hireable: e.target.checked })} /><span>Hireable: a Keeper can hire one</span></label>
+        {classId !== "keeper" && <label className="tv-chk"><input type="checkbox" checked={!!draft.hireable} onChange={(e) => set({ hireable: e.target.checked })} /><span>Hireable: a Keeper can hire one</span></label>}
       </div>
       <fieldset className="tv-field wide tv-ce-pool"><legend>Characters, in the order they are picked</legend>
         {picked.length === 0 ? <p className="m small">None chosen: a {cls.label} gets no character name.</p> : <ol className="tv-ce-order" ref={orderRef}>{picked.map((c, i) =>
@@ -213,7 +213,7 @@ export function ClassEditForm({ classId, registry, focusOnOpen = false }: { clas
           <span className="num">{bodyBytes.toLocaleString("en-GB")}</span> of <span className="num">{CLASS_BODY_LIMIT.toLocaleString("en-GB")}</span> bytes{bodyOver ? `: ${(bodyBytes - CLASS_BODY_LIMIT).toLocaleString("en-GB")} over. Shorten it to save; Tavern refuses a longer role prompt.` : ""}
         </p>
         <RulesFold className="tv-ce-rules" summary="Tavern's own rules, added after this prompt">
-          {([...(cls.hireable ? ["member"] : []), ...(cls.startable ? [classId === "keeper" ? "keeper" : "solo"] : [])] as TavernRole[]).map((role) => <div key={role}><div className="lbl">{role === "member" ? "For a hired member" : role === "keeper" ? "For a Keeper" : "For a thread you start"}</div><p className="tv-ce-rulestext" data-content>{classRules(role)}</p></div>)}
+          {([...(classId !== "keeper" && cls.hireable ? ["member"] : []), ...(cls.startable ? [classId === "keeper" ? "keeper" : "solo"] : [])] as TavernRole[]).map((role) => <div key={role}><div className="lbl">{role === "member" ? "For a hired member" : role === "keeper" ? "For a Keeper" : "For a thread you start"}</div><p className="tv-ce-rulestext" data-content>{classRules(role)}</p></div>)}
           <p className="m small">Read-only: they keep reports, asks and blockers plain for every class, so editing the prompt can't remove them.</p>
         </RulesFold>
       </div>

@@ -249,8 +249,9 @@ it("lets the user confirm a test alert and shows the last real failure separatel
 });
 it.runIf(process.env.TAVERN_LAYOUT_HARNESS === "1")("renders the lead settings for measured layout", async () => {
  const s = await section("keepers");
- await s.findByRole("spinbutton", { name: "Lead chain depth" });
- const rows = Array.from(s.container.querySelectorAll('[data-setting-keys="keepers.chainDepth"],[data-setting-keys="keepers.chainMembers"]'));
+ await s.findByRole("spinbutton", { name: "Lead chain ceiling" });
+ expect(s.queryByRole("spinbutton", { name: "Lead chain depth" })).toBeNull();
+ const rows = Array.from(s.container.querySelectorAll('[data-setting-keys="keepers.chainMembers"]'));
  process.stdout.write("CH5_SETTINGS=" + JSON.stringify(rows.map(row => row.outerHTML).join("")) + "\n");
 });
 it("resets using the same recorded save path",async()=>{

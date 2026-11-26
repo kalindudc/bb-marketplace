@@ -75,6 +75,10 @@ export function previewToml(source: string, snapshot: Pick<SettingsSnapshot, "us
     for (const retired of ["voiceChecksPerHour", "speechThreadLimit", "speechInstallLimit"]) delete converted.tavern[retired];
     if (!Object.keys(converted.tavern).length) delete converted.tavern;
   }
+  if (isObject(converted.keepers)) {
+    delete converted.keepers.chainDepth;
+    if (!Object.keys(converted.keepers).length) delete converted.keepers;
+  }
   const tuning = isObject(converted.tuning) ? converted.tuning : null;
   const pins = tuning?.pinned ?? {};
   if (tuning) delete tuning.pinned;

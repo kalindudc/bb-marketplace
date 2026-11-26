@@ -284,6 +284,7 @@ export class TickLoop {
             boardQuestId: report.boardQuestId,
             status: report.status,
             outcome: report.outcome,
+            ...(report.childQuestId ? { childQuestId: report.childQuestId, sourceRouteId: report.sourceRouteId } : {}),
             ...(report.wait ? { wait: report.wait } : {}),
             ...(report.checkpoint ? { checkpoint: report.checkpoint } : {}),
             ...(this.k.member(report.memberThreadId)?.rangerCheckpointReportId === report.id ? { waitingForKeeper: true } : {}),

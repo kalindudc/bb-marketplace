@@ -18,7 +18,8 @@ it("links the parent and child and shows computed authority and read-only asks w
   try {
     expect(slot.getByText("Hiring Keeper decides")).toBeTruthy();
     expect(slot.getByText("Plan v2")).toBeTruthy();
-    expect(slot.getByText(/4 members, 1 Ranger, 2 layers/)).toBeTruthy();
+    expect(slot.getByText(/4 members, 1 Ranger/)).toBeTruthy();
+    expect(slot.queryByText(/2 layers/)).toBeNull();
     expect(slot.getByText("You decide")).toBeTruthy();
     expect(slot.getByText(/Cluster writes/)).toBeTruthy();
     expect(slot.getByText(/read-only/)).toBeTruthy();

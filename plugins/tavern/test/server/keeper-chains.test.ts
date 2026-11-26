@@ -5,9 +5,12 @@ import { recoverHires } from "../../src/server/hires";
 import { TavernRuntime } from "../../src/server/runtime";
 import { SettingsStore } from "../../src/server/settings/store";
 import { InsightsReader } from "../../src/server/insights";
-import { DEFAULT_SETTINGS, settingsSchema, settingsPatchSchema } from "../../src/shared/settings";
+import { DEFAULT_SETTINGS, settingsPatchSchema } from "../../src/shared/settings";
 import { makeThreadResponse } from "./host";
 import { setup } from "./runtime-fixture";
+import { rpcHandlers } from "../../src/server/rpc";
+import { readRequestSources } from "../../src/server/request-sources";
+import { searchAnswers } from "../../src/server/summaries";
 import { planInput, seedQuest } from "./support";
 
 const brief = { outcome: "Coordinate two parallel tracks", mode: "make-it-work" as const, outOfScope: "No deploy", doneWhen: "Both checks pass", context: [], questions: [], timeboxMinutes: null };
@@ -19,7 +22,8 @@ async function fixture(ids = ["w1"], opts: { chainDepth?: number; chainMembers?:
   const f = setup();
   const settings = new SettingsStore(f.k.store.db, f.time);
   f.runtime.enableSettings(settings, new InsightsReader(f.k.store.db, settings, f.time));
-  if (opts.chainDepth || opts.chainMembers) settings.update({ revision: 0, patch: { keepers: { ...(opts.chainDepth ? { chainDepth: opts.chainDepth } : {}), ...(opts.chainMembers ? { chainMembers: opts.chainMembers } : {}) } }, why: "Test the chain limits" });
+  if (opts.chainMembers) settings.update({ revision: 0, patch: { keepers: { chainMembers: opts.chainMembers } }, why: "Test the chain limit" });
+  if (opts.chainDepth) f.k.store.db.prepare("UPDATE tavern_settings SET data=json_set(data,'$.user.keepers.chainDepth',?) WHERE id=1").run(opts.chainDepth);
   const q = await seedQuest(f.k, "lead", "A project in stages", "Stages");
   f.k.plan("lead", leadPlan(q.id, ids, opts.slotDepth));
   approve(f.k, "lead", q.id);
@@ -32,10 +36,9 @@ function approve(k: ReturnType<typeof setup>["k"], keeperId: string, qid: string
   return ask.id;
 }
 
-it("defaults to one layer and twelve seats and validates integer settings without patch defaults", () => {
-  expect(DEFAULT_SETTINGS.keepers).toMatchObject({ chainDepth: 1, chainMembers: 12 });
-  expect(settingsSchema.parse({ keepers: { ...DEFAULT_SETTINGS.keepers, chainDepth: 3, chainMembers: 1000 } }).keepers.chainDepth).toBe(3);
-  for (const patch of [{ chainDepth: 0 }, { chainDepth: 4 }, { chainMembers: 1001 }, { chainMembers: 1.5 }])
+it("defaults to twelve linked party seats and validates integer settings without patch defaults", () => {
+  expect(DEFAULT_SETTINGS.keepers.chainMembers).toBe(12);
+  for (const patch of [{ chainDepth: 2 }, { chainMembers: 1001 }, { chainMembers: 1.5 }])
     expect(settingsPatchSchema.safeParse({ keepers: patch }).success).toBe(false);
   expect(settingsPatchSchema.parse({ keepers: { partyMax: 6 } })).toEqual({ keepers: { partyMax: 6 } });
 });
@@ -48,7 +51,9 @@ it("uses the parent environment, accounts for the seat, and opens just one verif
   expect(f.k.require(member.threadId, "keeper").threadId).toBe(member.threadId);
   expect(() => f.k.require(member.threadId, "member")).toThrow();
   registerTools(f.bb, f.runtime);
-  await expect(f.harness.behavior.invokeAgentTool("tavern_report", {}, { threadId: member.threadId })).rejects.toThrow("Only a Tavern member");
+  const report = { status: "done", outcome: "Result", evidence: [], artifacts: [] };
+  await expect(f.harness.behavior.invokeAgentTool("tavern_report", report, { threadId: "lead" })).rejects.toThrow("Only a Tavern member");
+  await expect(f.harness.behavior.invokeAgentTool("tavern_report", report, { threadId: member.threadId })).rejects.toThrow(/open child quest/);
   const [a, b] = await Promise.all([f.k.openQuest(member.threadId, "Parallel tracks", "Tracks"), f.k.openQuest(member.threadId, "Duplicate", "Duplicate")]);
   expect(a.id).toBe(b.id);
   expect(a.keeperThreadId).toBe(member.threadId);
@@ -100,27 +105,18 @@ it("refuses an unapproved, unallocated, or unnamed lead without spawning", async
   expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
 });
 
-it("rejects a lead plan beyond the depth setting, but allows a second layer with a named envelope and raised setting", async () => {
-  const f = await fixture();
-  const member = await f.runtime.hire("lead", "project", request(f.q.id));
-  const child = await f.k.openQuest(member.threadId, "Work", "Work");
-  expect(() => f.k.plan(member.threadId, leadPlan(child.id, ["w1"]))).toThrow(/chain depth/i);
-  const deeper = await fixture(["w1"], { chainDepth: 2, slotDepth: 2 });
-  const lead = await deeper.runtime.hire("lead", "project", request(deeper.q.id));
-  const next = await deeper.k.openQuest(lead.threadId, "Work", "Work");
-  deeper.k.plan(lead.threadId, leadPlan(next.id, ["w1"], 2));
-  approve(deeper.k, lead.threadId, next.id);
-  const grandchild = await deeper.runtime.hire(lead.threadId, "project", request(next.id));
-  expect(grandchild.keeperThreadId).toBe(lead.threadId);
-});
-
 it.each([false, true])("stops the chain depth first and retries a failed inner stop (host archive: %s)", async hostArchive => {
   const f = await fixture(["w1"], { chainDepth: 2, slotDepth: 2 });
   const lead = await f.runtime.hire("lead", "project", request(f.q.id));
   const child = await f.k.openQuest(lead.threadId, "Child stages", "Child");
-  f.k.plan(lead.threadId, leadPlan(child.id, ["w1"], 2));
-  approve(f.k, lead.threadId, child.id);
-  const inner = await f.runtime.hire(lead.threadId, "project", request(child.id));
+  const token = "legacy-hire", linkId = "legacy-seat";
+  const seat = f.k.store.get("leadLinks", lead.leadLinkId!)!;
+  const owner = { keeperThreadId: lead.threadId, boardQuestId: child.id, waypointId: "w1", errand: false, title: "Legacy nested seat", brief };
+  f.k.store.put("leadLinks", linkId, { ...seat, id: linkId, hireToken: token, parentKeeperThreadId: lead.threadId, parentQuestId: child.id,
+    childKeeperThreadId: null, childQuestId: null, state: "reserved" });
+  f.k.store.put("hires", token, { classId: "keeper", characterId: null, projectId: "project", leadLinkId: linkId, owner, createdAt: f.time(), initialInput: "Legacy brief" });
+  const inner = f.k.bind("legacy-inner", "keeper", null, "project", owner, token);
+  f.runtime.spawnBriefDelivered(inner.threadId);
   const deepest = await f.k.openQuest(inner.threadId, "Deepest stages", "Deepest");
   const stopped: string[] = [];
   let refuse = true;
@@ -143,6 +139,127 @@ it.each([false, true])("stops the chain depth first and retries a failed inner s
   expect(stopped).toEqual([inner.threadId, lead.threadId]);
   expect([deepest.id, child.id, f.q.id].map(id => f.k.quest(id).phase)).toEqual(["stopped", "stopped", "stopped"]);
   expect(f.k.store.all("leadLinks").map(link => link.state)).toEqual(["stopped", "stopped"]);
+});
+
+it("loads historical chain depth without exposing it as a live setting", async () => {
+  const f = await fixture(["w1"], { chainDepth: 3 });
+  expect(f.runtime.config().keepers).not.toHaveProperty("chainDepth");
+  expect(f.runtime.settings!.snapshot().user).not.toHaveProperty("keepers.chainDepth");
+  expect(settingsPatchSchema.safeParse({ keepers: { chainDepth: 3 } }).success).toBe(false);
+});
+
+const client = { experimental_caller: { kind: "client" as const }, experimental_signal: new AbortController().signal };
+
+it("binds the accepted side choice once, forwards only the exact steer, and returns a routine result to Answers", async () => {
+  const f = await fixture(["w1", "w2"]);
+  registerTools(f.bb, f.runtime);
+  const tools = f.harness.behavior;
+  f.k.receiveUser("lead", "Publish the guide. Keep the old URL.");
+  const outside = f.k.route("lead", { kind: "new-quest", summary: "Publish", notes: [] });
+  const card = f.k.offerQuestStart("lead", outside.id);
+  const input = { ...request(f.q.id), sideQuestAskId: card.id };
+  await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(/answered/i);
+  await rpcHandlers(f.runtime).answerAsk({ askId: card.id, optionId: "side-quest", note: null, via: "page" }, client);
+  const member = await f.runtime.hire("lead", "project", input);
+  expect(f.k.store.leadLinksBy("parentQuestId", f.q.id)[0]).toMatchObject({ sideQuestAskId: card.id });
+  expect(JSON.stringify(f.harness.inspection.sdk.callsTo("threads.spawn"))).toContain("Publish the guide. Keep the old URL.");
+  expect((await f.runtime.hire("lead", "project", input)).threadId).toBe(member.threadId);
+  await expect(f.runtime.hire("lead", "project", { ...input, waypointId: "w2" })).rejects.toThrow(/reserved|waypoint/i);
+  expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1);
+  expect(f.k.openingGoalHint(member.threadId)).toContain("You are a side Keeper");
+  const child = await f.k.openQuest(member.threadId, "Publish the guide", "Guide");
+  expect(f.k.store.runtime(member.threadId).pending).toEqual([]);
+  f.k.receiveUser("lead", "Move the new guide to /handbook; leave /guide in place.");
+  const steer = f.k.route("lead", { kind: "steer", boardQuestId: f.q.id, summary: "Move it", notes: [] });
+  f.k.bind("other-keeper", "keeper", null, "project");
+  await expect(f.runtime.tell("other-keeper", member.threadId, "Forwarding this change", undefined, undefined, undefined, steer.id)).rejects.toThrow(/own party/i);
+  await expect(f.runtime.tell("lead", member.threadId, "Forwarding this change", undefined, undefined, undefined, outside.id)).rejects.toThrow(/steer/i);
+  await expect(tools.invokeAgentTool("tavern_tell", { member: member.threadId, text: "Forwarding this change", sourceRouteId: steer.id }, { threadId: "lead" })).resolves.toContain("Brief delivered");
+  const manifest = f.k.store.runtime(member.threadId).requestSources!;
+  expect(manifest.sources.map(source => source.routeId)).toEqual([steer.id]);
+  expect(readRequestSources(f.k, member.threadId, { manifestId: manifest.id }).text).toBe("Move the new guide to /handbook; leave /guide in place.");
+  const report = await tools.invokeAgentTool("tavern_report", { status: "done", outcome: "Guide moved.", sourceRouteId: steer.id, evidence: [], artifacts: [] }, { threadId: member.threadId });
+  expect(report).toContain("Report written");
+  expect(f.k.store.query("reports", "boardQuestId", f.q.id)).toEqual([expect.objectContaining({ memberThreadId: member.threadId, childQuestId: child.id, waypointId: null })]);
+  expect(f.k.member(member.threadId)?.engagement).toBe("active");
+  expect(f.k.summary(f.q.id).waypoints[0]?.state).not.toMatch(/reported|verified|done/);
+  const draft = { boardQuestId: f.q.id, title: "Guide moved", body: "The guide now lives under /handbook.", links: [], answers: [steer.id] };
+  expect(() => f.k.postSummary("lead", { ...draft, childQuestId: f.q.id })).toThrow(/only a side quest/);
+  const answer = f.k.postSummary("lead", { ...draft, childQuestId: child.id });
+  expect(() => f.k.postSummary("lead", { ...draft, childQuestId: child.id })).toThrow(/already has an answer/);
+  expect(searchAnswers(f.k.store, "Guide moved", 10, f.q.id).answers).toMatchObject([{ id: answer.id, childQuestId: child.id }]);
+});
+
+it("refuses a side seat in a child despite historical depth settings", async () => {
+  const f = await fixture(["w1"], { chainDepth: 2, slotDepth: 2 });
+  const lead = await f.runtime.hire("lead", "project", request(f.q.id));
+  const child = await f.k.openQuest(lead.threadId, "Child work", "Child");
+  expect(() => f.k.plan(lead.threadId, leadPlan(child.id, ["w1"], 2))).toThrow(/side Keeper.*Keeper/i);
+  await expect(f.runtime.hire(lead.threadId, "project", request(child.id))).rejects.toThrow(/side Keeper.*Keeper/i);
+  expect(f.k.store.all("leadLinks")).toHaveLength(1);
+});
+
+it("rejects a parent return with a running side Keeper and stops only the side Keeper on a direct stop", async () => {
+  const f = await fixture();
+  const lead = await f.runtime.hire("lead", "project", request(f.q.id));
+  const child = await f.k.openQuest(lead.threadId, "Child work", "Child");
+  const stopped: string[] = [];
+  f.bb.sdk.threads.stop = async ({ threadId }) => { stopped.push(threadId); return { ok: true }; };
+  await expect(f.runtime.proposeWrap("lead", f.q.id, "Done", "Nothing")).rejects.toThrow(/side quest/i);
+  await f.runtime.stop(child.id);
+  expect(stopped).toEqual([lead.threadId]);
+  expect(f.k.quest(f.q.id).phase).toBe("build");
+  expect(f.k.quest(child.id).phase).toBe("stopped");
+  expect(f.k.store.all("leadLinks")[0]?.result).toBeUndefined();
+});
+
+it.each(["parent", "child"] as const)("won't forward a steer while the %s has reached its spend cap", async cap => {
+  const f = await fixture();
+  const lead = await f.runtime.hire("lead", "project", request(f.q.id));
+  const child = await f.k.openQuest(lead.threadId, "Child work", "Child");
+  const id = cap === "parent" ? f.q.id : child.id;
+  f.k.store.put("quests", id, { ...f.k.quest(id), spendBudget: { cents: 100, reached: { at: f.time(), usdNanos: 1_000_000_000 } } });
+  f.k.receiveUser("lead", "Review the glossary as well.");
+  const route = f.k.route("lead", { kind: "steer", boardQuestId: f.q.id, summary: "Glossary", notes: [] });
+  await expect(f.runtime.tell("lead", lead.threadId, "Review the glossary", undefined, undefined, undefined, route.id)).rejects.toThrow(/spend budget/);
+  expect(f.harness.inspection.sdk.callsTo("threads.send").filter(call => (call.args[0] as { threadId: string }).threadId === lead.threadId)).toHaveLength(0);
+});
+
+it("stops a root Keeper and its side Keeper once each in the same Stop all receipt", async () => {
+  const f = await fixture();
+  const lead = await f.runtime.hire("lead", "project", request(f.q.id));
+  await f.k.openQuest(lead.threadId, "Child work", "Child");
+  const stopped: string[] = [];
+  f.bb.sdk.threads.stop = async ({ threadId }) => { stopped.push(threadId); return { ok: true }; };
+  const result = await f.runtime.stopAll.stop({ kind: "agent", threadId: "lead" });
+  expect(stopped.sort()).toEqual(["lead", lead.threadId].sort());
+  expect(result).toMatchObject({ state: "stopped", receipt: { stopped: 2, failed: 0 } });
+});
+
+it("cancels an in-flight side brief when Stop all stops the lead and child", async () => {
+  const f = await fixture();
+  const lead = await f.runtime.hire("lead", "project", request(f.q.id));
+  await f.k.openQuest(lead.threadId, "Child work", "Child");
+  f.k.receiveUser("lead", "Review the glossary as well.");
+  const route = f.k.route("lead", { kind: "steer", boardQuestId: f.q.id, summary: "Glossary", notes: [] });
+  let started!: () => void, finish!: () => void;
+  const startedDelivery = new Promise<void>(resolve => { started = resolve; });
+  const finishDelivery = new Promise<void>(resolve => { finish = resolve; });
+  const send = f.bb.sdk.threads.send.bind(f.bb.sdk.threads);
+  vi.spyOn(f.bb.sdk.threads, "send").mockImplementation(async args => {
+    if (args.threadId === lead.threadId) {
+      started();
+      await finishDelivery;
+    }
+    return send(args);
+  });
+  const before = f.k.store.runtime(lead.threadId).requestSources;
+  const tell = f.runtime.tell("lead", lead.threadId, "Review the glossary", undefined, undefined, undefined, route.id);
+  await startedDelivery;
+  try { await f.runtime.stopAll.stop({ kind: "agent", threadId: "lead" }); }
+  finally { finish(); }
+  await expect(tell).resolves.toMatchObject({ status: "cancelled" });
+  expect(f.k.store.runtime(lead.threadId).requestSources).toEqual(before);
 });
 
 it("reserves one lead seat across concurrent hires even when both pass the initial checks", async () => {

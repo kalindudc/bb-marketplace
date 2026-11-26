@@ -52,7 +52,7 @@ function ScopeGrant({ change }: { change: NonNullable<Ask["scopeChange"]> }) {
 const CHECK_WORDS = { warden: "Warden check", keeper: "Keeper check", you: "your check", none: "no required check" };
 function PlanBounds({ bounds, before }: { bounds: LeadPlanReview["approved"]; before?: LeadPlanReview["approved"] }) {
   const was = (next: number | string, old?: number | string) => old !== undefined && old !== next ? ` (was ${old})` : "";
-  return <>{bounds.members} {bounds.members === 1 ? "member" : "members"}{was(bounds.members, before?.members)}, {bounds.rangers} {bounds.rangers === 1 ? "Ranger" : "Rangers"}{was(bounds.rangers, before?.rangers)}, depth {bounds.depth}{was(bounds.depth, before?.depth)}, {CHECK_WORDS[bounds.check]}{was(CHECK_WORDS[bounds.check], before && CHECK_WORDS[before.check])}
+  return <>{bounds.members} {bounds.members === 1 ? "member" : "members"}{was(bounds.members, before?.members)}, {bounds.rangers} {bounds.rangers === 1 ? "Ranger" : "Rangers"}{was(bounds.rangers, before?.rangers)}, {CHECK_WORDS[bounds.check]}{was(CHECK_WORDS[bounds.check], before && CHECK_WORDS[before.check])}
     {bounds.acts.length ? <ul className="grants">{bounds.acts.map(act => <li key={JSON.stringify(act)}>
       <span>{before && !before.acts.some(previous => previous.kind === act.kind && previous.path === act.path && previous.command === act.command) ? "New scope act: " : ""}{act.kind}</span>{act.path && <code>{act.path}</code>}{act.command && <code>{act.command}</code>}
     </li>)}</ul> : <span> · no listed scope acts</span>}</>;

@@ -44,12 +44,13 @@ it("renames in place, records one attributed transition, and exposes it in histo
 
 it("requires an explicit rename op and an existing quest id, while keeping the old opening input", async () => {
   const f = await fixture();
-  const open = (input: object) => f.harness.behavior.invokeAgentTool("tavern_quest", input, { threadId: "lead" });
+  const open = (input: object, threadId = "lead") => f.harness.behavior.invokeAgentTool("tavern_quest", input, { threadId });
   await expect(open({ op: "rename", ...to })).rejects.toThrow(/boardQuestId/);
   await expect(open({ boardQuestId: f.q.id, ...to })).rejects.toThrow(/boardQuestId/);
-  f.k.receiveUser("lead", "Check the harbor bell");
-  f.k.route("lead", { kind: "new-quest", summary: "Check the bell", notes: [] });
-  const legacy = await open({ title: "Check the harbor bell", short: "Bell" });
+  f.k.bind("other", "keeper", null, "project");
+  f.k.receiveUser("other", "Check the harbor bell");
+  f.k.route("other", { kind: "new-quest", summary: "Check the bell", notes: [] });
+  const legacy = await open({ title: "Check the harbor bell", short: "Bell" }, "other");
   expect(JSON.parse(String(legacy))).toMatchObject({ title: "Check the harbor bell", short: "Bell", phase: "scout" });
   expect(f.k.quest(f.q.id)).toMatchObject(from);
   expect(f.events()).toHaveLength(0);
@@ -105,15 +106,15 @@ it("holds Keeper renames during Closing time and Stop all, but allows them durin
   expect(f.runtime.stopAll.snapshot().state).toBe("stopped");
 });
 
-it("allows renaming a quest that Closing time permits, but not before routing pending user words", async () => {
+it("allows a single-quest rename that Closing time permits while a message is pending", async () => {
   const f = await fixture();
   f.runtime.away.store.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: f.q.id, endState: "drafts-ready" }], allowWatched: true });
   await f.tool();
   f.k.resetRoutes("lead");
   f.k.receiveUser("lead", "I have an unanswered question");
-  await expect(f.tool("lead", from)).rejects.toThrow(/Route the oldest unrouted/);
-  expect(f.k.quest(f.q.id)).toMatchObject(to);
-  expect(f.events()).toHaveLength(1);
+  await f.tool("lead", from);
+  expect(f.k.quest(f.q.id)).toMatchObject(from);
+  expect(f.events()).toHaveLength(2);
 });
 
 it.each([

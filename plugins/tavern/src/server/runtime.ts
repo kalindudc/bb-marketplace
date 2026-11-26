@@ -6,7 +6,7 @@ import { approvedDrafts, invalidateDrafts } from "./communication";
 import { hasLiveName, isKeeperIdentity, isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
 import { StudyEvents, StudyRefusal } from "./study-events";
 import { StudyTurns } from "./study-turns";
-import { assertChainHire, assertLeadPathOpen, currentLead, holdsLeadSeat, leadAuthorization, recordLeadOutcome, reserveLead } from "./keeper/leads";
+import { assertChainHire, assertLeadPathOpen, assertMayHireKeeper, currentLead, holdsLeadSeat, leadAuthorization, recordLeadOutcome, reserveLead, sideQuestChoice } from "./keeper/leads";
 import { assertLeadRetirementReady, confirmLeadRetirement, finishLeadRetirement, recordForcedLeadPullRequestOwners, requestForcedLeadStop, requestLeadRetirement } from "./keeper/lead-retirement";
 import { archiveDisposition, assertMemberMachineForBrief, briefProgress, isMemberMachineGone, MACHINE_RELEASED, memberDetails, memberHost, openBriefBlocker, outstandingArchivedPlacement, patchMemberDetails, releasedThreadOpen, transitionMember, withdrawBriefBlocker, type EngagementReceipt, type MemberOperation } from "./member-engagement";
 import { wasReleased } from "../shared/member-engagement";
@@ -65,7 +65,7 @@ import { authorizeGuardedHire } from "./guard-hire";
 import { doneWhenCommands } from "./check-commands";
 import { memberTitle, uniqueMemberName } from "./titles";
 import { memberIdentityFacts, memberRoleLabel } from "../shared/identity";
-import { captureRequestSources, requestSourcePacket } from "./request-sources";
+import { captureRequestSources, forwardedSteer, requestSourcePacket } from "./request-sources";
 import { isHireCancelled, recoverHires, rejectedSpawn, releaseHire, settleCancelledHire, SpawnedHireNeedsRecovery } from "./hires";
 import { briefForPrompt } from "./brief-prompt";
 import { BackendScopes, type BackendScopeOptions } from "./scopes";
@@ -144,6 +144,7 @@ type Hire = {
   brief: Brief;
   boardQuestId?: string | null;
   waypointId?: string | null;
+  sideQuestAskId?: string;
   errand?: boolean;
   characterId?: string | null;
   title: string;
@@ -446,20 +447,44 @@ export class TavernRuntime {
     }
     return member;
   }
-  async sendRebrief(threadId: string, text: string, supersedeBriefId?: string, continuation?: { keeperId: string; input: RangerContinuation }, waypointIds?: string[]): Promise<{ briefPending: boolean }> {
+  private briefQuest(member: Member) {
+    const k = this.keeper, link = currentLead(k.store, member);
+    if (!member.leadLinkId) return member.boardQuestId;
+    if (!link || link.parentKeeperThreadId !== member.keeperThreadId || link.parentQuestId !== member.boardQuestId)
+      throw new Error("The side Keeper no longer has its linked party seat.");
+    assertLeadPathOpen(k.store, link);
+    leadAuthorization(k, k.quest(link.parentQuestId), member.classId, link.parentWaypointId);
+    if (!link.childQuestId) return link.parentQuestId;
+    const child = k.quest(link.childQuestId);
+    if (child.keeperThreadId !== member.threadId || !isOpenQuest(child) || child.phase === "closing")
+      throw new Error("The side quest is closing, ended or no longer linked.");
+    k.assertQuestNotHeld(child.id);
+    return child.id;
+  }
+  async sendRebrief(threadId: string, text: string, supersedeBriefId?: string, continuation?: { keeperId: string; input: RangerContinuation }, waypointIds?: string[], sourceRouteId?: string): Promise<{ briefPending: boolean }> {
     this.stopAll.assertRunning();
     let member = this.requireBriefableMember(threadId);
-    if (member.boardQuestId) {
-      await this.spend.assert(member.boardQuestId);
+    const briefQuestId = this.briefQuest(member), keeperId = member.keeperThreadId;
+    if (briefQuestId) {
+      await this.spend.assert(briefQuestId);
       member = this.requireBriefableMember(threadId);
-      if (member.boardQuestId) this.keeper.assertQuestNotHeld(member.boardQuestId);
+      if (member.keeperThreadId !== keeperId || this.briefQuest(member) !== briefQuestId) throw new Error("The brief's owner or quest changed; check the party before retrying.");
+      this.keeper.assertQuestNotHeld(briefQuestId);
     }
+    if (member.leadLinkId && (!sourceRouteId || briefQuestId === member.boardQuestId || waypointIds?.length || continuation))
+      throw new Error("To tell a side Keeper, name its open quest's parent steer with sourceRouteId. Omit waypointIds.");
+    if (sourceRouteId && !member.leadLinkId) throw new Error("Only briefs to a side Keeper take sourceRouteId.");
+    const selected = sourceRouteId ? forwardedSteer(this.keeper, member.keeperThreadId!, member.boardQuestId!, sourceRouteId) : undefined;
+    const sources = selected ? captureRequestSources(this.keeper, member.keeperThreadId!, member.boardQuestId, selected) : undefined;
     if (this.config().tavern.paused) throw new Error("Tavern is paused; no new brief was queued. Resume it before sending new work.");
     if (this.scopes?.pending(threadId)) throw new Error("The member is waiting for a scope decision; no new brief was queued.");
     if (!text.trim()) throw new Error("A brief cannot be empty");
-    const targets = this.rebriefWaypoints(member, text, waypointIds);
+    const targets = member.leadLinkId ? [] : this.rebriefWaypoints(member, text, waypointIds);
     const current = () => memberDetails(this.keeper.store, threadId).delivery;
     let delivery = current();
+    const accepted = this.keeper.store.runtime(threadId);
+    if (sources && !delivery && !supersedeBriefId && accepted.lastAcceptedBriefId && accepted.requestSources?.id === sources.id && accepted.assignmentText === text)
+      return { briefPending: false };
     if (continuation) {
       const { keeperId, input } = continuation;
       this.rangerReportForKeeper(keeperId, input.reportId);
@@ -506,17 +531,19 @@ export class TavernRuntime {
         member = this.requireBriefableMember(threadId);
         if (current()?.id !== delivery.id || this.away.blocked(threadId) || this.scopes?.pending(threadId) || this.config().tavern.paused)
           throw new Error("The pending brief or its work gates changed. No replacement was queued.");
-        if (member.boardQuestId) this.keeper.assertQuestNotHeld(member.boardQuestId);
-        delivery = this.queueRebrief(member, text, targets, { old: delivery, receipt: receipt?.state ?? "not-attempted", removedQueueIds });
+        if (member.keeperThreadId !== keeperId || this.briefQuest(member) !== briefQuestId || this.spend.held(briefQuestId)) throw new Error("The brief's owner, quest or spend gate changed. No replacement was queued.");
+        if (briefQuestId) this.keeper.assertQuestNotHeld(briefQuestId);
+        if (sourceRouteId) forwardedSteer(this.keeper, member.keeperThreadId!, member.boardQuestId!, sourceRouteId);
+        delivery = this.queueRebrief(member, text, targets, { old: delivery, receipt: receipt?.state ?? "not-attempted", removedQueueIds }, undefined, sources);
       } finally { this.replacingBriefs.delete(threadId); }
-    } else if (delivery && ((delivery.assignmentText ?? delivery.text) !== text || waypointIds && !isDeepStrictEqual(delivery.waypointIds, targets))) {
+    } else if (delivery && ((delivery.assignmentText ?? delivery.text) !== text || sources && delivery.requestSources?.id !== sources.id || waypointIds && !isDeepStrictEqual(delivery.waypointIds, targets))) {
       const brief = briefProgress(this.keeper.store, delivery, this.keeper.now());
       const next = this.initialBriefs.has(threadId)
         ? "Wait for this delivery attempt to settle, then read tavern_status section=pending."
         : `To replace it, call tavern_tell for ${threadId} with supersedeBriefId: "${brief.id}".`;
       throw new Error(`A different brief is already pending for ${this.keeper.name(member)}: ${brief.id} (${brief.state}, ${Math.floor(brief.ageMs / 1000)}s old). ${next}`);
     }
-    return this.sendInitialBrief(threadId, (delivery ?? this.queueRebrief(member, text, targets)).text);
+    return this.sendInitialBrief(threadId, (delivery ?? this.queueRebrief(member, text, targets, undefined, undefined, sources)).text);
   }
 
   private rebriefWaypoints(member: Member, text: string, requested?: string[]): string[] {
@@ -536,9 +563,9 @@ export class TavernRuntime {
     return named.length ? named : [...linked];
   }
 
-  private queueRebrief(member: Member, text: string, waypointIds: string[], superseded?: { old: PendingBrief; receipt: string; removedQueueIds: string[] }, rangerContinuation?: RangerContinuation): PendingBrief {
+  private queueRebrief(member: Member, text: string, waypointIds: string[], superseded?: { old: PendingBrief; receipt: string; removedQueueIds: string[] }, rangerContinuation?: RangerContinuation, selectedSources?: ReturnType<typeof captureRequestSources>): PendingBrief {
     const k = this.keeper, { threadId, keeperThreadId, boardQuestId } = member, at = k.now();
-    const requestSources = captureRequestSources(k, keeperThreadId!, boardQuestId);
+    const requestSources = selectedSources ?? captureRequestSources(k, keeperThreadId!, boardQuestId);
     const actor = { kind: "agent" as const, threadId: keeperThreadId! };
     const delivery: PendingBrief = { id: `brief_${randomUUID()}`, text: `${text}\n\n${requestSourcePacket(k, requestSources)}`, assignmentText: text, requestSources, waypointIds, ...(rangerContinuation ? { rangerContinuation } : {}), createdAt: at, state: "queued", attempts: 0, nextAttemptAt: at, attemptedAt: null, hostAfterSeq: null, error: null };
     k.store.atomic(() => {
@@ -618,7 +645,7 @@ export class TavernRuntime {
           { memberThreadId: threadId, briefId: id, briefPending: false, delivery: "delivered", attempts: pending.attempts },
           { kind: "agent", threadId: member.keeperThreadId! });
         // Acceptance, the new brief version and the journal's reopen and supersession share this transaction.
-        if (member.boardQuestId) {
+        if (member.boardQuestId && !member.leadLinkId) {
           const waypointIds = pending.waypointIds ?? this.rebriefWaypoints(member, pending.assignmentText ?? pending.text);
           this.keeper.store.patch(threadId, { acceptedBriefWaypoints: { boardQuestId: member.boardQuestId, waypointIds } });
           this.keeper.journal.rebriefed(threadId, member.boardQuestId, this.keeper.store.runtime(threadId).briefVersion ?? 0, waypointIds);
@@ -674,6 +701,7 @@ export class TavernRuntime {
     const member = this.requireBriefableMember(threadId);
     const k = this.keeper, at = k.now();
     const pendingResult = { briefPending: true };
+    const briefQuestId = this.briefQuest(member);
     const blocked = () => this.stopAll.reason() || this.config().tavern.paused || this.away.blocked(threadId) || this.scopes?.pending(threadId)
       || this.keeper.checkerHandoffProblem(member.classId, member.boardQuestId) || member.boardQuestId && k.quest(member.boardQuestId).phase === "held";
     if (this.keeper.checkerHandoffProblem(member.classId, member.boardQuestId) || this.away.blocked(threadId)) return pendingResult;
@@ -734,7 +762,7 @@ export class TavernRuntime {
       this.ensureBriefBlocker(threadId);
       return pendingResult;
     }
-    if (member.boardQuestId && !(await this.spend.allows(member.boardQuestId))) return pendingResult;
+    if (!(await this.spend.allows(briefQuestId))) return pendingResult;
     const attempt: PendingBrief = { ...pending, attempts: pending.attempts + 1, receiptChecks: 0, retryRequested: false, queuedOnHost: false,
       nextAttemptAt: k.now() + Math.min(LIMITS.briefRetryMaxMs, LIMITS.briefRetryMs * 2 ** pending.attempts), error: null };
     try {
@@ -747,7 +775,7 @@ export class TavernRuntime {
         this.threadGone(threadId);
       }
       this.requireBriefableMember(threadId);
-      if (!unchanged() || blocked() || this.spend.held(member.boardQuestId)) return pendingResult;
+      if (!unchanged() || blocked() || this.spend.held(briefQuestId) || this.briefQuest(this.requireBriefableMember(threadId)) !== briefQuestId) return pendingResult;
       attempt.hostAfterSeq = latest[0]?.seq ?? 0;
       attempt.attemptedAt = k.now();
       attempt.state = "delivering";
@@ -765,7 +793,7 @@ export class TavernRuntime {
     } catch (error) {
       if (attempt.state === "delivering" && !unchanged()) return pendingResult;
       this.requireBriefableMember(threadId);
-      if (!unchanged()) return pendingResult;
+      if (!unchanged() || blocked()) return pendingResult;
       attempt.state = "unconfirmed";
       attempt.error = String(error).slice(0, 1000);
       k.store.atomic(() => {
@@ -1446,7 +1474,7 @@ export class TavernRuntime {
       tools: [
         ...common.tools,
         ...(keeper
-          ? KEEPER_TOOLS
+          ? [...KEEPER_TOOLS, ...(m.leadLinkId ? [reportTool(m.classId), "tavern_request_sources"] : [])]
           : m.role === "member" && !m.leadLinkId
             ? [reportTool(m.classId), "tavern_request_sources", "tavern_status", ...(m.classId === "warden" ? ["tavern_act_verdict"] : [])]
             : []),
@@ -1726,6 +1754,10 @@ export class TavernRuntime {
     if (!registryProblem) this.clearRegistryFailure(ctx.thread.id);
     await this.away.detectReturn(ctx);
     if (member) {
+      if (tavernBrief && member.leadLinkId) {
+        try { await this.spend.assert(this.briefQuest(member)); }
+        catch (error) { return { action: "wait" as const, reason: String(error) }; }
+      }
       if (this.scopes) {
         try {
           if (hire && hireToken) await this.prepareHiredScope(member, hireToken, hire);
@@ -1765,7 +1797,12 @@ export class TavernRuntime {
         if (id && briefs.includes(id) && this.replacingBriefs.has(member.threadId))
           return { action: "wait" as const, reason: "Tavern is checking the previous brief before replacing it." };
       }
-      if (tavernBrief && this.spend.held(questId)) return { action: "wait" as const, reason: "The quest reached its measured spend budget; only you can raise or remove it." };
+      let deliveryQuestId = questId;
+      if (tavernBrief && member.leadLinkId) {
+        try { deliveryQuestId = this.briefQuest(member); }
+        catch (error) { return { action: "wait" as const, reason: String(error) }; }
+      }
+      if (tavernBrief && this.spend.held(deliveryQuestId)) return { action: "wait" as const, reason: "The quest reached its measured spend budget; only you can raise or remove it." };
       if (hire?.initialInput) this.spawnBriefDelivered(member.threadId);
       for (const input of this.userInputs(ctx, member, data)) this.keeper.receiveUser(...input);
       // Identity is already durable before SDK I/O, so the first configure pass cannot race the mirror.
@@ -1800,7 +1837,7 @@ export class TavernRuntime {
   private hireClass(registry: RegistrySnapshot, keeperClassId: string, classId: string) {
     const policy = registry.classes.find(c => c.id === keeperClassId);
     const role = registry.classes.find(c => c.id === classId);
-    if (!role?.hireable || !policy?.hires.includes(classId))
+    if (!role || role.id !== "keeper" && (!role.hireable || !policy?.hires.includes(classId)))
       throw new Error(`classId "${classId}" is not in the "${keeperClassId}" Keeper's hire policy for hireable classes. Allowed there: ${policy?.hires.join(", ") || "none"}.`);
     return { role, policy };
   }
@@ -1975,6 +2012,8 @@ export class TavernRuntime {
     const snapshot = await loopCall(this.prepareRegistry(projectId), "hire project class lookup");
     const { role, policy: lead } = this.hireClass(snapshot, leader.classId, input.classId);
     const leadHire = classKind(role) === "keeper";
+    if (leadHire) assertMayHireKeeper(this.keeper, threadId);
+    if (input.sideQuestAskId && !leadHire) throw new Error("Only a Keeper hire can cite a Side quest card.");
     this.projectClassNotice(threadId, leader.classId, projectId);
     const placementPolicy = this.settings?.placementPolicy();
     if (placementPolicy?.state === "invalid") {
@@ -1996,7 +2035,19 @@ export class TavernRuntime {
     if (!errand && !q) throw new Error("A party member needs a board quest");
     if (errand && !["ranger", "wanderer"].includes(role.id))
       throw new Error("Only Ranger and Wanderer helpers run errands");
-    if (q) this.keeper.guard(threadId, q.id);
+    const outsideGoal = q && input.sideQuestAskId ? sideQuestChoice(this.keeper, q, input.sideQuestAskId) : undefined;
+    if (outsideGoal && q) {
+      const link = this.keeper.store.leadLinksBy("parentQuestId", q.id).find(link => link.sideQuestAskId === input.sideQuestAskId && link.state !== "cancelled");
+      if (link) {
+        if (link.parentWaypointId !== input.waypointId) throw new Error("This Side quest card already reserved a different waypoint.");
+        const member = link.childKeeperThreadId && this.keeper.member(link.childKeeperThreadId);
+        if (!member || link.state !== "linked") throw new Error("This Side quest card already reserved a seat. Check its existing hire; do not spawn again.");
+        const placement = this.placements().store.byMember(member.threadId);
+        return { ...member, placement: placement ? this.placements().controller.view(placement) : null,
+          placementSummary: `The Side quest card already hired ${this.keeper.name(member)}.`, executionNotes: [],
+          pendingScopeAsk: this.keeper.store.runtime(member.threadId).scopePending ?? null, briefPending: member.engagement === "briefing" };
+      }
+    } else if (q) this.keeper.guard(threadId, q.id);
     if (q && this.keeper.store.leadLinksBy("childQuestId", q.id).length && q.greenlitVersion !== q.planVersion)
       throw new Error("This child plan needs its exact greenlight before staffing.");
     if (role.id !== "ranger" && !errand && q?.greenlitVersion === null)
@@ -2251,7 +2302,7 @@ export class TavernRuntime {
       ...checkerPlan?.waypoints.filter(item => checkedWaypoints.has(item.id)).map(item => item.doneWhen) ?? [],
     ]);
     const token = randomUUID();
-    const requestSources = captureRequestSources(this.keeper, threadId, questId);
+    const requestSources = captureRequestSources(this.keeper, threadId, questId, outsideGoal);
     const owner: HireIntent["owner"] = {
       keeperThreadId: threadId,
       boardQuestId: questId,
@@ -2265,7 +2316,7 @@ export class TavernRuntime {
     const briefPreview = briefForPrompt(input.brief, this.config(questId).limits.intake.briefPromptBytes);
     const scoutingText = scouting && q ? `Hire ${role.label} for reversible scouting: ${input.title}` : null;
     const scoutingDecision = scoutingText ? boundedData(scoutingText, DECISION_TEXT_MAX, "…") : null;
-    let brief = `Your brief:\n${briefPreview.notice ? `${briefPreview.notice}\n` : ""}${JSON.stringify(briefPreview.brief)}\n${leadHire ? "Open one side quest with tavern_quest. Use the hire receipt, not a user route. Bring outside goals to your lead." : "Report through tavern_report; do not message the Keeper directly."}`;
+    let brief = `Your brief:\n${briefPreview.notice ? `${briefPreview.notice}\n` : ""}${JSON.stringify(briefPreview.brief)}\n${leadHire ? "Open your one side quest from this hire, not a user route. Report to your hiring Keeper; never hire a Keeper." : "Report through tavern_report; do not message the Keeper directly."}`;
     if (reviewTarget)
       brief += `\nTrusted journal review target:\n${JSON.stringify(reviewTarget, null, 2)}\n${recordsSubject ? "Check the exact subject recorded by the Keeper. Verify or reject these entries in the Keeper's journal, not your own." : "Verify or reject these entry ids in the maker's thread, not in your own journal."} Keep the waypoint and target thread identifiers with your evidence.`;
     owner.assignmentText = brief;
@@ -2325,7 +2376,7 @@ export class TavernRuntime {
       }
       owner.displayName = uniqueMemberName(character?.name ?? role.label, this.namesInScope(this.nameScope(nameScope)));
       if (authorization) intent.leadLinkId = reserveLead(this.keeper, this.keeper.owned(threadId, questId!),
-        { classId: role.id, waypointId: input.waypointId!, token }, authorization);
+        { classId: role.id, waypointId: input.waypointId!, token, sideQuestAskId: input.sideQuestAskId }, authorization);
       this.keeper.store.put("hires", token, intent);
       return owner.displayName;
     });
@@ -3258,7 +3309,7 @@ export class TavernRuntime {
     const text = `Continue scouting for ${minutes} minutes, then file a checkpoint and wait. Reason: ${reason}\nQuestions for this box:\n${questions.map((question, index) => `${index + 1}. ${question.replace(/^\s*\d+[.)]\s+/, "")}`).join("\n")}`;
     return this.tell(keeperId, member.threadId, text, undefined, { keeperId, input: { reportId, minutes, questions } });
   }
-  async tell(threadId: string, memberThreadId: string, text: string, supersedeBriefId?: string, continuation?: { keeperId: string; input: RangerContinuation }, waypointIds?: string[]) {
+  async tell(threadId: string, memberThreadId: string, text: string, supersedeBriefId?: string, continuation?: { keeperId: string; input: RangerContinuation }, waypointIds?: string[], sourceRouteId?: string) {
     memberThreadId = this.keeper.resolvePartyMember(threadId, memberThreadId).threadId;
     this.keeper.require(threadId, "keeper");
     const member = this.keeper.member(memberThreadId);
@@ -3270,8 +3321,8 @@ export class TavernRuntime {
       throw new Error(`The Ranger is waiting on ${member.rangerCheckpointReportId}. Use tavern_judge to continue or accept, or tavern_release.`);
     this.keeper.assertCheckerHandoff(member.classId, member.boardQuestId);
     if (member.boardQuestId) {
-      this.keeper.guard(threadId, member.boardQuestId);
-      await this.spend.assert(member.boardQuestId);
+      if (!member.leadLinkId) this.keeper.guard(threadId, member.boardQuestId);
+      await this.spend.assert(this.briefQuest(member));
     }
     if (this.scopes?.pending(memberThreadId))
       throw new Error(
@@ -3286,8 +3337,9 @@ export class TavernRuntime {
       if (supersedeBriefId) throw new Error("Closing time held this member; send a fresh brief without supersedeBriefId after returning.");
     }
     await this.away.beforeTell(memberThreadId);
+    if (this.keeper.member(memberThreadId)?.keeperThreadId !== threadId) throw new Error("This member no longer belongs to your party.");
     this.keeper.assertCheckerHandoff(member.classId, member.boardQuestId);
-    const delivery = await this.sendRebrief(memberThreadId, text, supersedeBriefId, continuation, waypointIds);
+    const delivery = await this.sendRebrief(memberThreadId, text, supersedeBriefId, continuation, waypointIds, sourceRouteId);
     const pending = memberDetails(this.keeper.store, memberThreadId).delivery;
     const status = !delivery.briefPending ? "delivered" : !pending ? "cancelled"
       : openBriefBlocker(this.keeper.store, pending) ? "blocked"
@@ -3514,11 +3566,20 @@ export class TavernRuntime {
     }
   }
   async stop(id: string, reason: string | null = null, receipt?: UserActReceipt) {
-    const q = commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => this.keeper.recordStop(id, reason));
+    const k = this.keeper;
+    const q = commitUserAct(k.store, () => k.now(), receipt, () => {
+      const quest = k.recordStop(id, reason);
+      const [seat] = k.store.leadLinksBy("childQuestId", id);
+      const request = k.store.latestQuestEvent(id, "quest.stopping");
+      if (seat && holdsLeadSeat(seat) && request) requestForcedLeadStop(k, seat, String(request.id), reason ?? "Side quest stop");
+      return quest;
+    });
     this.scopes?.expireQuestGrants(id);
     await this.retryStops(q.keeperThreadId, id, true);
-    const current = this.keeper.summary(id);
-    return { phase: current.phase as "stopping" | "stopped", unconfirmed: current.stopUnconfirmed ?? 0 };
+    const current = k.summary(id);
+    const [seat] = k.store.leadLinksBy("childQuestId", id);
+    const sidePending = current.phase === "stopped" && seat?.state === "retiring" && !!seat.forcedStop && !await this.retryLeadCleanup(seat, true);
+    return { phase: current.phase as "stopping" | "stopped", unconfirmed: (current.stopUnconfirmed ?? 0) + (sidePending ? 1 : 0) };
   }
   async retryStops(keeperId: string, questId?: string, force = false, retiring?: readonly LeadLink[]) {
     if (this.stopAll.reason()) return;
@@ -3738,6 +3799,12 @@ export class TavernRuntime {
     }
     this.keeper.changed(keeperId, q.id);
   }
+  private assertNoRunningSideQuest(id: string) {
+    const k = this.keeper;
+    if (k.store.leadLinksBy("parentQuestId", id).some(link => holdsLeadSeat(link) && (!link.childQuestId ||
+      !["done", "stopped"].includes(k.quest(link.childQuestId).phase) || (link.forcedStop && !link.forcedStop.hostStopped))))
+      throw new Error("Finish or stop every side quest before returning this quest.");
+  }
   async proposeWrap(
     threadId: string, id: string, outcome: string, left: string,
     next?: string[], results?: import("../shared/tale-results").TaleResults,
@@ -3753,12 +3820,14 @@ export class TavernRuntime {
     k.assertQuestNotHeld(id);
     k.liveQuest(threadId, id);
     k.guard(threadId, id);
+    this.assertNoRunningSideQuest(id);
     this.away.wrapWindow(id);
     const pullRequests = await previewPullRequests(this, id);
     return k.store.atomic(() => {
       const q = k.liveQuest(threadId, id);
       k.assertQuestNotHeld(id);
       k.guard(threadId, id);
+      this.assertNoRunningSideQuest(id);
       const fromSteer = options.fromSteer ? k.closingSteer(q, options.fromSteer) : undefined;
       const reason = options.reason ?? (left.trim() || outcome.trim() || "The Keeper proposed closing before these waypoints settled.").slice(0, 500);
       const summary = k.summary(id), noPlan = !summary.plan;
@@ -3839,6 +3908,7 @@ export class TavernRuntime {
       return null;
     }
     if (optionId !== effect.type) throw new Error("This answer does not match the closing card.");
+    this.assertNoRunningSideQuest(id);
     const { draft } = effect;
     const awayWindow = this.away.wrapWindow(id);
     const leadBinding = effect.type === "conclude" ? effect.draft.lead : undefined;

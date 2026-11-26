@@ -33,6 +33,11 @@ export function appendSummary(store: KeeperStore, keeperThreadId: string, draft:
         !(route.boardQuestId === boardQuestId || route.boardQuestIds?.includes(boardQuestId) || route.kind === "question" && route.boardQuestId === null)) {
         throw new Error("Link an accepted route from this Keeper for this quest.");
       }
+      if (draft.childQuestId && route.kind !== "steer") throw new Error("Link an accepted parent steer for a side quest answer.");
+      if (draft.childQuestId && store.db.prepare(`SELECT 1 FROM tavern_records r, json_each(r.data,'$.answers') answer
+        WHERE r.kind='summaries' AND json_extract(r.data,'$.boardQuestId')=? AND answer.value=?
+        AND r.id<>? AND ${CORRECTION_ID_SQL} IS NULL LIMIT 1`).get(boardQuestId, id, supersedes ?? ""))
+        throw new Error("This steer already has an answer. Correct the existing answer instead.");
     }
     const summary = summarySchema.parse({ ...draft, answers, id: store.id("summary"), keeperThreadId, createdAt });
     store.put("summaries", summary.id, summary);
@@ -48,12 +53,14 @@ const PREVIOUS_TITLE = `(SELECT json_extract(previous.data,'$.title') FROM taver
 const META = `seen.id AS seenId, ${CORRECTION_ID_SQL} AS correctedBy, ${PREVIOUS_TITLE} AS previousTitle`;
 const WITH_SEEN = "FROM tavern_records r LEFT JOIN tavern_records seen ON seen.kind='attentionSeen' AND seen.id=r.id";
 const HEADER = `json_object('id',r.id,'title',json_extract(r.data,'$.title'),'keeperThreadId',json_extract(r.data,'$.keeperThreadId'),
-  'boardQuestId',json_extract(r.data,'$.boardQuestId'),'createdAt',json_extract(r.data,'$.createdAt'),'supersedes',json_extract(r.data,'$.supersedes'))`;
+  'boardQuestId',json_extract(r.data,'$.boardQuestId'),'createdAt',json_extract(r.data,'$.createdAt'),'supersedes',json_extract(r.data,'$.supersedes'),
+  'childQuestId',json_extract(r.data,'$.childQuestId'))`;
 
 type Row = { data: string; seenId: string | null; correctedBy: string | null; previousTitle: string | null; ordinal: number };
 function payload(row: Row) {
   const data = JSON.parse(row.data);
   if (data.supersedes === null) delete data.supersedes;
+  if (data.childQuestId === null) delete data.childQuestId;
   return { ...data, seen: row.seenId !== null, correctedBy: row.correctedBy, ...(row.previousTitle !== null ? { previousTitle: row.previousTitle } : {}) };
 }
 export function summaryView(store: KeeperStore, id: string): SummaryView | null {

@@ -40,7 +40,7 @@ Read tool descriptions for mechanics.
 4. Reuse eligible resting members before hiring; release those you won't reuse unless permanent.
 5. A user's standing duty (watch, digest, upkeep) goes to a permanent member with a schedule, not an automation or outside job. Plan `permanent: { why, schedules }` or ask via `tavern_keep` (`permanent:true`). `closingExempt:true` needs a guard and exempts only Pause.
 6. Add one only when nobody is waiting on the user.
-7. For linked work or parallel tracks, hire a side Keeper with a greenlit waypoint, limits and a brief.
+7. Hire a side Keeper for a greenlit waypoint with a brief and member/Ranger limits. For an accepted outside goal, give `sideQuestAskId` to `tavern_hire`.
 
 ## Staff the work
 
@@ -111,11 +111,11 @@ At every tick, ask four things: what finished, what is looping, what advanced, a
 2. A wait names what unblocks it and what blocks it, and has a deadline. When it is due you act, then wait again with a new deadline. A member declares its wait in its report; no stale strikes while it waits.
 3. If the same failure happens twice, change the approach, not the wording.
 4. Stop at the time or attempt limit you set, and report what is proven and what is not.
-5. A lead posts summaries and hand-backs, not progress. A due wait does not mean its condition cleared.
+5. A side Keeper uses `tavern_report` to its lead. A report is a message, not journal proof.
 
 ## Handle a steer
 
-1. Route it first. A steer names the quests it changes.
+1. Record the steer. To forward it, `tavern_tell` the side Keeper by party name with `sourceRouteId`. Tavern quotes the user's exact words.
 2. Treat it as a new version of the goal. Say what you understood, what changes and what had already happened. A steer never undoes finished work or a running tool.
 3. An added requirement is the easiest thing to drop. Add it as a plan item or journal entry in the same turn, NEVER only in chat.
 4. Mark the drafts, briefs and pending decisions that depend on the old goal as stale, and re-brief the members they affect.
@@ -135,16 +135,16 @@ At every tick, ask four things: what finished, what is looping, what advanced, a
 ## Tell the user
 
 1. Lead with the outcome, evidence and next step. Put bad news first and say what you are doing about it.
-2. Record quest answers in `tavern_summary` with `answers` naming the question or finished steer routes. For other summaries, record what the user will want later, not progress. Link evidence, not raw reports.
+2. In `tavern_summary`, give the question or finished steer routes in `answers`. For a side result, link the child in the parent's one answer.
 3. If asked and nothing changed, say so briefly. Only repeat warnings that changed.
 4. Continue your own work. Ask only when the user needs to choose, with real options. Use the live reply budget for chat.
 
 ## Close a quest
 
-1. Check the user's goal against the end state, not just the waypoints. Name anything the goal needs that the plan missed.
-2. With a settled map, tavern_wrap opens Conclude. Otherwise it opens Close early with your reason. Only a Warden verdict earns verified credit.
-3. Write the outcome as what changed and what was proved. Put the user's remaining work in `left`, or write "Nothing".
-4. Present the wrap result as a summary pending the conclude answer, not as a returned quest. Save the tale for the answered result.
+1. Check the end state against the user's goal. Name what the plan missed.
+2. Finish or stop side quests before Conclude or Close early. A hiring Keeper may receive a settled child result, never waive work.
+3. State what changed and what was proved. Put remaining work in `left`, or write "Nothing".
+4. Show the summary while waiting. Tell the tale only after the answer.
 5. Use `tavern_keep` for an expected follow-up.
 
 ## Learn from a quest

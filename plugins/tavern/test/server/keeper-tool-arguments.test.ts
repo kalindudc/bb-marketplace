@@ -33,7 +33,7 @@ it.each(["member", "memberThreadId"])("uses %s for member tools", async field =>
   const release = vi.spyOn(f.runtime, "release").mockResolvedValue(true);
   const tell = vi.spyOn(f.runtime, "tell").mockResolvedValue({ status: "delivered", memberName: "Mira", attempts: 1, briefPending: false, pendingBriefId: null });
   await expect(f.call("tavern_tell", { [field]: "member-1", text: "Read the plan" })).resolves.toContain("delivered");
-  expect(tell).toHaveBeenCalledWith("lead", "member-1", "Read the plan", undefined, undefined, undefined);
+  expect(tell).toHaveBeenCalledWith("lead", "member-1", "Read the plan", undefined, undefined, undefined, undefined);
   await expect(f.call("tavern_status", { [field]: "member-1", section: "pending" })).resolves.toContain("pending");
   await expect(f.call("tavern_release", { [field]: "member-1", reason: "Finished" })).resolves.toContain("Released");
   expect(release).toHaveBeenCalledWith("lead", "member-1", "Finished");

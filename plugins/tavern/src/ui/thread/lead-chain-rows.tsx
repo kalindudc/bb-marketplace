@@ -17,7 +17,7 @@ export function LeadChainRows({ chain, onOpenQuest }: { chain: BoardQuestSummary
     {seat && <>
       <button className="lg-row act" type="button" onClick={() => onOpenQuest(seat.parentQuestId)}><span>Parent quest: <b>{seat.parentTitle}</b></span><OpensMark /></button>
       <dl className="sendbox">
-        <dt>Approved limits</dt><dd>{plural(seat.limits.members, "member")}, {plural(seat.limits.rangers, "Ranger")}, {plural(seat.limits.depth, "layer")}</dd>
+        <dt>Approved limits</dt><dd>{plural(seat.limits.members, "member")}, {plural(seat.limits.rangers, "Ranger")}</dd>
         <dt>Lead decides</dt><dd>{acts("keeper")}</dd>
         <dt>Hiring Keeper decides</dt><dd>{seat.parentDecisions.join(", ") || "Nothing waiting"}</dd>
         <dt>You decide</dt><dd>{acts("user")}</dd>

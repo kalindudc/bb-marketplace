@@ -22,7 +22,7 @@ export async function classExecutionFacts(runtime: TavernRuntime, input: ClassEx
     const requestedPreset = typeof role.scope === "string" ? role.scope : role.scope?.preset ?? ({ keeper: "open", ranger: "readonly", smith: "worktree", warden: "checker" }[role.id] ?? "open");
     const scoped = !!runtime.scopes && runtime.scopes.api.shouldScope(role.id, input.mode === "hire" ? "hire" : "direct");
     const forcePermission = !!runtime.scopes && input.mode === "hire";
-    const kind = input.mode === "hire" ? "member" : role.id === "keeper" ? "keeper" : "solo";
+    const kind = role.id === "keeper" ? "keeper" : input.mode === "hire" ? "member" : "solo";
     for (const [field, key] of [["provider", "provider"], ["model", "model"], ["reasoning", "reasoning"]] as const) {
       const override = runtime.config().classes[role.id];
       out.fields.push({ ...fileField(field, role[key]), ...(override && Object.hasOwn(override, key) ? { source: "settings" as const } : {}), ...(!role[key] ? { source: field === "provider" && input.mode === "hire" ? "keeper" as const : "provider-default" as const, ...(field === "provider" ? input.mode === "hire" ? { varies: "keeper" as const } : { rule: "Uses the provider selected in the composer." } : {}) } : {}) });
@@ -44,7 +44,7 @@ export async function classExecutionFacts(runtime: TavernRuntime, input: ClassEx
       for (const field of out.fields) if (field.field !== "tools" && !(field.field === "permission" && forcePermission)) field.dependsOnProject = true;
       out.notes.push("Execution depends on the project. Shown values use only user-level and built-in layers; select a project to verify its class overrides, scope policy and model catalog.");
     }
-    if (!(input.mode === "start" ? role.startable : role.hireable)) {
+    if (!(input.mode === "start" ? role.startable : role.id === "keeper" || role.hireable)) {
       const problem = `The ${role.label} class cannot be ${input.mode === "start" ? "started" : "hired"} here.`;
       if (projectId) out.errors.push(problem);
       else out.notes.push(`User-level/built-in baseline: ${problem} This also depends on the project.`);

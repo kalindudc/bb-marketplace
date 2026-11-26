@@ -149,7 +149,7 @@ const sections = {
     pushAnswers: z.boolean(), answerPageSize: z.number().int().min(ANSWER_PAGE_SIZE.min).max(ANSWER_PAGE_SIZE.max) }).strict(),
   keepers: z.object({ unreportedNudges: z.boolean(), restMinutes: z.number().int().min(1).max(10080).default(30), greenlight: z.enum(["explicit", "by-size"]),
     decisionTimerMax: z.number().int().min(1).max(10080), partyMax: z.number().int().min(1).max(1000),
-    chainDepth: z.number().int().min(1).max(3), chainMembers: z.number().int().min(1).max(1000),
+    chainMembers: z.number().int().min(1).max(1000),
     staleStrikes: z.number().int().min(1).max(4), alwaysAsk: alwaysAskSchema, ...numberFields(KNOB_FIELDS.keepers) }).strict(),
   classes: z.record(classId, z.object({ provider: providerSetting.optional(), model: modelSetting.optional(),
     reasoning: reasoningSetting.nullable().optional() }).strict()),
@@ -171,7 +171,7 @@ export const settingsSchema = z.object({
     defaultEndState: "drafts-ready", defaultAllowWatched: false, defaultWakeBlockers: true, defaultWakeProduction: false }),
   attention: sections.attention.extend({ pushAnswers: z.boolean().default(false), answerPageSize: sections.attention.shape.answerPageSize.default(ANSWER_PAGE_SIZE.default) })
     .prefault({ reviewBudget: 3, notify: "consequential", quietHours: null }),
-  keepers: sections.keepers.extend({ ...defaultNumbers(KNOB_FIELDS.keepers), unreportedNudges: z.boolean().default(true), alwaysAsk: alwaysAskSchema.default([...ALWAYS_ASK_KINDS]), chainDepth: sections.keepers.shape.chainDepth.default(1), chainMembers: sections.keepers.shape.chainMembers.default(12) })
+  keepers: sections.keepers.extend({ ...defaultNumbers(KNOB_FIELDS.keepers), unreportedNudges: z.boolean().default(true), alwaysAsk: alwaysAskSchema.default([...ALWAYS_ASK_KINDS]), chainMembers: sections.keepers.shape.chainMembers.default(12) })
     .prefault({ greenlight: "explicit", decisionTimerMax: 10080, partyMax: 5, staleStrikes: 2, restMinutes: 30 }),
   classes: sections.classes.default({}), scopes: sections.scopes.extend({ sendTools: sendToolsSchema.default([]) }).prefault({ mode: "enforce" }),
   machines: placementSettingsSchema.default({ maxMakers: 2, maxCheckers: 2, rules: [], forges: [] }),

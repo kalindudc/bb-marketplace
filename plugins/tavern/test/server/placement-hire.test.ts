@@ -13,7 +13,7 @@ import { InsightsReader } from "../../src/server/insights";
 import { placementRuleSchema } from "../../src/shared/placement-settings";
 import { PlacementController, PlacementHireBlocked } from "../../src/server/placement/controller";
 import type { KnownSource } from "../../src/server/placement/source-discovery";
-import { seedQuest, planInput } from "./support";
+import { seedLegacyQuest, seedQuest, planInput } from "./support";
 import { recoverHires } from "../../src/server/hires";
 import { registerTools } from "../../src/server/tools";
 import { dispatch049 } from "./dispatch-fixture";
@@ -153,6 +153,7 @@ describe("target model failures", () => {
     const member = await f.runtime.hire("lead", "project", { ...hire, errand: false, boardQuestId: q.id });
     const held = vi.spyOn(f.k, "quest");
     if (gate === "unrouted") {
+      seedLegacyQuest(f.k, "lead", "Earlier unrelated work", "Earlier work");
       f.k.endTurn("lead");
       f.k.receiveUser("lead", "An unrouted message");
       expect(() => f.k.guard("lead", q.id)).toThrow(/unrouted/);

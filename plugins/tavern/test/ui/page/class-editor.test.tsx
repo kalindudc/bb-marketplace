@@ -53,6 +53,15 @@ describe("Classes page: the class editor", () => {
     expect(slot.inspection.experimental_panelCalls).toContainEqual({ method: "openTab", options: { tab: { id: "class-edit", context: { kind: "nav-panel", panelId: "tavern" }, availability: "action" }, params: { classId: "smith", openedAt: expect.any(Number) }, title: "Edit Smith" } });
   });
 
+  it("keeps the Hireable switch for other classes, not Keepers", async () => {
+    const keeper = { ...registry.classes.find(c => c.id === "keeper")!, hireable: false };
+    const slot = await tab({ classEditor: () => editor({ current: keeper, models: effectiveExecution(keeper, {}) }) }, { classId: "keeper" });
+    const form = await slot.findByRole("form", { name: "Edit the Keeper class" });
+    expect(within(form).queryByRole("checkbox", { name: /Hireable/ })).toBeNull();
+    const smith = await tab();
+    expect(await smith.findByRole("checkbox", { name: /Hireable/ })).toBeTruthy();
+  });
+
   it("shows where models and the rest are set, and what applies when with the running count", async () => {
     const slot = await tab();
     await slot.findByRole("form", { name: "Edit the Smith class" });

@@ -13,6 +13,7 @@ import { checkerAssignments } from "../../src/server/assignments";
 import { resolveHireExecution } from "../../src/server/execution";
 import { setup } from "./runtime-fixture";
 import { planInput } from "./support";
+import { catalog, model, providerSdk } from "./provider-fixture";
 
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })));
@@ -42,6 +43,43 @@ describe("class character and quality policy", () => {
   it.each(["class", "character"] as const)("reports unknown keys in %s files", kind => {
     const raw = readFileSync(join(shipped, kind === "class" ? "classes/smith.md" : "characters/bram.md"), "utf8").replace(/^---\n/, "---\nmodle: typo\n");
     expect(() => parseRegistryDefinition(kind, raw, "test")).toThrow(/modle/);
+  });
+
+  it.each(["ranger, keeper", "ranger"])("treats Keeper hireability as a role rule with old hires [%s]", async hires => {
+    const source = readFileSync(join(shipped, "classes/keeper.md"), "utf8").replace(/^hireable:.+$/m, "hireable: false").replace(/^hires:.+$/m, `hires: [${hires}]`);
+    const keeperClass = parseRegistryDefinition("class", source, "fixture");
+    const f = setup({ providers: { ...providerSdk(), models: async () => catalog([model(keeperClass.model!)]) } });
+    const snapshot = f.runtime.registry.read();
+    f.runtime.registry.read = () => ({ ...snapshot, classes: snapshot.classes.map(role => role.id === "keeper" ? keeperClass : role) });
+    const quest = await seedQuest(f.k, "lead", "Prepare both guides", "Guides");
+    const plan = planInput(quest.id);
+    await f.runtime.plan("lead", { ...plan, party: [{ classId: "keeper", characterId: null, model: null, purpose: "Prepare the side guide",
+      waypointIds: ["w1"], leadEnvelope: { members: 2, rangers: 0, depth: 1 } }] });
+    const ask = f.k.store.openAsks("lead", quest.id).find(item => item.kind === "greenlight")!;
+    f.k.answerAsk(ask.id, "approve", null, "page", "user");
+    const brief = { outcome: "Prepare the side guide", mode: "make-it-work" as const, outOfScope: "Publishing", doneWhen: "Draft is reviewed", context: [], questions: [], timeboxMinutes: null };
+    await expect(f.runtime.hire("lead", "project", { classId: "keeper", boardQuestId: quest.id, waypointId: "w1", title: brief.outcome, brief })).resolves.toMatchObject({ classId: "keeper" });
+  });
+
+  it.each([
+    { hireable: false, listed: true },
+    { hireable: true, listed: false },
+  ])("refuses a custom Keeper when hireable=$hireable and listed=$listed", async ({ hireable, listed }) => {
+    const f = setup();
+    const snapshot = f.runtime.registry.read();
+    const keeperClass = snapshot.classes.find(role => role.id === "keeper")!;
+    const captain = { ...keeperClass, id: "captain", label: "Captain", kind: "keeper" as const, hireable, characters: [], model: model().model };
+    const classes = snapshot.classes.map(role => role.id === "keeper" && listed ? { ...role, hires: [...role.hires, captain.id] } : role);
+    f.runtime.registry.read = () => ({ ...snapshot, classes: [...classes, captain] });
+    const quest = await seedQuest(f.k, "lead", "Prepare both guides", "Guides");
+    const plan = { ...planInput(quest.id), party: [{ classId: captain.id, characterId: null, model: null, purpose: "Prepare the side guide",
+      waypointIds: ["w1"], leadEnvelope: { members: 2, rangers: 0, depth: 1 } }] };
+    f.k.plan("lead", plan);
+    const ask = f.k.store.openAsks("lead", quest.id).find(item => item.kind === "greenlight")!;
+    f.k.answerAsk(ask.id, "approve", null, "page", "user");
+    const brief = { outcome: "Prepare the side guide", mode: "make-it-work" as const, outOfScope: "Publishing", doneWhen: "Draft is reviewed", context: [], questions: [], timeboxMinutes: null };
+    await expect(f.runtime.hire("lead", "project", { classId: captain.id, boardQuestId: quest.id, waypointId: "w1", title: brief.outcome, brief })).rejects.toThrow(/hire policy/);
+    expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
   });
 
   it("rejects oversized UTF-8 class bodies instead of silently cutting the role", () => {
@@ -75,10 +113,10 @@ describe("class character and quality policy", () => {
     mkdirSync(home);
     const path = join(home, "keeper.md");
     const source = readFileSync(join(shipped, "classes/keeper.md"), "utf8");
-    writeFileSync(path, source.replace("Hold each concrete goal", "Record each concrete goal"));
+    writeFileSync(path, source.replace("Open one quest.", "Open exactly one quest."));
     utimesSync(path, 1, 1);
     expect(r.olderClassOverrides()).toEqual([{ id: "keeper", path }]);
-    expect(r.read().classes.find(c => c.id === "keeper")?.body).toContain("Record each concrete goal");
+    expect(r.read().classes.find(c => c.id === "keeper")?.body).toContain("Open exactly one quest.");
     writeFileSync(path, source);
     utimesSync(path, 1, 1);
     expect(r.olderClassOverrides()).toEqual([]);

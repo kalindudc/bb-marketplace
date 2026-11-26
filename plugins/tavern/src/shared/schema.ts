@@ -122,6 +122,7 @@ export const summaryDraftSchema = z.object({
   request: z.object({ kind: z.enum(["ask", "hand-back"]), id }).strict().optional(),
   supersedes: id.optional(),
   answers: z.array(id).optional(),
+  childQuestId: id.optional(),
 }).strict();
 export const summarySchema = summaryDraftSchema.extend({ id, keeperThreadId: threadId, createdAt: epochMs });
 export const answerMessageSchema = z.object({ id, text: z.string(), kind: z.enum(ROUTE_KINDS), at: epochMs });
@@ -391,15 +392,16 @@ function planQuestionFields(limit: IntakeLimits) {
 }
 export const planQuestionSchema = planQuestionFields(storedLimits);
 
-export const leadEnvelopeSchema = z.object({
-  members: z.number().int().min(1).max(1000),
-  rangers: z.number().int().min(0).max(1000),
-  depth: z.number().int().min(1).max(3),
-}).strict().refine(envelope => envelope.rangers <= envelope.members, "Rangers count toward the lead's member limit.");
+export const sideSeatFields = { members: z.number().int().min(1).max(1000), rangers: z.number().int().min(0).max(1000) };
+const rangersFit = (seat: { members: number; rangers: number }) => seat.rangers <= seat.members;
+const rangerLimitMessage = "Rangers count toward the side seat's member limit.";
+export const leadEnvelopeSchema = z.object({ ...sideSeatFields, depth: z.number().int().min(1).max(3) }).strict().refine(rangersFit, rangerLimitMessage);
+const newSideSeatSchema = z.object(sideSeatFields).strict().refine(rangersFit, rangerLimitMessage).transform(seat => ({ ...seat, depth: 1 }));
 export type LeadEnvelope = z.infer<typeof leadEnvelopeSchema>;
 export const leadLinkSchema = z.object({
   id,
   hireToken: id,
+  sideQuestAskId: id.optional(),
   parentKeeperThreadId: threadId,
   parentQuestId: id,
   parentWaypointId: id,
@@ -468,7 +470,7 @@ export function planInputFields(limit: IntakeLimits) {
   return planFields(limit).extend({
     fromSteer: id.nullish(),
     cause: planCauseSchema.optional(),
-    party: z.array(partySlotFields(limit).extend({ permanent: plannedPermanent.optional() })),
+    party: z.array(partySlotFields(limit).extend({ permanent: plannedPermanent.optional(), leadEnvelope: newSideSeatSchema.optional() })),
     waypoints: z.array(waypointFields(limit).extend({ check: waypointCheckSchema }).refine(w =>
       w.actor === "user" ? w.check === "you" : w.actor === "outside" ? w.check === "keeper" : w.check !== "you",
     { path: ["check"], message: "Use warden, keeper, or none for an agent; you for the user; keeper for an outside owner." })).min(1),
@@ -751,6 +753,8 @@ export function reportFields(limit: IntakeLimits) {
   keeperThreadId: threadId.nullable(),
   boardQuestId: id.nullable(),
   waypointId: z.string().nullable(),
+  childQuestId: id.optional(),
+  sourceRouteId: id.optional(),
   status: z.enum(["done", "needs-decision", "blocked", "checkpoint"]),
   checkpoint: z.object({ left: limit.prose(z.string().trim().min(1)),
     moreMinutes: z.number().int().nonnegative() }).strict().optional(),

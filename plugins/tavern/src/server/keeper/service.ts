@@ -491,6 +491,8 @@ export class Keeper {
   }
   guard(threadId: string, questId: string | null) {
     this.succession.assertMutable(threadId);
+    if (questId !== null) this.owned(threadId, questId);
+    if (this.store.query("quests", "keeperThreadId", threadId, 2).length < 2) return;
     const runtime = this.store.runtime(threadId);
     const questRoutes = this.applicableRoutes(threadId).filter(
       (route) => route.kind === "steer" || route.kind === "new-quest",
@@ -601,6 +603,10 @@ export class Keeper {
     this.changed(threadId, member.boardQuestId);
   }
   openingGoalHint(threadId: string) {
+    const member = this.member(threadId);
+    const seat = member && currentLead(this.store, member);
+    if (seat?.state === "linked" && !seat.childQuestId)
+      return "You are a side Keeper. Open your linked quest from the hire, not a user route. Report to your hiring Keeper.";
     if (this.store.runtime(threadId).pending[0]?.classSelectionOnly)
       return "No goal was supplied: this message only selects the Keeper class. Route it as aside, briefly acknowledge and ask what the user wants done. Do not open a placeholder quest.";
     const goal = this.store.runtime(threadId).openingGoal;
@@ -1932,6 +1938,9 @@ export class Keeper {
     const quest = this.quest(draft.boardQuestId);
     if (quest.keeperThreadId !== threadId) throw new Error("A Keeper can only post a summary to its own quest.");
     const linked = !!draft.answers?.length;
+    if (draft.childQuestId && (!linked || !this.store.leadLinksBy("childQuestId", draft.childQuestId).some(link =>
+      link.parentQuestId === quest.id && link.parentKeeperThreadId === threadId)))
+      throw new Error("A linked answer can name only a side quest of this parent quest.");
     if (quest.archivedAt != null || quest.deletedAt != null || quest.phase === "stopping" || !linked && !isOpenQuest(quest)) {
       throw new Error("Only an active quest can receive a summary unless it is a linked answer on a finished quest.");
     }
@@ -2353,10 +2362,21 @@ export class Keeper {
     input: Pick<
       Report,
       "status" | "outcome" | "headline" | "evidence" | "artifacts" | "confidence" | "wait" | "checkpoint"
-    > & Partial<Pick<Report, "voice">>,
+    > & Partial<Pick<Report, "voice" | "sourceRouteId">>,
     intake?: IntakeLimits,
   ) {
-    const m = this.require(threadId, "member");
+    const identity = this.member(threadId);
+    const lead = identity && currentLead(this.store, identity);
+    const m = this.require(threadId, lead ? "keeper" : "member");
+    if (lead && (!lead.childQuestId || !isOpenQuest(this.quest(lead.childQuestId))))
+      throw new Error("A side Keeper needs its open child quest to report to its hiring Keeper.");
+    if (lead && input.wait) throw new Error("A side Keeper's report is a message; omit wait.");
+    if (input.sourceRouteId) {
+      const route = this.store.get("routes", input.sourceRouteId);
+      if (!lead || route?.kind !== "steer" || !routeQuestIds(route).includes(lead.parentQuestId) ||
+          !this.store.runtime(threadId).requestSources?.sources.some(source => source.routeId === route.id))
+        throw new Error("sourceRouteId must name a steer in your accepted side quest brief.");
+    }
     const ranger = m.classId === "ranger";
     if (input.status === "checkpoint" ? !ranger || !input.checkpoint : input.checkpoint !== undefined)
       throw new Error("Only a Ranger checkpoint includes checkpoint.left and checkpoint.moreMinutes.");
@@ -2387,12 +2407,25 @@ export class Keeper {
       memberThreadId: threadId,
       keeperThreadId: m.keeperThreadId,
       boardQuestId: m.boardQuestId,
-      waypointId: m.waypointId,
+      waypointId: lead ? null : m.waypointId,
+      ...(lead ? { childQuestId: lead.childQuestId } : {}),
       voice: null,
       createdAt: this.now(),
       deliveredAt: late ? this.now() : null,
     });
     const previous = this.store.query("reports", "memberThreadId", threadId, 1)[0];
+    if (lead) {
+      if (previous && previous.sourceRouteId === report.sourceRouteId && isDeepStrictEqual(
+        { ...previous, id: report.id, createdAt: report.createdAt, deliveredAt: report.deliveredAt }, report)) return previous;
+      this.store.atomic(() => {
+        this.store.put("reports", report.id, report);
+        this.store.event(this.now(), lead.parentKeeperThreadId, lead.parentQuestId, "report.filed", `${this.name(m)}: ${outcome}`,
+          { reportId: report.id, childQuestId: lead.childQuestId, leadLinkId: lead.id, status: report.status, ...(report.sourceRouteId ? { sourceRouteId: report.sourceRouteId } : {}) },
+          { kind: "agent", threadId });
+      });
+      this.changed(threadId, lead.parentQuestId);
+      return report;
+    }
     if (
       previous &&
       (this.store.runtime(threadId).briefVersion ?? 0) ===
