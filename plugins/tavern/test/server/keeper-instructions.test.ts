@@ -184,7 +184,7 @@ describe("R11 tool rules remain at the tool boundary", () => {
     tavern_reopen: [/returned or stopped/, /build with a greenlit plan, or scout without one/i, /Warden still verifies/],
     tavern_hire: [/bounded brief/, /never-timed scope ask/, /brief stays queued/, /review budget/, /explicit approval/, /known maker journal entry/, /not request commands as tool names/],
     tavern_release: [/your own party/, /reason/, /reversible release.*Decided for you/],
-    tavern_scope: [/Temporary paths/, /own thread storage/, /explicit, never-timed scope answer/, /never approves a merge, deploy, delete, send or production action/],
+    tavern_scope: [/Do not request tool or path grants for ordinary work/, /never-timed scope answer/, /not approval for a merge, deploy, delete, send or production action/],
     tavern_tell: [/your own members/, /never steer into a running tool/, /delivered, queued.*retrying.*blocked/],
     tavern_plan: [/explicit greenlight/, /questions/, /reversible:true only for fully reversible work/, /by-size.*one party slot/],
     tavern_ask: [/Only kind decision with explicit reversible: true may carry a timed default/, /Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer/],

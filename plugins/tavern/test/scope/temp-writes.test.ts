@@ -4,10 +4,9 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scopeForClass } from "../../src/scope/presets";
-import { bindPaths, realPath } from "../../src/scope/paths";
+import { bindPaths, realPath, writeRoots } from "../../src/scope/paths";
 import { evaluate } from "../../src/scope/engine";
 import { ScopePolicy } from "../../src/scope/policy";
-import { sandboxProfile } from "../../src/scope/sandbox";
 
 const bound = (role: string) => bindPaths(scopeForClass(role, undefined, role === "keeper" ? "keeper" : undefined), { home: "/home/test", tmp: ["/tmp", "/private/tmp", "/native-tmp"], worktree: "/repo", threadStorage: "/storage/own", scopesDir: "/scopes" });
 const dirs: string[] = [];
@@ -54,7 +53,7 @@ it("refuses threads storage spellings without a bound thread storage root", () =
 it("passes Keeper worktree edits independently of scratch roots", () => {
   const scope = bound("keeper");
   expect(evaluate(scope, { kind: "write", toolName: "write", input: { path: "/repo/record" }, cwd: "/repo" }).allow).toBe(true);
-  expect(sandboxProfile(scope)).toContain('(allow file-write* (subpath "/storage/own"))');
+  expect(writeRoots(scope)).toContain("/storage/own");
 });
 it("refuses a temp symlink into Tavern scopes, not a repository", () => {
   const root = mkdtempSync(join(tmpdir(), "tavern-temp-test-")); dirs.push(root);

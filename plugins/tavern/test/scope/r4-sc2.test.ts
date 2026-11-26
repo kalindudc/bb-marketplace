@@ -86,16 +86,26 @@ it.each(["git push origin colleague", "git push --force-with-lease origin collea
   expect(evaluate(s, prepareCall(call("gh pr checkout 12; " + command), { scope: s, readCommand })).allow).toBe(false);
 });
 it.each([
+  ["sed -n '1p' file", true],
+  ["sed -n '1w output' file", false],
+  ["find . -exec git checkout other \\;", false],
+])("requires branch-stable prefixes before attributing a HEAD push: %s", (prefix, stable) => {
+  const s = scope();
+  const prepared = prepareCall(call(prefix + "; git push origin HEAD"), { scope: s, readCommand: (_program, args) => args.includes("symbolic-ref") ? "assigned" : "https://github.com/o/r.git" });
+  expect(Object.values(prepared.pushHeads ?? {})).toEqual(stable ? ["assigned"] : []);
+  expect(evaluate(s, prepared).allow).toBe(stable);
+});
+it.each([
   ["gh pr create --draft", "assigned", "assigned"],
   ["gh pr create --draft", "assigned", "colleague"],
   ["gh pr edit 12 --body x", "assigned", "colleague"],
   ["gh pr comment 12 -b x", undefined, "colleague"],
-])("collects write paths and invalidates later HEAD facts after %s on %s/%s", (command, assignedBranch, head) => {
+])("invalidates later HEAD facts after %s on %s/%s without gathering output paths", (command, assignedBranch, head) => {
   const s = { ...scope(), assignedBranch };
   let branchReads = 0;
   const readCommand = vi.fn((_program: string, args: string[]) => args.includes("symbolic-ref") ? ++branchReads === 1 ? head! : "assigned" : "https://github.com/o/r.git");
   const prepared = prepareCall(call(command + " > /repo/out; git push origin HEAD"), { scope: s, readCommand });
-  expect(prepared.resolvedPaths).toHaveProperty("/repo/out", "/repo/out");
+  expect(prepared.resolvedPaths?.["/repo/out"]).toBeUndefined();
   expect(prepared.pushHeads?.["/repo\0" + "0"]).toBe(head);
   expect(prepared.pushHeads?.["/repo\0" + "1"]).toBeUndefined();
   expect(branchReads).toBe(1);
@@ -121,8 +131,10 @@ it("keeps ownership checks but allows an ordinary draft log redirect", () => {
   mkdirSync(repo); mkdirSync(outside); symlinkSync(outside, join(repo, "link"));
   const s = { ...scope(), writes: { mode: "paths" as const, allow: [repo], deny: [] } };
   const prepared = prepareCall({ ...call("gh pr create --draft > link/out"), cwd: repo }, { scope: s, readCommand: () => "assigned" });
-  expect(prepared.resolvedPaths?.[join(repo, "link/out")]).toBe(join(outside, "out"));
+  expect(prepared.resolvedPaths?.[join(repo, "link/out")]).toBeUndefined();
   expect(evaluate(s, prepared)).toMatchObject({ allow: true });
+  const protectedScope = { ...s, controlRoots: [outside] };
+  expect(evaluate(protectedScope, prepared)).toMatchObject({ allow: false, ruleId: "tavern-control-files" });
 });
 it("keeps the author check even on the assigned head", () => {
   const s = scope();

@@ -113,7 +113,7 @@ export default function tavernGuard(pi: PiGuardApi): void {
       if (!decision.allow) return { block: true, reason: decision.reason };
       if (mode === "enforce" && decision.acts?.length) return { block: true, reason: "[Tavern scope blocked] The guard is unavailable for this act. Ask your Keeper to repair it." };
       const shell = name.toLowerCase() === "bash" && typeof event.input?.command === "string" ? event.input.command : undefined;
-      if (event.input && shell !== undefined) event.input.command = sandboxCommand(fallback, shell, false, [], file);
+      if (event.input && shell !== undefined) event.input.command = sandboxCommand(fallback, shell, false, file);
     };
     try { scope = load(); } catch { return unavailable(); }
     let protectedCall = false;
@@ -191,7 +191,7 @@ export default function tavernGuard(pi: PiGuardApi): void {
       const checking = !nativeReceipt && scope.sandbox && decision.check === true;
       if (checking && process.platform === "darwin" && shellSource === undefined)
         return { block: true, reason: "[Tavern scope blocked] Run the check through the guarded shell so Tavern can isolate the maker worktree." };
-      const wrapped = shellSource === undefined ? undefined : sandboxCommand(checking ? bindChecks(scope) : scope, shellSource, checking, [], file);
+      const wrapped = shellSource === undefined ? undefined : sandboxCommand(checking ? bindChecks(scope) : scope, shellSource, checking, file);
       if (decision.shellGrant) {
         const receipt = randomUUID();
         if (shellSource === undefined || wrapped === undefined || !claimShellGrant(file, scope, decision.shellGrant, receipt, [shellSource, wrapped])) return { block: true, reason: "[Tavern scope blocked] This shell grant has ended or was already used. Nothing was done." };

@@ -50,7 +50,7 @@ Every bb thread gets a Journal in its context row and Journal side tab. Threads 
 
 Scopes constrain tools, file writes, shell commands, consequential shell acts, messages sent as you, and cluster writes. You can set ordinary enforcement to Enforce, Watch, or Off, while three boundaries always stay on: agents cannot send as you, scoped shells cannot run user-only Tavern controls, and party members cannot spawn or archive threads.
 
-Local Pi sessions with Tavern's guard shim prevent supported violations before execution, and on macOS run bash inside an operating-system sandbox. Claude Code, Codex, and placed remote members run detection-only: a watcher stops a turn after it starts, not beforehand. Blocked external sends become drafts so you remain the sender, and cluster writes such as Kubernetes or Terraform mutations always require your approval followed by a separate immediate confirmation.
+Local Pi sessions with Tavern's guard shim hold recognized sensitive acts before execution. On macOS, an operating-system overlay protects Tavern control files and the Warden's assigned maker checkout. Warden check commands also run in a dedicated sandbox. Claude Code, Codex, and placed remote members run detection-only: a watcher stops a turn after it starts, not beforehand. Blocked external sends become drafts so you remain the sender, and cluster writes such as Kubernetes or Terraform mutations always require your approval followed by a separate immediate confirmation.
 
 ## Closing time and Stop all
 

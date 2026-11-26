@@ -230,7 +230,6 @@ export interface Runtime {
   registryFailureAskId?: string | null;
   builtinKeeperFallback?: boolean;
   scopeKeeperFallback?: boolean;
-  scopeRefusalCounts?: Record<string, number>;
   scopeAssignedBranch?: { environmentId: string; branch: string };
   projectClassRevision?: string;
   classExecutionChoice?: { providerId?: string; recordedAt?: number; model: string | null; reasoningLevel: string | null; modelSource: string | null; reasoningSource: string | null };

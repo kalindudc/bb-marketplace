@@ -3,10 +3,9 @@ import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync } from "node:fs
 import { dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { evaluate, type ScopeCall } from "../../src/scope/engine";
-import { bindPaths, realPath, writeAllowed } from "../../src/scope/paths";
+import { bindPaths, realPath, writeAllowed, writeRoots } from "../../src/scope/paths";
 import { prepareCall } from "../../src/scope/prepare";
 import { scopeForClass } from "../../src/scope/presets";
-import { sandboxProfile } from "../../src/scope/sandbox";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -38,12 +37,11 @@ it("follows a relocated grant through either name without following a replacemen
     expect(writeAllowed(scope, join(root, "protected/file"), vars.worktree)).toBe(false);
     expect(write(join(root, "protected/file"), scope).allow).toBe(true);
   }
-  expect(sandboxProfile({ ...scope, writes: { ...scope.writes, mode: "paths" } })).toContain(moved);
+  expect(writeRoots(scope)).toContain(moved + "/**");
   rmSync(oldRoot); symlinkSync(outside, oldRoot);
   expect(writeAllowed(scope, join(oldRoot, "file"), vars.worktree)).toBe(false);
   expect(writeAllowed(scope, join(outside, "file"), vars.worktree)).toBe(false);
-  const sandboxAllows = sandboxProfile({ ...scope, writes: { ...scope.writes, mode: "paths" } }).split("\n").filter(line => line.startsWith("(allow file-write*"));
-  expect(sandboxAllows.join("\n")).not.toContain(outside);
+  expect(writeRoots(scope)).not.toContain(outside + "/**");
 });
 
 it("preserves scratch grants and allows ordinary sibling storage writes, but protects linked controls", () => {
@@ -78,7 +76,7 @@ it.each([false, true])("does not grant a replacement thread storage target after
     expect(write(file, rebound).allow).toBe(true);
     expect(shell(`printf x > '${file}'`, rebound).allow).toBe(true);
   }
-  expect(sandboxProfile(rebound)).not.toContain(`(allow file-write* (subpath "${target}"))`);
+  expect(writeRoots(rebound)).not.toContain(target);
 });
 
 it("passes mktemp templates under scratch and the worktree", () => {

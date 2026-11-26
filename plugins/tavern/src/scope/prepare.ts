@@ -8,7 +8,6 @@ import { prCallKey, prUrl, pullRequestWrite } from "./pr-policy";
 import { isSink, normalizeToolPath, realPath } from "./paths";
 import { containmentRead, readonlyProgram, temporaryRoot, type ScopeCall } from "./engine";
 import type { Scope } from "./schema";
-import { gitWriteRoots } from "./sandbox";
 import { commandWritePaths, shellCommands } from "./shell";
 import { memoryCommandCandidates, memoryCommandRule, memoryExecutableKey } from "./memory-policy";
 import { exactMerge, inspectMerge } from "./merge";
@@ -35,7 +34,6 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
   const ownedDraftPrs: string[] = [];
   const ownedPrs: string[] = [];
   const questOwnedPrs: string[] = [];
-  const fetchWriteRoots: string[] = [];
   const add = (path: string, base: string) => {
     if (!/[\$`]/.test(path)) {
       const full = normalizeToolPath(path, base);
@@ -63,9 +61,6 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
       }
       commands = shellCommands(command, cwd, facts);
     } catch { return { ...call, ...mergeFacts, cwd, resolvedPaths }; }
-    if (call.containment === "sandbox" && commands.every(cmd => !cmd.uncertain && commandWritePaths(cmd).length === 0 && (containmentRead(cmd) || cmd.argv[0] === "git" && cmd.argv[1] === "fetch" && !cmd.gitEnvironment))) {
-      for (const cmd of commands) if (cmd.argv[0] === "git" && cmd.argv[1] === "fetch") fetchWriteRoots.push(...gitWriteRoots(cmd.cwd));
-    }
     const memoryPaths = deps.scope && memoryCommandRule(deps.scope)?.argv?.[0];
     const memoryNames = new Set(Array.isArray(memoryPaths) ? memoryPaths.map(path => basename(path)) : []);
     let branchStable = true;
@@ -137,8 +132,7 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
         } catch { /* Missing ownership, draft or branch facts require a decision, not an inferred grant. */ }
       }
       branchStable &&= preservesBranch;
-      for (const path of commandWritePaths(cmd)) add(path, cmd.cwd);
     }
   }
-  return { ...call, ...mergeFacts, cwd, resolvedPaths, pushTargets, pushHeads, gitRoots, directories, ownedDraftPrs, ownedPrs, ...(questOwnedPrs.length ? { questOwnedPrs } : {}), ...(call.containment === "sandbox" ? { fetchWriteRoots: [...new Set(fetchWriteRoots)] } : {}) };
+  return { ...call, ...mergeFacts, cwd, resolvedPaths, pushTargets, pushHeads, gitRoots, directories, ownedDraftPrs, ownedPrs, ...(questOwnedPrs.length ? { questOwnedPrs } : {}) };
 }

@@ -7,10 +7,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { readerFallback } from "../../src/scope/worktree";
 import { evaluate, type ScopeCall } from "../../src/scope/engine";
 import { scopeForClass } from "../../src/scope/presets";
-import { bindPaths, realPath, within } from "../../src/scope/paths";
+import { bindPaths, realPath } from "../../src/scope/paths";
 import { shellCommands, commandWritePaths } from "../../src/scope/shell";
 import { prepareCall } from "../../src/scope/prepare";
-import { sandboxProfile } from "../../src/scope/sandbox";
 import { ScopeStore } from "../../src/scope/store";
 import extension, { type PiGuardApi } from "../../adapters/pi/extension";
 import { linkedWorktree } from "./git-fixture";
@@ -31,7 +30,6 @@ function replay(rows: ReplayRow[]) {
     const input = Object.fromEntries(Object.entries(row.call.input ?? {}).map(([key, value]) => [key, typeof value === "string" ? value.replaceAll("$HOME", "/home/fixture") : value]));
     const command = input.command ?? input.cmd;
     const c: ScopeCall = { kind: typeof command === "string" ? "bash" : "tool", toolName: row.call.toolName, input, cwd: (row.call.cwd ?? "/home/fixture").replaceAll("$HOME", "/home/fixture"), containment: "sandbox" };
-    if (typeof command === "string" && /\bgit fetch\b/.test(command)) c.fetchWriteRoots = [c.cwd + "/.git"];
     const decision = evaluate(row.i === 0 ? readerFallback(s) : s, c);
     results.set(key, decision);
     return decision.allow ? [] : [{ i: row.i, rule: decision.ruleId, command }];
@@ -53,36 +51,18 @@ it.skipIf(!process.env.TAVERN_SCOPE_REPLAY)("opt-in replay keeps only the expect
   expect(refusals.map(({ i, rule }) => ({ i, rule }))).toEqual(expected);
   console.info(`Opt-in replay: ${rows.length - refusals.length} allowed, ${refusals.length} refused.`);
 }, 120_000);
-it("allows a Ranger Python heredoc while its profile denies writes outside storage and temp", () => {
-  const s = scope();
-  expect(evaluate(s, call("python3 - <<'EOF' > $BB_THREAD_STORAGE/x.txt\nprint('fixture')\nEOF")).allow).toBe(true);
-  const profile = sandboxProfile(s);
-  expect(profile).toContain("(deny file-write*)");
-  expect(profile).toContain('(allow file-write* (subpath "/storage/t1"))');
-  expect(profile).not.toContain('(allow file-write* (subpath "/home/me/src"))');
+it("allows a Ranger Python heredoc with a redirect into its storage", () => {
+  expect(evaluate(scope(), call("python3 - <<'EOF' > $BB_THREAD_STORAGE/x.txt\nprint('fixture')\nEOF")).allow).toBe(true);
 });
 it("resolves prior assignments and both finite loop writes into thread storage", () => {
   const commands = shellCommands("S=$BB_THREAD_STORAGE/state; for p in a b; do echo > $S/$p.json; done", "/repo", { env: scope().env.variables, containment: "sandbox" });
   expect(commands.flatMap(commandWritePaths)).toEqual(["/storage/t1/state/a.json", "/storage/t1/state/b.json"]);
 });
-it("extends only a read-and-fetch call with the external repository git dir", () => {
-  const root = realPath(mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES!, "tavern-fetch-"))); roots.push(root);
-  const repo = join(root, "repo"); mkdirSync(repo); execFileSync("git", ["init", repo], { stdio: "ignore" });
-  const scratch = realPath(tmpdir());
-  expect(within(repo, scratch), "The repository must be outside the allowed scratch root").toBe(false);
-  const s = bindPaths(scopeForClass("ranger"), { home: join(root, "home"), tmp: [scratch], scopesDir: join(root, "scopes") }, realPath);
-  const fetch = prepareCall(call("git status && git fetch", repo), { scope: s });
-  expect(evaluate(s, fetch).allow).toBe(true);
-  expect(fetch.fetchWriteRoots).toEqual([join(repo, ".git")]);
-  expect(sandboxProfile(s, false, fetch.fetchWriteRoots)).toContain(`(allow file-write* (subpath ${JSON.stringify(join(repo, ".git"))}))`);
-  for (const command of ["git fetch && rm -rf .git", "git fetch && printf note > notes.txt", 'git fetch && printf note > "$TMPDIR/notes.txt"']) {
-    const input = call(command, repo);
-    const mixed = prepareCall(input, { scope: s });
-    expect(mixed.fetchWriteRoots, command).toEqual([]);
-    expect(evaluate(s, mixed), command).toMatchObject({ allow: true });
-    const uncontained = prepareCall({ ...input, containment: undefined }, { scope: s });
-    expect(evaluate(s, uncontained), command).toMatchObject({ allow: true });
-  }
+it("treats fetch as ordinary for a Ranger without gathering a write allowance", () => {
+  const readCommand = vi.fn();
+  const fetch = prepareCall(call("git status && git fetch"), { scope: scope(), readCommand });
+  expect(evaluate(scope(), fetch)).toMatchObject({ allow: true });
+  expect(readCommand).not.toHaveBeenCalled();
 });
 it("allows unparsable research but retains the raw deploy fallback", () => {
   expect(evaluate(scope(), call("echo 'unfinished")).allow).toBe(true);

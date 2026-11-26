@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { bindPaths, realPath, type ScopePaths } from "./paths";
-import { narrowScope, scopeForClass } from "./presets";
+import { narrowScope } from "./presets";
 import { scopeHostTargetSchema, scopeSchema, type ClassScope, type Scope, type ScopeNarrowing, type ScopeOverride } from "./schema";
 import { ScopeStore } from "./store";
 import { issueActGrant, revokeActGrant, type ActGrant } from "./act-grants";
@@ -176,43 +176,6 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
   };
   return {
     shouldScope,
-    refreshPresetTools: (threadId: string) => {
-      const result = store.refreshPresetTools(threadId);
-      if (result === "updated" && store.records.get(threadId)?.binding) deps.onHostTemplateChanged?.(threadId);
-      return result;
-    },
-    protectOpenPolicy: (threadId: string) => {
-      prepareBinding(threadId);
-      return enqueue(threadId, async check => {
-        const record = store.records.get(threadId), current = record?.template ?? record?.scope;
-        if (!current || record?.error || current.preset !== "open") return false;
-        if (record?.binding) return false;
-        const deny = "~/.agents/tavern/scopes.yml";
-        const bound = realPath(join(deps.policyOptions?.home ?? homedir(), ".agents/tavern/scopes.yml"));
-        if (current.writes.deny.includes(deny) || current.writes.deny.includes(bound)) return false;
-        await bindAndWrite(threadId, { ...current, writes: { ...current.writes, deny: [...current.writes.deny, deny] } }, check);
-        return true;
-      });
-    },
-    openKeeperScope: (threadId: string) => {
-      prepareBinding(threadId);
-      return enqueue(threadId, async check => {
-        const record = store.records.get(threadId), current = record?.template ?? record?.scope;
-        if (!current || record?.error || record?.presetProvenance || current.preset === "open") return false;
-        const legacy = scopeForClass(current.role, undefined, "keeper").tools.allow;
-        const known = [[], ["check_ui", "ui_examples"], ["check_ui", "ui_examples", "write", "Write", "edit", "Edit"]].some(removed => {
-          const previous = legacy.filter(name => !removed.includes(name));
-          return previous.length === current.tools.allow.length && previous.every((name, index) => current.tools.allow[index] === name);
-        });
-        if (current.preset !== "keeper" && !known) return false;
-        const open = scopeForClass(current.role, undefined, "open");
-        open.tools.allow = [...new Set([...open.tools.allow, ...current.tools.allow])];
-        open.writes.allow = [...current.writes.allow];
-        open.shell.allow = structuredClone(current.shell.allow);
-        await bindAndWrite(threadId, { ...open, threadId, issuedAt: Date.now() }, check);
-        return true;
-      });
-    },
     scopeForHire: (classId: string, narrowing?: ScopeNarrowing) => narrowScope(policy.resolve(classId, {}, {}, deps.classScope?.(classId)).scope, narrowing),
     setMode: (value: ScopeMode) => {
       if (!["enforce", "watch", "off"].includes(value)) throw new Error("Unknown Tavern scope mode: " + value);

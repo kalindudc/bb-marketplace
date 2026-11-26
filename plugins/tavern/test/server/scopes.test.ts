@@ -123,8 +123,10 @@ describe("backend scope integration", () => {
     expect(scopes.view("child")?.clusterGuard).toBe("ready");
     const scope = scopes.view("child")!.scope!;
     writeFileSync(join(f.root, "scopes/child.armed"), JSON.stringify({ threadId: "child", issuedAt: scope.issuedAt, pid: process.pid, at: Date.now() }));
-    expect(scopes.view("child")?.clusterGuard).toBe("restart");
-    expect(scopes.view("child")?.sendGuard).toBe("restart");
+    expect(scopes.api.clusterGuardArmed("child")).toBe(false);
+    expect(scopes.api.sendGuardArmed("child")).toBe(false);
+    expect(scopes.view("child")?.clusterGuard).not.toBe("armed");
+    expect(scopes.view("child")?.sendGuard).not.toBe("armed");
     armScope(join(f.root, "scopes/child.json"), scope);
     expect(scopes.view("child")?.sendGuard).toBe("armed");
   });
@@ -231,10 +233,10 @@ describe("backend scope integration", () => {
     expect(scopes.view("child")!.scope).toMatchObject({ issuedAt: before.issuedAt, tools: { deny: expect.arrayContaining(["fixture-preview", "fixture-local"]) } });
     const refreshed = () => f.k.store.events("lead").filter(e => e.type === "scope.refreshed" && e.data.memberThreadId === "child");
     expect(refreshed()).toHaveLength(1);
-    expect(refreshed()[0]!.text).toContain("Now denied: tool fixture-preview");
+    expect(refreshed()[0]!.text).toContain("Saved tool rules changed");
     await scopes.refreshLiveScopes();
     expect(refreshed()).toHaveLength(1);
-    expect(evaluate(scopes.view("child")!.scope!, { kind: "tool", toolName: "fixture-preview", cwd: f.work, input: {} }).allow).toBe(false);
+    expect(evaluate(scopes.view("child")!.scope!, { kind: "tool", toolName: "fixture-preview", cwd: f.work, input: {} }).allow).toBe(true);
     writeFileSync(join(policyDir, "scopes.yml"), "v: 1\nrules: []\n");
     await scopes.refreshLiveScopes();
     expect(scopes.view("child")!.scope!.tools.deny).not.toContain("fixture-preview");
@@ -275,43 +277,35 @@ describe("backend scope integration", () => {
     await f.runtime.scopes!.api.rebindScope("child");
     expect(f.runtime.scopes!.view("child")!.scope?.assignedBranch).toBe("assigned-at-hire");
   });
-  it("widens a live Keeper snapshot on load once, preserves grants and records a scope event", async () => {
+  it("keeps a legacy Keeper’s mode, rules and grants on load", async () => {
     const f = await fixture();
-    const scope = { ...scopeForClass("keeper", undefined, "keeper"), threadId: "lead", issuedAt: 1 };
+    const scope = { ...scopeForClass("keeper", undefined, "keeper"), threadId: "lead", issuedAt: 1, mode: "watch" as const };
     scope.tools.allow = scope.tools.allow.filter(name => !["check_ui", "ui_examples", "write", "Write", "edit", "Edit"].includes(name));
     scope.tools.deny.push("write", "Write", "edit", "Edit");
     scope.writes.allow.push("/approved/grant");
     const file = join(f.root, "scopes", "lead.json");
     writeFileSync(file, JSON.stringify({ ...scope, bindingTemplate: scope }));
-    const restart = () => new BackendScopes(f.runtime, { dataDir: f.root, installGuard: false, policyOptions: { home: f.root } });
+    const restart = () => new BackendScopes(f.runtime, { dataDir: f.root, installGuard: false, mode: "watch", policyOptions: { home: f.root } });
     scope.shell.allow.push({ id: "approved", argv: ["git", "push"], why: "User approved" });
     writeFileSync(file, JSON.stringify({ ...scope, bindingTemplate: scope }));
-    await restart().refreshPresets();
+    restart().refreshScopeProjections();
     const saved = JSON.parse(readFileSync(file, "utf8"));
-    expect(saved.preset).toBe("open");
-    expect(saved.tools.hide).toBe(false);
-    expect(saved.tools.allow).toContain("*");
-    expect(saved.writes.mode).toBe("any");
-    expect(saved.writes.allow).toContain("/approved/grant");
-    expect(saved.shell.allow).toEqual(scope.shell.allow);
-    expect(saved.presetProvenance.id).toBe("open");
-    await restart().refreshPresets();
-    const events = f.k.store.events("lead").filter(event => event.type === "scope.refreshed");
-    expect(events).toHaveLength(1);
-    expect(events[0]!.text).toBe("Keeper scope widened to open by Tavern 0.1.2");
+    expect(saved).toMatchObject({ preset: "keeper", mode: "watch", tools: scope.tools, writes: scope.writes, shell: scope.shell });
+    restart().refreshScopeProjections();
+    expect(f.k.store.events("lead").filter(event => event.type === "scope.refreshed")).toEqual([]);
   });
-  it("repairs an open snapshot with provenance once on load and records both the event and log", async () => {
+  it("protects the live policy without rewriting the legacy open snapshot", async () => {
     const f = await fixture();
     const open = scopeForClass("keeper");
-    open.writes.deny = open.writes.deny.filter(path => path !== "~/.agents/tavern/scopes.yml");
+    open.writes.deny = [];
     await f.runtime.scopes!.api.writeScope("lead", open);
-    const log = vi.spyOn(f.bb.log, "info");
+    const file = join(f.root, "scopes", "lead.json"), before = readFileSync(file, "utf8");
     const reload = new BackendScopes(f.runtime, { dataDir: f.root, installGuard: false, policyOptions: { home: f.root } });
-    await reload.refreshPresets();
-    await reload.refreshPresets();
-    expect(reload.api.status().threads.find(row => row.threadId === "lead")!.scope!.writes.deny).toContain(join(f.root, ".agents/tavern/scopes.yml"));
-    expect(f.k.store.events("lead").filter(event => event.text === "Protected the trusted scope policy in an open scope")).toHaveLength(1);
-    expect(log).toHaveBeenCalledWith("Tavern scope policy protection added lead: ~/.agents/tavern/scopes.yml");
+    reload.refreshScopeProjections();
+    expect(readFileSync(file, "utf8")).toBe(before);
+    const scope = reload.api.status().threads.find(row => row.threadId === "lead")!.scope!;
+    expect(evaluate(scope, { kind: "write", toolName: "write", cwd: f.work, input: { path: join(f.root, ".agents/tavern/scopes.yml") } }))
+      .toMatchObject({ allow: false, ruleId: "tavern-control-files" });
   });
   it("leaves current wildcard member snapshots and their grants unchanged", async () => {
     const f = await fixture();
@@ -322,7 +316,7 @@ describe("backend scope integration", () => {
     const file = join(f.root, "scopes", "child.json");
     writeFileSync(file, JSON.stringify({ ...scope, bindingTemplate: scope }));
     const reload = new BackendScopes(f.runtime, { dataDir: f.root, installGuard: false, policyOptions: { home: f.root } });
-    await reload.refreshPresets();
+    reload.refreshScopeProjections();
     const saved = JSON.parse(readFileSync(file, "utf8"));
     expect(saved.preset).toBe("readonly");
     expect(saved.tools).toEqual(scope.tools);
@@ -346,11 +340,11 @@ describe("backend scope integration", () => {
     expect(f.runtime.scopes!.view("child")!.scope).toEqual(before);
   });
 
-  it("names the existing shell rule when a mistaken tool grant requests a blocked command", async () => {
+  it("does not mistake an old ordinary command restriction for act authority", async () => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);
     await f.runtime.scopes!.override("lead", "child", { denyRules: [{ id: "no-tests", argv: ["npm", "test"], why: "Tests are outside this task" }] }, "Narrow tests");
-    await expect(f.runtime.scopes!.override("lead", "child", { tools: { allow: ["npm test"] } }, "Run checks")).rejects.toThrow(/shell command.*no-tests.*Tests are outside this task/);
+    await expect(f.runtime.scopes!.override("lead", "child", { tools: { allow: ["npm test"] } }, "Run checks")).rejects.toThrow(/shell command.*already allows/);
     expect(f.runtime.scopes!.pending("child")).toBeNull();
   });
 
@@ -648,21 +642,18 @@ describe("backend scope integration", () => {
       .filter((call) => (call.args[0] as { threadId: string }).threadId === "lead");
     expect(JSON.stringify(ticks)).toContain("STOP FAILED");
   });
-  it("records one Keeper-only notice on a third distinct refusal of the same class", async () => {
+  it("records distinct violations without the legacy repeated-refusal notice", async () => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);
     const scopes = f.runtime.scopes!;
-    const member = f.k.member("child")!, name = f.k.name(member);
-    const refused = (seq: number, ruleId = "write-path") => scopes.violation({ threadId: "child", providerId: "pi",
+    const refused = (seq: number, ruleId = "tavern-control-files") => scopes.violation({ threadId: "child", providerId: "pi",
       at: f.time(), eventId: `blocked-${seq}`, seq, ruleId, reason: "Blocked write", mode: "enforce", prevented: true, stopped: false, latencyMs: 0 });
     const notices = () => f.k.store.events("lead").filter(e => e.type === "scope.repeated-refusal");
-    await refused(1); await refused(1); await refused(2); await refused(3, "tool");
-    expect(notices()).toHaveLength(0);
-    await refused(4, "shell-write"); await refused(5); await refused(6, "shell-write");
-    expect(notices()).toEqual([expect.objectContaining({
-      text: expect.stringMatching(new RegExp(`${name}.*write.*tavern_scope.*replace`)),
-      data: expect.objectContaining({ memberThreadId: "child", refusalClass: "write" }),
-    })]);
+    await refused(1); await refused(1); await refused(2); await refused(3);
+    await refused(4, "checker-write");
+    expect(notices()).toEqual([]);
+    const violations = f.k.store.events("lead").filter(e => e.type === "scope.violation");
+    expect(violations.map(event => event.data.eventId)).toEqual(["blocked-1", "blocked-2", "blocked-3", "blocked-4"]);
     expect(new AttentionSnapshot(f.k.store).asks).toEqual([]);
     expect(f.harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(0);
     expect(f.harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
@@ -983,13 +974,17 @@ describe("backend scope integration", () => {
     f.k.decide("lead", { askId: allow.id, optionId: "once", boardQuestId: f.q.id, text: "Publish", why: "The plan covers it.", source: "keeper", reversible: true });
     expect(f.k.restatement("lead")).not.toContain('heldEventId="child:again"');
   });
-  it("keeps changing the user's tools out of the Keeper lane", async () => {
+  it("does not create a generic configuration ask or let an ask authorize Tavern controls", async () => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);
-    const ask = f.runtime.scopes!.askAct("lead", { memberThreadId: "child", command: "bb plugin install fixture", why: "Install the fixture." });
-    expect(ask.effect).toMatchObject({ type: "grant-shell-act", target: { act: "configure" } });
-    expect(f.k.authority.lane(ask)).toBe("user");
-    expect(() => f.k.decide("lead", { askId: ask.id, optionId: "once", boardQuestId: f.q.id, text: "Install", why: "Requested", source: "keeper", reversible: true })).toThrow("This ask belongs to the user");
+    const scopes = f.runtime.scopes!, scope = scopes.view("child")!.scope!;
+    const configuration = "bb plugin install fixture", control = "bb plugin config tavern set scopes.mode off";
+    expect(evaluate(scope, { kind: "bash", toolName: "bash", cwd: f.work, input: { command: configuration } }).allow).toBe(true);
+    expect(evaluate(scope, { kind: "bash", toolName: "bash", cwd: f.work, input: { command: control } }))
+      .toMatchObject({ allow: false, ruleId: "tavern-control" });
+    for (const command of [configuration, control])
+      expect(() => scopes.askAct("lead", { memberThreadId: "child", command, why: "Change fixture configuration." })).toThrow(/literal shell act/);
+    expect(f.k.store.openAsks("lead")).toEqual([]);
   });
   it("issues an exact member grant in the Keeper lane and expires it on release", async () => {
     const f = await fixture();

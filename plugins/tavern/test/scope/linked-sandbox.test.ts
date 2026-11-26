@@ -5,17 +5,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { linkedWorktree } from "./git-fixture";
-import { sandboxProfile } from "../../src/scope/sandbox";
+import { sandboxCommand } from "../../src/scope/sandbox";
 import { scopeForClass } from "../../src/scope/presets";
 
-it.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec"))("commits, branches and stashes in an isolated linked worktree", () => {
+it.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec"))("allows a Smith to commit, branch and stash in its linked worktree", () => {
   const root = mkdtempSync(join(tmpdir(), "tavern-linked-probe-"));
   try {
     const { worktree, git } = linkedWorktree(root);
-    const scope = scopeForClass("smith"); scope.writes.allow = [worktree]; scope.writes.deny = [];
+    const scope = scopeForClass("smith");
     writeFileSync(join(worktree, "file"), "one\n");
-    const profile = sandboxProfile(scope);
-    const run = (command: string) => spawnSync("/usr/bin/sandbox-exec", ["-p", profile, "/bin/bash", "-c", command], { cwd: worktree, encoding: "utf8" });
+    const run = (command: string) => spawnSync("/bin/bash", ["-c", sandboxCommand(scope, command)], { cwd: worktree, encoding: "utf8" });
     const commit = run("git add file && git -c user.name=Tavern -c user.email=tavern@example.invalid -c commit.gpgsign=false commit -qm probe && git checkout -qb probe-branch");
     expect(commit.status, commit.stderr).toBe(0); expect(git(worktree, "log", "-1", "--format=%s").trim()).toBe("probe");
     writeFileSync(join(worktree, "file"), "two\n");

@@ -46,21 +46,12 @@ import { approvedDrafts, communicationPolicy, recordCommunication } from "./comm
 import type { TavernRuntime } from "./runtime";
 
 function scopeChanges(before: Scope, after: Scope) {
-  const added = (next: string[], prior: string[]) => next.filter(value => !prior.includes(value));
-  const labels = (prefix: string, values: string[]) => values.map(value => `${prefix} ${value}`);
-  const allowed = [...labels("tool", added(after.tools.allow, before.tools.allow)), ...labels("tool", added(before.tools.deny, after.tools.deny)), ...labels("write to", added(after.writes.allow, before.writes.allow))];
-  const denied = [...labels("tool", added(after.tools.deny, before.tools.deny)), ...labels("tool", added(before.tools.allow, after.tools.allow)), ...labels("write to", added(after.writes.deny, before.writes.deny)), ...labels("write to", added(before.writes.allow, after.writes.allow))];
   const phrases: string[] = [];
-  const list = (heading: string, items: string[]) => {
-    const values = [...new Set(items)];
-    if (values.length) phrases.push(`${heading}: ${values.slice(0, 4).join(", ")}${values.length > 4 ? ` and ${values.length - 4} more` : ""}`);
-  };
-  list("now allowed", allowed);
-  list("now denied", denied);
+  if (!isDeepStrictEqual(before.tools, after.tools)) phrases.push("saved tool rules changed");
+  if (!isDeepStrictEqual(before.writes, after.writes)) phrases.push("saved path rules changed");
   if (!isDeepStrictEqual(before.shell, after.shell)) phrases.push("shell rules changed");
   if (before.preset !== after.preset) phrases.push(`class baseline is now ${after.preset}`);
-  if (before.network !== after.network) phrases.push(after.network === "none" ? "network access is now denied" : "network access is now allowed");
-  if (before.writes.mode !== after.writes.mode) phrases.push(`write access changed to ${after.writes.mode}`);
+  if (before.network !== after.network) phrases.push("saved network policy changed");
   const github = before.env.poisonGh && !after.env.poisonGh;
   const push = before.env.blockGitPush && !after.env.blockGitPush;
   if (github || push) phrases.push(`no longer set: the ${github && push ? "GitHub and push environment overrides" : github ? "GitHub environment override" : "push environment override"}`);
@@ -254,31 +245,12 @@ export class BackendScopes {
   refreshPullRequestPolicies() {
     for (const { threadId } of this.api.status().threads) this.refreshPullRequestPolicy(threadId);
   }
-  async refreshPresets() {
-    const runtime = this.runtime;
-    for (const row of this.api.status().threads) {
-      const member = runtime.keeper.member(row.threadId), state = runtime.keeper.store.runtime(row.threadId);
+  refreshScopeProjections() {
+    for (const { threadId } of this.api.status().threads) {
       try {
-        this.refreshPullRequestPolicy(row.threadId);
-        this.syncGrants(row.threadId);
-        if (await this.api.protectOpenPolicy(row.threadId)) {
-          runtime.keeper.store.event(runtime.keeper.now(), member?.keeperThreadId ?? row.threadId, member?.boardQuestId ?? null,
-            "scope.refreshed", "Protected the trusted scope policy in an open scope",
-            { memberThreadId: row.threadId, deny: "~/.agents/tavern/scopes.yml" }, { kind: "tavern" });
-          runtime.bb.log.info(`Tavern scope policy protection added ${row.threadId}: ~/.agents/tavern/scopes.yml`);
-          if (member) runtime.keeper.changed(row.threadId, member.boardQuestId);
-        }
-        if (!member || memberHost(this.runtime.keeper.store, member).archivedAt !== null || memberHost(this.runtime.keeper.store, member).deletedAt !== null || wasReleased(member) || (member.role === "keeper" && row.scope?.preset === "open")) continue;
-        const result = member.role === "keeper"
-          ? await this.api.openKeeperScope(row.threadId) ? "updated" : "skipped"
-          : this.api.refreshPresetTools(row.threadId);
-        if (result === "skipped") runtime.bb.log.info(`Tavern scope preset refresh skipped ${row.threadId}: allowlist is not an exact legacy preset`);
-        if (result !== "updated") continue;
-        runtime.keeper.store.event(runtime.keeper.now(), member.keeperThreadId ?? member.threadId, member.boardQuestId,
-          "scope.refreshed", member.role === "keeper" ? "Keeper scope widened to open by Tavern 0.1.2" : "Added read-only renderer helpers from the current preset",
-          { memberThreadId: row.threadId, ...(member.role === "keeper" ? { preset: "open" } : { tools: ["check_ui", "ui_examples"] }) }, { kind: "tavern" });
-        runtime.keeper.changed(row.threadId, member.boardQuestId);
-      } catch (error) { runtime.bb.log.warn(`Tavern scope preset refresh ${row.threadId}: ${String(error)}`); }
+        this.refreshPullRequestPolicy(threadId);
+        this.syncGrants(threadId);
+      } catch (error) { this.runtime.bb.log.warn(`Tavern scope projection refresh ${threadId}: ${String(error)}`); }
     }
   }
   private scopeRefreshed(threadId: string, text: string, policyVersion?: string) {
@@ -974,18 +946,6 @@ export class BackendScopes {
       k.store.event(k.now(), keeperThreadId, member.boardQuestId, "scope.violation",
         `${memberName}: ${violation.reason}${violation.stopError ? `; STOP FAILED: ${violation.stopError}` : ""}`,
         { ...violation, memberName }, { kind: "tavern" });
-      if (member.role === "member" && keeperThreadId && violation.mode !== "watch" && isLiveMember(k.store, member, "brief")) {
-        const refusalClass = ["write-path", "shell-write", "shell-location"].includes(violation.ruleId) ? "write" : violation.ruleId;
-        const counts = k.store.runtime(member.threadId).scopeRefusalCounts ?? {};
-        const count = Object.hasOwn(counts, refusalClass) ? counts[refusalClass]! : 0;
-        if (count < 3) {
-          k.store.patch(member.threadId, { scopeRefusalCounts: { ...counts, [refusalClass]: count + 1 } });
-          if (count === 2)
-            k.store.event(k.now(), keeperThreadId, member.boardQuestId, "scope.repeated-refusal",
-              `${memberName} (${member.threadId}) hit three ${refusalClass} scope refusals. Review the block, then re-scope with tavern_scope or use tavern_release with memberThreadId "${member.threadId}", a reason and replace:true if the member needs replacing.`,
-              { memberThreadId: member.threadId, refusalClass, eventId: violation.eventId }, { kind: "tavern" });
-        }
-      }
       return true;
     });
     if (!saved) return;

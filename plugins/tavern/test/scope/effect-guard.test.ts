@@ -7,8 +7,7 @@ import extension, { type PiGuardApi } from "../../adapters/pi/extension";
 import { ScopeStore } from "../../src/scope/store";
 import { scopeForClass } from "../../src/scope/presets";
 import { bindPaths, realPath } from "../../src/scope/paths";
-import { sandboxProfile } from "../../src/scope/sandbox";
-import { prepareCall } from "../../src/scope/prepare";
+import { evaluate } from "../../src/scope/engine";
 import { linkedWorktree } from "./git-fixture";
 
 const roots: string[] = [];
@@ -38,14 +37,9 @@ it("keeps only the control-file overlay, not a discretionary hold or hint, in Wa
   expect(input.command).not.toContain("(deny file-write*)");
   expect(f.emit("tool_result", { toolName: "bash", toolCallId: "watch", content: [{ type: "text", text: "Operation not permitted" }] })).toBeUndefined();
 });
-it("allows a Warden fetch metadata root only on the fetch profile, never on a check profile", () => {
+it("does not grant a Warden fetch access to the maker’s Git metadata", () => {
   const f = fixture(), { worktree } = linkedWorktree(f.root);
   const scope = { ...f.scope, preset: "checker" as const, checks: { worktree, commands: [] } };
-  const call = prepareCall({ kind: "bash", toolName: "bash", input: { command: "git fetch" }, cwd: worktree, containment: "sandbox" }, { scope });
-  expect(call.fetchWriteRoots?.length).toBeGreaterThan(0);
-  for (const root of call.fetchWriteRoots!) {
-    expect(sandboxProfile(scope, false, call.fetchWriteRoots)).not.toContain(`(deny file-write* (subpath ${JSON.stringify(root)}))`);
-    expect(sandboxProfile(scope, true, call.fetchWriteRoots)).toContain(`(deny file-write* (subpath ${JSON.stringify(root)}))`);
-    expect(sandboxProfile(scope)).toContain(`(deny file-write* (subpath ${JSON.stringify(root)}))`);
-  }
+  const call = { kind: "bash" as const, toolName: "bash", input: { command: "git fetch" }, cwd: worktree };
+  expect(evaluate(scope, call)).toMatchObject({ allow: false, ruleId: "checker-write" });
 });

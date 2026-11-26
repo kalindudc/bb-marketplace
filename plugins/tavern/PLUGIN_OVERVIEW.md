@@ -16,7 +16,7 @@ Every bb thread gets a Journal checklist with steps, blockers, evidence, assigne
 
 Explicit plan approval is the default. Standing rules stay local to one Keeper unless you make them global. You can set a spend budget on a quest, delegate chosen consequential kinds per quest with Undo, or pause work cleanly with Closing time and Stop all.
 
-Scope presets constrain each class. On macOS, local Pi sessions use a pre-execution guard and OS bash sandbox; consequential shell acts, cluster writes, and sends as you are guarded separately, and cluster writes always require your approval plus immediate confirmation. Claude Code and Codex require an explicit detection-only exception that notices violations without preventing them before execution.
+Act guard holds recognized sensitive acts before they run in local Pi and records ordinary calls without stopping them. On macOS, a narrow shell overlay protects Tavern files and the Warden’s assigned maker checkout. Warden check commands also run in a sandbox. Cluster writes need your approval and a separate immediate confirmation. Claude Code and Codex require an explicit detection-only exception and cannot prevent the original calls.
 
 Machine rules in Settings let you place working members on dedicated machines through bb's providers, choose per-class models per rule, and open draft pull requests from home via GitHub or custom forge profiles. Settings also offers guided setup proposals, TOML export and import, Insights with Burn cost data when installed, and private server-local backups from the page or `bb tavern`.
 

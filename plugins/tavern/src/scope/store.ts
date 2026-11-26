@@ -115,24 +115,6 @@ export class ScopeStore {
     this.records.set(threadId, { file: this.file(threadId), scope: null, error: "Host-bound template is not yet written", ...current, binding });
     return binding;
   }
-  refreshPresetTools(threadId: string): "updated" | "skipped" | "current" {
-    const record = this.records.get(threadId);
-    if (!record?.scope || record.error) return "skipped";
-    const helpers = ["check_ui", "ui_examples"];
-    const scopes = [record.scope, ...(record.template ? [record.template] : [])];
-    if (scopes.every(scope => scope.tools.allow.includes("*") || helpers.every(name => scope.tools.allow.includes(name)))) return "current";
-    const matches = (scope: Scope) => {
-      const preset = scopeForClass(scope.role, undefined, scope.preset);
-      return [helpers, [...helpers, "write", "Write", "edit", "Edit"]].some(removed => {
-        const previous = preset.tools.allow.filter(name => !removed.includes(name));
-        return previous.length === scope.tools.allow.length && previous.every((name, index) => scope.tools.allow[index] === name);
-      }) && helpers.every(name => preset.tools.allow.includes(name));
-    };
-    if (!scopes.every(matches)) return "skipped";
-    const refresh = (scope: Scope): Scope => ({ ...scope, tools: { ...scope.tools, allow: [...scope.tools.allow, ...helpers] } });
-    this.write(threadId, refresh(record.scope), record.template ? refresh(record.template) : undefined);
-    return "updated";
-  }
   write(threadId: string, input: Scope, template = this.records.get(threadId)?.template, error?: string, preserveProvenance = false): Scope {
     const file = this.file(threadId);
     const scope = scopeSchema.parse({ ...input, threadId });

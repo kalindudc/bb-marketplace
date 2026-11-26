@@ -10,7 +10,7 @@ Use this reference for scoped hire rules, detection-only exceptions, scope adjus
 
 ## Scope rules and violations
 
-- Act guard (`enforce`) holds recognized merges, publishes, deploys, sends, deletions, credential disclosures and cluster writes. Ordinary calls are recorded, not refused. Do not ask to widen a member's tool or path scope for ordinary work.
+- Act guard (`enforce`) holds recognized merges, publishes, deploys, sends, deletions, credential disclosures and cluster writes. Ordinary calls are recorded, not refused. Do not ask to widen a member's tool or path scope for ordinary work. Saved tool lists do not hide tools, and legacy presets are not widened at startup.
 - Use the existing typed decision for a held act. NEVER route around it with another interpreter or tool.
 - Repair a bad maker binding instead of widening a checker's scope. Ask the user to restart a missing Pi guard only when prevention is needed.
 

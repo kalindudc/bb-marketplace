@@ -3,7 +3,8 @@ import { dirname, join } from "node:path";
 import { normalizeToolPath, realPath, within } from "./paths";
 import type { Scope } from "./schema";
 
-export const projectControl = String.raw`/\.agents/tavern/(?:scopes\.ya?ml|settings\.toml)(?:$|/)`;
+// Keep this POSIX-compatible for the macOS shell overlay.
+export const projectControl = "/[.]agents/tavern/(scopes[.]ya?ml|settings[.]toml)($|/)";
 const projectRule = new RegExp(projectControl);
 
 export function controlPaths(scope: Scope, file?: string): string[] {

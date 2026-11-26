@@ -4583,7 +4583,7 @@ export class TavernRuntime {
     }));
     await this.maintain("name reconciliation", null, [{ name: "names", run: () => this.reconcileNames() }]);
     if (this.scopes) {
-      await this.scopes.refreshPresets();
+      this.scopes.refreshScopeProjections();
       await this.maintain("Scope refresh", null, [{ name: "scopes", run: () => this.scopes?.refreshLiveScopes() }]);
       await this.recheckDispatch();
     }

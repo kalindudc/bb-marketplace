@@ -49,7 +49,6 @@ it.each(["keeper", "lead"])("binds an open %s on its actual remote host without 
   expect((await host.harness.behavior.emitThreadEvent("experimental_thread.events", { thread, sequence: 1 })).errors).toEqual([]);
   expect(violations).not.toHaveBeenCalled(); expect(host.harness.inspection.sdk.callsTo("threads.stop")).toEqual([]);
   expect(await host.harness.behavior.resolveProviderEnv("pi", { threadId: "member", hostId: "guest" } as never)).toEqual([]);
-  expect(await api.protectOpenPolicy("member")).toBe(false);
   await expect(api.writeScope("member", { ...scopeForClass("ranger"), threadId: "member", issuedAt: 2 }))
     .rejects.toThrow("Only an open Keeper scope can bind remotely without a native delivery");
   let reloaded!: ReturnType<typeof registerScopes>;

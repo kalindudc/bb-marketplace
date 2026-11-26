@@ -10,7 +10,7 @@ import { evaluate } from "../../src/scope/engine";
 import { prepareCall } from "../../src/scope/prepare";
 import { bindPaths, realPath } from "../../src/scope/paths";
 import { scopeSchema, type Scope } from "../../src/scope/schema";
-import { sandboxCommand, sandboxProfile } from "../../src/scope/sandbox";
+import { sandboxCommand, shellQuote } from "../../src/scope/sandbox";
 import { emulatedGit } from "../host/emulated-git";
 import { checkerWritePaths } from "../../src/scope/checker";
 import { linkedWorktree } from "./git-fixture";
@@ -96,10 +96,12 @@ it.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec"))
 it("fails closed rather than allowing a pre-existing hardlink alias to a tracked file", () => {
   const f = fixture(); writeFileSync(join(f.worktree, "tracked"), "original"); writeFileSync(join(f.worktree, ".gitignore"), "coverage/\\n");
   f.git(f.worktree, "add", "tracked", ".gitignore"); mkdirSync(join(f.worktree, "coverage")); linkSync(join(f.worktree, "tracked"), join(f.worktree, "coverage/alias"));
-  expect(() => sandboxProfile(f.scope, true)).toThrow(/hard.link/i);
+  expect(() => checkerWritePaths(f.scope)).toThrow(/hard.link/i);
 });
 it.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec"))("runs real npm test but denies tracked files, Git metadata, unignored/outside writes and network", async () => {
   const f = fixture(), tracked = join(f.worktree, "tracked.txt"), kept = join(f.worktree, "dist/keep.txt");
+  const projectPolicy = join(f.scratch, "project", ".agents", "tavern");
+  mkdirSync(projectPolicy, { recursive: true });
   for (const path of ["dist", ".cache", "odd*output", "oddXoutput"]) mkdirSync(join(f.worktree, path));
   writeFileSync(join(f.worktree, ".gitignore"), "node_modules/\ndist/\ncoverage/\n.cache/\nodd\\*output/\n");
   writeFileSync(tracked, "original"); writeFileSync(kept, "kept");
@@ -113,7 +115,7 @@ fs.mkdirSync('coverage',{recursive:true});fs.writeFileSync('coverage/result.txt'
 fs.writeFileSync('odd*output/cache','ok');assert.throws(()=>fs.writeFileSync('oddXoutput/bad','bad'),e=>['EPERM','EACCES'].includes(e.code));
 fs.symlinkSync('../tracked.txt','coverage/softlink');assert.throws(()=>fs.writeFileSync('coverage/softlink','bad'),e=>['EPERM','EACCES'].includes(e.code));
 assert.throws(()=>fs.linkSync('tracked.txt','coverage/hardlink'),e=>['EPERM','EACCES'].includes(e.code));
-for(const path of ${JSON.stringify([tracked, kept, join(f.worktree, ".git"), join(gitDir, "index"), join(common, "config"), join(f.outside, "bad"), join(f.worktree, "not-ignored")])}){assert.throws(()=>fs.writeFileSync(path,'bad'),e=>['EPERM','EACCES'].includes(e.code),path);}
+for(const path of ${JSON.stringify([tracked, kept, join(f.worktree, ".git"), join(gitDir, "index"), join(common, "config"), join(f.outside, "bad"), join(f.worktree, "not-ignored"), join(projectPolicy, "scopes.yaml"), join(projectPolicy, "settings.toml")])}){assert.throws(()=>fs.writeFileSync(path,'bad'),e=>['EPERM','EACCES'].includes(e.code),path);}
 assert.throws(()=>fs.renameSync('dist','.cache/moved'),e=>['EPERM','EACCES'].includes(e.code));
 console.log('CHECKER_OK');`);
   f.git(f.worktree, "add", ".gitignore", "tracked.txt", "package.json", "verify.cjs"); f.git(f.worktree, "add", "-f", "dist/keep.txt"); f.git(f.worktree, "commit", "-qm", "checker fixture");
@@ -121,7 +123,7 @@ console.log('CHECKER_OK');`);
   const before = readFileSync(join(gitDir, "index"));
   expect(f.run("npm test")).toMatchObject({ allow: true, check: true });
   f.scope.writes.allow.push(f.root, f.root + "/*");
-  expect(sandboxProfile(f.scope)).not.toContain("(deny network*)");
+  expect(sandboxCommand(f.scope, "git status")).not.toContain("(deny network*)");
   const wrapped = sandboxCommand(f.scope, "npm test", true);
   const result = spawnSync("/bin/bash", ["-c", wrapped], { cwd: f.worktree, encoding: "utf8", env: { ...process.env, TMPDIR: f.scratch, npm_config_cache: join(f.scratch, "npm"), npm_config_userconfig: join(f.root, "user.npmrc"), npm_config_globalconfig: join(f.root, "global.npmrc") }, timeout: 15000 });
   expect(result.stderr + result.stdout).toContain("CHECKER_OK"); expect(result.status).toBe(0);
@@ -131,7 +133,8 @@ console.log('CHECKER_OK');`);
   try {
     const address = server.address(); if (!address || typeof address === "string") throw new Error("Missing fixture port");
     const script = `const s=require('net').connect(${address.port},'127.0.0.1');s.on('connect',()=>process.exit(1));s.on('error',e=>{console.log(e.code);process.exit(['EPERM','EACCES'].includes(e.code)?0:1)});setTimeout(()=>process.exit(2),1000);`;
-    const network = spawnSync("/usr/bin/sandbox-exec", ["-p", sandboxProfile(f.scope, true), process.execPath, "-e", script], { cwd: f.worktree, encoding: "utf8", timeout: 3000 });
+    const command = sandboxCommand(f.scope, [process.execPath, "-e", script].map(shellQuote).join(" "), true);
+    const network = spawnSync("/bin/bash", ["-c", command], { cwd: f.worktree, encoding: "utf8", timeout: 3000 });
     expect(network.status).toBe(0); expect(network.stdout).toMatch(/EPERM|EACCES/);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 30_000);
