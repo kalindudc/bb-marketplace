@@ -551,7 +551,7 @@ describe("host boundaries", () => {
       description: "Build",
       parentId: null,
       status: "verified",
-      evidence: [],
+      evidence: [{ kind: "note", ref: "Test result" }],
       link: { boardQuestId: q.id, waypointId: "w1" },
       owner: "child",
       note: null,

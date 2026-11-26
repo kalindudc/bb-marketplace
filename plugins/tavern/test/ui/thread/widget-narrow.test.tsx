@@ -23,6 +23,14 @@ it("shows no asks or new chip at zero", async () => {
   expect(slot.container.textContent).not.toMatch(/0\s*need you/);
   slot.lifecycle.unmount();
 });
+it("names the current journal state in the widget's quest drawer", async () => {
+  const quest = { ...fixtureQuest, waypoints: fixtureQuest.waypoints.map(w => ({ ...w, state: "reported" as const })) };
+  const slot = await keeperRow({ boardQuests: [quest] });
+  try {
+    fireEvent.click(await slot.findByRole("button", { name: `Show ${quest.title}` }));
+    expect(await slot.findAllByText("Waiting for a check")).toHaveLength(quest.waypoints.length);
+  } finally { slot.lifecycle.unmount(); }
+});
 it("still shows the asks chip with its count when an ask waits", async () => {
   const slot = await keeperRow({ status: "holding" });
   const chip = await slot.findByRole("button", { name: /1 need you/ });

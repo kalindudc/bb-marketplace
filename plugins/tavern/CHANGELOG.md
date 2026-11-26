@@ -23,6 +23,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Changed
 
+- The quest page, plan card and widget read waypoint progress from the journal. Keeper checks, optional skips, qualifying user answers and outside replies are recorded there. Proof survives release, and ambiguous old completions stay open for another check.
 - Party size, Ranger count and Ranger minutes come from Settings. Old class-file budgets no longer override them, and Tavern warns when an older class copy differs from the shipped one.
 - Ticks ask the Keeper to check on silent members and leave it up to the Keeper whether there is anything the user needs to hear.
 - Act guard holds recognized sensitive acts without changing Keeper authority. Ordinary calls are recorded without waking the Keeper. Startup no longer migrates old presets or tool lists, and repeat violations create no extra notice. Closing time, Tavern control files, and Warden access to the maker’s checkout keep their separate protections. Tool deny lists saved in `scopes.yml`, class files or per-hire overrides no longer block tools; Closing time still holds its stop list, and messaging tools stay held when marked as send tools in Settings.

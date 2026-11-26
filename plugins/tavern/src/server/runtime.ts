@@ -3313,7 +3313,7 @@ export class TavernRuntime {
       if (!live.get(id)) continue;
       try {
         const summary = summaryOf(quest.id);
-        const reported = summary.waypoints.filter(w => w.state === "reported");
+        const reported = summary.waypoints.filter(w => (w.readyEvidenceCount ?? 0) > 0 || w.state === "reported");
         if (!reported.length) continue;
         const reports = this.keeper.store.query(
           "reports",
@@ -3337,7 +3337,7 @@ export class TavernRuntime {
             reportId: report?.id ?? null,
             headline: (report?.outcome ?? waypoint.title).slice(0, 500),
             headlineTruncated: (report?.outcome ?? waypoint.title).length > 500,
-            evidenceCount: report?.evidence.length ?? 0,
+            evidenceCount: waypoint.readyEvidenceCount ?? report?.evidence.length ?? 0,
             reportedAt: report?.createdAt ?? null,
             waitingFor: userGate ? { who: "you" } : checker ? { who: "checker", name: this.keeper.name(checker), working: checker.state === "working" } : { who: "keeper" },
             url: report?.artifacts.find((a) => /^https?:/.test(a)) ?? null,
@@ -3867,6 +3867,7 @@ export class TavernRuntime {
     const verified = summary.waypoints.filter(verifiedWaypoint);
     const skipped = summary.waypoints.flatMap(w => w.state === "skipped" && w.resolutionReason ? [{ waypointId: w.id, reason: w.resolutionReason }] : []);
     const at = k.now();
+    k.recordWaypointWaivers(q, waivers, ask.id, at);
     k.store.cancelQuestHires(id, at);
     const membersToArchive = summary.members.filter(m => !m.leadLinkId);
     for (const m of membersToArchive) {

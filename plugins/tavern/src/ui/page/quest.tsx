@@ -4,7 +4,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { rpcContract, type BoardQuestDetail, type BoardQuestSummary, type Room } from "../../shared/contract";
 
 import { attentionView, attentionNotes } from "../../shared/attention";
-import { resolutionWords, settled, verifiedWaypoint } from "../../shared/waypoint";
+import { settled, verifiedWaypoint, waypointLabel } from "../../shared/waypoint";
 import { AlertAction } from "../kit/alert-action";
 import { QuestAuthority, AskCard, verifiedOf, verifiedWords, questNames, readable, heldQuests, stoppingWords as kitStoppingWords, CELLAR, CheckIndependence, ExpandsMark, GateRows, GuardPosture, KeeperNoteRows, KeptInMind, OpensMark, QuestMap, QuietNotice, Vocabulary, clockTime, useNow, glowVars, vocab } from "../kit";
 import { DecidedForYou, KIND, heldTitles } from "./asks";
@@ -224,7 +224,7 @@ export function QuestPage({ detail, registry, room, summaryId, askId, recheck }:
               {w.ownerMember ? <CrestOf member={w.ownerMember} registry={registry} size={16} /> : <PageGlyph name={w.actor === "user" ? "diamond" : w.actor === "outside" ? "gate" : "wait"} className={w.actor === "user" ? "tv-mn-you" : ""} />}
               <span className="tv-item-t" data-content title={`${owner}: ${w.title}`}>{owner}: {w.title}</span>
               <span className="m small num">{w.leadTime ?? "lead time unknown"}</span>
-              <span className="tv-item-s">{w.ownerMember && <><CheckIndependence member={w.ownerMember} /><GuardPosture member={w.ownerMember} /></>}<span>{w.doneWhen ? `done when ${w.doneWhen}` : "no done-when"}</span>{w.evidenceCount > 0 && <span>{w.evidenceCount} evidence</span>}{verifiedWaypoint(w) ? <span>verified by the Warden</span> : <span>{resolutionWords(w)}</span>}{w.resolutionReason && w.actor === "user" && !settled(w) && <span>{w.resolutionReason}</span>}{w.rejectedReason && <span className="tv-st-bad">rejected: {w.rejectedReason}</span>}<MemberEstimate confidence={report?.confidence ?? null} /></span>
+              <span className="tv-item-s">{w.ownerMember && <><CheckIndependence member={w.ownerMember} /><GuardPosture member={w.ownerMember} /></>}<span>{w.doneWhen ? `done when ${w.doneWhen}` : "no done-when"}</span>{w.evidenceCount > 0 && <span>{w.evidenceCount} evidence</span>}<span>{waypointLabel(w.state)}</span>{verifiedWaypoint(w) && <span>Verified by the Warden</span>}{w.resolutionReason && <span>{w.resolutionReason}</span>}{w.rejectedReason && <span className="tv-st-bad">rejected: {w.rejectedReason}</span>}<MemberEstimate confidence={report?.confidence ?? null} /></span>
               {group === "Blocked" && <AlertAction action={{ kind: "tell", keeperThreadId: quest.keeperThreadId,
                 text: `Review the blocked waypoint “${w.title}” in “${quest.title}” and tell me what needs to change before it can continue.` }} />}
               {w.ownerMember && <PlacementFacts placement={w.ownerMember.placement} memberName={owner} variant="status" />}

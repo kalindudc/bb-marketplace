@@ -270,6 +270,8 @@ export class KeeperMemory {
         `${q.id}:${draft.waypointId}:${gate.identity}`,
         gate,
       );
+      if (q.waypointJournal && answer !== null && answeredAt !== null && (draft.answer !== undefined || draft.answeredAt !== undefined))
+        this.recordGateReply(gate, waypoint.title);
       this.k.store.event(
         this.k.now(),
         threadId,
@@ -282,6 +284,16 @@ export class KeeperMemory {
     });
     this.k.changed(threadId, q.id);
     return gate;
+  }
+  recordGateReply(gate: GateRecord, title: string) {
+    if (gate.answer === null || gate.answeredAt === null) throw new Error("A journal reply needs the recorded outside answer.");
+    const { boardQuestId, waypointId, keeperThreadId, answeredAt, answer } = gate;
+    const entries = this.k.journal.linkedEntries(boardQuestId).filter(e => e.link?.waypointId === waypointId && e.threadId === keeperThreadId);
+    if (entries.length > 1) throw new Error("More than one journal entry matches this outside waypoint.");
+    const ref = `Outside reply: ${gate.askedWho} via ${gate.via}`;
+    this.k.journal.recordWaypoint({ link: { boardQuestId, waypointId }, title, keeperThreadId, actor: { kind: "agent", threadId: keeperThreadId },
+      at: answeredAt, ref, kind: "outside", entries, reason: null, evidence: [{ kind: "note", ref, detail: answer, exitCode: null }],
+    });
   }
   gateFor(questId: string, version: number, waypointId: string) {
     const waypoint = this.k.store

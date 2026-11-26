@@ -237,7 +237,7 @@ describe("Warden target briefing", () => {
     journal.linkWaypoint("replacement", { boardQuestId: q.id, waypointId: "w2" }, one.title, "replacement", { kind: "tavern" });
     expect(await verify("replacement")).toMatchObject({ isError: false });
     expect(f.k.quest(q.id).planVersion).toBe(1);
-    expect(f.k.summary(q.id).waypoints.map(w => w.state)).toEqual(["verified", "verified"]);
+    expect(f.k.summary(q.id).waypoints.map(w => w.state)).toEqual(["verified", "reported"]);
   });
 
   it.each(["verify", "reject"] as const)("lets a Warden with unknown independence file a labelled %s verdict", async action => {

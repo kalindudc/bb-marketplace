@@ -2,7 +2,7 @@ import { memberName } from "../../shared/member-name";
 import { useEffect, useRef, useState } from "react";
 import type { BoardQuestDetail, BoardQuestSummary } from "../../shared/contract";
 import { SHAPE_PATHS } from "../../shared/heraldry";
-import { keeperSubject, resolutionWords, settled, verifiedWaypoint, waypointCheck } from "../../shared/waypoint";
+import { keeperSubject, resolutionWords, settled, verifiedWaypoint, waypointCheck, waypointLabel } from "../../shared/waypoint";
 import { reviewLimitation } from "../../shared/check-posture";
 import { useRegistry, memberIdentity, type Registry } from "./registry";
 import { Crest } from "./crest";
@@ -37,7 +37,6 @@ export function layoutWaypoints(waypoints: WaypointView[], laneGap = LANE) {
 
 /** "about 40 min" reads as "~40 min" on the map; the full text stays in the tooltip and the list. */
 const shortLead = (t: string | null) => t === null ? "unknown" : t.replace(/^about\s+/i, "~");
-const STATE_WORD: Record<WaypointView["state"], string> = { planned: "planned", todo: "to do", doing: "in progress", blocked: "blocked", reported: "reported", verified: "verified", rejected: "rejected", accepted: "accepted", done: "done", skipped: "skipped", waived: "waived" };
 const CHECK_WORD = { warden: "Warden check", keeper: "Keeper accepts", none: "no check", you: "you mark done" };
 
 export const checkWord = (waypoint: Pick<WaypointView, "actor" | "check">) => CHECK_WORD[waypointCheck(waypoint)];
@@ -59,14 +58,14 @@ type MemberCredits = NonNullable<BoardQuestDetail["memberCredits"]>;
 
 /** "Lark made · Vex verified": credited members first, then the waypoint's own owner and verifier, then the class word; never a guessed name. */
 function creditLine(w: WaypointView, owner: Owner, quest: BoardQuestSummary, registry: Registry | undefined, credits: MemberCredits) {
-  if (w.actor === "user") return `Your move · ${STATE_WORD[w.state]}`;
-  if (w.actor === "outside") return `${owner.name} · ${STATE_WORD[w.state]}`;
+  if (w.actor === "user") return `Your move · ${waypointLabel(w.state)}`;
+  if (w.actor === "outside") return `${owner.name} · ${waypointLabel(w.state)}`;
   const nameOf = (threadId: string | null) => { const m = threadId ? quest.members.find(x => x.threadId === threadId) : undefined; return m && registry ? memberIdentity(registry, m)?.character.name ?? null : null; };
   const madeRow = credits.find(c => c.madeWaypointIds.includes(w.id));
   const verifiedRow = credits.find(c => c.verifiedWaypointIds.includes(w.id));
   if (keeperSubject(w)) {
     const checker = verifiedWaypoint(w) ? quest.members.find(m => m.threadId === w.verifiedBy) : undefined;
-    const verdict = verifiedWaypoint(w) ? `${nameOf(w.verifiedBy) ?? "A Warden"} verified` : STATE_WORD[w.state];
+    const verdict = verifiedWaypoint(w) ? `${nameOf(w.verifiedBy) ?? "A Warden"} verified` : waypointLabel(w.state);
     const posture = verifiedWaypoint(w) ? reviewLimitation(checker?.checkIndependence) ?? (checker?.checkIndependence === "independent" ? "different-family check" : "check independence not established") : null;
     const subject = w.evidenceCount > 0 ? "Subject recorded by the Keeper" : "Keeper records the subject";
     return `${subject} · ${verdict}${posture ? ` · ${posture}` : ""}`;
@@ -75,7 +74,7 @@ function creditLine(w: WaypointView, owner: Owner, quest: BoardQuestSummary, reg
   const maker = madeRow ? nameOf(madeRow.memberThreadId) ?? classed : classed;
   const checker = verifiedWaypoint(w) ? nameOf(verifiedRow?.memberThreadId ?? w.verifiedBy) ?? "a Warden" : null;
   const made = ["reported", "verified", "rejected"].includes(w.state) || madeRow ? `${maker} made` : maker;
-  return `${made} · ${checker ? `${checker} verified` : STATE_WORD[w.state]}`;
+  return `${made} · ${checker ? `${checker} verified` : waypointLabel(w.state)}`;
 }
 
 export type Figure = { label: string; value: string; title?: string; note?: string };
@@ -163,7 +162,7 @@ export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, s
             <foreignObject className="wp-fo" x={n.x - 16} y={n.y - 16} width={32} height={32}><Mark w={w} owner={o} size={32} /></foreignObject>
             {verifiedWaypoint(w) && <g className="ok" transform={`translate(${n.x + 10} ${n.y - 20})`}><rect width="12" height="12" /><path d="M2.5 6.2 5 8.6 9.6 3.4" /></g>}
             <foreignObject x={n.x - labelW / 2} y={n.y + 19} width={labelW} height={labelH}>
-              <div className="map-label" title={`${describe(w)}${credit(w) ? ` · ${credit(w)}` : ""}`}><b className="clamp">{w.title}</b>{credit(w) ? <span className={`o o-${o.kind} o-credit`}><span className="m clamp">{credit(w)}</span></span> : <span className={`o o-${o.kind}`}>{o.name}{!showChecks && <span className="m"> · {mode === "tale" ? (verifiedWaypoint(w) ? `${w.evidenceCount} evidence` : STATE_WORD[w.state]) : w.state === "planned" || w.state === "todo" ? shortLead(w.leadTime) : STATE_WORD[w.state]}</span>}</span>}{showChecks && <span className="wp-check m">{checkWord(w)}</span>}</div>
+              <div className="map-label" title={`${describe(w)}${credit(w) ? ` · ${credit(w)}` : ""}`}><b className="clamp">{w.title}</b>{credit(w) ? <span className={`o o-${o.kind} o-credit`}><span className="m clamp">{credit(w)}</span></span> : <span className={`o o-${o.kind}`}>{o.name}{!showChecks && <span className="m"> · {mode === "tale" ? (verifiedWaypoint(w) ? `${w.evidenceCount} evidence` : waypointLabel(w.state)) : w.state === "planned" || w.state === "todo" ? shortLead(w.leadTime) : waypointLabel(w.state)}</span>}</span>}{showChecks && <span className="wp-check m">{checkWord(w)}</span>}</div>
             </foreignObject>
           </g>
         ); })}
@@ -173,7 +172,7 @@ export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, s
           <li key={w.id} className={settled(w) ? "done" : w.state === "doing" ? "cur" : ""}>
             <span className="vw"><Mark w={w} owner={o} size={20} /></span>
             <span className="qt" data-content><b>{w.title}</b><span className="m">{credit(w) ?? (o.kind === "you" ? "Your move" : o.kind === "outside" ? `Waits on ${o.name}` : o.kind === "proposed" ? `${o.name} (proposed)` : o.name)}{showChecks && <> · <span className="wp-check">{checkWord(w)}</span></>} · {w.leadTime ?? "lead time unknown"}{w.dependsOn.length > 0 ? ` · after ${w.dependsOn.map(d => d.replace(/^w/, "")).join(", ")}` : ""}{!credit(w) && mode === "tale" ? ` · ${w.evidenceCount} evidence${verifiedWaypoint(w) ? " · verified" : ""}` : ""}</span>{w.rejectedReason && <span className="m">Rejected: {w.rejectedReason}</span>}{w.resolutionReason && <span className="wp-reason m">{w.resolutionReason}</span>}</span>
-            {!(mode === "plan" && rowsOnly && w.state === "planned") && <StatusPill status={w.state} mark={w.state === "done" ? "·" : undefined}>{STATE_WORD[w.state]}</StatusPill>}
+            <StatusPill status={w.state} mark={w.state === "done" ? "·" : undefined}>{waypointLabel(w.state)}</StatusPill>
           </li>
         ); })}
       </ol>

@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS } from "../../shared/settings";
 import { IntakeLimits, limitMessage, type LimitValues } from "../../shared/limits";
 import { changeSummary, clip } from "./text";
 
-export const ACTIONS = ["add", "split", "add_step", "list", "toggle", "update", "delete", "clear", "reorder", "reparent", "undo", "redo", "rules", "skill", "start", "done", "block", "reopen", "verify", "reject", "note", "link", "get", "settle", "wait"] as const;
+export const ACTIONS = ["add", "split", "add_step", "list", "toggle", "update", "delete", "clear", "reorder", "reparent", "undo", "redo", "rules", "skill", "start", "done", "block", "reopen", "verify", "reject", "skip", "note", "link", "get", "settle", "wait"] as const;
 const shortId = z.string().regex(/^[0-9a-z]{2,8}$/);
 export const actionSchema = z.object({
   action: z.enum(ACTIONS), id: shortId.optional(), ids: z.array(shortId).min(1).optional(),
@@ -112,7 +112,7 @@ export function rebriefEntries(original: JournalEntry[], { boardQuestId, version
     if (e.link?.boardQuestId !== boardQuestId || !targets.has(e.link.waypointId) || !(closed(e) || e.status === "rejected")) continue;
     const parts: string[] = [];
     if (e.evidence.length) parts.push(`v${was} evidence kept for reference: ${e.evidence.map(x => x.detail ? `${x.ref} (${x.detail})` : x.ref).join(", ")}.`);
-    const review = e.status === "verified" ? e.review : null;
+    const review = e.status === "verified" && !e.review?.kind ? e.review : null;
     if (review) parts.push(`Verified for brief v${was} by ${review.actor.kind === "agent" ? name(review.actor.threadId) : "a Warden"} (Warden).`);
     if (!parts.length) continue;
     const head = `[${e.id}] ${JSON.stringify(e.description)}`;
@@ -121,6 +121,7 @@ export function rebriefEntries(original: JournalEntry[], { boardQuestId, version
       ? `reopened ${head}: brief v${version} arrived after it was verified. Its v${was} verdict and evidence are in the note; it needs fresh evidence and a new check.`
       : `reopened ${head}: brief v${version} arrived after it was done. Its v${was} evidence is in the note; attach fresh evidence before marking it done.`);
     if (review) { verified.push(copy(e)); e.review = null; }
+    if (e.review?.kind) e.review = null;
     // An answer to a rejection given under the earlier brief no longer counts.
     if (e.review) e.review.memberEvidenceAt = null;
     const kept = [...(e.rebrief?.evidence ?? []), ...e.evidence];
@@ -242,7 +243,10 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
     const wasClosed = closed(e);
     e.status = status;
     e.report = null; e.rewrites = 0;
-    if (!closed(e)) { e.doneAt = null; e.doneBy = null; }
+    if (!closed(e)) {
+      e.doneAt = null; e.doneBy = null;
+      if (e.review?.kind) e.review = null;
+    }
     else if (!wasClosed) { e.doneAt = ctx.now; e.doneBy = actor; }
     touch(e);
   };
@@ -289,10 +293,14 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
         if (status === "doing" && e.after.some(id => !closed(find(id)))) throw new Error("Finish this entry's dependencies before starting it.");
         if (action.evidence !== undefined && action.action !== "verify" && action.action !== "reject") {
           const evidence = combineEvidence(e.evidence, action.evidence);
-          if (JSON.stringify(e.evidence) !== JSON.stringify(evidence)) { e.evidence = evidence; touch(e); }
-          if (e.review?.reason && action.evidence.length) { e.review.memberEvidenceAt = ctx.now; touch(e); }
+          if (JSON.stringify(e.evidence) !== JSON.stringify(evidence)) {
+            if (e.link && e.status === "verified") requireReopen(e, actor, ctx.roleOf);
+            if (e.review?.kind === "keeper") e.review = null;
+            e.evidence = evidence; touch(e);
+          }
+          if (!e.review?.kind && e.review?.reason && action.evidence.length) { e.review.memberEvidenceAt = ctx.now; touch(e); }
         }
-        if (status === "done" && e.review?.reason && e.review.memberEvidenceAt === null) throw new Error("This entry was rejected. Submit evidence from work checked after that rejection before reporting done again.");
+        if (status === "done" && !e.review?.kind && e.review?.reason && e.review.memberEvidenceAt === null) throw new Error("This entry was rejected. Submit evidence from work checked after that rejection before reporting done again.");
         if (status === "done" && e.link && !e.evidence.length) throw new Error("A linked entry needs at least one evidence item before it is reported done.");
         const earlier = e.rebrief?.evidence.map(x => JSON.stringify(x)) ?? [];
         if (status === "done" && e.rebrief && e.evidence.length && e.evidence.every(x => earlier.includes(JSON.stringify(x))))
@@ -332,6 +340,7 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
       if (action.after !== undefined) e.after = [...new Set(action.after)];
       if (action.links !== undefined) e.links = action.links;
       if (e.status === "verified") setStatus(e, "todo");
+      if (e.review?.kind) e.review = null;
       touch(e); break;
     }
     case "note": {
@@ -351,6 +360,7 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
           throw new Error("Link your own entry to a waypoint in your active quest assignment.");
       }
       e.link = action.link;
+      if (e.review?.kind) e.review = null;
       if (closed(e) && (e.status === "verified" || (e.link && !e.evidence.length))) setStatus(e, "todo");
       touch(e); break;
     }

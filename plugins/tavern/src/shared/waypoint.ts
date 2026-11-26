@@ -15,10 +15,21 @@ export function keeperSubject(waypoint: Pick<Waypoint, "actor" | "check" | "owne
     waypoint.actor === "agent" && waypointCheck(waypoint) === "warden";
 }
 
+export function waypointLabel(state: WaypointState) {
+  switch (state) {
+    case "planned": case "todo": return "To do";
+    case "doing": return "Doing";
+    case "rejected": case "blocked": return "Blocked";
+    case "reported": return "Waiting for a check";
+    case "verified": case "accepted": case "done": return "Done";
+    case "skipped": case "waived": return "Skipped";
+  }
+}
+
 export function resolutionWords(waypoint: Pick<Waypoint, "actor" | "check"> & { state: WaypointState; acceptedBy?: string | null; resolutionReason?: string | null }) {
   const { state, acceptedBy, resolutionReason } = waypoint;
   const word = state === "accepted" ? `accepted by ${acceptedBy ?? "the Keeper"}; no Warden check` :
-    state === "done" ? (waypointCheck(waypoint) === "you" ? "done; marked by you" : "done; no check was planned") : state;
+    state === "done" ? (waypointCheck(waypoint) === "you" ? "done; marked by you" : "done; no check was planned") : waypointLabel(state).toLowerCase();
   return resolutionReason ? `${word}: ${resolutionReason}` : word;
 }
 

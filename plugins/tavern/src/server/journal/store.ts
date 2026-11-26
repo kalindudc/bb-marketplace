@@ -1,9 +1,11 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { readFileSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { tags, type JournalEdit } from "../../shared/contract";
 import { JOURNAL_NOTE_PREFIX } from "../../shared/text";
 import { actorSchema, journalChangeSchema, journalEntrySchema, type Actor, type JournalChange, type JournalEntry, type Journal, type WaypointLink } from "../../shared/schema";
-import type { Database, JournalDeps } from "../ports";
+import type { Database, JournalDeps, WaypointReceipt } from "../ports";
+import { stampWaypoint } from "../keeper/waypoint-journal";
 import { DEFAULT_SETTINGS } from "../../shared/settings";
 import { LIMITS } from "../limits";
 import { actionSchema, ago, applyAction, awaitingSummary, closed, delegated, ordered, openSummary, rebriefEntries, type ShowOptions, planLine, progress, requireWarden, wardenReview, requireReopen, canManageLinks, BOARD_MIRROR_REFUSAL, copy, validateEntries, type JournalAction } from "./engine";
@@ -152,6 +154,9 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       put.run(threadId, entry.id, entry.link?.boardQuestId ?? null, JSON.stringify(entry));
       db.prepare("INSERT OR IGNORE INTO questlog_reserved(thread_id, id) VALUES (?, ?)").run(threadId, entry.id);
     }
+  }
+  function trimHistory(threadId: string) {
+    db.prepare("DELETE FROM questlog_history WHERE thread_id=? AND action NOT LIKE 'waypoint:%' AND id NOT IN (SELECT id FROM questlog_history WHERE thread_id=? AND action NOT LIKE 'waypoint:%' ORDER BY id DESC LIMIT 50)").run(threadId, threadId);
   }
   function initialize(threadId: string) {
     if (disposed || deleted.has(threadId)) throw new Error("The journal is no longer available.");
@@ -394,7 +399,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     try {
       initialize(threadId); scheduleRead(threadId); syncBoardQuests(threadId);
       const entries = ownedElsewhere && readOnly.has(threadId) ? readOnly.get(threadId)! : localEntries(threadId);
-      const can = (state: string) => !!db.prepare("SELECT 1 FROM questlog_history WHERE thread_id = ? AND state = ? LIMIT 1").get(threadId, state);
+      const can = (state: string) => !!db.prepare("SELECT 1 FROM questlog_history WHERE thread_id = ? AND state = ? AND action NOT LIKE 'waypoint:%' LIMIT 1").get(threadId, state);
       return { threadId, entries, changes: db.prepare("SELECT * FROM (SELECT * FROM questlog_changes WHERE thread_id = ? ORDER BY id DESC LIMIT 200) ORDER BY id").all(threadId).map(changeOf), progress: safeProgress(threadId), canUndo: can("undo"), canRedo: can("redo"), reportGraceMinutes: journalPacing().reportGraceMinutes, toolOwnedElsewhere: ownedElsewhere, ...(errors.has(threadId) ? {problem: errors.get(threadId)!.text} : {}) };
     } catch (error) { reportReadError(threadId, error); return minimal(threadId); }
   }
@@ -414,7 +419,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       let reviewHistory: { before: JournalEntry[]; after: JournalEntry[] } | null = null;
       if (action.action === "undo" || action.action === "redo") {
         const direction = action.action;
-        const row = db.prepare(`SELECT * FROM questlog_history WHERE thread_id = ? AND state = ? ORDER BY id ${direction === "undo" ? "DESC" : "ASC"} LIMIT 1`).get(threadId, direction) as HistoryRow | undefined;
+        const row = db.prepare(`SELECT * FROM questlog_history WHERE thread_id = ? AND state = ? AND action NOT LIKE 'waypoint:%' ORDER BY id ${direction === "undo" ? "DESC" : "ASC"} LIMIT 1`).get(threadId, direction) as HistoryRow | undefined;
         if (!row) throw new Error(`Nothing to ${direction}.`);
         // A follow-up brief reopened this work; undoing that would bring back a done that the new brief never saw.
         if (row.action === "rebrief" && actor.kind !== "tavern") throw new Error(`Brief v${row.after_data.match(/Brief v(\d+) arrived/)?.[1] ?? "?"} reopened this entry; mark it done with fresh evidence instead.`);
@@ -437,6 +442,8 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
           if (prior?.review?.reason && prior.review.memberEvidenceAt === null && restored?.status === "done" && !(reviewChanged && direction === "undo")) throw new Error("Submit evidence checked after rejection before restoring reported done work.");
           if (prior?.status === "verified") requireReopen(prior, actor, deps.roleOf);
           if (restored?.status === "verified") requireWarden(restored, actor, deps.roleOf);
+          if ((prior?.review?.kind || restored?.review?.kind) && JSON.stringify(prior?.review) !== JSON.stringify(restored?.review))
+            throw new Error("Use the waypoint call's Undo to change its journal receipt.");
           if (JSON.stringify(prior?.link ?? null) !== JSON.stringify(restored?.link ?? null) && !canManageLinks(actor, deps.roleOf)) throw new Error("Only the Keeper or Tavern can change linked waypoints through history.");
         }
         text = changeSummary(direction, ids, before, after);
@@ -448,7 +455,16 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
         after = result.entries; ids = result.entryIds; text = result.text;
         db.prepare("DELETE FROM questlog_history WHERE thread_id = ? AND state = 'redo'").run(threadId);
         db.prepare("INSERT INTO questlog_history(thread_id, before_data, after_data, action, actor, state) VALUES (?, ?, ?, ?, ?, 'undo')").run(threadId, JSON.stringify(before), JSON.stringify(after), action.action, JSON.stringify(actor));
-        db.prepare("DELETE FROM questlog_history WHERE thread_id = ? AND id NOT IN (SELECT id FROM questlog_history WHERE thread_id = ? ORDER BY id DESC LIMIT 50)").run(threadId, threadId);
+        trimHistory(threadId);
+      }
+      if (deps.keepsLinkedWork) {
+        const afterById = new Map(after.map(e => [e.id, e]));
+        for (const entry of before) {
+          if (!entry.link) continue;
+          const link = afterById.get(entry.id)?.link;
+          if ((link?.boardQuestId !== entry.link.boardQuestId || link.waypointId !== entry.link.waypointId) && deps.keepsLinkedWork(entry))
+            throw new Error("Unfinished linked work must stay on its waypoint. Update the assignment, check the evidence, or skip optional work instead.");
+        }
       }
       saveEntries(threadId, after);
       const seen = actor.kind !== "user" && !(actor.kind === "agent" && actor.threadId !== threadId);
@@ -514,6 +530,18 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       const actor: Actor = { kind: "agent", threadId: callerThreadId };
       const entries = localEntries(threadId);
       const verdictNotes = new Set<string>();
+      const keeperCall = (action.action === "verify" || action.action === "skip") && deps.roleOf(callerThreadId)?.classId === "keeper";
+      if (keeperCall) {
+        if (!deps.keeperWaypointCall) throw new Error("Keeper waypoint authorization is unavailable.");
+        const entry = action.id ? entries.find(e => e.id === action.id) : undefined;
+        const link = action.id ? entry?.link : action.action === "skip" ? action.link : null;
+        if (!link || action.ids?.length || action.link && (action.link.boardQuestId !== link.boardQuestId || action.link.waypointId !== link.waypointId))
+          throw new Error("Name one linked entry, or a waypoint link when skipping without an entry.");
+        const reason = action.reason;
+        if (!reason) throw new Error("Give a reason for this waypoint call.");
+        return { text: deps.keeperWaypointCall(callerThreadId, { action: action.action as "verify" | "skip", link, entry, reason }), isError: false };
+      }
+      if (action.action === "skip") throw new Error("Only the Keeper can skip optional waypoint work.");
       if (threadId !== callerThreadId) {
         if (!["verify", "reject", "reopen", "list", "get"].includes(action.action)) throw new Error("Only Warden read and verdict actions can target another thread.");
         const role = deps.roleOf(callerThreadId);
@@ -563,7 +591,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
   }
   async function runTool(callerThreadId: string, input: JournalAction) {
     let assertVerdict: (() => string | void) | void;
-    if (input.action === "verify" || input.action === "reject") {
+    if (input.action === "reject" || input.action === "verify" && deps.roleOf(callerThreadId)?.classId !== "keeper") {
       try {
         const action = actionSchema.parse(input), threadId = action.threadId ?? callerThreadId;
         await ready(threadId, false);
@@ -590,7 +618,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
         saveEntries(threadId, r.entries);
         db.prepare("DELETE FROM questlog_history WHERE thread_id = ? AND state = 'redo'").run(threadId);
         db.prepare("INSERT INTO questlog_history(thread_id,before_data,after_data,action,actor,state) VALUES(?,?,?,?,?,'undo')").run(threadId, JSON.stringify(before), JSON.stringify(r.entries), "rebrief", JSON.stringify(actor));
-        db.prepare("DELETE FROM questlog_history WHERE thread_id = ? AND id NOT IN (SELECT id FROM questlog_history WHERE thread_id = ? ORDER BY id DESC LIMIT 50)").run(threadId, threadId);
+        trimHistory(threadId);
         // Unseen, so the member's next journal result tells it what changed and why.
         record(threadId, actor, "rebrief", r.ids, r.text, false);
         changed = { ids: r.ids, entries: r.entries };
@@ -620,13 +648,88 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       saveEntries(threadId, r.entries);
       db.prepare("DELETE FROM questlog_history WHERE thread_id = ? AND state = 'redo'").run(threadId);
       db.prepare("INSERT INTO questlog_history(thread_id,before_data,after_data,action,actor,state) VALUES(?,?,?,?,?,'undo')").run(threadId, JSON.stringify(before), JSON.stringify(r.entries), "linkWaypoint", JSON.stringify(actor));
-      db.prepare("DELETE FROM questlog_history WHERE thread_id = ? AND id NOT IN (SELECT id FROM questlog_history WHERE thread_id = ? ORDER BY id DESC LIMIT 50)").run(threadId, threadId);
+      trimHistory(threadId);
       record(threadId, actor, "link", [id], `assigned [${id}] ${JSON.stringify(description)} to waypoint ${link.waypointId}.`, actor.kind !== "user");
     })();
     notify(threadId, [id]); return id;
   }
+  function recordWaypoint(input: WaypointReceipt) {
+    const { keeperThreadId, link, title, at, kind, ref, actor } = input;
+    const byThread = new Map<string, JournalEntry[]>();
+    for (const entry of input.entries) {
+      if (entry.link?.boardQuestId !== link.boardQuestId || entry.link.waypointId !== link.waypointId)
+        throw new Error("The journal entry belongs to a different waypoint.");
+      const entries = byThread.get(entry.threadId) ?? [];
+      entries.push(entry);
+      byThread.set(entry.threadId, entries);
+    }
+    if (!byThread.size) {
+      if (kind === "reopen" || kind === "invalidate") return;
+      byThread.set(keeperThreadId, []);
+    }
+    const mutations: { threadId: string; ids: string[]; entries: JournalEntry[] }[] = [];
+    db.transaction(() => {
+      for (const [threadId, targets] of byThread) {
+        deps.assertWritable?.(threadId);
+        initialize(threadId);
+        const before = localEntries(threadId), after = copy(before);
+        let selected = targets.map(target => {
+          const entry = after.find(entry => entry.id === target.id);
+          if (!entry || entry.link?.boardQuestId !== link.boardQuestId || entry.link.waypointId !== link.waypointId)
+            throw new Error("The journal entries changed. Read the waypoint before acting.");
+          return entry;
+        });
+        if (!selected.length) {
+          const row = applyAction(after, { action: "add", description: title, owner: keeperThreadId }, {
+            threadId, actor, now: at, allocate: () => allocate(threadId), roleOf: deps.roleOf,
+          });
+          selected = row.entries.filter(entry => row.createdIds.includes(entry.id));
+          for (const entry of selected) entry.link = link;
+          after.splice(0, after.length, ...row.entries);
+        }
+        for (const entry of selected) stampWaypoint(entry, input);
+        const ids = selected.map(entry => entry.id);
+        saveEntries(threadId, after);
+        if (kind === "keeper" || kind === "keeper-waypoint" || kind === "skip" || kind === "reopen")
+          db.prepare("INSERT INTO questlog_history(thread_id,before_data,after_data,action,actor,state) VALUES(?,?,?,?,?,'undo')")
+            .run(threadId, JSON.stringify(before.filter(entry => ids.includes(entry.id))), JSON.stringify(selected), `waypoint:${ref}`, JSON.stringify(actor));
+        record(threadId, actor, kind === "keeper" || kind === "keeper-waypoint" ? "verify" : kind === "outside" || kind === "answer" ? "done" : kind, ids,
+          `${kind === "keeper" || kind === "keeper-waypoint" ? "Accepted" : kind === "skip" ? "Skipped" : kind === "waiver" ? "Waived" : kind === "reopen" ? "Reopened" : kind === "invalidate" ? "Reopened after the plan changed" : "Submitted"} ${link.waypointId}: ${title}.`, false);
+        mutations.push({ threadId, ids, entries: after });
+      }
+    })();
+    for (const change of mutations) notify(change.threadId, change.ids, change.entries);
+  }
+  function undoWaypoint(ref: string) {
+    const action = `waypoint:${ref}`;
+    const rows = db.prepare("SELECT thread_id, before_data, after_data FROM questlog_history WHERE action=? AND state='undo'").all(action) as { thread_id: string; before_data: string; after_data: string }[];
+    if (!rows.length) return false;
+    db.transaction(() => {
+      for (const row of rows) {
+        const entries = localEntries(row.thread_id);
+        const before = (JSON.parse(row.before_data) as unknown[]).map(entry => journalEntrySchema.parse(entry));
+        const after = (JSON.parse(row.after_data) as unknown[]).map(entry => journalEntrySchema.parse(entry));
+        const next = entries.flatMap(entry => {
+          const original = after.find(item => item.id === entry.id);
+          if (!original) return [entry];
+          const { note, updatedAt, updatedBy, ...proof } = entry;
+          if (!isDeepStrictEqual({ ...proof, note: original.note, updatedAt: original.updatedAt, updatedBy: original.updatedBy }, original)) return [entry];
+          const restored = before.find(item => item.id === entry.id);
+          if (restored) return [{ ...restored, note, updatedAt, updatedBy }];
+          if (note === original.note) return [];
+          return [{ ...entry, status: "todo" as const, doneAt: null, doneBy: null, review: null }];
+        });
+        saveEntries(row.thread_id, next);
+        const ids = after.map(entry => entry.id);
+        record(row.thread_id, { kind: "user" }, "undo", ids, "Undid the waypoint call.", false);
+        notify(row.thread_id, ids, [...entries, ...next]);
+      }
+      db.prepare("DELETE FROM questlog_history WHERE action=?").run(action);
+    })();
+    return true;
+  }
   const store = {
-    get, edit, runTool, ready, prepare, linkWaypoint, syncBoardQuests, isKeeper,
+    get, edit, runTool, ready, prepare, linkWaypoint, recordWaypoint, undoWaypoint, syncBoardQuests, isKeeper,
     journalPacing,
     reminders: () => deps.settings ? deps.settings().journalReminders : DEFAULT_SETTINGS.journal.journalReminders,
     deleteThread(threadId: string) {

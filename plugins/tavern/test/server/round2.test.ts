@@ -415,9 +415,15 @@ describe("round 2 release, ask and scout policies", () => {
     expect(await f.release(true)).toContain(replacement!.threadId);
     expect(replaced()).toHaveLength(1);
   });
-  it.each(["todo", "doing", "blocked", "rejected", "done"])(
-    "M-2 excludes released %s work and its owner without deleting its history",
-    async (status) => {
+  const replacementCases = [
+    ...["todo", "doing", "blocked", "rejected"].map(status => ({
+      status, title: `excludes released ${status} work`, projection: { state: "verified", evidenceCount: 1 },
+    })),
+    { status: "done", title: "keeps a released submission waiting for a check", projection: { state: "reported", evidenceCount: 2 } },
+  ];
+  it.each(replacementCases)(
+    "M-2 $title without losing history or crediting the previous owner",
+    async ({ status, projection }) => {
       const f = await approved();
       f.bb.sdk.threads.stop = async () => ({ ok: true });
       const previous = await f.runtime.hire("lead", "project", f.input);
@@ -434,7 +440,7 @@ describe("round 2 release, ask and scout policies", () => {
       });
       f.port.linkedEntries = () => rows;
       const waypoint = f.k.summary(f.q.id).waypoints[0]!;
-      expect(waypoint).toMatchObject({ state: "verified", evidenceCount: 1 });
+      expect(waypoint).toMatchObject(projection);
       expect(waypoint.ownerMember?.threadId).toBe(replacement.threadId);
       expect(f.port.get(previous.threadId).entries[0]?.status).toBe(status);
     },

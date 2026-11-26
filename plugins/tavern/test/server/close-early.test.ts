@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, expect, it, vi } from "vitest";
 import type { Ask } from "../../src/shared/schema";
+import { waypointLabel } from "../../src/shared/waypoint";
 import { registerTools } from "../../src/server/tools";
 import { registerRpc } from "../../src/server/rpc";
 import { readTale } from "../../src/server/tale";
@@ -53,7 +54,12 @@ it("applies one explicit close and makes the event log sufficient to explain the
   await expect(f.runtime.answerAsk(ask.id, "close-early", null, "page")).rejects.toThrow(/explicit/i);
   await f.answer(ask, "close-early");
   expect(f.k.quest(f.q.id)).toMatchObject({ phase: "done", outcome: "closed-early" });
-  expect(f.k.summary(f.q.id).waypoints.map(w => w.state)).toEqual(["waived", "waived"]);
+  const waypoints = f.k.summary(f.q.id).waypoints;
+  expect(waypoints.map(w => waypointLabel(w.state))).toEqual(["Skipped", "Skipped"]);
+  expect(waypoints.map(w => w.madeBy)).toEqual([["maker"], []]);
+  expect(f.port.linkedEntries(f.q.id)).toEqual(expect.arrayContaining(["w1", "w2"].map(waypointId => expect.objectContaining({
+    link: { boardQuestId: f.q.id, waypointId }, review: expect.objectContaining({ kind: "waiver", actor: { kind: "user" } }),
+  }))));
   const events = f.k.store.events("lead", 0, 500).filter(e => e.boardQuestId === f.q.id);
   const wrapped = events.filter(e => e.type === "quest.wrapped");
   expect(wrapped).toHaveLength(1);
@@ -64,8 +70,8 @@ it("applies one explicit close and makes the event log sufficient to explain the
   expect(readTale(f.k, f.k.summary(f.q.id))).toMatchObject({ closure: "closed-early", waivers: wrapped[0]!.data.waivers });
   expect(f.k.member("maker")?.verifiedWins).toBe(0);
   expect(f.k.store.get("serviceRecords", f.q.id)).toMatchObject({ outcome: "closed-early", waypoints: { verified: 0, waived: 2 } });
-  f.port.linkedEntries = () => [{ ...waypointEntry("maker", f.q.id), status: "verified" }];
-  expect(f.k.summary(f.q.id).waypoints[0]?.state).toBe("waived");
+  f.port.linkedEntries = () => [waypointEntry("maker", f.q.id), { ...waypointEntry("maker", f.q.id, "w1", "a2"), status: "verified" }];
+  expect(f.k.summary(f.q.id).waypoints[0]).toMatchObject({ state: "skipped", verifiedBy: null });
 });
 
 it("replaces a pending proposal and returns to build without waivers on Keep open", async () => {

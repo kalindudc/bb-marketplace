@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSP
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_usePluginId, experimental_useAppPanel, useBbNavigate, useComposer, useRpc, UrlLink, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
 import { charactersPatch, settingsContract, type SettingsPatch } from "../../shared/settings";
 import { isSetupPrompt } from "../../shared/setup";
+import { waypointLabel } from "../../shared/waypoint";
 import { RetiredKeeperNotice } from "../kit/succession";
 import { classDifferences, composerProjectId, fieldWords, rearmClassSettings, startRefusal, useClassStart } from "./class-start";
 import { rpcContract, type ThreadDecor } from "../../shared/contract";
@@ -540,7 +541,7 @@ function QuestBriefs({ quests, onQuest }: { quests: KeeperView["boardQuests"]; o
       <PhaseStrip phase={q.phase} />
       <p>{q.move.text}</p>
       <p className="m">{progress ? `${progress.done} of ${plural(progress.total, "waypoint")} settled` : "No waypoints yet"}{!!q.attention?.summaries && <> · <span>{summaryCountWords(q.attention.summaries)}</span></>}</p>
-      {q.waypoints.length > 0 && <ol aria-label="Waypoints">{q.waypoints.slice(0, 5).map(w => <li key={w.id}><span>{w.title}</span><StatusPill status={w.state}>{w.state}</StatusPill></li>)}</ol>}
+      {q.waypoints.length > 0 && <ol aria-label="Waypoints">{q.waypoints.slice(0, 5).map(w => <li key={w.id}><span>{w.title}</span><StatusPill status={w.state}>{waypointLabel(w.state)}</StatusPill></li>)}</ol>}
       <button type="button" className="lnk-btn act" aria-label={`Open the quest page for ${q.title}`} onClick={() => onQuest(q.id)}>Open quest page{q.waypoints.length > 5 && ` · ${q.waypoints.length - 5} more`}<OpensMark /></button>
     </li>;
   })}</ul>;

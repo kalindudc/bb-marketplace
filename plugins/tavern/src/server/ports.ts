@@ -8,6 +8,19 @@ export type Database = ReturnType<BbPluginApi["storage"]["database"]>;
 
 export type BoardQuestMirror = Pick<BoardQuest, "id" | "title" | "phase" | "updatedAt" | "endedAt" | "outcome" | "waivers">;
 
+export type WaypointReceipt = {
+  link: WaypointLink;
+  title: string;
+  keeperThreadId: string;
+  actor: Actor;
+  at: number;
+  ref: string;
+  kind: "keeper" | "keeper-waypoint" | "skip" | "waiver" | "reopen" | "answer" | "outside" | "invalidate";
+  entries: readonly JournalEntry[];
+  reason: string | null;
+  evidence?: JournalEntry["evidence"];
+};
+
 export interface JournalPort {
   // added by Builder A: board phase changes refresh the Keeper's read-only checklist mirrors.
   syncBoardQuests(threadId: string): void;
@@ -22,6 +35,8 @@ export interface JournalPort {
   linkWaypoint(memberThreadId: string, link: WaypointLink, description: string, owner: string, actor: Actor): string;
   /** Every entry linked to a board quest, across threads, for the waypoint roll-up. */
   linkedEntries(boardQuestId: string): JournalEntry[];
+  recordWaypoint(receipt: WaypointReceipt): void;
+  undoWaypoint(ref: string): boolean;
   /** Open entries as a few lines, for re-anchoring text. */
   openSummary(threadId: string, limit: number): string;
   /** The journal as Markdown, grouped as the panel's tracker; read-only, so a thread without a journal gets none. */
@@ -46,6 +61,8 @@ export interface JournalDeps {
   /** Private proof receipt, inside the review transaction; never an agent-visible event. */
   reviewed?(review: JournalReview): void;
   verdictSubmitted?(actor: Actor, entries: JournalEntry[]): void;
+  keeperWaypointCall?(threadId: string, input: { action: "skip" | "verify"; link: WaypointLink; entry?: JournalEntry; reason: string }): string;
+  keepsLinkedWork?(entry: JournalEntry): boolean;
   /** A verified entry is about to reopen for a newer brief: its receipt no longer proves the maker's waypoint, though the Warden keeps the check. Inside the journal transaction; must not throw. */
   superseded?(input: { entry: JournalEntry; version: number; at: number }): void;
   limits?(): LimitValues;

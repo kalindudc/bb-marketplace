@@ -2,6 +2,8 @@ import type { JournalPort } from "../../src/server/ports";
 import type { Keeper } from "../../src/server/keeper/service";
 import { journalEntrySchema } from "../../src/shared/schema";
 
+import { stampWaypoint } from "../../src/server/keeper/waypoint-journal";
+
 export function waypointEntry(threadId: string, boardQuestId: string, waypointId = "w1", id = "a1") {
   return journalEntrySchema.parse({
     threadId, id, description: "Build the checked work", parentId: null,
@@ -12,6 +14,12 @@ export function waypointEntry(threadId: string, boardQuestId: string, waypointId
   });
 }
 export function fakePort(): JournalPort {
+  let readLinks: JournalPort["linkedEntries"] = () => [];
+  const changed = new Map<string, { before: string; after: ReturnType<typeof waypointEntry> }>();
+  const added: ReturnType<typeof waypointEntry>[] = [];
+  let syntheticId = 0;
+  const undo = new Map<string, (() => void)[]>();
+  const key = ({ threadId, id }: ReturnType<typeof waypointEntry>) => `${threadId}:${id}`;
   return {
     prepare: async () => {},
     exportMarkdown: async () => "",
@@ -29,7 +37,45 @@ export function fakePort(): JournalPort {
     progress: () => ({ done: 0, total: 0, current: null, blocked: 0 }),
     edit: () => ({ message: "edited" }),
     linkWaypoint: () => "a1",
-    linkedEntries: () => [],
+    get linkedEntries() { return (questId: string) => [...readLinks(questId).map(row => {
+      const stamp = changed.get(key(row));
+      return stamp?.before === JSON.stringify(row) ? stamp.after : row;
+    }), ...added.filter(row => row.link?.boardQuestId === questId)]; },
+    set linkedEntries(read) { readLinks = read; },
+    recordWaypoint(receipt) {
+      const { entries, kind, link, keeperThreadId, ref, at } = receipt;
+      const operations: (() => void)[] = [];
+      const selected = entries.length ? entries : [journalEntrySchema.parse({
+        ...waypointEntry(keeperThreadId, link.boardQuestId, link.waypointId, `k${(syntheticId++).toString(36)}`), status: "todo",
+        evidence: [], createdAt: at, updatedAt: at,
+      })];
+      for (const entry of selected) {
+        const after = structuredClone(entry);
+        stampWaypoint(after, receipt);
+        const index = added.findIndex(item => key(item) === key(entry));
+        if (!entries.length || index >= 0) {
+          if (index >= 0) added[index] = after; else added.push(after);
+          operations.push(() => {
+            const at = added.indexOf(after);
+            if (at >= 0) { if (index >= 0) added[at] = entry; else added.splice(at, 1); }
+          });
+        } else {
+          const id = key(entry), previous = changed.get(id);
+          changed.set(id, { before: previous?.before ?? JSON.stringify(entry), after });
+          operations.push(() => {
+            if (changed.get(id)?.after === after) { if (previous) changed.set(id, previous); else changed.delete(id); }
+          });
+        }
+      }
+      if (kind === "keeper" || kind === "keeper-waypoint" || kind === "skip" || kind === "reopen") undo.set(ref, operations);
+    },
+    undoWaypoint(ref) {
+      const operations = undo.get(ref);
+      if (!operations) return false;
+      for (const undoCall of operations) undoCall();
+      undo.delete(ref);
+      return true;
+    },
     openSummary: () => "No open entries.",
     instructions: () => "Use journal.",
     dispatchCheck: () => null,

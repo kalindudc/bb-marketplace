@@ -24,6 +24,13 @@ it("shows the per-class scopes in the screenshot fixture without claiming a Wand
   const party = slot.container.querySelector('[data-fold="quest.party"]')!;
   for (const words of ["scope: worktree · enforced", "scope: open · only protected files guarded", "scope: checker · enforced", "scope: readonly · enforced"]) expect(party.textContent).toContain(words);
 });
+it("names the current journal state on the quest page", async () => {
+  const detail = structuredClone(railDetail);
+  const waypoint = detail.quest.waypoints.find(w => w.state === "doing")!;
+  waypoint.state = "reported";
+  const slot = await mount(detail);
+  expect(slot.getAllByText("Waiting for a check").length).toBeGreaterThan(0);
+});
 it("keeps a blocked waypoint's action and placement status out of the glyph column", async () => {
   const detail = structuredClone(railDetail);
   const waypoint = detail.quest.waypoints.find(w => w.state === "doing" && w.ownerMember)!;

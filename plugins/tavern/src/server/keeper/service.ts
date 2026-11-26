@@ -6,7 +6,7 @@ import { DELEGATABLE_KINDS, preapprovalWords, type DelegationKind } from "../../
 import { clusterCommandTarget, fallbackActs } from "../../scope/acts";
 import { clusterWriteCommands } from "../../scope/engine";
 import { KeeperSuccessionStore } from "./succession-store";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { KeeperCallKind } from "../../shared/undo-lane";
 import { applyAskEffect, hasUserAskOutcome, isNoticeEffect, keeperOwnsBlock, keeperRecoveryOptions, needsKeeperReview, askMemberTarget, scopeAskMember, type EffectHandlers, type AskEffect } from "../ask-effects";
@@ -21,7 +21,7 @@ import { leadChainView } from "./lead-chain-view";
 import { memberDetails, memberHost, outstandingArchivedPlacement, patchMemberDetails, transitionMember } from "../member-engagement";
 import { PlacementStore } from "../placement/store";
 import { wasReleased } from "../../shared/member-engagement";
-import type { JournalPort } from "../ports";
+import type { JournalPort, WaypointReceipt } from "../ports";
 import { messageKey, SCOPE_DENIAL_TEXT } from "../../shared/text";
 import { z } from "zod";
 import { DEFAULT_SETTINGS, type TavernSettings } from "../../shared/settings";
@@ -36,7 +36,9 @@ import {
   settleWaypointSchema,
   reportSchema,
   type Decision,
+  type Waypoint,
   type WaypointState,
+  readStoredActor,
   routeSchema,
   ruleSchema,
   type Ask,
@@ -55,6 +57,7 @@ import { tags, type BoardQuestSummary } from "../../shared/contract";
 import { KeeperStore, type ReviewTarget } from "./store";
 import { renderRestatement } from "./restatement";
 import { planDiff } from "./plan-diff";
+import { waypointProof } from "./waypoint-journal";
 import { checkerAssignments } from "../assignments";
 import { reviewLimitation } from "../../shared/check-posture";
 import { KeeperMemory } from "./memory";
@@ -755,6 +758,7 @@ export class Keeper {
       phase: "scout",
       planVersion: 0,
       greenlitVersion: null,
+      waypointJournal: true,
       createdAt: this.now(),
       updatedAt: this.now(),
       endedAt: null,
@@ -1019,7 +1023,10 @@ export class Keeper {
         slot.permanent.decisionId = decision.id;
       }
       const diff = previous && planDiff(previous, plan);
-      if (previous && diff) this.carryWaypointAcceptances(q, plan, diff);
+      if (previous && diff) {
+        if (q.waypointJournal) this.invalidateWaypointReceipts(q, plan, diff);
+        else this.carryWaypointAcceptances(q, plan, diff);
+      }
       this.store.put("plans", `${q.id}:${plan.version}`, plan);
       const updated = { ...q, planVersion: plan.version, ...(spendProposal || q.spendProposal ? { spendProposal: spendProposal ?? null } : {}), ...(leadPath.length ? { greenlitVersion: null, checkPlanVersion: undefined } : !needsGreenlight ? { checkPlanVersion: plan.version } : {}), updatedAt: this.now() };
       const data = { version: plan.version, routeId: r?.id ?? null };
@@ -1080,6 +1087,21 @@ export class Keeper {
     this.changed(threadId, q.id);
     return plan;
   }
+  private invalidateWaypointReceipts(q: BoardQuest, plan: Plan, diff: ReturnType<typeof planDiff>) {
+    const before = this.store.get("plans", `${q.id}:${q.planVersion}`)!;
+    const changed = new Set([...diff.waypoints.removed, ...diff.waypoints.changed.filter(w =>
+      plan.waypoints.find(waypoint => waypoint.id === w.id)?.actor !== "agent" ||
+      Object.keys(w.fields).some(field => field !== "owner"),
+    )].map(w => w.id));
+    if (!changed.size) return;
+    const entries = this.journal.linkedEntries(q.id).filter(e => e.link && changed.has(e.link.waypointId) && e.review?.kind);
+    for (const waypoint of before.waypoints.filter(w => changed.has(w.id))) {
+      const affected = entries.filter(e => e.link?.waypointId === waypoint.id);
+      if (!affected.length) continue;
+      this.journal.recordWaypoint({ link: { boardQuestId: q.id, waypointId: waypoint.id }, keeperThreadId: q.keeperThreadId,
+        title: waypoint.title, kind: "invalidate", entries: affected, ref: `${q.id}:${plan.version}`, at: this.now(), actor: { kind: "tavern" }, reason: null });
+    }
+  }
   private carryWaypointAcceptances(q: BoardQuest, plan: Plan, diff: ReturnType<typeof planDiff>) {
     const calls = this.waypointCalls(q.id, q.planVersion);
     if (![...calls.values()].some(call => call.waypointCall?.as === "accepted")) return;
@@ -1127,47 +1149,80 @@ export class Keeper {
       holds: plan.waypoints.map(w => w.id),
     }, { planVersion: plan.version });
   }
-  settle(threadId: string, input: Parameters<typeof settleWaypointSchema.parse>[0], legacySkipAskId?: string): Decision | Ask {
+  keepsLinkedWork(entry: JournalEntry) {
+    if (!entry.link) return false;
+    const { boardQuestId, waypointId } = entry.link;
+    const q = this.store.get("quests", boardQuestId);
+    if (!q?.waypointJournal || !isOpenQuest(q)) return false;
+    const waypoint = this.store.get("plans", `${q.id}:${q.planVersion}`)?.waypoints.find(w => w.id === waypointId);
+    return !!waypoint && !waypointProof(waypoint, entry);
+  }
+  journalWaypointCall(threadId: string, { action, link, entry, reason }: {
+    action: "verify" | "skip"; link: WaypointReceipt["link"]; entry?: JournalEntry; reason: string;
+  }) {
+    const result = this.settle(threadId, { ...link, as: action === "verify" ? "accepted" : "skipped", reason }, undefined, entry);
+    return "question" in result ? `Waypoint call needs the user's answer (${result.id}).` : result.text;
+  }
+  settle(threadId: string, input: Parameters<typeof settleWaypointSchema.parse>[0], legacySkipAskId?: string, entry?: JournalEntry): Decision | Ask {
     const call = settleWaypointSchema.parse(input);
-    const target = this.waypointForSettlement(threadId, call);
+    const target = this.waypointForSettlement(threadId, call, entry);
     const { q, w } = target;
     const shift = !legacySkipAskId && this.keeperCallShift(threadId, call.as);
     if (shift) {
       const { boardQuestId, ...effect } = call;
       const verb = { accepted: "Accept", skipped: "Skip", open: "Reopen" }[call.as];
-      return this.askForKeeperCall(threadId, boardQuestId, { ...effect, type: "settle-waypoint", planVersion: q.planVersion },
+      return this.askForKeeperCall(threadId, boardQuestId, {
+        ...effect, type: "settle-waypoint", planVersion: q.planVersion,
+        ...(q.waypointJournal ? { entries: this.waypointCallEntries(target.targets), ...(entry ? { entryOnly: true as const } : {}) } : {}),
+      },
         `${verb} ${w.id}: ${w.title}?`, verb, `${verb} this waypoint.`, "Leave the waypoint unchanged.", "The Keeper waits for your answer on this waypoint.");
     }
     return this.recordSettlement(threadId, call, target, legacySkipAskId);
   }
-  private waypointForSettlement(threadId: string, { boardQuestId, waypointId, as }: ReturnType<typeof settleWaypointSchema.parse>) {
+  private waypointCallEntries(entries: readonly JournalEntry[]) {
+    return entries.map(({ threadId, id, link, status, evidence, review, doneAt }) => ({ threadId, id,
+      fingerprint: createHash("sha256").update(JSON.stringify({ link, status, evidence, review, doneAt })).digest("hex"),
+    })).sort((a, b) => a.threadId.localeCompare(b.threadId) || a.id.localeCompare(b.id));
+  }
+  private waypointForSettlement(threadId: string, { boardQuestId, waypointId, as }: ReturnType<typeof settleWaypointSchema.parse>, entry?: Pick<JournalEntry, "threadId" | "id">) {
     const q = this.liveQuest(threadId, boardQuestId);
     this.assertQuestNotHeld(q.id);
     this.guard(threadId, q.id);
     const submission = { waypointId, entries: [] as JournalEntry[] };
     const w = this.readQuestSummary(q.id, undefined, submission).waypoints.find(w => w.id === waypointId);
     if (!w) throw new Error("Settlement must name a waypoint in the current plan");
+    const linked = entry ? submission.entries.filter(e => e.threadId === entry.threadId && e.id === entry.id) : submission.entries;
+    if (entry && !linked.length) throw new Error("That journal entry is not current work on this waypoint.");
+    const acceptance = submission.entries.find(e => e.review?.kind === "keeper-waypoint");
+    const pending = linked.filter(e => !waypointProof(w, e, acceptance));
+    const targets = as === "accepted" ? pending.filter(e => (e.status === "done" || e.status === "verified") && e.evidence.length)
+      : as === "skipped" ? pending : linked.filter(e => e.review?.kind === "keeper" || e.review?.kind === "keeper-waypoint" || e.review?.kind === "skip");
     if (as === "accepted") {
       if (w.actor === "outside" && (w.gate?.answer == null || w.gate.answeredAt === null))
         throw new Error("Record the outside gate answer before accepting this waypoint");
-      if (w.check !== "keeper" || !(w.actor === "outside" ? !settled(w) : w.actor === "agent" && w.state === "reported"))
-        throw new StudyRefusal("waypoint.report-required", "Only a reported or answered outside waypoint with a Keeper check can be accepted");
+      if (w.check !== "keeper" || (q.waypointJournal ? !targets.length : !(w.actor === "outside" ? !settled(w) : w.actor === "agent" && w.state === "reported")))
+        throw new StudyRefusal("waypoint.report-required", "Only a reported journal entry with evidence and a Keeper check can be accepted.");
     }
-    if (as === "skipped" && (!w.optional || settled(w)))
-      throw new Error("Only an unsettled optional waypoint can be skipped");
-    if (as === "open" && !(w.state === "skipped" || w.state === "accepted"))
-      throw new Error("Only a waypoint the Keeper accepted or skipped can be reopened");
+    if (as === "skipped" && (!w.optional || settled(w) || entry && !targets.length))
+      throw new Error("Only unsettled optional work can be skipped.");
+    if (as === "open" && (q.waypointJournal ? !targets.length : !(w.state === "skipped" || w.state === "accepted")))
+      throw new Error("Only work the Keeper accepted or skipped can be reopened.");
     const acceptedEntries = as === "accepted" && w.actor === "agent"
-      ? submission.entries.map(({ threadId, id }) => ({ threadId, id })) : undefined;
-    return { q, w, acceptedEntries };
+      ? (q.waypointJournal ? targets : submission.entries).map(({ threadId, id }) => ({ threadId, id })) : undefined;
+    return { q, w, acceptedEntries, targets };
   }
-  private recordSettlement(threadId: string, { boardQuestId, waypointId, as, reason }: ReturnType<typeof settleWaypointSchema.parse>, { q, w, acceptedEntries }: ReturnType<Keeper["waypointForSettlement"]>, askId?: string, answerReceipt?: string) {
+  private recordSettlement(threadId: string, { boardQuestId, waypointId, as, reason }: ReturnType<typeof settleWaypointSchema.parse>, { q, w, acceptedEntries, targets }: ReturnType<Keeper["waypointForSettlement"]>, askId?: string, answerReceipt?: string) {
     const words = as === "open" ? "Reopened" : as === "accepted" ? "Accepted" : "Skipped";
     return this.store.atomic(() => {
       const decision = this.decide(threadId, { boardQuestId, text: `${words} ${waypointId}: ${w.title}`, why: reason, reversible: true,
         ...(askId ? { source: "ask", sourceRef: askId } : { source: "keeper" }),
       }, undefined, { waypointCall: { planVersion: q.planVersion, waypointId, as, acceptedEntries }, answerReceipt });
       if (!askId) authorize(as === "accepted" ? "acceptWaypoint" : as === "skipped" ? "skipWaypoint" : "reopenWaypoint", { level: "keeper", receipt: decision.id });
+      if (q.waypointJournal) this.journal.recordWaypoint({
+        link: { boardQuestId, waypointId }, title: w.title, keeperThreadId: q.keeperThreadId,
+        at: decision.createdAt, ref: decision.id, actor: answerReceipt ? { kind: "user" } : { kind: "agent", threadId },
+        kind: as === "accepted" ? "keeper" : as === "skipped" ? "skip" : "reopen", entries: targets, reason,
+      });
       if (!askId || answerReceipt) this.withdrawClosingForWaypointChange(q);
       return decision;
     });
@@ -1743,8 +1798,11 @@ export class Keeper {
           if (effect.type !== "settle-waypoint" || optionId !== "approve") return;
           if (by !== "user" || receipt?.act !== "answerAsk" || !ask.boardQuestId) throw new Error("This waypoint needs your explicit answer.");
           const call = { boardQuestId: ask.boardQuestId, waypointId: effect.waypointId, as: effect.as, reason: effect.reason };
-          const target = this.waypointForSettlement(ask.keeperThreadId, call);
+          const one = effect.entryOnly ? effect.entries?.[0] : undefined;
+          const target = this.waypointForSettlement(ask.keeperThreadId, call, one);
           if (target.q.planVersion !== effect.planVersion) throw new Error("This waypoint ask belongs to an old plan.");
+          if (effect.entries && !isDeepStrictEqual(effect.entries, this.waypointCallEntries(target.targets)))
+            throw new Error("The submitted journal entries changed. Open a fresh waypoint ask.");
           this.recordSettlement(ask.keeperThreadId, call, target, ask.id, ask.id);
         },
         "user-waypoint": effect => {
@@ -1752,7 +1810,11 @@ export class Keeper {
           const q = this.quest(ask.boardQuestId);
           const waypoint = this.store.get("plans", `${q.id}:${q.planVersion}`)?.waypoints.find(w => w.id === effect.waypointId);
           if (q.planVersion !== effect.planVersion || waypoint?.actor !== "user") throw new Error("This waypoint ask belongs to an old plan.");
-          if (effect.completeOn.includes(optionId)) this.withdrawClosingForWaypointChange(q);
+          if (effect.completeOn.includes(optionId)) {
+            const option = ask.options.find(option => option.id === optionId)!;
+            if (q.waypointJournal) this.recordWaypointAnswer(q, waypoint, ask.id, this.now(), option.label, note);
+            this.withdrawClosingForWaypointChange(q);
+          }
         },
         "soft-limit": effect => {
           if (effect.type !== "soft-limit" || optionId !== "approve") return;
@@ -1996,7 +2058,8 @@ export class Keeper {
         const ask = this.store.get("asks", d.askId);
         if (ask?.answer?.by === "keeper" && ask.answer.optionId === d.optionId && (!ask.boardQuestId || isOpenQuest(this.quest(ask.boardQuestId)))) this.store.put("asks", ask.id, { ...ask, state: "open", answer: null, unsure: true, lane: "user" });
       }
-      if (q && affectsCurrentWaypoint) this.withdrawClosingForWaypointChange(q);
+      if (q && (q.waypointJournal && d.waypointCall && this.journal.undoWaypoint(d.id) || affectsCurrentWaypoint))
+        this.withdrawClosingForWaypointChange(q);
       if (d.checkChange && q && (q.greenlitVersion ?? 0) < d.checkChange.planVersion) {
         const previous = this.store.get("plans", `${q.id}:${d.checkChange.previousVersion}`);
         const current = this.store.get("plans", `${q.id}:${q.planVersion}`);
@@ -2428,12 +2491,125 @@ export class Keeper {
     }
     return calls;
   }
+  private recordWaypointAnswer(q: BoardQuest, waypoint: Waypoint, ref: string, at: number, label: string, note: string | null) {
+    const entries = this.journal.linkedEntries(q.id).filter(e => e.link?.waypointId === waypoint.id && e.threadId === q.keeperThreadId);
+    if (entries.length > 1) throw new Error("More than one journal entry matches this user waypoint.");
+    this.journal.recordWaypoint({ link: { boardQuestId: q.id, waypointId: waypoint.id }, title: waypoint.title, keeperThreadId: q.keeperThreadId,
+      actor: { kind: "user" }, at, ref, kind: "answer", entries, reason: null,
+      evidence: [{ kind: "note", ref, detail: note ? `${label}: ${note}`.slice(0, 2000) : label, exitCode: null }],
+    });
+  }
+  async migrateWaypointJournal(warn: (message: string) => void = console.warn) {
+    for (const q of this.store.all("quests").filter(q => isOpenQuest(q) && !q.waypointJournal)) {
+      try {
+        if (q.planVersion) await this.journal.prepare(q.keeperThreadId);
+        this.store.atomic(() => {
+          const current = this.quest(q.id);
+          if (!isOpenQuest(current) || current.waypointJournal) return;
+          const plan = this.store.get("plans", `${q.id}:${current.planVersion}`);
+          const legacyEntries = new Map<string, JournalEntry[]>();
+          const legacy = this.readQuestSummary(q.id, undefined, undefined, legacyEntries);
+          const calls = this.waypointCalls(q.id, current.planVersion);
+          const warning: Record<string, string> = {};
+          const linked = this.journal.linkedEntries(q.id);
+          for (const w of legacy.waypoints) {
+            const call = calls.get(w.id);
+            const link = { boardQuestId: q.id, waypointId: w.id };
+            const base = { link, title: w.title, keeperThreadId: current.keeperThreadId };
+            const all = linked.filter(e => e.link?.waypointId === w.id);
+            if (w.actor === "outside" && w.gate?.answer != null && w.gate.answeredAt !== null) {
+              if (all.filter(e => e.threadId === current.keeperThreadId).length > 1) {
+                warning[w.id] = "The old outside reply matches more than one journal entry. Record it against the right entry.";
+                continue;
+              }
+              this.memory.recordGateReply(w.gate, w.title);
+            }
+            if (w.state === "accepted") {
+              const refs = call?.waypointCall?.acceptedEntries;
+              const matches = w.actor === "outside" ? this.journal.linkedEntries(q.id).filter(e => e.threadId === current.keeperThreadId && e.link?.waypointId === w.id)
+                : legacyEntries.get(w.id) ?? [];
+              if (!call || !matches.length || refs && matches.length !== refs.length ||
+                  matches.some(e => !e.evidence.length || !["done", "verified"].includes(e.status))) {
+                warning[w.id] = "The old acceptance does not identify exact submitted journal evidence. Check the work again.";
+                continue;
+              }
+              const receipt = { ...base, at: call.createdAt, ref: call.id, reason: call.why,
+                actor: call.answerReceipt ? { kind: "user" as const } : { kind: "agent" as const, threadId: call.keeperThreadId } };
+              if (w.actor === "outside" || refs) this.journal.recordWaypoint({ ...receipt, kind: "keeper", entries: matches });
+              else this.journal.recordWaypoint({ ...receipt, kind: "keeper-waypoint", entries: [], evidence: matches.flatMap(e => e.evidence) });
+            } else if (w.state === "skipped" || w.state === "waived") {
+              const prior = call?.waypointCall?.as === "skipped" ? { at: call.createdAt, ref: call.id, reason: call.why,
+                actor: call.answerReceipt ? { kind: "user" as const } : { kind: "agent" as const, threadId: call.keeperThreadId } } : null;
+              const waiver = w.waiver && this.store.get("asks", w.waiver.askId);
+              const event = w.state === "skipped" && !prior ? this.store.db.prepare(`SELECT id, at, actor FROM tavern_events WHERE board_quest_id=? AND type='waypoint.skipped'
+                AND json_extract(data,'$.version')=? AND json_extract(data,'$.waypointId')=? ORDER BY id DESC LIMIT 1`).get(q.id, current.planVersion, w.id) as { id: number; at: number; actor: string } | undefined : undefined;
+              const source = prior ?? (w.state === "waived" && waiver?.answer?.by === "user" && waiver.answer.optionId === "close-early" &&
+                waiver.effect?.type === "close-early" && waiver.boardQuestId === q.id &&
+                waiver.effect.draft.unsettled.some(entry => entry.waypointId === w.id)
+                ? { at: waiver.answer.at, ref: waiver.id, actor: { kind: "user" as const }, reason: w.waiver!.reason }
+                : event ? { at: event.at, ref: String(event.id), actor: readStoredActor(event.actor), reason: w.resolutionReason ?? "Optional work was skipped." } : null);
+              if (!source) {
+                warning[w.id] = "The old skip or waiver does not identify who authorized it. This work stays open.";
+                continue;
+              }
+              this.journal.recordWaypoint({ ...base, ...source, kind: w.state === "waived" ? "waiver" : "skip", entries: all.filter(e => !waypointProof(w, e)) });
+            } else if (call?.waypointCall?.as === "accepted") {
+              warning[w.id] = "The old acceptance is not backed by current submitted proof. Check the work again.";
+            } else if (w.actor === "user" && w.state === "done" && !all.some(e => waypointProof(w, e))) {
+              const answer = plan && this.userWaypointAnswers(current, plan).get(w.id);
+              if (answer?.done && answer.ask.answer?.by === "user" && all.length <= 1)
+                this.recordWaypointAnswer(current, w, answer.ask.id, answer.ask.answer.at, answer.label, answer.ask.answer.note);
+              else warning[w.id] = "The old answer does not identify an unambiguous user completion. Ask again.";
+            }
+          }
+          if (Object.keys(warning).length) this.store.event(this.now(), current.keeperThreadId, q.id, "journal.migration-needs-proof",
+            "Some old waypoint calls could not be tied to exact journal evidence.", { waypoints: warning }, { kind: "tavern" });
+          this.store.put("quests", q.id, { ...current, waypointJournal: true });
+        });
+      } catch (error) {
+        warn(`Waypoint journal migration skipped ${q.id}; will retry next start: ${String(error)}`);
+      }
+    }
+  }
+  recordWaypointWaivers(q: BoardQuest, waivers: NonNullable<BoardQuest["waivers"]>, ref: string, at: number) {
+    if (!q.waypointJournal) return;
+    for (const waiver of waivers) {
+      const submission = { waypointId: waiver.waypointId, entries: [] as JournalEntry[] };
+      const waypoint = this.readQuestSummary(q.id, undefined, submission).waypoints.find(w => w.id === waiver.waypointId);
+      if (!waypoint) throw new Error("The waiver names a waypoint that is no longer on the plan.");
+      const acceptance = submission.entries.find(e => e.review?.kind === "keeper-waypoint");
+      this.journal.recordWaypoint({ link: { boardQuestId: q.id, waypointId: waypoint.id }, title: waypoint.title, keeperThreadId: q.keeperThreadId,
+        actor: { kind: "user" }, at, ref, kind: "waiver", reason: waiver.reason, entries: submission.entries.filter(e => !waypointProof(waypoint, e, acceptance)),
+      });
+    }
+  }
+  private userWaypointAnswers(q: BoardQuest, storedPlan: Plan) {
+    const answers = new Map<string, { done: boolean; label: string; ask: Ask }>();
+    const plans = new Map([[q.planVersion, storedPlan]]);
+    for (const ask of this.store.answeredUserWaypoints(q.id)) {
+      const effect = ask.effect;
+      if (ask.keeperThreadId !== q.keeperThreadId || effect?.type !== "user-waypoint" || !ask.answer || effect.planVersion > q.planVersion) continue;
+      const waypoint = storedPlan.waypoints.find(w => w.id === effect.waypointId && w.actor === "user");
+      if (!waypoint) continue;
+      let version = q.planVersion;
+      for (; version > effect.planVersion; version--) {
+        const previous = plans.get(version - 1) ?? this.store.get("plans", `${q.id}:${version - 1}`);
+        if (previous) plans.set(version - 1, previous);
+        if (!isDeepStrictEqual(waypoint, previous?.waypoints.find(w => w.id === waypoint.id))) break;
+      }
+      if (version !== effect.planVersion || answers.get(waypoint.id)?.done) continue;
+      const option = ask.options.find(o => o.id === ask.answer!.optionId);
+      if (option) answers.set(waypoint.id, { done: effect.completeOn.includes(option.id), label: option.label, ask });
+    }
+    return answers;
+  }
   summary(id: string, planVersion?: number): BoardQuestSummary {
     return this.readQuestSummary(id, planVersion);
   }
-  private readQuestSummary(id: string, planVersion?: number, submission?: { waypointId: string; entries: JournalEntry[] }): BoardQuestSummary {
+  private readQuestSummary(id: string, planVersion?: number, submission?: { waypointId: string; entries: JournalEntry[] }, legacyEntries?: Map<string, JournalEntry[]>): BoardQuestSummary {
     const current = this.quest(id);
     const q = planVersion === undefined ? current : { ...current, planVersion };
+    const liveJournal = q.waypointJournal && !legacyEntries && q.planVersion === current.planVersion;
     const storedPlan = this.store.get("plans", `${id}:${q.planVersion}`),
       members = this.store.query("members", "boardQuestId", id),
       entries = this.journal.linkedEntries(id);
@@ -2458,31 +2634,13 @@ export class Keeper {
         ]),
       ].filter((threadId) => wasReleased(memberOf(threadId))),
     );
-    const calls = this.waypointCalls(id, q.planVersion);
+    const calls = liveJournal ? new Map<string, Decision>() : this.waypointCalls(id, q.planVersion);
     const leadSeats = this.store.leadLinksBy("parentQuestId", q.id);
     const asks = this.store.openAsks(q.keeperThreadId, id).map(ask => currentAskNames(this.store, ask));
     const userAsks = new Map(asks.flatMap(ask => ask.effect?.type === "user-waypoint" && ask.effect.planVersion === q.planVersion
       ? [[ask.effect.waypointId, ask.id] as const] : []));
-    const userAnswers = new Map<string, { done: boolean; label: string }>();
-    if (storedPlan?.waypoints.some(w => w.actor === "user")) {
-      const plans = new Map([[q.planVersion, storedPlan]]);
-      for (const ask of this.store.answeredUserWaypoints(q.id)) {
-        const effect = ask.effect;
-        if (ask.keeperThreadId !== q.keeperThreadId || effect?.type !== "user-waypoint" || !ask.answer || effect.planVersion > q.planVersion) continue;
-        const waypoint = storedPlan.waypoints.find(w => w.id === effect.waypointId && w.actor === "user");
-        if (!waypoint) continue;
-        // An answer carries across revisions only while the waypoint stays unchanged.
-        let version = q.planVersion;
-        for (; version > effect.planVersion; version--) {
-          const previous = plans.get(version - 1) ?? this.store.get("plans", `${id}:${version - 1}`);
-          if (previous) plans.set(version - 1, previous);
-          if (!isDeepStrictEqual(waypoint, previous?.waypoints.find(w => w.id === waypoint.id))) break;
-        }
-        if (version !== effect.planVersion || userAnswers.get(waypoint.id)?.done) continue;
-        const option = ask.options.find(o => o.id === ask.answer!.optionId);
-        if (option) userAnswers.set(waypoint.id, { done: effect.completeOn.includes(option.id), label: option.label });
-      }
-    }
+    const userAnswers = storedPlan?.waypoints.some(w => w.actor === "user") ? this.userWaypointAnswers(q, storedPlan) : new Map();
+    const migration = liveJournal ? this.store.latestQuestEvent(q.id, "journal.migration-needs-proof") : null;
     const waypoints: BoardQuestSummary["waypoints"] = (
       plan?.waypoints ?? []
     ).map((w) => {
@@ -2492,13 +2650,17 @@ export class Keeper {
       const isLeadResult = (e: JournalEntry) => leadSeats.some(link => link.parentWaypointId === w.id && link.result?.entryId === e.id && link.result.makerThreadId === e.threadId);
       const candidates = entries.filter(e =>
         e.link?.boardQuestId === id && e.link.waypointId === w.id &&
-        (w.actor === "user" ? e.threadId === q.keeperThreadId : w.actor === "agent" && e.owner !== "You" &&
-          (recordsSubject ? e.threadId === q.keeperThreadId : e.threadId !== q.keeperThreadId)) &&
+        (liveJournal && e.threadId === q.keeperThreadId && (e.review?.kind === "keeper-waypoint" || e.review?.kind === "skip" || e.review?.kind === "waiver" || w.actor === "outside") ||
+          (w.actor === "user" ? e.threadId === q.keeperThreadId : w.actor === "agent" && e.owner !== "You" &&
+          (recordsSubject ? e.threadId === q.keeperThreadId : e.threadId !== q.keeperThreadId))) &&
         memberOf(e.threadId)?.classId !== "warden" &&
         (recordsSubject || !memberOf(e.threadId)?.leadLinkId || isLeadResult(e)),
       );
       const currentWork = candidates.some(e => !released.has(e.threadId));
-      let linked = candidates.filter(e =>
+      const submitted = (e: JournalEntry) => (e.status === "done" || e.status === "verified") && e.evidence.length > 0;
+      const keepIncomplete = (e: JournalEntry) => !released.has(e.threadId) || candidates.every(other =>
+        e.threadId === other.threadId || released.has(other.threadId) && !(other.createdAt >= e.createdAt && waypointProof(w, other)));
+      let linked = liveJournal ? candidates.filter(e => submitted(e) || waypointProof(w, e) || keepIncomplete(e)) : candidates.filter(e =>
         isLeadResult(e) || !released.has(e.threadId) || e.status === "verified" ||
         e.status === "done" && (w.check === "none" || w.check === "keeper" && !currentWork || call?.waypointCall?.as === "accepted"));
       const journalMakers = new Set(linked.map(entry => entry.threadId));
@@ -2507,7 +2669,7 @@ export class Keeper {
       const ownerMember = owners.find(m => m.threadId === w.owner && !released.has(m.threadId)) ??
         owners.find(m => !released.has(m.threadId)) ??
         owners.find(m => journalMakers.has(m.threadId)) ?? null;
-      const legacySkip = w.optional && !call && this.store.get("skips", `${id}:${q.planVersion}:${w.id}`);
+      const legacySkip = !liveJournal && w.optional && !call && this.store.get("skips", `${id}:${q.planVersion}:${w.id}`);
       const gate = this.memory.gateFor(q.id, q.planVersion, w.id);
       const hasReport = (rows: JournalEntry[]) => rows.length > 0 && rows.every(e =>
         e.status === "verified" || e.status === "done" && (w.check === "warden" || e.evidence.length > 0));
@@ -2518,9 +2680,39 @@ export class Keeper {
       const rejected = linked.find(e => e.status === "rejected");
       const userAnswer = userAnswers.get(w.id);
       let state: WaypointState;
-      let resolutionReason: string | null = userAnswer && !userAnswer.done ? `You answered “${userAnswer.label}”; this waypoint stays open.` : null;
+      const migrationReason = (migration?.data.waypoints as Record<string, unknown> | undefined)?.[w.id];
+      let resolutionReason: string | null = userAnswer && !userAnswer.done ? `You answered “${userAnswer.label}”; this waypoint stays open.` : typeof migrationReason === "string" ? migrationReason : null;
       let acceptedBy: string | null = null;
-      if (waiver) {
+      let readyEvidenceCount: number | undefined;
+      let creditable: JournalEntry[] = [];
+      if (liveJournal) {
+        const acceptance = linked.find(entry => entry.review?.kind === "keeper-waypoint");
+        const proof = linked.map(entry => waypointProof(w, entry, acceptance));
+        const left = linked.filter((_, i) => !proof[i]);
+        if (w.check === "warden" || w.check === "keeper")
+          readyEvidenceCount = left.reduce((count, e) => count + (e.status === "done" || e.status === "verified" ? e.evidence.length : 0), 0);
+        const skipped = linked.find((_, i) => proof[i] === "skip" || proof[i] === "waiver");
+        const accepted = linked.find((_, i) => proof[i] === "accepted");
+        if (linked.length && !left.length) {
+          creditable = linked.filter((entry, i) => entry.evidence.length > 0 &&
+            (proof[i] === "verified" || proof[i] === "accepted" || proof[i] === "waiver" ||
+              (w.check === "none" && proof[i] === "done")));
+          state = skipped ? "skipped" : w.check === "warden" ? "verified" : accepted ? "accepted" : "done";
+          if (skipped?.review) resolutionReason = skipped.review.kind === "waiver" ? `Waived by you: ${skipped.review.reason ?? "Closed early."}` : skipped.review.reason;
+          else if (accepted) {
+            const review = (accepted.review?.kind === "keeper" ? accepted : acceptance)?.review;
+            resolutionReason = review?.reason ?? null;
+            const actor = review?.actor;
+            const keeper = actor?.kind === "agent" ? this.member(actor.threadId) : null;
+            acceptedBy = actor?.kind === "user" ? "you" : keeper ? this.name(keeper) : "the Keeper";
+          } else if (w.actor === "user" && userAnswer?.done) resolutionReason = `You answered “${userAnswer.label}”.`;
+        } else if (left.some(e => e.status === "blocked" || e.status === "rejected") || w.actor === "outside" && gate && !gate.answer) {
+          state = left.some(e => e.status === "rejected") ? "rejected" : "blocked";
+          resolutionReason ??= left.find(e => e.status === "blocked")?.note ?? (gate && !gate.answer ? `Waiting for a reply from ${gate.askedWho}.` : null);
+        } else if (left.some(e => e.status === "doing" && !released.has(e.threadId))) state = "doing";
+        else if ((w.check === "warden" || w.check === "keeper") && left.length && left.every(e => (e.status === "done" || e.status === "verified") && e.evidence.length)) state = "reported";
+        else state = linked.length ? "todo" : "planned";
+      } else if (waiver) {
         state = "waived";
         resolutionReason = `${waiverWords(waiver.state)}; closed early at your request: ${waiver.reason}`;
       } else if (w.optional && (call?.waypointCall?.as === "skipped" || legacySkip)) {
@@ -2549,8 +2741,12 @@ export class Keeper {
       else if (reported && w.actor === "agent") state = "reported";
       else state = linked.length ? "todo" : "planned";
       if (submission?.waypointId === w.id) submission.entries = linked;
-      const madeBy = !recordsSubject && (state === "reported" || state === "verified" || (state === "accepted" || state === "done") && w.actor === "agent")
-        ? [...new Set(linked.map(e => e.threadId))] : [];
+      legacyEntries?.set(w.id, linked);
+      if (!liveJournal && (state === "verified" || state === "accepted" || state === "waived" ||
+        (w.check === "none" && state === "done")))
+        creditable = linked.filter(entry => entry.evidence.length > 0);
+      const madeBy = !recordsSubject && w.actor === "agent"
+        ? [...new Set(creditable.filter(e => e.review?.kind !== "keeper-waypoint").map(e => e.threadId))] : [];
       const checkedBy = state === "verified" ? [...new Set(linked.flatMap(entry => {
         const author = entry.review?.actor ?? entry.updatedBy;
         if (author.kind !== "agent" || author.threadId === entry.threadId) return [];
@@ -2566,7 +2762,8 @@ export class Keeper {
         ...(waiver ? { waiver } : {}),
         acceptedBy,
         ownerMember,
-        evidenceCount: linked.reduce((n, e) => n + e.evidence.length, 0),
+        evidenceCount: linked.reduce((n, e) => n + (e.review?.kind === "keeper-waypoint" && linked.length > 1 ? 0 : e.evidence.length), 0),
+        ...(readyEvidenceCount !== undefined ? { readyEvidenceCount } : {}),
         madeBy,
         checkedBy,
         verifiedBy: checkedBy[0] ?? null,

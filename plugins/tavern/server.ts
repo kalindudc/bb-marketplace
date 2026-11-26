@@ -81,6 +81,8 @@ export default async function tavern(bb: BbPluginApi) {
   const journal = register(bb, db, {
     studyTool: (tool, threadId, input, call) => runtime ? runtime.study.tool(tool, threadId, input, call) : Promise.resolve(call(() => {})),
     verdictSubmitted: (actor, entries) => keeper.recordWardenRound(actor, entries),
+    keeperWaypointCall: (threadId, input) => keeper.journalWaypointCall(threadId, input),
+    keepsLinkedWork: entry => keeper.keepsLinkedWork(entry),
     assertWritable: threadId => keeper.succession.assertMutable(threadId),
     isRetired: threadId => keeper.succession.fence(threadId)?.kind === "retired",
     reviewed: review => {
@@ -117,6 +119,9 @@ export default async function tavern(bb: BbPluginApi) {
       bb.log.warn(`Your ${id} class copy (${path}) is older than the shipped file and differs from it. Compare the two in Settings, Classes and models. Tavern still uses your copy.`);
   } catch (error) { bb.log.warn(`Could not check class copies against the shipped files: ${String(error)}`); }
   runtime = new TavernRuntime(bb, keeper, registry, keeperCards);
+  const warnMigration = (message: string) => bb.log.warn(message);
+  try { await keeper.migrateWaypointJournal(warnMigration); }
+  catch (error) { warnMigration(`Waypoint journal migration did not finish: ${String(error)}`); }
   const burn = new BurnCosts(bb);
   const insights = new InsightsReader(db, settings, Date.now, (data, from, to) => burn.read(data, from, to), () => ({ characters: runtime.snapshot().characters.map(character => ({ id: character.id, classIds: character.classes })), serviceRecords: runtime.serviceRecords.read() }));
   runtime.enableSettings(settings, insights);

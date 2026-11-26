@@ -90,7 +90,9 @@ describe("quest tale and credits", () => {
     expect((await f.detail()).memberCredits!.find(c => c.memberThreadId === "maker")!.madeWaypointIds).toEqual([]);
     patchThreadFixture(f.k.store, "maker", { released: { reason: "Replaced", decisionId: "release" } });
     f.port.linkedEntries = () => [entry];
-    expect((await f.detail()).memberCredits!.find(c => c.memberThreadId === "maker")!.madeWaypointIds).toEqual([]);
+    const pending = await f.detail();
+    expect(pending.quest.waypoints[0]).toMatchObject({ state: "reported", evidenceCount: 1 });
+    expect(pending.memberCredits!.find(c => c.memberThreadId === "maker")!.madeWaypointIds).toEqual([]);
     f.port.linkedEntries = () => [{ ...entry, status: "verified", updatedBy: { kind: "agent", threadId: "checker" } }];
     expect((await f.detail()).memberCredits!.find(c => c.memberThreadId === "maker")!.madeWaypointIds).toEqual(["w1"]);
   });

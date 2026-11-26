@@ -50,11 +50,7 @@ describe("Memory re-check regressions", () => {
       }
       expect(sends(f)).toHaveLength(blocked ? 0 : 1);
       if (blocked) {
-        f.k.store.put("skips", `${f.q.id}:1:w1`, {
-          boardQuestId: f.q.id,
-          version: 1,
-          waypointId: "w1",
-        });
+        f.k.settle("lead", { boardQuestId: f.q.id, waypointId: "w1", as: "skipped", reason: "Optional work is no longer needed" });
         await f.runtime.tick("lead");
         f.advance(61_000);
         await f.runtime.tick("lead");

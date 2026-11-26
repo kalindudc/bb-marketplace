@@ -31,6 +31,15 @@ describe("the quest map's readability", () => {
     live.lifecycle.unmount();
   });
 
+  it("names the current journal state in the plan card's waypoint list", async () => {
+    const detail = structuredClone(fixtureDetail);
+    detail.quest.waypoints[0]!.state = "reported";
+    const plan = await card(detail);
+    try {
+      expect(plan.getAllByText("Waiting for a check").length).toBeGreaterThan(0);
+    } finally { plan.lifecycle.unmount(); }
+  });
+
   it("steps lanes 96 px apart, room for a three-line title before the next row", () => {
     const w = (id: string, dependsOn: string[] = []) => ({ ...fixtureDetail.quest.waypoints[0]!, id, dependsOn });
     const nodes = layoutWaypoints([w("a"), w("b")] as Parameters<typeof layoutWaypoints>[0]);

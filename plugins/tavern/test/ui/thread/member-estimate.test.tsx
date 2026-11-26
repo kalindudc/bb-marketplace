@@ -35,10 +35,10 @@ it("separates the estimate from the verified mark on the same waypoint", () => {
   const slot = renderSlot({ component: () => <div className="tavern tv-page"><QuestPage detail={{ ...detail, reports: [{ ...report, waypointId: verified.id }] }} registry={registry} /></div> }, {}, {});
   try {
     fireEvent.click(slot.getByRole("button", { name: /^Done ·/ }));
-    const row = slot.getAllByText("verified by the Warden").map(mark => mark.closest("li")!).find(el => el.textContent?.includes(verified.title))!;
+    const row = slot.getAllByText("Verified by the Warden").map(mark => mark.closest("li")!).find(el => el.textContent?.includes(verified.title))!;
     const group = within(row).getByRole("group", { name: estimate });
     expect(group.textContent).toContain("matches intent 90%");
-    expect(within(group).queryByText("verified by the Warden")).toBeNull();
+    expect(within(group).queryByText("Verified by the Warden")).toBeNull();
   } finally { slot.lifecycle.unmount(); }
 });
 

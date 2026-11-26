@@ -109,6 +109,7 @@ export const waypointViewSchema = waypointSchema.extend({
   ownerMember: memberSchema.nullable(),
   /** The linked entry's evidence, and the Warden's verdict when there is one. */
   evidenceCount: z.number().int(),
+  readyEvidenceCount: z.number().int().nonnegative().optional(),
   verifiedBy: threadId.nullable(),
   rejectedReason: z.string().nullable(),
 });

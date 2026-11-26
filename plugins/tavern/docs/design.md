@@ -44,7 +44,9 @@ Reversible calls inside approved work appear in Decided for you, each with Undo.
 
 ## The journal
 
-Every bb thread gets a Journal in its context row and Journal side tab. Threads use it to track deliverables, steps, blockers, and observed evidence with grouped Undo. Tavern can link work when a Keeper assigns it, and active members can link their own entries to assigned waypoints. Linked work needs evidence before it can be submitted. An active Warden on the quest can check another maker's submission without a checker-slot change. Known same-family checks refuse; placed checks still use the exact submitted snapshot.
+Every bb thread gets a Journal in its context row and Journal side tab. Threads use it to track deliverables, steps, blockers, and observed evidence with grouped Undo. Tavern can link work when a Keeper assigns it, and active members can link their own entries to assigned waypoints. Linked work needs evidence before it can be submitted. A Keeper accepts it in the journal when the plan calls for a Keeper check. A same-quest Warden can check another maker’s submission without a checker slot; known same-family checks refuse and placed checks still use the exact snapshot. The quest page, plan card and widget show To do, Doing, Blocked, Waiting for a check, Done, or Skipped from the same journal entries. A user’s qualifying answer supplies its own evidence; an outside reply still needs a Keeper check. Release does not change the journal’s proof. Unsubmitted work from a released maker stays in the journal, but stops holding the waypoint open once a replacement links work there.
+
+Back up Tavern with its records before upgrading this journal format. The upgrade copies provable completions on open quests once. An old acceptance of a whole waypoint keeps its original authority and evidence without naming individual reviewed entries. If an upgrade fails for one quest, that quest keeps its old journal behaviour and Tavern retries at the next startup. The upgrade does not rewrite concluded quests. To downgrade, restore the pre-upgrade backup.
 
 ## Scopes and guardrails
 

@@ -155,6 +155,7 @@ it("computes the version diff even when the Keeper repeats its reason", async ()
 async function acceptedWaypoints() {
   const f = setup(); databases.push(f.k.store.db);
   const q = await seedQuest(f.k, "lead", "Build and accept", "Acceptance");
+  f.k.store.put("quests", q.id, { ...q, waypointJournal: undefined });
   const base = planInput(q.id);
   const one = { ...base.waypoints[0]!, check: "keeper" as const };
   const two = { ...one, id: "w2", title: "Document" };

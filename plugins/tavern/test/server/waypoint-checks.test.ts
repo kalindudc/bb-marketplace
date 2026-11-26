@@ -64,7 +64,7 @@ async function userMove(title = userWaypoint.title) {
 }
 
 describe("your move", () => {
-  it("closes mock sign-off with the card answer alone, without creating a journal entry", async () => {
+  it("closes mock sign-off with the card answer alone, without a separate journal tick", async () => {
     const f = await userMove();
     expect(f.link).not.toHaveBeenCalled();
     const ask = await f.open();
@@ -130,9 +130,9 @@ describe("your move", () => {
     await f.propose([userWaypoint], { changeNote: "Updated the overview." });
     expect(f.summary().waypoints[0]?.state).toBe("done");
     await f.propose([{ ...userWaypoint, doneWhen: "A different mock is approved" }]);
-    expect(f.summary().waypoints[0]?.state).toBe("planned");
+    expect(f.summary().waypoints[0]?.state).toBe("todo");
     await f.propose([userWaypoint]);
-    expect(f.summary().waypoints[0]?.state).toBe("planned");
+    expect(f.summary().waypoints[0]?.state).toBe("todo");
   });
 
   it("rejects timed and misbound asks", async () => {
@@ -254,22 +254,22 @@ describe("planned waypoint checks", () => {
     expect(await f.runtime.release("lead", "maker", "Done with the assignment")).toBe(true);
     await f.settle("accepted", "w1", "The linked journal evidence was checked");
     expect(f.k.quest(f.q.id).planVersion).toBe(1);
-    expect(f.summary().waypoints[0]?.state).toBe("accepted");
+    expect(f.summary().waypoints[0]?.state).toBe("todo");
     expect(f.k.store.all("decisions").find(decision => decision.waypointCall?.as === "accepted")?.waypointCall?.acceptedEntries)
       .toEqual([{ threadId: "maker", id: proof.id }]);
 
     f.bind("successor", "ranger");
-    expect(f.summary().waypoints[0]).toMatchObject({ state: "accepted", ownerMember: { threadId: "successor" } });
     expect(f.k.quest(f.q.id).planVersion).toBe(1);
     await f.propose([{ ...waypoint, owner: "successor" }]);
     f.entries([proof, { ...waypointEntry("successor", f.q.id), status: "todo" }]);
     expect(f.ask("greenlight")).toBeUndefined();
-    expect(f.summary().waypoints[0]).toMatchObject({ state: "accepted", ownerMember: { threadId: "successor" } });
+    expect(f.summary().waypoints[0]).toMatchObject({ state: "todo", ownerMember: { threadId: "successor" } });
+    expect(f.port.linkedEntries(f.q.id).find(entry => entry.threadId === "maker")?.review?.kind).toBe("keeper");
     f.entries([{ ...proof, status: "doing", doneAt: null }]);
     expect(f.summary().waypoints[0]?.state).not.toBe("accepted");
   });
 
-  it("captures exactly the submitted entries the Keeper saw, not other done work from a released maker", async () => {
+  it("captures all submitted entries the Keeper saw, including work from a released maker", async () => {
     const f = await fixture();
     f.bind("maker", "ranger");
     await f.propose([{ ...baseWaypoint, check: "keeper", owner: "maker" }]);
@@ -282,17 +282,18 @@ describe("planned waypoint checks", () => {
       waypointEntry("maker", f.q.id, "w1", "a2"),
       waypointEntry("successor", f.q.id),
     ]);
-    expect(f.summary().waypoints[0]).toMatchObject({ state: "reported", evidenceCount: 2 });
+    expect(f.summary().waypoints[0]).toMatchObject({ state: "reported", evidenceCount: 3 });
     await f.settle("accepted");
     expect(f.k.store.all("decisions").find(decision => decision.waypointCall?.as === "accepted")?.waypointCall?.acceptedEntries)
-      .toEqual([{ threadId: "maker", id: "a1" }, { threadId: "successor", id: "a1" }]);
-    expect(f.summary().waypoints[0]).toMatchObject({ state: "accepted", evidenceCount: 2 });
+      .toEqual([{ threadId: "maker", id: "a1" }, { threadId: "maker", id: "a2" }, { threadId: "successor", id: "a1" }]);
+    expect(f.summary().waypoints[0]).toMatchObject({ state: "accepted", evidenceCount: 3 });
   });
 
   it("explains required checks in new plans while preserving a stored plan and old skip", async () => {
     const f = await fixture();
     await expect(f.propose([baseWaypoint])).rejects.toThrow(/warden.*keeper.*none/i);
     f.k.plan("lead", { ...f.base, waypoints: [baseWaypoint, { ...baseWaypoint, id: "w2", optional: true }] });
+    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), waypointJournal: undefined });
     const key = `${f.q.id}:1:w2`;
     f.k.store.put("skips", key, { boardQuestId: f.q.id, version: 1, waypointId: "w2" });
     f.k.store.event(f.time(), "lead", f.q.id, "waypoint.skipped", "Old skip", { waypointId: "w2", version: 1, reason: "Not needed" });
@@ -331,12 +332,12 @@ describe("planned waypoint checks", () => {
     f.entries([{ ...entry, doneBy: { kind: "user" } }]);
     await expect(f.settle("accepted", "w2")).rejects.toThrow(/gate answer/i);
     f.k.memory.gate("lead", { boardQuestId: f.q.id, waypointId: "w2", askedWho: "Release team", via: "Their channel", answer: "No, not this week" });
-    expect(f.summary().waypoints).toMatchObject([{ check: "you", state: "done" }, { check: "keeper", state: "planned", gate: { answer: "No, not this week" } }]);
+    expect(f.summary().waypoints).toMatchObject([{ check: "you", state: "done" }, { check: "keeper", state: "reported", gate: { answer: "No, not this week" } }]);
     await f.settle("accepted", "w2", "Deferring until next week meets the goal");
     expect(f.summary().waypoints[1]).toMatchObject({ state: "accepted", resolutionReason: "Deferring until next week meets the goal", gate: { answer: "No, not this week" } });
     const decision = f.k.store.query("decisions", "boardQuestId", f.q.id).at(-1)!;
     await f.runtime.undoDecision(decision.id);
-    expect(f.summary().waypoints[1]).toMatchObject({ state: "planned", gate: { answer: "No, not this week" } });
+    expect(f.summary().waypoints[1]).toMatchObject({ state: "reported", gate: { answer: "No, not this week" } });
     await f.settle("accepted", "w2", "Deferring until next week meets the goal");
     await f.conclude();
   });

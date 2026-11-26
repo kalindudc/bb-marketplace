@@ -99,7 +99,7 @@ A scope block is yours to handle, not an ask to pass on.
 
 1. Read the journal evidence against the waypoint and user goal. Members can link their own entries to assigned waypoints.
 2. Brief the claim and evidence, NEVER your conclusion. An active Warden on the quest can check another maker's submission without a slot change. Known same-family checks refuse; unknown is labelled. Placed checks keep their exact snapshot and scope.
-3. Re-brief or replace a stuck maker without revising the plan for staffing alone. Use `tavern_settle` for Keeper checks.
+3. Use journal `verify` for Keeper checks and `skip` for optional work. Re-brief or replace without re-planning for staffing alone.
 4. For a branch, PR or path, set owner to your thread ID. Submit the exact subject with evidence for a Warden to check. Use a fresh waypoint for a different subject.
 5. When you read a report and plan no follow-up, release a non-permanent member that turn. If you expect one, use `tavern_keep`. A pending Warden check is a follow-up.
 

@@ -159,10 +159,12 @@ export const journalEntrySchema = z.object({
   note: z.string().nullable(),
   evidence: z.array(evidenceSchema),
   // added by Builder A: separate review evidence and attribution; memberEvidenceAt marks proof submitted after the latest rejection.
-  review: z.object({ actor: actorSchema, at: epochMs,
-    evidence: z.array(evidenceSchema),
-    reason: z.string().nullable(),
-    previousNote: z.string().nullable().default(null), memberEvidenceAt: epochMs.nullable().default(null) }).nullable().default(null),
+  review: z.object({
+    actor: actorSchema, at: epochMs, evidence: z.array(evidenceSchema), reason: z.string().nullable(),
+    previousNote: z.string().nullable().default(null), memberEvidenceAt: epochMs.nullable().default(null),
+    kind: z.enum(["keeper", "keeper-waypoint", "skip", "waiver", "answer", "outside"]).optional(),
+    ref: z.string().optional(),
+  }).nullable().default(null),
   link: waypointLinkSchema.nullable(),
   // added by Builder A: board summaries are phase-owned mirrors, not agent-ticked waypoint work.
   boardQuestId: id.nullable().default(null),
@@ -502,6 +504,7 @@ export const questNamesSchema = z.object({
 });
 
 export const boardQuestSchema = z.object({
+  waypointJournal: z.literal(true).optional(),
   delegations: z.array(delegationSchema).max(100).optional(),
   preapprovals: z.array(preapprovalSchema).max(100).optional(),
   checkerHandoffHold: checkerHandoffHoldSchema.optional(),
@@ -592,7 +595,11 @@ export const askEffectSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("conclude"), draft: concludeDraftSchema }),
   z.object({ type: z.literal("close-early"), draft: closeEarlyDraftSchema }),
   z.object({ type: z.literal("release-hold"), holdId: id }),
-  settleWaypointSchema.omit({ boardQuestId: true }).extend({ type: z.literal("settle-waypoint"), planVersion: z.number().int().positive() }),
+  settleWaypointSchema.omit({ boardQuestId: true }).extend({
+    type: z.literal("settle-waypoint"), planVersion: z.number().int().positive(),
+    entries: z.array(z.object({ threadId, id, fingerprint: z.string() })).optional(),
+    entryOnly: z.literal(true).optional(),
+  }),
   z.object({ type: z.literal("user-waypoint"), waypointId: id, planVersion: z.number().int().positive(), completeOn: z.array(askOptionSchema.shape.id).min(1) }),
   z.object({ type: z.literal("member-schedules"), memberThreadId: threadId, permanentDecisionId: id, schedules: schedulesInputSchema }),
   z.object({ type: z.literal("soft-limit"), limit: z.enum(["party", "rangers"]), text: z.string().min(1).max(400), reason: z.string().max(600) }),
