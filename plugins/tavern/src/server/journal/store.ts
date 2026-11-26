@@ -469,6 +469,12 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       saveEntries(threadId, after);
       const seen = actor.kind !== "user" && !(actor.kind === "agent" && actor.threadId !== threadId);
       const sequence = record(threadId, actor, action.action, ids, text, seen);
+      if (action.action === "done" || action.action === "toggle") {
+        const priorEntries = new Map(before.map(entry => [entry.id, entry]));
+        const submitted = after.filter(entry => entry.link && entry.status === "done" && entry.evidence.length &&
+          priorEntries.get(entry.id)?.status !== "done");
+        if (submitted.length) deps.workSubmitted?.(actor, submitted);
+      }
       if (action.action === "verify" || action.action === "reject") {
         const priorEntries = new Map(before.map(entry => [entry.id, entry]));
         const changedIds = new Set(ids);
@@ -530,21 +536,27 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       const actor: Actor = { kind: "agent", threadId: callerThreadId };
       const entries = localEntries(threadId);
       const verdictNotes = new Set<string>();
-      const keeperCall = (action.action === "verify" || action.action === "skip") && deps.roleOf(callerThreadId)?.classId === "keeper";
-      if (keeperCall) {
+      const entry = action.id ? entries.find(e => e.id === action.id) : undefined;
+      const call = action.action;
+      const receipt = entry?.review?.kind;
+      const reopenCall = call === "reopen" && (receipt === "keeper" || receipt === "keeper-waypoint" || receipt === "skip");
+      if ((call === "verify" || call === "skip" || reopenCall) && deps.roleOf(callerThreadId)?.classId === "keeper") {
         if (!deps.keeperWaypointCall) throw new Error("Keeper waypoint authorization is unavailable.");
-        const entry = action.id ? entries.find(e => e.id === action.id) : undefined;
         const link = action.id ? entry?.link : action.action === "skip" ? action.link : null;
         if (!link || action.ids?.length || action.link && (action.link.boardQuestId !== link.boardQuestId || action.link.waypointId !== link.waypointId))
           throw new Error("Name one linked entry, or a waypoint link when skipping without an entry.");
         const reason = action.reason;
         if (!reason) throw new Error("Give a reason for this waypoint call.");
-        return { text: deps.keeperWaypointCall(callerThreadId, { action: action.action as "verify" | "skip", link, entry, reason }), isError: false };
+        return { text: deps.keeperWaypointCall(callerThreadId, { action: call, link, entry, reason }), isError: false };
       }
       if (action.action === "skip") throw new Error("Only the Keeper can skip optional waypoint work.");
-      if (threadId !== callerThreadId) {
+      const role = deps.roleOf(callerThreadId);
+      const canRead = (entry: JournalEntry) => threadId === callerThreadId ||
+        (role?.classId === "keeper" ? !!entry.link && role.canReadWaypoint?.(entry.link) === true : !wardenReview(entry, callerThreadId, role).problem);
+      if (threadId !== callerThreadId && (action.action === "get" || action.action === "list") && role?.classId === "keeper") {
+        if (!entries.some(canRead)) throw new Error("No linked journal entries on a quest you own.");
+      } else if (threadId !== callerThreadId) {
         if (!["verify", "reject", "reopen", "list", "get"].includes(action.action)) throw new Error("Only Warden read and verdict actions can target another thread.");
-        const role = deps.roleOf(callerThreadId);
         const selected = new Set(action.action === "get" ? (action.id ? [action.id] : []) : action.ids ?? (action.id ? [action.id] : []));
         const targets = selected.size ? entries.filter(e => selected.has(e.id)) : entries.filter(e => !wardenReview(e, callerThreadId, role).problem);
         if (!targets.length) throw new Error("No linked entries found in the target thread.");
@@ -562,11 +574,10 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       unseen = callerThreadId === threadId ? pending(threadId) : [];
       let text: string;
       if (action.action === "list") {
-        const role = deps.roleOf(callerThreadId);
-        const filtered = entries.filter(e => (threadId === callerThreadId || !wardenReview(e, callerThreadId, role).problem) && (action.filter === "open" ? !closed(e) : action.filter === "blocked" ? e.status === "blocked" : action.filter === "mine" ? e.owner === callerThreadId || (e.link && e.threadId === callerThreadId) || (e.createdBy.kind === "agent" && e.createdBy.threadId === callerThreadId) : true));
+        const filtered = entries.filter(e => canRead(e) && (action.filter === "open" ? !closed(e) : action.filter === "blocked" ? e.status === "blocked" : action.filter === "mine" ? e.owner === callerThreadId || (e.link && e.threadId === callerThreadId) || (e.createdBy.kind === "agent" && e.createdBy.threadId === callerThreadId) : true));
         text = filtered.length ? filtered.map(e => `[${e.id}] ${e.description} (${e.status})${e.parentId ? `; step of [${e.parentId}]` : ""}${e.note ? ` — ${e.note}` : ""}`).join("\n") : "No matching journal entries.";
       } else if (action.action === "get") {
-        const entry = entries.find(e => e.id === action.id);
+        const entry = entries.find(e => e.id === action.id && canRead(e));
         if (!entry) throw new Error("Entry not found; provide id and use list to see current ids.");
         text = JSON.stringify(entry, null, 2);
       } else if (action.action === "rules" || action.action === "skill") text = readJournalSkill();

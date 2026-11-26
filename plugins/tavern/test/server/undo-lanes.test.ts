@@ -27,7 +27,7 @@ async function fixture(count = 10) {
   }
   f.port.linkedEntries = id => Array.from({ length: id === q.id ? count + 1 : 1 }, (_, i) => waypointEntry("maker", id, `w${i + 1}`, `a${i + 1}`));
   const acceptances = Array.from({ length: count }, (_, i) => f.k.settle("lead", { boardQuestId: q.id, waypointId: `w${i + 1}`, as: "accepted", reason: "Sources check out" }));
-  const settle = (boardQuestId: string, as: "accepted" | "skipped", waypointId = "w1") => f.harness.behavior.invokeAgentTool("tavern_settle", { boardQuestId, waypointId, as, reason: "Sources check out" }, { threadId: "lead" });
+  const settle = async (boardQuestId: string, as: "accepted" | "skipped", waypointId = "w1") => f.k.settle("lead", { boardQuestId, waypointId, as, reason: "Sources check out" });
   const ledger = (threadId = "lead") => f.harness.invokeRpc("ledger", { threadId }, client) as Promise<Ledger>;
   const undo = (decisionId: string) => f.harness.invokeRpc("undoDecision", { decisionId }, client);
   const reset = (kind: string, context = client) => f.harness.invokeRpc("resetUndoLane", { threadId: "lead", kind }, context);

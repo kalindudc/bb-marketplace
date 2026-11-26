@@ -9,11 +9,11 @@ Use this reference for the full `journal` tool action table, evidence schema, re
 | `add` | `description` or `descriptions[]`, optional `owner` | Add top-level entries in one atomic action. Set `owner` to the delegate's thread id (`thr_…`) for work another agent does. |
 | `split`, `add_step` | `id`, `descriptions[]`, optional `owner` | Add steps under an open top-level entry. Returns their ids on a `New ids:` line. |
 | `list` | optional `filter: open, mine, blocked` | Read all entries or a filtered view. |
-| `get` | `id` | Read one entry with its notes, links, actor, timestamps, and evidence. |
+| `get` | `id` | Read one entry with notes and evidence. A Keeper can target another thread with `threadId` for linked entries on its own quests. |
 | `start` | `id` or `ids[]`, optional `owner` | Set doing. To hand several entries to the same delegate at once, pass `ids` and the delegate's thread id as `owner`. Start your own work one entry at a time: your other unowned doing entry returns to todo. Delegated entries with an owner stay doing side by side. Dependencies must be complete. |
 | `done` | `id` or `ids[]`, optional `evidence[]` | Set done idempotently. Linked entries REQUIRE evidence and are reported done, not yet verified. Unlinked entries can finish without evidence; attach proof when available. |
 | `block` | `id` or `ids[]`, `reason` | Set blocked and record why. |
-| `reopen` | `id` or `ids[]` | Set todo idempotently. A completed parent reopens too. Reopening verified work needs the assigned Warden or the Keeper. |
+| `reopen` | `id` or `ids[]` | Set todo idempotently. A completed parent reopens too. Reopening verified work needs the assigned Warden or the Keeper. To reopen Keeper-accepted or skipped work, give one `id`, `threadId` if needed, and a `reason`. |
 | `toggle` | `id` or `ids[]` | Compatibility action: open becomes done, done or verified becomes todo. Unlike `done`, repeating it flips again. |
 | `verify` | `id`, optional `threadId`, `evidence[]` for a Warden or `reason` for a Keeper | The Keeper can accept a done entry when the plan calls for a Keeper check. An active Warden on the same quest can verify another maker's done entry awaiting review, without a checker slot for that waypoint. A new verdict cannot overwrite an existing verification. Include your own evidence. Same-family checks refuse; unknown independence is labelled. Machine-placed work needs a Warden with its pinned snapshot. Placed Wardens can only check their pinned targets. |
 | `reject` | `id`, `reason`, optional `threadId` | The same Warden rules apply to rejection of a submitted entry. The journal preserves the previous note, records the reason, and notifies the owner. `start` or `done` moves the entry on. |
@@ -38,7 +38,7 @@ Evidence items have `kind` (`command`, `file`, `url`, `pr`, `query`, or `note`),
 {"action":"done","id":"00","evidence":[{"kind":"command","ref":"npm test","detail":"12 tests passed","exitCode":0}]}
 ```
 
-After a Warden rejection, submit fresh evidence checked since that rejection before reporting done again. Evidence attached before the rejection does not satisfy this gate, even after `start`, `reopen`, or `undo`. Submitting fresh proof with `start` also counts; never claim to have rerun a check you did not run.
+After a Warden rejection, submit fresh evidence checked since that rejection before marking the journal entry done again. Evidence attached before the rejection does not satisfy this gate, even after `start`, `reopen`, or `undo`. Submitting fresh proof with `start` also counts; never claim to have rerun a check you did not run.
 
 For a planned Warden check, a submitted entry stays reported until an eligible Warden verifies it. Never claim verification on the Warden's behalf.
 

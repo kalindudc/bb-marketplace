@@ -213,7 +213,7 @@ describe("live Keeper flow regressions", () => {
     Object.assign(f.port, registerJournal(f.bb, f.k.store.db, {
       roleOf: id => f.runtime.journalRole(id),
       invalidate: () => {},
-      verdictSubmitted: (actor, entries) => f.k.recordWardenRound(actor, entries),
+      verdictSubmitted: (actor, entries) => f.k.recordJournalVerdict(actor, entries),
     }));
     const q = await seedQuest(f.k, "lead", "Build two parts", "Parts");
     bind(f, "maker-one", "smith", q.id, "bram");
@@ -238,7 +238,6 @@ describe("live Keeper flow regressions", () => {
     const submit = async (maker: string) => {
       const [entry] = f.port.get(maker).entries;
       expect(await journal(maker, { action: "done", id: entry!.id, evidence })).toEqual(expect.any(String));
-      f.k.report(maker, { status: "done", outcome: "Ready for review", evidence, artifacts: [], confidence: null });
       return entry!.id;
     };
     const verify = (warden: string, maker: string, id: string) =>
@@ -260,57 +259,11 @@ describe("live Keeper flow regressions", () => {
     const second = await hire("w2");
     expect(await verify(second.threadId, "maker-two", secondEntry)).toEqual(expect.any(String));
     expect(f.k.quest(q.id)).toMatchObject({ planVersion: plan.version, greenlitVersion: plan.version });
-    const rounds = f.k.store.events("lead", 0, 100).filter(e => e.type === "waypoint.review-round");
+    const rounds = f.k.store.events("lead", 0, 100).filter(e => e.type === "journal.reviewed");
     expect(rounds.map(e => e.data)).toEqual([
-      expect.objectContaining({ waypointId: "w1", makerThreadId: "maker-one", verdict: "verified", planVersion: plan.version }),
-      expect.objectContaining({ waypointId: "w2", makerThreadId: "maker-two", verdict: "verified", planVersion: plan.version }),
+      expect.objectContaining({ waypointId: "w1", makerThreadId: "maker-one", verdict: "verified" }),
+      expect.objectContaining({ waypointId: "w2", makerThreadId: "maker-two", verdict: "verified" }),
     ]);
-  });
-  it("does not accept a completed report while any of the member's linked waypoints is unfinished", async () => {
-    const f = setup();
-    const q = await seedQuest(f.k,"lead", "A", "A");
-    bind(f, "maker", "ranger", q.id);
-    const entry = journalEntrySchema.parse({
-      threadId: "maker",
-      id: "a1",
-      parentId: null,
-      description: "Done",
-      owner: "maker",
-      status: "done",
-      evidence: [
-        { kind: "command", ref: "npm test", detail: "Passed", exitCode: 0 },
-      ],
-      order: 0,
-      note: null,
-      link: { boardQuestId: q.id, waypointId: "w1" },
-      updatedAt: f.time(),
-      createdAt: f.time(),
-      updatedBy: { kind: "tavern" },
-      createdBy: { kind: "tavern" },
-    });
-    const originalGet = f.port.get;
-    f.port.get = (threadId) => ({
-      ...originalGet(threadId),
-      entries: [
-        entry,
-        {
-          ...entry,
-          id: "a2",
-          status: "todo",
-          link: { boardQuestId: q.id, waypointId: "w2" },
-        },
-      ],
-    });
-    expect(() =>
-      f.k.report("maker", {
-        status: "done",
-        outcome: "Done",
-        evidence: [],
-        artifacts: [],
-        confidence: null,
-        voice: null,
-      }),
-    ).toThrow("evidence");
   });
   it("lets one current steer govern both quests even after a newer queued message arrives", async () => {
     const f = setup();

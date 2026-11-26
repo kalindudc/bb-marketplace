@@ -141,7 +141,7 @@ describe("a follow-up brief reopens the member's linked work", () => {
   });
 });
 
-it("replays live run 4: done with 9 tests, brief v2, a note only, and the second done report is refused until fresh evidence", async () => {
+it("replays live run 4: done with 9 tests, brief v2, a new report without changing the reopened journal entry", async () => {
   const h = makeHost(); cleanup.push(h.dispose); h.bb.storage.migrate(h.db, MIGRATIONS);
   const data = new KeeperStore(h.db);
   const journal = registerJournal(h.bb, h.db, { roleOf: id => data.get("members", id), invalidate: () => {} });
@@ -159,9 +159,11 @@ it("replays live run 4: done with 9 tests, brief v2, a note only, and the second
   journal.rebriefed("m", q.id, 2, ["w1"]);
   expect(await run({ action: "note", id: "00", note: "pass 10, fail 0" })).not.toMatch(/^Error/);
   const evidence = [{ kind: "command" as const, ref: "npm test", detail: "10 tests pass, fail 0", exitCode: 0 }];
-  expect(() => keeper.report("m", { ...report, evidence })).toThrow(/done with evidence first/);
+  expect(() => keeper.report("m", { ...report, evidence })).not.toThrow();
   expect(journal.get("m").entries[0]).toMatchObject({ status: "doing", evidence: [] });
-  expect(() => keeper.report("m", report)).toThrow(/done with evidence first/);
+  expect(await tool.execute({ action: "done", id: "00" }, { threadId: "m" })).toMatchObject({
+    isError: true, content: [expect.objectContaining({ text: expect.stringMatching(/evidence/i) })],
+  });
   expect(await run({ action: "done", id: "00", evidence })).not.toMatch(/^Error/);
   expect(() => keeper.report("m", report)).not.toThrow();
   expect(journal.get("m").entries[0]!.note).toMatch(/v1 evidence kept for reference: npm test \(9 tests pass/);

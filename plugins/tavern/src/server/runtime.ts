@@ -117,7 +117,6 @@ export const KEEPER_TOOLS = [
   "tavern_unarchive",
   "tavern_reopen",
   "tavern_plan",
-  "tavern_settle",
   "tavern_ask",
   "tavern_decide",
   "tavern_rule",
@@ -315,7 +314,7 @@ export class TavernRuntime {
     const rt = this.keeper.store.runtime(threadId);
     if (rt.reanchor || rt.pending.length) return "none";
     const events = this.keeper.store.unreadEvents(threadId, rt.cursor, 100, true)
-      .filter(event => !["journal.changed", "questlog.changed"].includes(event.type));
+      .filter(event => !["journal.changed", "questlog.changed", "journal.submitted"].includes(event.type));
     if (!events.length || events.some(event => event.type !== "report.filed")) return "none";
     const reports = this.keeper.store.query("reports", "keeperThreadId", threadId, 500);
     const now = this.keeper.now();
@@ -1806,6 +1805,10 @@ export class TavernRuntime {
   }
   journalRole(threadId: string): ReturnType<import("./ports").JournalDeps["roleOf"]> {
     const member = this.keeper.member(threadId);
+    if (member?.classId === "keeper") return {
+      ...member,
+      canReadWaypoint: link => this.keeper.store.get("quests", link.boardQuestId)?.keeperThreadId === threadId,
+    };
     if (!member || member.role !== "member") return member;
     const active = member.state !== "failed" && isLiveMember(this.keeper.store, member);
     if (member.classId !== "warden") return {

@@ -60,8 +60,9 @@ export interface JournalDeps {
   beforeVerdict?(callerThreadId: string, targetThreadId: string, entryIds: string[]): Promise<(() => string | void) | void>;
   /** Private proof receipt, inside the review transaction; never an agent-visible event. */
   reviewed?(review: JournalReview): void;
+  workSubmitted?(actor: Actor, entries: JournalEntry[]): void;
   verdictSubmitted?(actor: Actor, entries: JournalEntry[]): void;
-  keeperWaypointCall?(threadId: string, input: { action: "skip" | "verify"; link: WaypointLink; entry?: JournalEntry; reason: string }): string;
+  keeperWaypointCall?(threadId: string, input: { action: "skip" | "verify" | "reopen"; link: WaypointLink; entry?: JournalEntry; reason: string }): string;
   keepsLinkedWork?(entry: JournalEntry): boolean;
   /** A verified entry is about to reopen for a newer brief: its receipt no longer proves the maker's waypoint, though the Warden keeps the check. Inside the journal transaction; must not throw. */
   superseded?(input: { entry: JournalEntry; version: number; at: number }): void;
@@ -73,6 +74,7 @@ export interface JournalDeps {
   roleOf(threadId: string): {
     classId: string; role: "keeper" | "member" | "solo"; waypointId: string | null; boardQuestId: string | null;
     canLinkWaypoint?: (link: WaypointLink) => boolean;
+    canReadWaypoint?: (link: WaypointLink) => boolean;
     checkerWaypointIds?: readonly string[];
     checkerEntryReview?: (entry: JournalEntry) => { problem?: string; note?: string | null };
   } | null;

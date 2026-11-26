@@ -237,10 +237,12 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     "Re-opened a board quest",
     "Re-open one of your returned or stopped board quests to do deviations and follow-up commits without opening a new quest. Cite messageId of the user’s uncancelled, unused routed message, newer than the last phase transition; its quoted text is the receipt. The quest's plan version and its greenlight are kept. It returns to build with a greenlit plan, or scout without one. Refused for a live quest, and for an archived quest: bring it up from the cellar first. A Warden still verifies the deviation work before the next wrap.",
     z.object({ boardQuestId: id, messageId: id }),
-    (input, threadId) => {
+    async (input, threadId) => {
       const quest = k.owned(threadId, input.boardQuestId);
       const reopened = k.reopenQuest(quest.id, { kind: "agent", threadId }, input.messageId);
-      return `Re-opened ${reopened.title} for deviations; it is back in ${reopened.phase} at plan v${reopened.planVersion}.`;
+      await k.migrateWaypointJournal(message => bb.log.warn(message), reopened.id);
+      const retry = k.quest(reopened.id).waypointJournal ? "" : " Its journal upgrade did not finish; Tavern will retry at the next startup.";
+      return `Re-opened ${reopened.title} for deviations; it is back in ${reopened.phase} at plan v${reopened.planVersion}.${retry}`;
     },
   );
   register(
@@ -453,10 +455,12 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   );
   register(
     "tavern_settle",
-    "Recorded a waypoint decision",
-    "Record why you accepted a Keeper check (reported work or an answered outside gate), skipped an unsettled optional waypoint, or reopened one you accepted or skipped. Set as to accepted, skipped, or open. The reason is visible and the user can undo the call. This never awards Warden credit.",
+    "Redirected a retired tool",
+    "Retired. Use the journal to check, skip or reopen waypoint work.",
     settleWaypointFields,
-    (input, threadId) => { const result = k.settle(threadId, input); return "question" in result ? keeperCallAsk(result.id) : result; },
+    () => { throw new Error("tavern_settle is retired. Use journal verify for a Keeper check, skip for optional work, or reopen with the linked entry ID and reason. For an existing call, use Undo in Decided for you."); },
+    "keeper",
+    () => new Error("tavern_settle is retired. Use journal verify, skip or reopen, or Undo in Decided for you."),
   );
   register(
     "tavern_ask",
@@ -668,7 +672,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_report",
     "Filed a report",
-    "File a report and end your turn. Give a short headline. A Warden headline states the result, never a claim of independence; retain the review limitation. Before done, mark every linked entry done with evidence or have it verified. Use wait with condition and dueAt for a reminder.",
+    "File a report and end your turn. Give a short headline. A Warden headline states the result, never a claim of independence; retain the review limitation. A report does not change waypoint progress; submit work and evidence in the journal. Use wait with condition and dueAt for a reminder.",
     reportInput,
     async (input, threadId, _project, _signal, limit) => {
       const report = k.report(threadId, input, limit);

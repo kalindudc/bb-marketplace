@@ -42,6 +42,30 @@ function fileReport(f: ReturnType<typeof fixture>, q: string, wake = true) {
 }
 
 describe("event-driven wake and wake batching", () => {
+  it("coalesces submission news into the report wake", async () => {
+    const f = fixture();
+    const q = await routineReport(f);
+    f.k.store.event(f.time(), "lead", q.id, "journal.submitted", "Journal work submitted");
+    await f.runtime.settleWakes();
+    expect(sent(f)).toHaveLength(0);
+    fileReport(f, q.id);
+    await f.runtime.settleWakes();
+    expect(sent(f)).toHaveLength(1);
+    expect(sent(f)[0]).toContain("Journal work submitted");
+    expect(sent(f)[0]).toContain("Report outcome");
+  });
+
+  it("delivers submission-only news on the next sweep", async () => {
+    const f = fixture();
+    const q = await routineReport(f);
+    f.k.store.event(f.time(), "lead", q.id, "journal.submitted", "Journal work submitted");
+    await f.runtime.settleWakes();
+    expect(sent(f)).toHaveLength(0);
+    await f.runtime.tick("lead");
+    expect(sent(f)).toHaveLength(1);
+    expect(sent(f)[0]).toContain("Journal work submitted");
+  });
+
   it("wakes an idle Keeper when a member files a report", async () => {
     const f = fixture();
     const q = await routineReport(f);
@@ -86,6 +110,8 @@ describe("event-driven wake and wake batching", () => {
     const f2 = fixture();
     const q2 = await routineReport(f2);
     enableWakeBatching(f2);
+    f2.k.store.event(f2.time(), "lead", q2.id, "journal.submitted", "Journal work submitted");
+    await f2.runtime.settleWakes();
     fileReport(f2, q2.id, false);
     await f2.runtime.tick("lead", "wake");
     expect(sent(f2)).toHaveLength(0);

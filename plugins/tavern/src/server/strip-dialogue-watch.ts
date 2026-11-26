@@ -37,7 +37,7 @@ export function registerDialogueWatch(bb: BbPluginApi, runtime: TavernRuntime, s
     const { type, data, keeperThreadId, actor } = event;
     if (type === "tavern.stopped") { watches.cancelFlights(); void speech.stop(); }
     if (data.phase || type.startsWith("ask.") || type === "route.recorded" || type === "route.corrected") notice(keeperThreadId);
-    if ((type === "waypoint.review-round" || type === "waypoint.review-rejected") && actor.kind === "agent") notice(actor.threadId);
+    if (type === "journal.reviewed" && actor.kind === "agent") notice(actor.threadId);
     if ((type.startsWith("member.") || type === "report.filed" || type.startsWith("ask.")) && typeof data.memberThreadId === "string") notice(data.memberThreadId);
   };
   const unlistenJournal = keeper.journal.onChange(threadId => { notice(threadId); });

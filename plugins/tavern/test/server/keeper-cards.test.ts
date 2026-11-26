@@ -93,8 +93,8 @@ it("selects guidance from quest and waypoint receipts", async () => {
   f.k.receiveUser("lead", "Check the slow edge case too");
   const steer = f.k.route("lead", { kind: "steer", boardQuestId: f.q.id, summary: "Slow edge", notes: [] });
   expect(reference("route.recorded", { routeId: steer.id })).toContain("## Handle a steer");
-  expect(reference("waypoint.review-round", { verdict: "verified" }, { any: true, all: false })).toContain("## Tell the user");
-  expect(reference("waypoint.review-round", { verdict: "verified" }, { any: true, all: true })).toContain("## Close a quest");
+  expect(reference("journal.reviewed", { verdict: "verified" }, { any: true, all: false })).toContain("## Tell the user");
+  expect(reference("journal.reviewed", { verdict: "verified" }, { any: true, all: true })).toContain("## Close a quest");
   expect(reference("quest.wrapped")).toContain("## Learn from a quest");
   expect(reference("quest.stopped")).toContain("## Learn from a quest");
 });

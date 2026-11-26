@@ -8,8 +8,10 @@ import { Keeper } from "../../src/server/keeper/service";
 import { KeeperStore } from "../../src/server/keeper/store";
 import { registerJournal } from "../../src/server/journal";
 import { registerRpc } from "../../src/server/rpc";
+import { registerTools } from "../../src/server/tools";
+import { readStatus, statusInput } from "../../src/server/status";
 import { setup } from "./runtime-fixture";
-import { planInput, seedQuest } from "./support";
+import { planInput, putQuestFixture, seedQuest } from "./support";
 
 const proof = [{ kind: "note" as const, ref: "Observed result", detail: "Matches the requested result", exitCode: null }];
 const brief = { outcome: "Build", mode: "make-it-work" as const, outOfScope: "Publishing", doneWhen: "Tests pass", context: [], questions: [], timeboxMinutes: null };
@@ -25,9 +27,12 @@ async function fixture(legacy = false) {
     roleOf: id => f.runtime.journalRole(id), invalidate: () => {},
     keeperWaypointCall: (id, input) => f.k.journalWaypointCall(id, input),
     keepsLinkedWork: entry => f.k.keepsLinkedWork(entry),
+    workSubmitted: (actor, entries) => f.k.recordJournalSubmission(actor, entries),
+    verdictSubmitted: (actor, entries) => f.k.recordJournalVerdict(actor, entries),
   });
   Object.assign(f.port, journal);
   registerRpc(f.bb, f.runtime);
+  registerTools(f.bb, f.runtime);
   const q = await seedQuest(f.k, "lead", "Build the journal", "Build");
   if (legacy) f.k.store.put("quests", q.id, { ...q, waypointJournal: undefined });
   const plan = planInput(q.id);
@@ -57,7 +62,67 @@ async function fixture(legacy = false) {
   return { ...f, q, plan, journal, tool, link, done, state, bind };
 }
 
-it("offers a submitted entry for review while another linked entry is open", async () => {
+it("delivers a done report without changing any journal proof or waypoint state", async () => {
+  const f = await fixture();
+  const id = await f.link("w1");
+  const before = f.journal.get("maker").entries;
+  const report = await f.harness.behavior.invokeAgentTool("tavern_report", {
+    status: "done", outcome: "The update for the Keeper", evidence: proof, artifacts: [],
+  }, { threadId: "maker" });
+  expect(report).toMatch(/Report written/);
+  expect(f.k.store.unreadEvents("lead", 0, 100, true)).toContainEqual(expect.objectContaining({
+    type: "report.filed", text: expect.stringContaining("The update for the Keeper"),
+  }));
+  expect(f.journal.get("maker").entries).toEqual(before);
+  expect(f.state("w1").state).toBe("todo");
+  expect(f.runtime.review().items).toEqual([]);
+  expect(f.journal.get("maker").entries[0]?.id).toBe(id);
+});
+
+it("shows a permanent member’s last completed duty entry without treating its report as a round", async () => {
+  const f = await fixture();
+  f.runtime.keep("lead", "maker", undefined, "Ongoing watch", true);
+  const status = () => readStatus(f.runtime, "lead", statusInput.parse({ boardQuestId: f.q.id, member: "maker" }));
+  await f.tool("maker", { action: "add", description: "Duty round: check for changes" });
+  const round = f.journal.get("maker").entries[0]!;
+  await f.done(round.id);
+  await f.tool("maker", { action: "add", description: "Next round" });
+  f.k.report("maker", { status: "done", outcome: "An update, not a round", evidence: [], artifacts: [], confidence: null });
+  expect(status()).toMatchObject({ permanentRounds: [{ memberThreadId: "maker", lastRound: { entryId: round.id, description: round.description, at: expect.any(Number) } }] });
+  expect(f.journal.linkedEntries(f.q.id)).toEqual([]);
+  expect(f.state("w1").state).toBe("planned");
+});
+
+it("directs stale settle calls to the journal without recording a decision", async () => {
+  const f = await fixture();
+  await expect(f.harness.behavior.invokeAgentTool("tavern_settle", {
+    boardQuestId: f.q.id, waypointId: "w6", as: "skipped", reason: "Optional",
+  }, { threadId: "lead" })).rejects.toThrow(/retired.*journal.*skip/i);
+  expect(f.state("w6").state).toBe("planned");
+  expect(f.journal.linkedEntries(f.q.id)).toEqual([]);
+  await f.tool("lead", { action: "skip", link: { boardQuestId: f.q.id, waypointId: "w6" }, reason: "Optional" });
+  const skipped = f.journal.linkedEntries(f.q.id).find(e => e.link?.waypointId === "w6")!;
+  expect(f.state("w6").state).toBe("skipped");
+  expect(await f.tool("lead", { action: "reopen", id: skipped.id, reason: "Needed after all" })).not.toMatchObject({ isError: true });
+  expect(f.state("w6").state).toBe("planned");
+});
+
+it("lets a Keeper find linked proof on its own quest without exposing the maker’s plain journal", async () => {
+  const f = await fixture();
+  const linked = await f.link("w2");
+  await f.tool("maker", { action: "add", description: "Private checklist item" });
+  const privateEntry = f.journal.get("maker").entries.at(-1)!;
+  const list = await f.tool("lead", { action: "list", threadId: "maker" });
+  expect(list).toContain(`[${linked}]`);
+  expect(list).not.toContain(privateEntry.description);
+  expect(await f.tool("lead", { action: "get", threadId: "maker", id: privateEntry.id })).toMatchObject({ isError: true });
+  f.k.bind("other", "keeper", "moss", "project");
+  const other = await seedQuest(f.k, "other", "Other quest", "Other");
+  expect(other.id).not.toBe(f.q.id);
+  expect(await f.tool("other", { action: "get", threadId: "maker", id: linked })).toMatchObject({ isError: true });
+});
+
+it("offers a submitted entry for review while another linked entry is open, without a report", async () => {
   const f = await fixture();
   const id = await f.link("w1");
   await f.done(id);
@@ -65,7 +130,15 @@ it("offers a submitted entry for review while another linked entry is open", asy
   const sibling = f.journal.get("maker").entries.at(-1)!.id;
   await f.tool("maker", { action: "link", id: sibling, link: { boardQuestId: f.q.id, waypointId: "w1" } });
   expect(f.state("w1").state).toBe("todo");
-  expect(f.runtime.review().items).toMatchObject([{ boardQuestId: f.q.id, waypoint: { id: "w1" }, evidenceCount: 1 }]);
+  expect(f.runtime.review().items).toMatchObject([{ boardQuestId: f.q.id, waypoint: { id: "w1" }, evidenceCount: 1, reportId: null }]);
+  expect(f.k.store.unreadEvents("lead", 0, 100, true)).toContainEqual(expect.objectContaining({
+    type: "journal.submitted", data: expect.objectContaining({ waypoints: ["w1"] }),
+  }));
+  expect(await f.tool("checker", { action: "verify", threadId: "maker", id, evidence: proof })).not.toMatchObject({ isError: true });
+  expect(f.k.store.unreadEvents("lead", 0, 100, true)).toContainEqual(expect.objectContaining({
+    type: "journal.reviewed", data: expect.objectContaining({ waypointId: "w1", verdict: "verified", entryIds: [id] }),
+  }));
+  expect(f.k.store.all("reports")).toEqual([]);
 });
 
 it("keeps unfinished released work open without erasing verified proof on the same waypoint", async () => {
@@ -135,6 +208,37 @@ it("keeps the old acceptance auditable but asks for a new check when the maker c
   await f.tool("maker", { action: "done", id, evidence: [{ ...proof[0]!, detail: "The result changed" }] });
   expect(f.state("w2").state).toBe("reported");
   expect(f.journal.get("maker").entries[0]).toMatchObject({ review: null, evidence: [proof[0], { detail: "The result changed" }] });
+});
+
+it.each([false, true])("migrates an old outside answer on reopen, with guarded fallback (failure: %s)", async failure => {
+  const f = await fixture(true);
+  f.k.memory.gate("lead", { boardQuestId: f.q.id, waypointId: "w4", askedWho: "Outside team", via: "Their channel", answer: "Checked" });
+  const quest = f.k.quest(f.q.id);
+  putQuestFixture(f.k.store, quest.id, { ...quest, phase: "done", endedAt: f.time() });
+  const warn = vi.spyOn(f.bb.log, "warn");
+  if (failure) vi.spyOn(f.port, "prepare").mockRejectedValueOnce(new Error("Journal unavailable"));
+  f.advance(1);
+  f.k.receiveUser("lead", "Reopen this quest");
+  const route = f.k.route("lead", { kind: "steer", boardQuestId: quest.id, summary: "Reopen", notes: [] });
+  await expect(f.harness.behavior.invokeAgentTool("tavern_reopen", { boardQuestId: quest.id, messageId: route.sourceMessageId }, { threadId: "lead" }))
+    .resolves.toMatch(/Re-opened/);
+  expect(f.k.quest(quest.id).endedAt).toBeNull();
+  if (failure) {
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Journal unavailable"));
+    expect(f.k.quest(quest.id).waypointJournal).toBeUndefined();
+    expect(f.journal.linkedEntries(quest.id)).toEqual([]);
+    const id = await f.link("w4", "lead");
+    await f.done(id, "lead");
+    expect(await f.tool("lead", { action: "verify", id, reason: "Checked" })).toMatchObject({
+      isError: true, content: [expect.objectContaining({ text: expect.stringContaining("Restart Tavern to retry") })],
+    });
+  } else {
+    expect(f.k.quest(quest.id).waypointJournal).toBe(true);
+    const [reply] = f.journal.linkedEntries(quest.id);
+    expect(reply).toMatchObject({ link: { waypointId: "w4" }, evidence: [{ detail: "Checked" }] });
+    expect(await f.tool("lead", { action: "verify", id: reply!.id, reason: "The reply is conclusive" })).not.toMatchObject({ isError: true });
+    expect(f.state("w4").state).toBe("accepted");
+  }
 });
 
 it("records an outside reply as submitted proof, but not the contact alone", async () => {

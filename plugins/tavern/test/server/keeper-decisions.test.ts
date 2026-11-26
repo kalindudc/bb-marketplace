@@ -213,7 +213,7 @@ async function reviewFixture() {
   const journal = registerJournal(f.bb, f.k.store.db, {
     roleOf: id => runtime?.journalRole(id) ?? null,
     invalidate: () => {},
-    verdictSubmitted: (actor, entries) => k.recordWardenRound(actor, entries),
+    verdictSubmitted: (actor, entries) => k.recordJournalVerdict(actor, entries),
   });
   k = withMemberFixtures(new Keeper(f.k.store, journal, f.time, () => {}));
   const q = await seedQuest(k, "lead", "Build and check", "Checked");
@@ -242,20 +242,19 @@ async function reviewFixture() {
   const reportTool = (outcome: string) => f.harness.behavior.invokeAgentTool("tavern_report", { status: "done", outcome, evidence, artifacts: [] }, { threadId: "maker" });
   const send = vi.spyOn(f.bb.sdk.threads, "send");
   const tick = async () => { f.advance(180_000); await runtime.tick("lead"); };
-  const rounds = () => k.store.events("lead", 0, 100).filter(event => event.type === "waypoint.review-round");
+  const rounds = () => k.store.events("lead", 0, 100).filter(event => event.type === "journal.reviewed");
   return { q, k, journal, plan, ids, ready, report, reportTool, verdict, wardenCall, rounds, tick, send };
 }
 
-it("counts a first review once when two Wardens verify three separate entries", async () => {
+it("records each Warden verdict when two Wardens verify three separate entries", async () => {
   const f = await reviewFixture();
   const [a, b, c] = f.ids as [string, string, string];
   await f.ready();
-  const report = f.report("Ready for the first review");
   await f.verdict("warden", "verify", [a]);
   await f.verdict("second-warden", "verify", [b]);
   await f.verdict("warden", "verify", [c]);
   expect(f.journal.get("maker").entries.filter(e => f.ids.includes(e.id)).map(e => e.status)).toEqual(["verified", "verified", "verified"]);
-  expect(f.rounds()).toEqual([expect.objectContaining({ data: expect.objectContaining({ reportId: report.id, planVersion: 1 }) })]);
+  expect(f.rounds().map(event => event.data.entryIds)).toEqual([[a], [b], [c]]);
   f.k.plan("lead", { ...f.plan, changeNote: "Keep the checked waypoint" });
   expect(f.k.summary(f.q.id).waypoints[0]?.state).toBe("verified");
   expect(f.k.store.events("lead", 0, 100).filter(e => e.type === "waypoint.acceptance-carried")).toEqual([]);
@@ -270,11 +269,11 @@ it("lets the Warden review another corrected report without forcing a new plan",
   await f.verdict("warden", "reject", [a]);
   await f.verdict("second-warden", "reject", [b]);
   await f.ready([a, b]);
-  const second = f.report("Ready for review");
-  expect(second.id).not.toBe(first.id);
+  const duplicate = f.report("Ready for review");
+  expect(duplicate.id).toBe(first.id);
   await f.verdict("warden", "reject", [a, b]);
   const rejections = f.k.store.events("lead", 0, 100).filter(event => event.data.verdict === "rejected");
-  expect(rejections.map(event => event.data.reportId)).toEqual([first.id, second.id]);
+  expect(rejections.map(event => event.data.entryIds)).toEqual([[a], [b], [a, b]]);
   await f.ready([a, b]);
   f.k.store.patch("lead", { cursor: f.k.store.eventSequence("lead"), userAt: null, reanchor: null });
   f.k.endTurn("lead");
@@ -288,6 +287,6 @@ it("lets the Warden review another corrected report without forcing a new plan",
   expect(sent).not.toMatch(/record a new plan version before the next review/i);
   await f.verdict("warden", "verify", [a, b]);
   expect(f.journal.get("maker").entries.filter(entry => [a, b].includes(entry.id)).map(entry => entry.status)).toEqual(["verified", "verified"]);
-  expect(f.rounds().map(e => [e.data.reportId, e.data.planVersion])).toEqual([[first.id, 1], [second.id, 1], [third.id, 1]]);
+  expect(f.rounds().map(e => e.data.verdict)).toEqual(["verified", "rejected", "rejected", "rejected", "verified"]);
   expect(f.k.quest(f.q.id).planVersion).toBe(1);
 });

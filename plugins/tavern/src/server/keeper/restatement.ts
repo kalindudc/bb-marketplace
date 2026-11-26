@@ -175,7 +175,7 @@ function questBlock(k: Keeper, summary: BoardQuestSummary) {
     `Allocated party: ${plan?.party.map((p) => `${p.classId} for ${p.waypointIds.join(",") || p.purpose}${p.permanent ? " (permanent)" : ""}`).join("; ") || "not planned"}`,
     ...waypoints.map(
       (w) =>
-        `${w.id} [${w.state}] ${quoted(short(w.title, 80))}; ${w.actor} owner ${w.actor === "agent" && w.ownerMember ? `${k.name(w.ownerMember)} (${w.ownerMember.classId}, ${memberActivityWord(w.ownerMember)})` : (w.owner ?? "unassigned")}; lead time ${w.leadTime ?? "unknown"}; after ${w.dependsOn.join(",") || "none"}${w.rejectedReason ? `; rejected: ${quoted(w.rejectedReason)}` : ""}${w.state === "reported" && w.check === "keeper" ? "; Keeper check: use tavern_settle" : ""}${w.actor === "outside" ? (w.gate ? `; asked ${w.gate.askedWho} at ${clock(w.gate.askedAt)} via ${quoted(w.gate.via)}; answer ${quoted(w.gate.answer ?? "waiting")}` : "; not asked yet") : ""}`,
+        `${w.id} [${w.state}] ${quoted(short(w.title, 80))}; ${w.actor} owner ${w.actor === "agent" && w.ownerMember ? `${k.name(w.ownerMember)} (${w.ownerMember.classId}, ${memberActivityWord(w.ownerMember)})` : (w.owner ?? "unassigned")}; lead time ${w.leadTime ?? "unknown"}; after ${w.dependsOn.join(",") || "none"}${w.rejectedReason ? `; rejected: ${quoted(w.rejectedReason)}` : ""}${w.state === "reported" && w.check === "keeper" ? "; Keeper check: journal verify" : ""}${w.actor === "outside" ? (w.gate ? `; asked ${w.gate.askedWho} at ${clock(w.gate.askedAt)} via ${quoted(w.gate.via)}; answer ${quoted(w.gate.answer ?? "waiting")}` : "; not asked yet") : ""}`,
     ),
     ...memberLines(k, summary),
   ];

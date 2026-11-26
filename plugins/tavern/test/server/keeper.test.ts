@@ -430,7 +430,8 @@ describe("host boundaries", () => {
         }),
       ],
     });
-    expect(() => k.report("child", { ...report, status: "done" })).toThrow(/evidence/);
+    expect(k.report("child", { ...report, status: "done" }).status).toBe("done");
+    expect(port.get("child").entries[0]?.evidence).toEqual([]);
   });
   it("stop halts only that quest's party and withdraws its asks without a model", async () => {
     const { k, runtime, harness } = setup();

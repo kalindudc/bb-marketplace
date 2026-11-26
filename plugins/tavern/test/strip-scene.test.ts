@@ -84,16 +84,12 @@ describe("thread workbench", () => {
       store.event(21, "keeper-a", "quest-a", "ask.answered", "Unrelated reply");
       expect(committedStripPhase(store, "keeper-a", "quest-a")).toMatchObject({ from: "greenlight", to: "build", version: 3, at: 20 });
       expect(committedStripPhase(store, "keeper-b", "quest-a")).toBeNull();
-      const entry = { link: { boardQuestId: "quest-a", waypointId: "waypoint-a" }, status: "verified" } as JournalEntry;
-      const details = { waypointId: "waypoint-a", planVersion: 3, verdict: "verified" };
       const actor = { kind: "agent", threadId: "checker-a" } as const;
-      store.event(22, "keeper-a", "quest-a", "waypoint.review-round", "Fixture review", details, actor);
-      expect(committedStripReview(store, "checker-a", "quest-a", 3, "waypoint-a", [entry])).toEqual({ at: 22, status: "verified" });
-      expect(committedStripReview(store, "checker-b", "quest-a", 3, "waypoint-a", [entry])).toBeNull();
-      expect(committedStripReview(store, "checker-a", "quest-a", 4, "waypoint-a", [entry])).toBeNull();
-      expect(committedStripReview(store, "checker-a", "quest-a", 3, "waypoint-a", [{ ...entry, status: "todo" }])).toBeNull();
-      store.event(23, "keeper-a", "quest-a", "waypoint.review-rejected", "Fixture rejection", { ...details, verdict: "rejected" }, actor);
-      expect(committedStripReview(store, "checker-a", "quest-a", 3, "waypoint-a", [entry])).toBeNull();
+      const entry = { link: { boardQuestId: "quest-a", waypointId: "waypoint-a" }, status: "verified", review: { at: 22, actor } } as JournalEntry;
+      expect(committedStripReview("checker-a", "quest-a", "waypoint-a", [entry])).toEqual({ at: 22, status: "verified" });
+      expect(committedStripReview("checker-b", "quest-a", "waypoint-a", [entry])).toBeNull();
+      expect(committedStripReview("checker-a", "quest-a", "waypoint-b", [entry])).toBeNull();
+      expect(committedStripReview("checker-a", "quest-a", "waypoint-a", [{ ...entry, status: "todo" }])).toBeNull();
     } finally { db.close(); }
   });
 

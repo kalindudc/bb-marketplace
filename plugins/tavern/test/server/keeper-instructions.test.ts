@@ -193,7 +193,7 @@ describe("R11 tool rules remain at the tool boundary", () => {
     tavern_status: [/bounded board state/, /reportId and character offset/],
     tavern_wrap: [/quest NEVER concludes itself/, /never-timed conclude ask/, /Conclude for a settled map, Close early otherwise/, /Do not write the tale directive or archive anyone before the user answers/],
     tavern_unarchive: [/Unarchive one member/, /Deleted threads are refused/],
-    tavern_report: [/end your turn/, /short headline/, /mark every linked entry done with evidence/, /never a claim of independence/],
+    tavern_report: [/end your turn/, /short headline/, /report does not change waypoint progress/, /never a claim of independence/],
   };
   for (const [name, patterns] of Object.entries(rules)) it(name, () => {
     expect(tools.has(name)).toBe(true);

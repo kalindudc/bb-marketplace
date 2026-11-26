@@ -91,20 +91,18 @@ export function eventMoments(k: Keeper, event: TavernEvent, waypointProgress: (q
     if (ask?.state === "open" && ask.kind === "scope") return card("request");
   }
   if (type === "member.stale" || type === "member.failed") return card("stalled");
-  let check = false;
   if (type === "report.filed") {
     const report = typeof data.reportId === "string" ? k.store.get("reports", data.reportId) : null;
     if (quest.planVersion === 0 && report && k.member(report.memberThreadId)?.classId === "ranger") return card("scouts");
-    check = report?.status === "done" && !!report.waypointId;
   }
   if (type === "plan.proposed" && typeof data.version === "number" && data.version !== quest.planVersion) return [];
   const phase = type === "quest.phase" || (typeof data.phase === "object" && data.phase !== null && "from" in data.phase && "to" in data.phase && data.phase.from !== data.phase.to);
-  const settling = check || type === "waypoint.review-round" && data.verdict === "verified" || type === "journal.changed" ||
+  const settling = type === "journal.submitted" || type === "journal.reviewed" && data.verdict === "verified" || type === "journal.changed" ||
     type === "decision.made" && !!data.waypoint || type === "plan.proposed";
   const progress = settling ? waypointProgress(questId) : null;
   const currentPlanApproved = (quest.checkPlanVersion ?? quest.greenlitVersion) === quest.planVersion;
   const decision: Moment | null = progress?.all && currentPlanApproved ? "close" : progress?.any || phase ? "tell" : null;
-  return card(...(check ? ["check" as const] : []), ...(decision ? [decision] : []));
+  return card(...(type === "journal.submitted" ? ["check" as const] : []), ...(decision ? [decision] : []));
 }
 
 export function readWaypointProgress(k: Keeper, questId: string) {

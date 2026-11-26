@@ -21,7 +21,7 @@ async function fixture() {
   const base = planInput(q.id);
   const ask = (kind: "greenlight" | "conclude") => f.k.store.openAsks("lead", q.id).find(a => a.kind === kind);
   const tool = (name: string, args: Record<string, unknown>) => f.harness.behavior.invokeAgentTool(name, args, { threadId: "lead" });
-  const settle = (as: "accepted" | "skipped" | "open", waypointId = "w1", reason = "No more work is needed") => tool("tavern_settle", { boardQuestId: q.id, waypointId, as, reason });
+  const settle = async (as: "accepted" | "skipped" | "open", waypointId = "w1", reason = "No more work is needed") => f.k.settle("lead", { boardQuestId: q.id, waypointId, as, reason });
   const propose = (waypoints: unknown[], extra: Record<string, unknown> = {}) => tool("tavern_plan", { ...base, waypoints, ...extra });
   const summary = () => f.k.summary(q.id);
   const approve = () => f.runtime.answerAsk(ask("greenlight")!.id, "approve", null, "page", true);

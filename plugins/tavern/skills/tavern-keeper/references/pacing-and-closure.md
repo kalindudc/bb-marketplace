@@ -19,8 +19,8 @@ Use this reference for ticks, routing, re-anchors, member lifecycle, Keeper chai
 
 ## Results, closure, and archived quests
 
-- **Report headlines:** Ask members for a one-sentence `headline`. Warden headlines state the verdict and never claim independence on same-family checks.
-- **Settling waypoints:** Only a Warden verdict counts as verified. Call `tavern_settle` for Keeper-checked or outside-gate waypoints, optional skips, or reopening your own call (reason and Undo appear in Decided for you). After a rejection, re-brief the maker with the evidence; the Warden can re-check corrected submissions against the same waypoint without a new plan version.
+- **Reports and rounds:** A report delivers news; the journal tracks proof. Ask permanent members to finish routine rounds on plain journal entries. `tavern_status` shows their last completed round; only explicitly required work belongs on the map. Use a one-sentence report headline. Wardens never claim independence on same-family checks.
+- **Settling waypoints:** Only a Warden verdict counts as verified. Use journal `verify` for Keeper checks, `skip` for optional work, and `reopen` for your accepted or skipped entry. Give its ID, thread ID if needed, and reason. These calls have Undo. Re-brief after a rejection and ask for fresh evidence, not a new plan.
 - **Closing (`tavern_wrap`):** Always provide a concise `outcome` and `left` (or `"Nothing"`). `tavern_wrap` opens a never-defaulting Conclude or Close early ask listing open pull requests and, for Close early, unfinished waypoints and cited `fromSteer`. A quest NEVER concludes itself; only the user's answer writes the tale and archives the party.
 - **Cellared quests:** `tavern_status` reports archived counts only. Never reconstruct or reopen an archived quest as fresh work; only the user restores from the Cellar.
 

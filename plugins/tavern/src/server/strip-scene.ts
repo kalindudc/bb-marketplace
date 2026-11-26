@@ -36,15 +36,12 @@ export function committedStripPhase(store: KeeperStore, threadId: string, questI
   return row ? { revision: `phase:${row.id}`, at: row.at, from: row.from, to: row.to, version: row.version } : null;
 }
 
-export function committedStripReview(store: KeeperStore, threadId: string, questId: string, planVersion: number, waypointId: string, entries: readonly JournalEntry[]) {
+export function committedStripReview(threadId: string, questId: string, waypointId: string, entries: readonly JournalEntry[]) {
   const linked = entries.filter(entry => entry.link?.boardQuestId === questId && entry.link?.waypointId === waypointId);
   if (!linked.length || linked.some(entry => entry.status !== "verified")) return null;
-  const row = store.db.prepare(`SELECT at, json_extract(data, '$.verdict') AS status
-    FROM tavern_events WHERE board_quest_id = ? AND type IN ('waypoint.review-round','waypoint.review-rejected')
-    AND json_extract(actor, '$.kind') = 'agent' AND json_extract(actor, '$.threadId') = ?
-    AND json_extract(data, '$.planVersion') = ? AND json_extract(data, '$.waypointId') = ?
-    ORDER BY id DESC LIMIT 1`).get(questId, threadId, planVersion, waypointId) as { at: number; status: string } | undefined;
-  return row?.status === "verified" ? { at: row.at, status: "verified" as const } : null;
+  const at = linked.reduce<number | null>((latest, { review }) =>
+    review?.actor.kind === "agent" && review.actor.threadId === threadId && (latest === null || review.at > latest) ? review.at : latest, null);
+  return at === null ? null : { at, status: "verified" as const };
 }
 
 type RoadWaypoint = {
@@ -174,7 +171,7 @@ export function readStripScene(keeper: Keeper, member: Member, known?: SceneFact
   const waypoint = member.checkerWaypointId ?? member.waypointId;
   const assigned = !!waypoint && !!plan?.waypoints.some(w => w.id === waypoint);
   const sceneVerdict = member.classId === "warden" && boardQuest && assigned && waypoint && plan
-    ? committedStripReview(store, threadId, boardQuest.id, plan.version, waypoint, entries)
+    ? committedStripReview(threadId, boardQuest.id, waypoint, entries)
     : verdict?.waypointId === waypoint ? verdict : null;
   const host = known ? null : memberHost(store, member);
   const askOwner = member.role === "keeper" ? threadId : member.keeperThreadId;

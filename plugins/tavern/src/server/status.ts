@@ -1,5 +1,6 @@
 import { briefProgress, memberDetails, memberHost, releasedThreadOpen } from "./member-engagement";
 import type { MemberBriefRow } from "../shared/contract";
+import type { JournalEntry } from "../shared/schema";
 import { memberActivityWord, wasReleased } from "../shared/member-engagement";
 import { z } from "zod";
 import { restingParty, showInFreeHands } from "./resting";
@@ -312,6 +313,16 @@ function statusData(
     archivedMembers, archivedMemberTotal, nextArchivedOffset,
     memberBriefs: memberBriefRows(k, threadId, input.boardQuestId ?? undefined, input.memberThreadId ?? undefined),
     rangerCheckpoints: rangerCheckpointRows(k, threadId, input.boardQuestId, input.memberThreadId),
+    permanentRounds: party.flatMap(member => {
+      const target = input.memberThreadId ?? input.member;
+      if (!member.permanent || !isLiveMember(k.store, member, "schedule") ||
+        input.boardQuestId && member.boardQuestId !== input.boardQuestId || target && member.threadId !== target) return [];
+      const last = k.journal.get(member.threadId).entries.reduce<JournalEntry | null>((latest, entry) => {
+        if (entry.boardQuestId || entry.parentId || entry.link || entry.doneAt === null || !["done", "verified"].includes(entry.status)) return latest;
+        return !latest || entry.doneAt > (latest.doneAt ?? 0) ? entry : latest;
+      }, null);
+      return [{ memberThreadId: member.threadId, name: k.name(member), lastRound: last ? { entryId: last.id, description: last.description, at: last.doneAt } : null }];
+    }),
     unreviewedMemory: runtime.memory.unreviewedFor(threadId, 0, 3),
     freeHands: resting.filter(showInFreeHands).map(m => m.machineLost ? { ...m, unavailable: "machine lost: can't take new work; release it" } : m),
     restingMembers: resting.filter(m => m.settled),

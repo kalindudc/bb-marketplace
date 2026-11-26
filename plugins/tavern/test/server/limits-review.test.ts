@@ -35,7 +35,7 @@ it("closes and reloads a quest with long tale text, next steps, a long skip reas
   const next = Array.from({ length: 6 }, () => "next ".repeat(60).trim());
   const reason = "Close early because the work changed. ".repeat(20).trim();
   const skipReason = "Already done outside this quest. ".repeat(20).trim();
-  await f.call("tavern_settle", { boardQuestId: f.q.id, waypointId: "w26", as: "skipped", reason: skipReason });
+  f.k.settle("lead", { boardQuestId: f.q.id, waypointId: "w26", as: "skipped", reason: skipReason });
   await f.call("tavern_wrap", { boardQuestId: f.q.id, outcome, left, next, reason });
   const ask = f.k.store.openAsks("lead", f.q.id).find(a => a.kind === "conclude")!;
   await f.harness.invokeRpc("answerAsk", { askId: ask.id, optionId: "close-early", note: null, via: "page" });

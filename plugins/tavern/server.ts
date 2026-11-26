@@ -80,7 +80,8 @@ export default async function tavern(bb: BbPluginApi) {
   const register: RegisterJournal = registerJournal;
   const journal = register(bb, db, {
     studyTool: (tool, threadId, input, call) => runtime ? runtime.study.tool(tool, threadId, input, call) : Promise.resolve(call(() => {})),
-    verdictSubmitted: (actor, entries) => keeper.recordWardenRound(actor, entries),
+    workSubmitted: (actor, entries) => keeper.recordJournalSubmission(actor, entries),
+    verdictSubmitted: (actor, entries) => keeper.recordJournalVerdict(actor, entries),
     keeperWaypointCall: (threadId, input) => keeper.journalWaypointCall(threadId, input),
     keepsLinkedWork: entry => keeper.keepsLinkedWork(entry),
     assertWritable: threadId => keeper.succession.assertMutable(threadId),

@@ -1158,10 +1158,10 @@ export class Keeper {
     return !!waypoint && !waypointProof(waypoint, entry);
   }
   journalWaypointCall(threadId: string, { action, link, entry, reason }: {
-    action: "verify" | "skip"; link: WaypointReceipt["link"]; entry?: JournalEntry; reason: string;
+    action: "verify" | "skip" | "reopen"; link: WaypointReceipt["link"]; entry?: JournalEntry; reason: string;
   }) {
-    const result = this.settle(threadId, { ...link, as: action === "verify" ? "accepted" : "skipped", reason }, undefined, entry);
-    return "question" in result ? `Waypoint call needs the user's answer (${result.id}).` : result.text;
+    const result = this.settle(threadId, { ...link, as: action === "verify" ? "accepted" : action === "skip" ? "skipped" : "open", reason }, undefined, entry);
+    return "question" in result ? `Waypoint call needs the user's answer. No decision was applied. Write on its own line:\n::tavern-ask{id="${result.id}"}` : result.text;
   }
   settle(threadId: string, input: Parameters<typeof settleWaypointSchema.parse>[0], legacySkipAskId?: string, entry?: JournalEntry): Decision | Ask {
     const call = settleWaypointSchema.parse(input);
@@ -1192,7 +1192,11 @@ export class Keeper {
     const w = this.readQuestSummary(q.id, undefined, submission).waypoints.find(w => w.id === waypointId);
     if (!w) throw new Error("Settlement must name a waypoint in the current plan");
     const linked = entry ? submission.entries.filter(e => e.threadId === entry.threadId && e.id === entry.id) : submission.entries;
-    if (entry && !linked.length) throw new Error("That journal entry is not current work on this waypoint.");
+    if (entry && !linked.length) {
+      if (!q.waypointJournal && w.actor === "outside" && as === "accepted")
+        throw new Error("This outside reply still uses the old journal format. Restart Tavern to retry its upgrade before accepting it.");
+      throw new Error("That journal entry is not current work on this waypoint.");
+    }
     const acceptance = submission.entries.find(e => e.review?.kind === "keeper-waypoint");
     const pending = linked.filter(e => !waypointProof(w, e, acceptance));
     const targets = as === "accepted" ? pending.filter(e => (e.status === "done" || e.status === "verified") && e.evidence.length)
@@ -2318,23 +2322,6 @@ export class Keeper {
     if (input.status === "checkpoint" && input.wait) throw new Error("A checkpoint already waits for the Keeper; omit wait.");
     const rangerCheckIn = ranger && (input.status === "done" || input.status === "checkpoint");
     const late = !isLiveMember(this.store, m, "brief") || m.engagement === "resting" && (input.status !== "done" || ranger) || !isLiveKeeper(this.store, this.member(m.keeperThreadId!), "present");
-    const entries = this.journal
-      .get(threadId)
-      .entries.filter((e) => e.link?.boardQuestId === m.boardQuestId);
-    if (
-      !late && input.status === "done" &&
-      (m.waypointId || entries.length) &&
-      m.classId !== "warden" &&
-      (!entries.length ||
-        entries.some(
-          (e) =>
-            !["done", "verified"].includes(e.status) || e.evidence.length === 0,
-        ))
-    ) {
-      throw new StudyRefusal("report.linked-journal-evidence",
-        "Mark every linked waypoint entry done with evidence first, then file the done report.",
-      );
-    }
     const limitation = reviewLimitation(m.checkIndependence);
     const limit = intake ?? new IntakeLimits(this.settings(m.boardQuestId).limits);
     const outcome = limit.prose(z.string().min(1)).parse(
@@ -2364,23 +2351,8 @@ export class Keeper {
       deliveredAt: late ? this.now() : null,
     });
     const previous = this.store.query("reports", "memberThreadId", threadId, 1)[0];
-    const quest = m.boardQuestId ? this.store.get("quests", m.boardQuestId) : null;
-    const reviewPlanVersion = quest?.checkPlanVersion ?? quest?.greenlitVersion;
-    const reviewPlan = quest && reviewPlanVersion && this.store.get("plans", `${quest.id}:${reviewPlanVersion}`);
-    const reviewWaypoints = !late && report.status === "done" && !ranger && m.classId !== "warden" && reviewPlan
-      ? reviewPlan.waypoints.flatMap(w => {
-          const entryIds = entries.filter(e => e.link?.waypointId === w.id && e.status === "done").map(e => e.id);
-          return entryIds.length && w.actor === "agent" && waypointCheck(w) === "warden" ? [{ waypointId: w.id, entryIds }] : [];
-        })
-      : [];
-    const rejections = quest && previous && reviewWaypoints.length
-      ? this.store.db.prepare(`SELECT DISTINCT json_extract(data,'$.waypointId') AS waypointId
-        FROM tavern_events WHERE board_quest_id=? AND type IN ('waypoint.review-round','waypoint.review-rejected')
-        AND json_extract(data,'$.reportId')=? AND json_extract(data,'$.verdict')='rejected'`)
-        .all(quest.id, previous.id) as { waypointId: string }[]
-      : [];
     if (
-      previous && !rejections.some(rejection => reviewWaypoints.some(w => w.waypointId === rejection.waypointId)) &&
+      previous &&
       (this.store.runtime(threadId).briefVersion ?? 0) ===
         (this.store.runtime(threadId).reportedBriefVersion ?? 0) &&
       previous.status === report.status &&
@@ -2400,8 +2372,7 @@ export class Keeper {
         this.memory.recordMemberWait(report);
       }
       this.store.patch(threadId, { reportedBriefVersion: this.store.runtime(threadId).briefVersion ?? 0 });
-      const text = `${this.name(m)}: ${input.outcome}`, data = { reportId: report.id, status: input.status,
-        ...(reviewWaypoints.length ? { makerThreadId: threadId, reviewPlanVersion, reviewWaypoints } : {}) };
+      const text = `${this.name(m)}: ${input.outcome}`, data = { reportId: report.id, status: input.status };
       if (!late && input.status === "done" && !ranger && m.engagement === "active") {
         transitionMember(this.store, m, memberDetails(this.store, threadId).delivery ? "briefing" : "resting", "done-report", { kind: "agent", threadId }, { kind: "report", id: report.id }, this.now(), { text, data });
       } else {
@@ -2419,38 +2390,31 @@ export class Keeper {
     this.changed(threadId, m.boardQuestId);
     return report;
   }
-  private reviewSubmission(questId: string, makerThreadId: string, waypointId: string) {
-    return this.store.db.prepare(`SELECT json_extract(data,'$.reportId') AS reportId,
-      json_extract(data,'$.reviewPlanVersion') AS planVersion, json_extract(w.value,'$.entryIds') AS entryIds
-      FROM tavern_events, json_each(data,'$.reviewWaypoints') w WHERE board_quest_id=? AND tavern_events.type='report.filed'
-      AND json_extract(data,'$.makerThreadId')=? AND json_extract(w.value,'$.waypointId')=? ORDER BY tavern_events.id DESC LIMIT 1`)
-      .get(questId, makerThreadId, waypointId) as { reportId: string; planVersion: number; entryIds: string } | undefined;
-  }
-  recordWardenRound(actor: Actor, entries: JournalEntry[]) {
-    const warden = actor.kind === "agent" ? this.member(actor.threadId) : null;
-    if (warden?.classId !== "warden" || !warden.boardQuestId) return;
-    const q = this.quest(warden.boardQuestId);
+  recordJournalSubmission(actor: Actor, entries: JournalEntry[]) {
+    const member = actor.kind === "agent" ? this.member(actor.threadId) : null;
+    if (!member?.keeperThreadId || !member.boardQuestId) return;
+    const q = this.store.get("quests", member.boardQuestId);
     if (!isOpenQuest(q)) return;
-    const makerThreadId = entries[0]?.threadId;
-    if (!makerThreadId) return;
-    const waypoints = new Set(entries.flatMap(e => e.link?.boardQuestId === q.id ? [e.link.waypointId] : []));
-    for (const waypointId of waypoints) {
-      const submission = this.reviewSubmission(q.id, makerThreadId, waypointId);
-      if (!submission) continue;
-      const { reportId } = submission;
-      const submitted = new Set<string>(JSON.parse(submission.entryIds));
-      const reviewed = entries.filter(e => e.link?.waypointId === waypointId && submitted.has(e.id));
-      if (!reviewed.length) continue;
-      const verdict = reviewed.some(e => e.status === "rejected") ? "rejected" : "verified";
-      const prior = this.store.db.prepare(`SELECT json_extract(data,'$.verdict') AS verdict, json_extract(data,'$.planVersion') AS planVersion
-        FROM tavern_events WHERE board_quest_id=? AND type IN ('waypoint.review-round','waypoint.review-rejected')
-        AND json_extract(data,'$.waypointId')=? AND json_extract(data,'$.reportId')=? ORDER BY id DESC LIMIT 1`)
-        .get(q.id, waypointId, reportId) as { verdict: string; planVersion: number } | undefined;
-      if (prior && (prior.verdict === "rejected" || verdict === "verified")) continue;
-      const planVersion = prior?.planVersion ?? submission.planVersion;
-      this.store.event(this.now(), q.keeperThreadId, q.id, prior ? "waypoint.review-rejected" : "waypoint.review-round",
-        `Warden ${verdict} work on ${waypointId} in plan v${planVersion}`,
-        { waypointId, planVersion, verdict, reportId, makerThreadId, entryIds: reviewed.map(entry => entry.id) }, actor);
+    const waypoints = [...new Set(entries.flatMap(e => e.link?.boardQuestId === q.id ? [e.link.waypointId] : []))];
+    if (waypoints.length) this.store.event(this.now(), q.keeperThreadId, q.id, "journal.submitted",
+      `${this.name(member)} submitted journal work on ${waypoints.join(", ")}`, { waypoints }, actor);
+  }
+  recordJournalVerdict(actor: Actor, entries: JournalEntry[]) {
+    const warden = actor.kind === "agent" ? this.member(actor.threadId) : null;
+    const q = warden?.classId === "warden" && warden.boardQuestId ? this.quest(warden.boardQuestId) : null;
+    if (!isOpenQuest(q)) return;
+    const byWaypoint = new Map<string, JournalEntry[]>();
+    for (const entry of entries) {
+      if (entry.link?.boardQuestId !== q.id) continue;
+      const id = entry.link.waypointId;
+      const linked = byWaypoint.get(id);
+      if (linked) linked.push(entry);
+      else byWaypoint.set(id, [entry]);
+    }
+    for (const [waypointId, reviewed] of byWaypoint) {
+      const verdict = reviewed.some(entry => entry.status === "rejected") ? "rejected" : "verified";
+      this.store.event(this.now(), q.keeperThreadId, q.id, "journal.reviewed", `Warden ${verdict} journal work on ${waypointId}`,
+        { waypointId, verdict, makerThreadId: reviewed[0]!.threadId, entryIds: reviewed.map(entry => entry.id) }, actor);
     }
   }
   checkerWaypoints(threadId: string) {
@@ -2499,8 +2463,10 @@ export class Keeper {
       evidence: [{ kind: "note", ref, detail: note ? `${label}: ${note}`.slice(0, 2000) : label, exitCode: null }],
     });
   }
-  async migrateWaypointJournal(warn: (message: string) => void = console.warn) {
-    for (const q of this.store.all("quests").filter(q => isOpenQuest(q) && !q.waypointJournal)) {
+  async migrateWaypointJournal(warn: (message: string) => void = console.warn, boardQuestId?: string) {
+    const quests = boardQuestId === undefined ? this.store.all("quests") : [this.store.get("quests", boardQuestId)];
+    for (const q of quests) {
+      if (!isOpenQuest(q) || q.waypointJournal) continue;
       try {
         if (q.planVersion) await this.journal.prepare(q.keeperThreadId);
         this.store.atomic(() => {

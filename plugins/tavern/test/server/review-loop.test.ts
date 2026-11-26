@@ -284,21 +284,18 @@ describe("tick delivery regressions", () => {
 });
 
 describe("staffing and policy regressions", () => {
-  it("M5 refuses done reports for open or missing linked entries, then accepts evidence", async () => {
+  it("a report delivers news even if journal work is missing or open", async () => {
     const { k, port } = setup();
     const q = await seedQuest(k,"lead", "A", "A");
     bind(k, "child", q.id, "w1");
-    expect(() => k.report("child", { ...report, status: "done" })).toThrow(
-      /done with evidence first/,
-    );
+    expect(k.report("child", { ...report, status: "done" }).status).toBe("done");
     const original = port.get;
     port.get = (id) => ({
       ...original(id),
       entries: [linked(id, q.id, "doing")],
     });
-    expect(() => k.report("child", { ...report, status: "done" })).toThrow(
-      /done with evidence first/,
-    );
+    expect(k.report("child", { ...report, status: "done", outcome: "Update with work open" }).status).toBe("done");
+    expect(port.get("child").entries[0]?.status).toBe("doing");
     port.get = (id) => ({
       ...original(id),
       entries: [linked(id, q.id, "verified", true)],
