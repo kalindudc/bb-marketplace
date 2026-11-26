@@ -298,7 +298,7 @@ export class TavernRuntime {
       `${this.keeper.name(member)} reported with ${changed.length} uncommitted file(s)`,
       { memberThreadId: threadId, changed: changed.slice(0, 200) },
     );
-    return `Warning: ${changed.length} uncommitted file(s) remain in your worktree. Keep your work on a branch and commit now, one or many appropriate commits, before this turn ends. Tavern preserves uncommitted files before cleanup, but an uncommitted turn-end is a defect.`;
+    return `Warning: ${changed.length} uncommitted file(s) remain in your worktree. If these are changes you were allowed to make, commit them on your own branch before ending your turn. Tavern's preservation before cleanup is a safety net.`;
   }
   /**
    * Whether wake-delivered ticks may batch. Off by default: only this opt-in setting lets a wake hold briefly so more

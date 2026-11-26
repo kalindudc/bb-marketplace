@@ -53,13 +53,12 @@ Check `tavern_placements` for repo and class. Consent, inputs, models and forge 
 
 ## Write a brief
 
-Write a self-contained brief:
-
-1. Name the outcome and repeatable checks. Prove claims with file and line, command and output, or query and counts.
-2. Quote settled decisions. Name what is out of scope and what to report rather than widen.
-3. Link paths, threads and journal entries instead of pasting long reports.
-4. Ask for a one-sentence headline and evidence paths. Ask for a journal note during long work; a report ends the turn.
-7. If the work changes something the user already uses, name what must survive and show before and after. Keep it local until they approve.
+1. Give the outcome and repeatable checks. Cite file and line, command and output, or query and counts.
+2. Quote decisions, exclusions and what to report rather than widen.
+3. Link paths, threads and journal entries, not pasted reports.
+4. Ask for a one-sentence headline, evidence paths and a journal note during long work. Reports end turns.
+5. Members who change files commit on their own branches and resolve their own merge conflicts. Do the same in your own worktree: commit as you go with clear messages and leave no uncommitted work.
+6. If the work changes something the user already uses, name what must survive and show before and after. Keep it local until they approve.
 
 Narrow follow-ups with changed `waypointIds`. If none resolve, all linked work on the quest reopens.
 

@@ -39,6 +39,10 @@ When a Keeper hires or re-briefs a member, Tavern attaches your exact opening re
 
 ## Checking work and managing members
 
+Smiths and Wanderers who change files in their own worktrees commit as they go and leave no uncommitted work at the end of a turn. Keepers do the same when they build in their own worktree. When a member's branch falls behind or conflicts, its owner rebases or merges into it, keeps both intents, and reports what they resolved. Pushing, merging into a shared branch, and publishing still need their usual approvals. If your agent rules forbid commits, allow them in member worktrees so members can commit there and keep their work from being lost.
+
+Rangers leave the work unchanged. Wardens never edit tracked files, commit, or switch refs in the maker's checkout. Tavern's preservation before archive remains a safety net, not a substitute for commits.
+
 Only a Warden verdict counts as verified work. Keeper reviews, outside replies, and optional skips are recorded in the journal. Reports deliver news without moving the waypoint. A Keeper can also record an existing branch, pull request, or path for a Warden to check without hiring a builder. After a rejection, the Keeper re-briefs the builder with the Warden's evidence, and the Warden can re-check corrected work across multiple rounds without a new plan version.
 
 Finished members rest rather than being released on a timer. Keepers must reuse an eligible resting member before hiring a new one, can keep a working or resting member for expected follow-ups (up to seven days by default), and archive a member's thread once it is released and its work is preserved.

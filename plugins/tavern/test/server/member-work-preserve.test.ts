@@ -208,7 +208,7 @@ describe("member work preservation before cleanup", () => {
     writeFileSync(join(worktree, "notes.txt"), "still uncommitted\n");
     const dirty = await f.harness.behavior.invokeAgentTool("tavern_report", report, { threadId: "child" });
     expect(String(dirty)).toContain("1 uncommitted file(s)");
-    expect(String(dirty)).toContain("commit");
+    expect(String(dirty)).toContain("If these are changes you were allowed to make, commit them on your own branch before ending your turn.");
     const warned = f.k.store.events("lead").filter(event => event.type === "member.work-uncommitted");
     expect(warned).toHaveLength(1);
     expect(warned[0]!.data).toMatchObject({ memberThreadId: "child", changed: ["notes.txt"] });

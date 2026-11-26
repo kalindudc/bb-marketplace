@@ -139,6 +139,9 @@ it("teaches carrying the user's outcome to done without adding a stop", () => {
   expect(carry).toMatch(/Prove a blocker with a read.*Update what exists/);
   expect(carry).toMatch(/Before the user leaves.*summary.*Closing time choice/);
 });
+it("keeps commits and merge resolutions on each working member's own branch", () => {
+  expect(sections.get("Write a brief")).toMatch(/members who change files.*commit on their own branches.*resolve their own merge conflicts/i);
+});
 it("keeps what the user relies on and makes the release decision while reading the report", () => {
   expect(sections.get("Write a brief")).toMatch(/already uses.*what must survive.*before and after.*local until they approve/);
   expect(sections.get("Check the work")).toMatch(/read a report.*no follow-up.*release.*that turn.*expect one.*tavern_keep/);

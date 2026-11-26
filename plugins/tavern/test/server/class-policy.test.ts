@@ -94,17 +94,29 @@ describe("class character and quality policy", () => {
     expect(classRules("solo")).not.toContain("tick id");
   });
 
-  it("carries the commit-before-turn-end standard in every working-class contract and in the Smith body", () => {
-    for (const role of ["member", "solo"] as const) {
-      const rules = classRules(role);
-      expect(rules).toContain("when your work changes files");
-      expect(rules).toContain("commit it before your turn ends");
-      expect(rules).toContain("An uncommitted turn-end is a defect");
-    }
-    expect(classRules("keeper")).not.toContain("An uncommitted turn-end is a defect");
-    const smith = registry().read().classes.find(role => role.id === "smith")!;
-    expect(smith.body).toContain("commit before you end your turn");
-    expect(smith.body).toContain("An uncommitted turn-end is a defect");
+  it.each(["member", "solo"] as const)("limits the %s commit rule to permitted changes in its own worktree", role => {
+    const rules = classRules(role);
+    expect(rules).toMatch(/allowed to change files in your own worktree/);
+    expect(rules).toMatch(/own branch.*commit as you go.*saying what changed\./);
+    expect(rules).toMatch(/end your turn.*uncommitted/);
+  });
+
+  it.each(["smith", "wanderer"] as const)("gives %s a local commit and conflict-resolution habit", classId => {
+    const { body } = registry().read().classes.find(role => role.id === classId)!;
+    expect(body).toMatch(/own branch.*commit as you go.*saying what changed\./i);
+    expect(body).toMatch(/end your turn.*uncommitted/);
+    expect(body).toMatch(/rebase or merge.*resolve conflicts yourself.*both intents.*report what you resolved/);
+    expect(body).toMatch(/pushing, merging into a shared branch, and publishing.*approval/i);
+  });
+
+  it("keeps Rangers read-only and Wardens from editing, committing or checking out refs in the maker's worktree", () => {
+    const { classes } = registry().read();
+    const ranger = classes.find(role => role.id === "ranger")!;
+    expect(ranger.scope).toBe("readonly");
+    expect(ranger.body).toContain("change nothing: no edits, no commits");
+    const warden = classes.find(role => role.id === "warden")!;
+    expect(warden.scope).toBe("checker");
+    expect(warden.body).toMatch(/NEVER edit tracked files, commit, check out another ref, or modify Git metadata in the maker's worktree/);
   });
 
   it("warns about an older, changed copy of a shipped class without dropping the override", () => {
