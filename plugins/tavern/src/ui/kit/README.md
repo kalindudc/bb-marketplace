@@ -28,7 +28,7 @@ The examples below use bb's stylesheet and the plugin CSS in a fixture harness.
 - Spacing steps are 2, 4, 6, 8, 12, 16 and 24 px. Inside a row use 4 to 6; between rows and inside cards use 6 to 8; between cards and sections use 12 to 16; use 24 only around page sections.
 - Density follows bb: the Keeper’s folded widget matches the context row (35 px, or 38 px on narrow touch screens). Card padding is 8 to 12 px. List rows are 28 to 32 px on desktop.
 - Surfaces size by their container, not the window: use container queries (`container-type: inline-size`), because the same part renders in a 1,000 px thread and in a 320 px side panel. Check every surface at 1400, 720 and 390 px wide.
-- Nothing scrolls sideways. Long text truncates with an ellipsis and carries a `title`; URLs and ids truncate, sentences wrap.
+- The quest map uses a vertical trail when its dependency columns cannot fit. Its waypoint titles wrap in full. In other surfaces, URLs and ids can truncate with a `title`; sentences wrap.
 
 ## Type
 

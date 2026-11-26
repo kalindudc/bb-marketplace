@@ -246,11 +246,6 @@ html.dark .tavern.qmcard { box-shadow: 0 0 0 1px color-mix(in oklab, var(--atten
 .tavern .qm-mapfold > .btn { display: flex; width: 100%; background: var(--tavern-recessed); }
 .tavern .qm-mapfold > .btn .act-i { margin-left: auto; }
 .tavern .qm-mapfold > div:not([hidden]) { margin-top: 8px; }
-.tavern .qm-mapfold .qmap.drawn { overflow-x: auto; }
-.tavern .qm-mapfold .qmap.drawn:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
-.tavern .qm-mapfold .qm-scroll-hint { position: sticky; left: 0; font-size: 12px; }
-.tavern .qm-mapfold .qmap.drawn .qsvg { display: block; }
-.tavern .qm-mapfold .qmap.drawn .qlist { display: none; }
 .tavern .qm-goal { display: grid; gap: 4px; font-size: 13px; overflow-wrap: anywhere; }
 .tavern .qm-goal b { font-size: 14px; }
 .tavern .qm-key { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 11px; }
@@ -362,20 +357,8 @@ html.dark .tavern .btn.seal { box-shadow: 0 0 18px -6px color-mix(in oklab, var(
 .tavern .wp-mark.gate .bar { stroke: color-mix(in oklab, var(--foreground) 55%, transparent); stroke-width: 1.6; fill: none; stroke-dasharray: 2 2; }
 .tavern .wp-mark.proposed path { fill: color-mix(in oklab, var(--foreground) 8%, var(--card)); stroke: var(--foreground); stroke-width: 1.3; stroke-dasharray: 2.4 1.8; }
 .tavern .wp-mark.open path { fill: none; stroke: var(--tavern-muted); stroke-width: 1.3; stroke-dasharray: 2 2; }
-.tavern .qsvg .wp .ring { fill: none; stroke-width: 2; }
-.tavern .qsvg .wp.s-doing .ring { stroke: var(--primary); }
-.tavern .qsvg .wp.s-reported .ring { stroke: var(--attention); stroke-dasharray: 4 3; }
-.tavern .qsvg .wp:is(.s-blocked, .s-rejected) .ring { stroke: var(--tavern-bad); stroke-dasharray: 3 3; }
-.tavern .qsvg .wp .ok rect { fill: var(--success); }
-.tavern .qsvg .wp .ok path { fill: none; stroke: var(--card); stroke-width: 1.8; }
-.tavern .qsvg .wp.s-planned .wp-fo, .tavern .qsvg .wp.s-skipped .wp-fo { opacity: .92; }
-.tavern .map-label .o { display: block; font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tavern .map-label .o .m { display: inline; font-weight: 400; }
-.tavern .map-label .o.o-you { color: var(--foreground); }
-.tavern .qmap.dealt .qsvg .wp.o-member .wp-fo { transform-box: fill-box; transform-origin: center; }
-.tavern.qmcard.mo-seal .qmap.dealt .qsvg .wp.o-member .wp-fo { animation: tavern-deal .4s var(--tavern-ease) both; animation-delay: calc(min(var(--i), 7) * 100ms); }
+.tavern.qmcard.mo-seal .qmap.dealt .qm-cards .wp.o-member .qm-crest > svg { animation: tavern-deal .4s var(--tavern-ease) both; animation-delay: calc(min(var(--i), 7) * 100ms); }
 @keyframes tavern-deal { from { transform: translate(-40px, 46px) rotate(-14deg) scale(1.3); opacity: 0; } 55% { opacity: 1; } to { transform: none; opacity: 1; } }
-html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix(in oklab, var(--attention) 70%, transparent)); }
 
 /* Party forms and the tale */
 .tavern .deal { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; }
@@ -401,8 +384,6 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 }
 @container page (max-width: 560px) { .tavern .roll li { grid-template-columns: auto minmax(0, 1fr); } .tavern .roll .rl-w { grid-column: 2; } }
 
-/* Labels sit on a translucent card fill under a text halo, so a dashed road passing beneath reads as a shade behind the words, never a slice through them. */
-.tavern .map-label b, .tavern .map-label .o { background: color-mix(in oklab, var(--card) 84%, transparent); text-shadow: 0 0 2px var(--card), 0 0 2px var(--card), 0 0 3px var(--card); }
 .tavern .qm-steer { border: 0; padding: 0; height: auto; color: var(--tavern-muted); }
 .tavern .qm-wait { border: 0; }
 /* Static chips: tinted, never bordered (borders mean controls). */
@@ -735,11 +716,6 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .decided .di-receipt > .tavern-glyph { color: var(--success); }
 .tavern .decided .di-err { color: var(--destructive-text, var(--destructive)); }
 
-/* Tale path: credit words take the second line whole; stretched labels wrap at word boundaries, never mid-word. */
-.tavern .map-label .o.o-credit { font-weight: 400; color: var(--tavern-muted); }
-.tavern .map-label .o.o-credit .m.clamp { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.tavern .qmap.stretch .map-label { overflow-wrap: normal; word-break: normal; }
-.tavern .qmap.stretch .map-label b { overflow-wrap: break-word; }
 /* Figure row: the tale's numbers, label over value like Kpi; spacing, not rules, between them, so a wrapped figure starts clean. */
 .tavern .tfig { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0; }
 .tavern .tfig > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

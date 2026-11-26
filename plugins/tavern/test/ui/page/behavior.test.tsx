@@ -170,6 +170,8 @@ describe("Tavern page surfaces", () => {
     const slot = await page(`quest/${quest.id}`, { boardQuest: () => ({ ...detail, quest, asks: [ask] }), answerAsk });
     const map = await slot.findByRole("region", { name: `Quest map: ${quest.title}` });
     const card = await slot.findByRole("region", { name: "Ask: Approve the mock?" });
+    const moves = slot.getByRole("heading", { name: "By whose move" });
+    expect(moves.compareDocumentPosition(map) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const disclosure = card.closest("details")!;
     disclosure.open = false;
     fireEvent.click(within(map).getByRole("button", { name: "Answer ask: Approve the mock" }));

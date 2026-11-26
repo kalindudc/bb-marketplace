@@ -50,7 +50,7 @@ it("lists added steps and the party change with the full map folded and approval
     expect(slot.container.querySelector(".qsvg")).toBeNull();
     fireEvent.click(fold);
     expect(fold.getAttribute("aria-expanded")).toBe("true");
-    expect(slot.container.querySelectorAll(".qsvg .wp")).toHaveLength(11);
+    expect(slot.getByRole("region", { name: /^Drawn quest map:/ }).querySelectorAll(".qm-cards .wp")).toHaveLength(11);
     fireEvent.click(fold);
     expect(slot.container.querySelector(".qsvg")).toBeNull();
   } finally { slot.lifecycle.unmount(); }
@@ -122,14 +122,14 @@ it("shows the Charter's goal, criteria, exact commands and everything that comes
   } finally { slot.lifecycle.unmount(); }
 });
 
-it("only gives the drawn map a tab stop and a scroll cue when it needs them", () => {
+it.each([5, 6])("draws a %i-level plan only when all its columns fit", (depth) => {
   let update!: (entries: { contentRect: { width: number } }[]) => void;
   vi.stubGlobal("ResizeObserver", class {
     constructor(private readonly callback: typeof update) {}
     observe(el: HTMLElement) { if (el.classList.contains("drawn")) update = this.callback; }
     disconnect() {}
   });
-  const plan = { ...firstPlan, waypoints: firstPlan.waypoints.map(w => w.id === "w2" ? { ...w, dependsOn: ["w1"] } : w.id === "w3" ? { ...w, dependsOn: ["w2"] } : w) };
+  const plan = { ...firstPlan, waypoints: firstPlan.waypoints.map((w, i) => i > 0 && i < depth ? { ...w, dependsOn: [firstPlan.waypoints[i - 1]!.id] } : w) };
   const slot = renderPlan(planDetail(plan, [plan]), "card");
   try {
     fireEvent.click(slot.getByRole("button", { name: "Quest map" }));
@@ -137,12 +137,13 @@ it("only gives the drawn map a tab stop and a scroll cue when it needs them", ()
     const route = slot.getByRole("region", { name: "Route in order" });
     const map = slot.getByRole("region", { name: "Drawn quest map: Harbor signal lamp" });
     expect(within(route).getByRole("list", { name: "Waypoints in order" })).toBeTruthy();
-    act(() => update([{ contentRect: { width: 730 } }]));
-    expect(map.hasAttribute("tabindex")).toBe(false);
-    expect(slot.queryByText("Scroll sideways to see the full map")).toBeNull();
-    act(() => update([{ contentRect: { width: 340 } }]));
-    expect(map.tabIndex).toBe(0);
-    expect(slot.getByText("Scroll sideways to see the full map")).toBeTruthy();
+    const minimum = depth === 5 ? 996 : 1200;
+    for (const width of [390, 800, 900, minimum - 0.5, minimum, 1400, 900]) {
+      act(() => update([{ contentRect: { width } }]));
+      expect(map.classList.contains("trail"), `pane at ${width}px`).toBe(width < minimum);
+      expect(within(map).getAllByRole("listitem")).toHaveLength(plan.waypoints.length);
+      expect(Number(map.querySelector(".qsvg")!.getAttribute("width"))).toBeLessThanOrEqual(width);
+    }
   } finally { slot.lifecycle.unmount(); vi.unstubAllGlobals(); }
 });
 

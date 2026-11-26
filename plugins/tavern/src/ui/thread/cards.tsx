@@ -245,8 +245,8 @@ export function QuestMapCard({ detail, version, measurement }: { detail: BoardQu
       {plan.findings.length + plan.assumptions.length > 0 && <div id={findingsId} className="qm-fold" hidden={!findingsOpen}>{findingsOpen && <ul className="dots">{plan.findings.map((f, i) => <li key={`f${i}`} data-content>{f}</li>)}{plan.assumptions.map((f, i) => <li key={`a${i}`} className="m" data-content>Assumes: {f}</li>)}</ul>}</div>}
       {decided.length > 0 && <div id={decidedId} hidden={!decidedOpen}>{decidedOpen && <DecidedForYou decisions={decided} pending={undo.isPending} onUndo={id => void undo.mutate({ decisionId: id }).catch(setError)} />}</div>}
       <PlanMapFold key={`map:${plan.version}`}>
-        <QuestMap quest={quest} mode={mode} dealt={sealed} stretch={!sealed} showChecks showAll drawn onOpenAsk={openAsk} />
-        <div className="qm-key m"><span><i className="k crest" />agent</span><span><i className="k you" />your move</span><span><i className="k gate" />outside owner</span><span>left to right is order, not a schedule</span></div>
+        <QuestMap quest={quest} mode={mode} dealt={sealed} stretch={!sealed} showChecks drawn onOpenAsk={openAsk} />
+        <div className="qm-key m"><span><i className="k crest" />agent</span><span><i className="k you" />your move</span><span><i className="k gate" />outside owner</span><span>dependency order, not a schedule</span></div>
       </PlanMapFold>
       <QueryState error={error} />
       {current && !sealed && <>

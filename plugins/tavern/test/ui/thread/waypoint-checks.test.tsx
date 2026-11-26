@@ -33,14 +33,17 @@ it("shows the checks beside owners and the resolution and reason in the Ledger w
     expect(route.getByText("No Warden checks on this map")).toBeTruthy();
     fireEvent.click(map.getByRole("button", { name: "Quest map" }));
     const card = map.container;
-    const target = () => card.querySelector(".qsvg .wp-check");
+    const target = () => card.querySelector(".qm-cards .wp-check");
     await waitFor(() => expect(target()?.textContent).toBe("no check"));
-    expect([...card.querySelectorAll(".qsvg .wp-check")].map(el => el.textContent)).toEqual(["no check", "Keeper accepts", "no check"]);
-    expect(card.querySelectorAll(".qsvg .wp .ok")).toHaveLength(0);
+    expect([...card.querySelectorAll(".qm-cards .wp-check")].map(el => el.textContent)).toEqual(["no check", "Keeper accepts", "no check"]);
+    expect(card.querySelectorAll(".qm-cards .wp.s-verified")).toHaveLength(0);
     fireEvent.click(await ledger.findByRole("button", { name: /3 waypoints/ }));
     const rows = await within(ledger.container).findByRole("list", { name: "Waypoints in order" });
-    expect(within(rows).getByText("accepted").closest("li")?.textContent).toContain(waypoints[1]!.resolutionReason);
-    expect(within(rows).getByText("skipped").closest("li")?.textContent).toContain(waypoints[2]!.resolutionReason);
+    const accepted = within(within(rows).getByText(waypoints[1]!.title).closest("li")!);
+    expect(accepted.getByText("Done")).toBeTruthy();
+    expect(accepted.getByText("Accepted by Wren; no Warden check")).toBeTruthy();
+    expect(accepted.getByText(waypoints[1]!.resolutionReason!)).toBeTruthy();
+    expect(within(rows).getByText("Skipped").closest("li")?.textContent).toContain(waypoints[2]!.resolutionReason);
     expect(rows.textContent).not.toContain("✓");
     if (capture) {
       const panel = rows.closest(".lg-quest")!;
@@ -68,6 +71,6 @@ it("tells a three-waypoint watch as done with no check and no verified loot", as
     const done = await slot.findByRole("region", { name: "Done without a Warden check" });
     expect(within(done).getAllByText("done; no check was planned")).toHaveLength(3);
     expect(await slot.findByText("No verified loot.")).toBeTruthy();
-    expect(slot.container.querySelector(".qsvg .wp .ok")).toBeNull();
+    expect(slot.container.querySelector(".qm-cards .wp.s-verified")).toBeNull();
   } finally { slot.lifecycle.unmount(); }
 });

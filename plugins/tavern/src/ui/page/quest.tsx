@@ -202,6 +202,26 @@ export function QuestPage({ detail, registry, room, summaryId, askId, recheck }:
     <QuestSpend key={`spend:${quest.id}`} id={quest.id} editable={!finished && quest.phase !== "stopping"} />
     {finished && <QuestLead detail={detail} registry={registry} />}
     {quest.outcome === "closed-early" && <Section title="Closed early at your request" count={`${quest.waivers?.length ?? 0} not verified`} className="tv-card"><WaiverRows items={quest.waivers ?? []} final /></Section>}
+    {!finished && <Section title="By whose move" count={`${attention.needYou} need you`}>
+      <CheckerHold quest={quest} asks={openAsks} />
+      {handBacks.length > 0 && <div className="tv-grp"><KeeperNoteRows notes={handBacks} label="Handed back to you" /></div>}
+      {attention.needYou > 0 && <div className="tv-grp"><div className="tv-grp-h"><StateMark tone="you">Needs you</StateMark><span className="num m">{attention.needYou} need you</span></div>
+        <div className="tv-asks">{openAsks.map((ask) => <details key={ask.id} id={askAnchor(ask.id)} open className={`tv-ask-disclosure ${ask.kind === "blocker" ? "blk" : ""}`}><summary className="tv-askrow"><PageGlyph name={ask.kind === "blocker" ? "fail" : "you"} size={13} className="tv-askrow-g" /><span className="tv-askrow-t"><span className="tv-askrow-q" data-content>{ask.question}</span><span className="tv-askrow-s">{KIND[ask.kind]} · {heldTitles(ask, quest).length ? `holds ${heldTitles(ask, quest).join(", ")}` : ask.why}</span></span><span className="tv-askrow-a"><Ago at={ask.createdAt} /></span></summary><AskCard ask={ask} via="page" headless /></details>)}</div></div>}
+      {groups.map((group) => { const items = quest.waypoints.filter((w) => groupOf(w) === group); if (!items.length) return null; if (group === "Done" && !showDone) return <button key={group} type="button" className="tv-fold act" aria-expanded={false} onClick={() => setShowDone(true)}><ExpandsMark open={false} />Done · {items.length}</button>; return <div className="tv-grp" key={group}><div className="tv-grp-h"><StateMark tone={groupTone[group]}>{group}</StateMark><span className="num m">{items.length}</span></div><ul className="tv-items">{items.map((w) => {
+        const owner = w.actor === "user" ? "You" : w.ownerMember ? characterName(registry, w.ownerMember) : w.owner ?? "Unassigned";
+        const report = detail.reports.find((r) => r.waypointId === w.id);
+        return <li key={w.id} className={`tv-item ${group === "Your next moves" ? "you" : group === "Blocked" ? "bad" : ""}`} data-stuck={group === "Blocked" || undefined}>
+          {w.ownerMember ? <CrestOf member={w.ownerMember} registry={registry} size={16} /> : <PageGlyph name={w.actor === "user" ? "diamond" : w.actor === "outside" ? "gate" : "wait"} className={w.actor === "user" ? "tv-mn-you" : ""} />}
+          <span className="tv-item-t" data-content title={`${owner}: ${w.title}`}>{owner}: {w.title}</span>
+          <span className="m small num">{w.leadTime ?? "lead time unknown"}</span>
+          <span className="tv-item-s">{w.ownerMember && <><CheckIndependence member={w.ownerMember} /><GuardPosture member={w.ownerMember} /></>}<span>{w.doneWhen ? `done when ${w.doneWhen}` : "no done-when"}</span>{w.evidenceCount > 0 && <span>{w.evidenceCount} evidence</span>}<span>{waypointLabel(w.state)}</span>{verifiedWaypoint(w) && <span>Verified by the Warden</span>}{w.resolutionReason && <span>{w.resolutionReason}</span>}{w.rejectedReason && <span className="tv-st-bad">rejected: {w.rejectedReason}</span>}<MemberEstimate confidence={report?.confidence ?? null} /></span>
+          {group === "Blocked" && <AlertAction action={{ kind: "tell", keeperThreadId: quest.keeperThreadId,
+            text: `Review the blocked waypoint “${w.title}” in “${quest.title}” and tell me what needs to change before it can continue.` }} />}
+          {w.ownerMember && <PlacementFacts placement={w.ownerMember.placement} memberName={owner} variant="status" />}
+        </li>;
+      })}</ul></div>; })}
+      {!openAsks.length && !quest.waypoints.length && <p className="tv-empty" data-empty>Nothing to move yet: {move.who}{move.next ? ` · ${move.next}` : ""}.</p>}
+    </Section>}
     <section className={`tv-card tv-qmapcard ${finished ? "" : "lit"} ${showMap ? "" : "folded"}`} aria-labelledby="tv-qmap-h" style={finished ? undefined : glowVars(`questmap:${quest.id}`)}>
       <header className="tv-colh"><h2 id="tv-qmap-h"><Vocabulary word="map" /></h2><span className="tv-colh-aside">{mapAside(quest)}</span><span className="tv-sp" />{steer && showMap && <span className="tag tv-steer-tag" title={steer.text}><PageGlyph name="steer" /><span>v{quest.planVersion} from your steer, {clockTime(steer.at)}</span></span>}{finished && <button type="button" className="tv-fold act" aria-label={`${vocab("map")} ${mapAside(quest)} ${mapOpen ? "Hide" : "Show"}`} aria-expanded={mapOpen} aria-controls="tv-qmap-b" onClick={() => setMapOpen(!mapOpen)}><ExpandsMark open={mapOpen} /><span>{mapOpen ? "Hide" : "Show"}</span></button>}</header>
       {quest.plan && <PlanChanges plan={quest.plan} plans={detail.plans} quest={quest} registry={registry} />}
@@ -212,26 +232,7 @@ export function QuestPage({ detail, registry, room, summaryId, askId, recheck }:
     </section>
     <div className="tv-ggrid" role="group" aria-label="The quest sections">
       <div className="tv-col">
-        {!finished ? <Section title="By whose move" count={`${attention.needYou} need you`}>
-          {!finished && <CheckerHold quest={quest} asks={openAsks} />}
-          {handBacks.length > 0 && <div className="tv-grp"><KeeperNoteRows notes={handBacks} label="Handed back to you" /></div>}
-          {attention.needYou > 0 && <div className="tv-grp"><div className="tv-grp-h"><StateMark tone="you">Needs you</StateMark><span className="num m">{attention.needYou} need you</span></div>
-            <div className="tv-asks">{openAsks.map((ask) => <details key={ask.id} id={askAnchor(ask.id)} open className={`tv-ask-disclosure ${ask.kind === "blocker" ? "blk" : ""}`}><summary className="tv-askrow"><PageGlyph name={ask.kind === "blocker" ? "fail" : "you"} size={13} className="tv-askrow-g" /><span className="tv-askrow-t"><span className="tv-askrow-q" data-content>{ask.question}</span><span className="tv-askrow-s">{KIND[ask.kind]} · {heldTitles(ask, quest).length ? `holds ${heldTitles(ask, quest).join(", ")}` : ask.why}</span></span><span className="tv-askrow-a"><Ago at={ask.createdAt} /></span></summary><AskCard ask={ask} via="page" headless /></details>)}</div></div>}
-          {groups.map((group) => { const items = quest.waypoints.filter((w) => groupOf(w) === group); if (!items.length) return null; if (group === "Done" && !showDone) return <button key={group} type="button" className="tv-fold act" aria-expanded={false} onClick={() => setShowDone(true)}><ExpandsMark open={false} />Done · {items.length}</button>; return <div className="tv-grp" key={group}><div className="tv-grp-h"><StateMark tone={groupTone[group]}>{group}</StateMark><span className="num m">{items.length}</span></div><ul className="tv-items">{items.map((w) => {
-            const owner = w.actor === "user" ? "You" : w.ownerMember ? characterName(registry, w.ownerMember) : w.owner ?? "Unassigned";
-            const report = detail.reports.find((r) => r.waypointId === w.id);
-            return <li key={w.id} className={`tv-item ${group === "Your next moves" ? "you" : group === "Blocked" ? "bad" : ""}`} data-stuck={group === "Blocked" || undefined}>
-              {w.ownerMember ? <CrestOf member={w.ownerMember} registry={registry} size={16} /> : <PageGlyph name={w.actor === "user" ? "diamond" : w.actor === "outside" ? "gate" : "wait"} className={w.actor === "user" ? "tv-mn-you" : ""} />}
-              <span className="tv-item-t" data-content title={`${owner}: ${w.title}`}>{owner}: {w.title}</span>
-              <span className="m small num">{w.leadTime ?? "lead time unknown"}</span>
-              <span className="tv-item-s">{w.ownerMember && <><CheckIndependence member={w.ownerMember} /><GuardPosture member={w.ownerMember} /></>}<span>{w.doneWhen ? `done when ${w.doneWhen}` : "no done-when"}</span>{w.evidenceCount > 0 && <span>{w.evidenceCount} evidence</span>}<span>{waypointLabel(w.state)}</span>{verifiedWaypoint(w) && <span>Verified by the Warden</span>}{w.resolutionReason && <span>{w.resolutionReason}</span>}{w.rejectedReason && <span className="tv-st-bad">rejected: {w.rejectedReason}</span>}<MemberEstimate confidence={report?.confidence ?? null} /></span>
-              {group === "Blocked" && <AlertAction action={{ kind: "tell", keeperThreadId: quest.keeperThreadId,
-                text: `Review the blocked waypoint “${w.title}” in “${quest.title}” and tell me what needs to change before it can continue.` }} />}
-              {w.ownerMember && <PlacementFacts placement={w.ownerMember.placement} memberName={owner} variant="status" />}
-            </li>;
-          })}</ul></div>; })}
-          {!openAsks.length && !quest.waypoints.length && <p className="tv-empty" data-empty>Nothing to move yet: {move.who}{move.next ? ` · ${move.next}` : ""}.</p>}
-        </Section> : <Section title="Done and left"><div className="tv-rec-two">
+        {finished && <Section title="Done and left"><div className="tv-rec-two">
           <section className="tv-card tv-rec-sec" aria-label="Done"><header className="tv-colh"><h2>Done</h2></header>
             {completed.length > 0 ? <ul className="tv-dw tv-loot">{completed.map(w => verifiedWaypoint(w) ? <LootRow key={w.id} waypoint={w} detail={detail} registry={registry} /> : <LeftRow key={w.id} waypoint={w} />)}</ul> : <p className="tv-empty" data-empty>Nothing was verified.</p>}
           </section>

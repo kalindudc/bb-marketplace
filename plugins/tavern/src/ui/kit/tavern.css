@@ -213,39 +213,80 @@ html.dark .tavern { --tavern-lantern: color-mix(in oklab, var(--attention) 13%, 
 /* bb follows the OS setting only; data-motion="reduced" is the harness's and the mock's switch, kept so the reduced state can be checked without emulation. */
 html[data-motion="reduced"] .tavern, html[data-motion="reduced"] .tavern::before, html[data-motion="reduced"] .tavern::after, html[data-motion="reduced"] .tavern *, html[data-motion="reduced"] .tavern *::before, html[data-motion="reduced"] .tavern *::after { animation: none !important; transition: none !important; }
 
-/* ---- The quest map: one route; crests stand on the waypoints they own ---- */
-.tavern.quest-map-container { container-type: inline-size; container-name: questmap; position: relative; }
-.tavern .map-key { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--tavern-muted); padding: 0 2px 4px; }
+.tavern.qmap {
+  container: questmap / inline-size;
+  --qm-walked: color-mix(in oklab, var(--foreground) 52%, var(--card));
+  --qm-ahead: color-mix(in oklab, var(--foreground) 76%, var(--card));
+  --qm-lit: var(--foreground);
+  font-size: 12px;
+}
+.tavern .map-key { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; }
 .tavern .map-key span { display: inline-flex; gap: 4px; align-items: center; }
-.tavern .qsvg { display: block; width: 100%; height: auto; overflow: visible; }
-.tavern .qsvg .road { fill: none; stroke: var(--tavern-road); stroke-width: 2.5; stroke-dasharray: 2 6; stroke-linecap: square; }
-.tavern .qsvg .road.done { stroke: var(--tavern-road-done); stroke-dasharray: none; stroke-width: 3; }
-.tavern .qsvg .axis { stroke: var(--tavern-line); }
-.tavern .map-label { text-align: center; font-size: 11px; line-height: 1.3; overflow-wrap: anywhere; color: var(--foreground); }
-.tavern .map-label b.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; }
-.tavern .map-label .m { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tavern .qmap .wp-check-note { font-size: 11px; margin: 0 0 4px; }
-.tavern .qmap .wp-ask { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-.tavern .qlist .wp-reason { display: block; overflow-wrap: anywhere; }
-.tavern .qlist { display: none; }
-.tavern .qlist li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 5px 0; position: relative; font-size: 12px; min-height: 40px; }
-.tavern .qlist li::before { content: ""; position: absolute; left: 12px; top: 0; bottom: 0; border-left: 2px dotted var(--tavern-road); }
-.tavern .qlist li.done::before { border-left-style: solid; border-color: var(--tavern-road-done); }
-.tavern .qlist li:first-child::before { top: 50%; } .tavern .qlist li:last-child::before { bottom: 50%; }
-.tavern .qlist .vw { position: relative; display: grid; place-items: center; width: 28px; height: 28px; background: var(--card); }
-.tavern .qlist .vw svg { width: 20px; height: 20px; }
-.tavern .qlist li.cur .vw { outline: 2px solid var(--primary); }
-.tavern .qlist .qt { min-width: 0; }
-.tavern .qlist .qt b { display: block; }
-.tavern .qlist .qt .m { font-size: 11px; }
-.tavern .qmap.list-only .qsvg { display: none; }
-.tavern .qmap.list-only .qlist { display: block; }
-@container questmap (max-width: 560px) { .tavern .qsvg { display: none; } .tavern .qlist { display: block; } }
-/* Narrow lists give the title the full width: the state tag drops under the owner line instead of squeezing the title into a column. */
-@container questmap (max-width: 480px) {
-  .tavern .qlist li { grid-template-columns: 28px minmax(0, 1fr); row-gap: 3px; }
-  .tavern .qlist li > .vw { grid-row: 1 / span 2; align-self: start; margin-top: 2px; }
-  .tavern .qlist li > :last-child:not(.qt) { grid-column: 2; justify-self: start; }
+.tavern .qm-canvas { position: relative; }
+.tavern .qsvg { display: block; position: absolute; inset: 0 auto auto 0; pointer-events: none; }
+.tavern.qmap .road { fill: none; stroke: var(--qm-ahead); stroke-width: 2; stroke-dasharray: 5 4; stroke-linecap: round; }
+.tavern.qmap .road.walked { stroke: var(--qm-walked); stroke-width: 1.5; stroke-dasharray: none; }
+.tavern.qmap .road.lit { stroke: var(--qm-lit); stroke-width: 3; stroke-dasharray: 7 4; }
+.tavern .qsvg.linking .road:not(.on) { opacity: .22; }
+.tavern .qm-port { fill: var(--card); stroke: var(--qm-ahead); stroke-width: 1.5; }
+.tavern .qm-port.lit { stroke: var(--qm-lit); }
+.tavern .qm-port.your-move { fill: var(--tavern-you); }
+.tavern.qmap .wp { min-width: 0; overflow-wrap: anywhere; }
+.tavern .qm-cards .wp {
+  position: absolute; background: var(--card); color: var(--foreground); line-height: 1.4;
+  padding: 8px 10px 8px 18px; border: 1px solid var(--tavern-line); border-radius: var(--radius);
+}
+.tavern .qm-cards .wp.settled { background: var(--tavern-recessed); }
+.tavern .qm-cards .wp.s-blocked { --qm-stop: var(--tavern-blocked); }
+.tavern .qm-cards .wp.s-rejected { --qm-stop: var(--tavern-bad); }
+.tavern .qm-cards .wp:is(.s-blocked, .s-rejected) { border-color: var(--qm-stop); border-style: dashed; }
+.tavern .qm-cards .wp:is(.s-blocked, .s-rejected)::after { content: ""; position: absolute; inset: 0 0 auto; border-top: 2px solid var(--qm-stop); pointer-events: none; }
+.tavern .qm-cards .wp.your-move { background: var(--tavern-you-fill); border-color: var(--tavern-you); }
+.tavern.qmap .wp.your-move .m { color: var(--foreground); }
+.tavern .qm-cards .wp.peer { box-shadow: inset 0 0 0 1px var(--qm-ahead); }
+.tavern .qm-cards .wp:focus-visible { outline-offset: 2px; }
+.tavern .qm-heading { display: flex; align-items: baseline; gap: 6px; }
+.tavern .qm-number { flex: none; }
+.tavern .qm-title { min-width: 0; font-size: 13px; font-weight: 600; }
+.tavern .qm-meta { display: flex; flex-wrap: wrap; gap: 2px 8px; margin: 4px 0 2px; }
+.tavern .qm-meta > span { min-width: 0; display: inline-flex; align-items: baseline; gap: 4px; }
+.tavern .qm-meta svg { flex: none; align-self: center; }
+.tavern .qm-state { font-weight: 600; }
+.tavern .wp:is(.s-blocked, .s-reported) .qm-state svg { color: var(--tavern-blocked); }
+.tavern .qm-cards .wp:is(.s-blocked, .s-rejected) .qm-state { color: color-mix(in oklab, var(--qm-stop) 55%, var(--foreground)); }
+.tavern .wp.s-rejected .qm-state svg { color: var(--tavern-bad); }
+.tavern .qm-port.blocked { stroke: var(--tavern-blocked); }
+.tavern .qm-port.rejected { stroke: var(--tavern-bad); }
+.tavern .wp.s-doing .qm-state svg { color: var(--primary); }
+.tavern .wp.s-verified .qm-state svg { color: var(--success); }
+.tavern .wp.your-move .qm-state svg { color: var(--tavern-blocked); }
+.tavern.qmap .qm-detail { margin-top: 2px; }
+.tavern.qmap .wp-check-note { margin-bottom: 4px; }
+.tavern.qmap .wp-ask { margin-top: 6px; white-space: normal; max-width: 100%; }
+.tavern .qm-crest { display: grid; place-items: center; }
+.tavern.qmap:not(.trail) .qm-cards .qm-crest {
+  position: absolute; width: 24px; height: 24px; left: -13px; top: calc(var(--qm-port-y) - 13px);
+  border-radius: 50%; background: inherit;
+}
+.tavern.qmap.trail .qm-cards .wp { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 8px; padding: 8px; }
+.tavern .qm-rows .wp { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 5px 0; position: relative; min-height: 40px; }
+.tavern .qm-rows .wp.your-move { background: var(--tavern-you-fill); }
+.tavern .qm-rows .wp::before { content: ""; position: absolute; left: 13px; top: 0; bottom: 0; border-left: 2px dotted var(--tavern-road); }
+.tavern .qm-rows .wp.settled::before { border-color: var(--tavern-road-done); border-left-style: solid; }
+.tavern .qm-rows .wp:first-child::before { top: 50%; }
+.tavern .qm-rows .wp:last-child::before { bottom: 50%; }
+.tavern .qm-rows .qm-crest { position: relative; width: 28px; height: 28px; background: var(--card); }
+.tavern .qm-rows .cur .qm-crest { outline: 2px solid var(--primary); }
+.tavern .qm-row-text > :is(b, .qm-row-meta) { display: block; }
+.tavern .qm-row-meta { font-size: 11px; }
+.tavern .qm-route .qm-row-meta { font-size: 12px; }
+@container questmap (width <= 480px) {
+  .tavern .qm-rows .wp { grid-template-columns: 28px minmax(0, 1fr); row-gap: 3px; }
+  .tavern .qm-rows .qm-crest { grid-row: 1 / span 2; align-self: start; margin-top: 2px; }
+  .tavern .qm-rows .wp > .tag { grid-column: 2; justify-self: start; }
+}
+@media (pointer: coarse), (width < 600px) {
+  .tavern.qmap .btn.wp-ask { min-width: 44px; }
 }
 
 /* ---- Asks: answered in the banner, on the common room and on the phone; never with a button that hides the consequence ---- */

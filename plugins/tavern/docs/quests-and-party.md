@@ -18,6 +18,8 @@ Using that evidence, the Keeper proposes a quest map with waypoints, owners, che
 
 Explicit approval is the default before planned building starts. Plans with only Rangers skip the staffing greenlight when they have no user or outside waypoint, though proposed budgets and weaker checks still ask.
 
+The drawn map shows every step, with its full title, owner, status, and check. The bold dashed road shows the unfinished chain with the most steps left, not an estimate. If the columns do not fit the available space, the map shows all steps in a vertical trail instead.
+
 Updated cards and the quest page show changes since the last plan, starting with the Keeper's note. Revisions show plan-level changes and mark edits inside the done-when sentences that changed.
 
 When the Keeper needs you to finish a move, answer its ask instead of ticking a Journal entry. The ask shows which choices finish the move. Declining or choosing another direction leaves it open. Existing Journal entries still work.

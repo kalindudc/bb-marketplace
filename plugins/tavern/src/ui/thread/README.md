@@ -2,7 +2,7 @@
 
 `registerThreadSurfaces(app)` registers the new-thread class picker and its preview banner, the single crest toggle, the bare Tavern widget banner, compact + menu entry, Keeper send-menu routes, message metadata/actions, seven directive cards, four thread tabs, the journal command and native row crests.
 
-The shared kit is exported from `../kit/index.ts`. `QuestMap` takes `{ quest: BoardQuestSummary, mode: "plan" | "live" | "tale" }`. It uses dependency columns and parallel lanes, folds after eight waypoints and falls back to a full-size ordered list whenever the route cannot fit without shrinking its labels. Lead times are descriptive because the contract contains free-form strings, not durations; no ETA is invented.
+The shared kit is exported from `../kit/index.ts`. `QuestMap` takes `{ quest: BoardQuestSummary, mode: "plan" | "live" | "tale" }`. It draws dependencies in the gutters between full-title waypoint cards. When the dependency columns do not fit the available width, the same waypoints form a vertical trail. The plan card and Ledger can also show a compact route list. Lead times are descriptive because the contract contains free-form strings, not durations; no ETA is invented.
 
 ## Server expectations
 
