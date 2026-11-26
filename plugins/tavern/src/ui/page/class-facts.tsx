@@ -17,14 +17,14 @@ export type ClassProject = { id: string | null; fromThread: boolean; projects: r
  * Every class's start and hire facts, as the server resolves them (Peter's classExecutions), for the page's project: the thread's,
  * else one the user picked here (remembered for this panel), else none, which gives the baseline with project-dependent fields marked.
  */
-export function useClassExecutions() {
+export function useClassExecutions(scope?: string | null) {
   const { projectId } = useBbContext();
   const [picked, pick] = usePanelState<string | null>("classes.project", null, (v) => v === null || typeof v === "string");
   const sidebar = experimental_useSidebarThreads();
   const projects = sidebar.projects ?? [];
-  const chosen = projectId ?? (picked && projects.some((p) => p.id === picked) ? picked : null);
+  const chosen = scope === undefined ? projectId ?? (picked && projects.some((p) => p.id === picked) ? picked : null) : scope;
   const query = experimental_useRpcQuery({ contract: rpcContract, method: "classExecutions", input: chosen ? { projectId: chosen } : {} });
-  const project: ClassProject = { id: chosen, fromThread: !!projectId, projects, pick };
+  const project: ClassProject = { id: chosen, fromThread: !!projectId || !!scope, projects, pick };
   return Object.assign(query, { project });
 }
 const dependsOnProject = (facts: ClassModeFacts) => facts.fields.filter((f) => f.dependsOnProject);
@@ -129,7 +129,7 @@ export function ClassFacts({ entry, registry, label, hireable, startable, projec
     {project && (dependsOnProject(facts).length > 0 || (project.id && !project.fromThread)) && <ProjectPick project={project} fields={dependsOnProject(facts).map((f) => f.field)} />}
     {facts.errors.length > 0 && <ul className="tv-problem tv-cf-errs" aria-label={mode === "hire" ? "Why it can't be hired" : "Why it can't be started"}>{facts.errors.map((e) => <li key={e} data-content>{e}</li>)}</ul>}
     {facts.requiresPi && <p className="tv-cf-note tv-cf-pi"><PageGlyph name="shield" size={13} /><span>Needs Pi: only Pi lets Tavern block a command before it runs, so {mode === "hire" ? "a hire" : "a start"} on another provider is refused.</span></p>}
-    {overrides.length > 0 && <p className="tv-cf-note tv-cf-over" data-override><PageGlyph name="note" size={13} /><span>This project's {label} file replaces the whole class, including {overrides.map((o) => o.field).join(", ")}. Review <code>{overridePath}</code> before starting or hiring.</span></p>}
+    {overrides.length > 0 && <p className="tv-cf-note tv-cf-over" data-override><PageGlyph name="note" size={13} /><span>This project's {label} file {overrides[0]?.format === "patch" ? "overrides these fields:" : "replaces the whole class, including"} {overrides.map((o) => o.field).join(", ")}. Review <code>{overridePath}</code> before starting or hiring.</span></p>}
     <dl className="tv-dl tv-cf-dl">{facts.fields.map((f) => <FieldRow key={f.field} f={f} facts={facts} registry={registry} mode={mode} />)}</dl>
     {facts.notes.length > 0 && <ul className="tv-cf-notes m small" aria-label="Notes from resolving it">{facts.notes.map((n) => <li key={n} data-content>{n}</li>)}</ul>}
     </>}

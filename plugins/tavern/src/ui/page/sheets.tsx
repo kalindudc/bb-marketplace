@@ -1,6 +1,6 @@
 import { experimental_useRpcQuery, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { useRef, useState } from "react";
-import { rpcContract, type Room } from "../../shared/contract";
+import { type ReactNode, useRef, useState } from "react";
+import { rpcContract, type Room, type OverrideSelection } from "../../shared/contract";
 import type { CharacterDef, Member } from "../../shared/schema";
 import { voiceShown, CheckIndependence, Crest, GuardPosture, OpensMark, Vocabulary, glowVars, levelFor, levelsShown, plural } from "../kit";
 import { Empty, PageButton, SegFilter, StateMark, type Registry } from "./common";
@@ -18,6 +18,7 @@ import { usePanelState } from "./panel-state";
 import { Level, RecordBrief, ServiceRecord, roleOf, serviceRecordOf } from "./service-record";
 import { PresentationProblems, ReportVoices, YourCharacter } from "./authorship";
 import { TaleList } from "./tales";
+import { DefinitionSheet } from "./overrides";
 
 
 function recordOf(members: Member[], characterId: string) {
@@ -39,6 +40,7 @@ export function CharacterSheets({ registry, room }: { registry: Registry; room: 
     <div className="tv-sline">
       <h1 className="tv-hero"><b className="num">{registry.characters.length}</b><span>character sheets <span className="anc">records</span></span></h1>
       <div className="tv-facts"><span>in <b className="num">{classCount}</b> classes</span><span><b className="num">{onQuest}</b> on a quest now</span>{levelsShown(registry) && <span>levels count what each class is trusted for · agents never see levels</span>}</div>
+      <PageButton path="classes/overrides" className="sm" glyph="file">Overrides</PageButton>
       <RegistryExport kind="character" name="every character sheet" />
     </div>
     <PresentationProblems problems={registry.problems} characters={registry.characters} />
@@ -61,7 +63,14 @@ export function CharacterSheets({ registry, room }: { registry: Registry; room: 
   </div>;
 }
 
-export function CharacterSheetEditor({ character, registry, room }: { character: CharacterDef; registry: Registry; room: Room }) {
+export function CharacterSheetEditor({ id, scope, registry, room }: { id: string; scope?: string; registry: Registry; room: Room }) {
+  return <DefinitionSheet kind="character" id={id} scope={scope} render={(definition, panel, selection, revision) => {
+    const character = definition && "name" in definition ? definition : registry.characters.find(c => c.id === id);
+    return character ? <CharacterSheetView character={character} registry={registry} room={room} panel={panel} selection={selection} revision={revision} /> : panel;
+  }} />;
+}
+
+function CharacterSheetView({ character, registry, room, panel, selection, revision }: { character: CharacterDef; registry: Registry; room: Room; panel: ReactNode; selection: OverrideSelection; revision?: string }) {
   const openTab = useOpenPanelTab();
   const [inline, setInline] = useState(false);
   const classes = registry.classes.filter((c) => character.classes.includes(c.id));
@@ -70,7 +79,7 @@ export function CharacterSheetEditor({ character, registry, room }: { character:
   // An older server sends no record: the sheet then keeps the count it can see, and says so.
   const service = serviceRecordOf(registry, character.id);
   const lv = levelFor(registry, character.id, character.classes[0] ?? "");
-  const edit = () => { if (!openTab(VOICE_TAB, { characterId: character.id })) setInline(true); };
+  const edit = () => { if (!openTab(VOICE_TAB, { characterId: character.id, projectId: selection.projectId, target: selection.target })) setInline(true); };
   return <div className="tv-sheet">
     <header className="tv-sheet-head tv-card lit" style={glowVars(`sheet:${character.id}`)}>
       <CharacterAvatar character={character} mode={registry.ambientMotion ?? room.ambientMotion ?? "calm"} />
@@ -80,13 +89,14 @@ export function CharacterSheetEditor({ character, registry, room }: { character:
         {service !== undefined && levelsShown(registry) && <Level lv={lv} role={roleOf(character.classes)} detail />}
         {service !== undefined && <ServiceRecord record={service} name={character.name} />}
         <PresentationProblems problems={registry.problems} characters={registry.characters} only={character} />
-        <div className="tv-facts">{service === undefined && <span><b className="num">{rec.wins}</b> verified wins in visible threads</span>}<YourCharacter authorship={registry.characterAuthorship?.find((a) => a.characterId === character.id)} />{levelsShown(registry) && <span>Agents never see levels.</span>}<code className="tv-sh-src" title={`~/.agents/tavern/characters/${character.id}.md`}>~/.agents/tavern/characters/{character.id}.md</code></div>
+        <div className="tv-facts">{service === undefined && <span><b className="num">{rec.wins}</b> verified wins in visible threads</span>}<YourCharacter authorship={registry.characterAuthorship?.find((a) => a.characterId === character.id)} />{levelsShown(registry) && <span>Agents never see levels.</span>}<code className="tv-sh-src" title={character.source}>{character.source === "builtin" ? "Tavern default" : character.source}</code></div>
       </div>
       <button type="button" className="btn pri" onClick={edit} aria-expanded={inline || undefined} title="Opens the editor in the side panel, beside this sheet"><PageGlyph name="told" /><span>Edit {character.name}'s voice and avatar</span><OpensMark /></button>
       <RegistryExport kind="character" id={character.id} name={`${character.name}'s sheet`} />
     </header>
+    {panel}
+    {inline && <section className="tv-card tv-inlineform" aria-label={`Edit ${character.name}'s voice`}>{revision ? <CharacterVoiceForm key={`${selection.projectId}:${selection.target}`} character={character} registry={registry} selection={selection} revision={revision} /> : <p role="status">Waiting for the definition comparison…</p>}<button type="button" className="btn sm" onClick={() => setInline(false)}><span>Hide the editor</span></button></section>}
     {service !== undefined && <TaleList record={service} characterId={character.id} name={character.name} />}
-    {inline && <section className="tv-card tv-inlineform" aria-label={`Edit ${character.name}'s voice`}><CharacterVoiceForm character={character} registry={registry} /><button type="button" className="btn sm" onClick={() => setInline(false)}><span>Hide the editor</span></button></section>}
     <div className="tv-editor tv-card">
       <section className="tv-lens" aria-labelledby="tv-lens-h">
         <div className="tv-zone-h"><PageGlyph name="file" size={16} /><span><b id="tv-lens-h">Lens</b><span className="m">shapes the work · read-only</span></span></div>
@@ -117,6 +127,7 @@ export function ClassesList({ registry }: { registry: Registry }) {
     <div className="tv-sline">
       <h1 className="tv-hero"><b className="num">{registry.classes.length}</b><span>classes <span className="anc">types</span></span></h1>
       <div className="tv-facts"><span><b className="num">{startable}</b> startable</span><span><b className="num">{hireable}</b> hireable</span><span className="tv-facts-long">edit on each class page · files in <code>~/.agents/tavern/classes/</code> and <code>.agents/tavern/classes/</code> override built-ins</span></div>
+      <PageButton path="classes/overrides" className="sm" glyph="file">Overrides</PageButton>
       <RegistryExport kind="class" name="every class" />
     </div>
     {(projectFields.length > 0 || (facts.project.id && !facts.project.fromThread)) && <ProjectPick project={facts.project} fields={projectFields} />}
@@ -146,21 +157,22 @@ function ModelCell({ cls, entry, failure }: { cls: Registry["classes"][number]; 
   return <span className="tv-ct-model" title={m.title}><span data-content>{m.text}</span>{m.note && <span className="m small"> {m.note.startsWith("(") ? m.note : `· ${m.note}`}</span>}</span>;
 }
 
-export function ClassDetail({ id, registry }: { id: string; registry: Registry }) {
-  const cls = registry.classes.find((c) => c.id === id);
-  if (!cls) return <Empty>Class not found: {id}</Empty>;
-  return <ClassDetailView cls={cls} registry={registry} />;
+export function ClassDetail({ id, scope, registry }: { id: string; scope?: string; registry: Registry }) {
+  return <DefinitionSheet kind="class" id={id} scope={scope} render={(definition, panel, selection) => {
+    const cls = definition && "label" in definition ? definition : registry.classes.find(c => c.id === id);
+    return cls ? <ClassDetailView cls={cls} registry={registry} panel={panel} selection={selection} /> : panel;
+  }} />;
 }
 
-function ClassDetailView({ cls, registry }: { cls: Registry["classes"][number]; registry: Registry }) {
+function ClassDetailView({ cls, registry, panel, selection }: { cls: Registry["classes"][number]; registry: Registry; panel: ReactNode; selection: OverrideSelection }) {
   const [inline, setInline] = useState(false);
   const chars = cls.characters.map((cid) => registry.characters.find((c) => c.id === cid)).filter((c): c is CharacterDef => !!c);
   const charLinks = <div className="tv-cd-chars">{chars.map((c) => <PageButton key={c.id} path={`character/${c.id}`} className="ghost sm"><Crest cls={cls} character={c} size={18} /> {c.name}</PageButton>)}</div>;
-  const facts = useClassExecutions();
+  const facts = useClassExecutions(selection.target === "project" ? selection.projectId : undefined);
   const entry = facts.data?.classes.find((e) => e.classId === cls.id);
   const opener = useRef<HTMLButtonElement>(null);
   const openEditor = useOpenClassEditor();
-  const edit = () => { if (!openEditor(cls.id, cls.label)) setInline(true); };
+  const edit = () => { if (!openEditor(cls.id, cls.label, selection.projectId ? selection : undefined)) setInline(true); };
   return <div className="tv-classd">
     <header className="tv-sheet-head tv-card lit" style={glowVars(`class:${cls.id}`)}>
       {chars[0] ? <Crest cls={cls} character={chars[0]} size={64} level={levelFor(registry, chars[0].id, cls.id)?.level} /> : <PageGlyph name="file" size={32} />}
@@ -169,7 +181,8 @@ function ClassDetailView({ cls, registry }: { cls: Registry["classes"][number]; 
       <button type="button" ref={opener} data-class-edit-opener={cls.id} className="btn pri" onClick={edit} aria-expanded={inline || undefined} title="Opens the class editor in the side panel, beside this page"><PageGlyph name="file" /><span>Edit the {cls.label} class</span><OpensMark /></button>
       <RegistryExport kind="class" id={cls.id} name={`the ${cls.label} class`} />
     </header>
-    {inline && <section className="tv-card tv-inlineform" aria-label={`Edit the ${cls.label} class`}><ClassEditForm classId={cls.id} registry={registry} focusOnOpen /><button type="button" className="btn sm" onClick={() => { setInline(false); requestAnimationFrame(() => opener.current?.focus()); }}><span>Hide the editor</span></button></section>}
+    {panel}
+    {inline && <section className="tv-card tv-inlineform" aria-label={`Edit the ${cls.label} class`}><ClassEditForm classId={cls.id} registry={registry} selection={selection.projectId ? selection : undefined} focusOnOpen /><button type="button" className="btn sm" onClick={() => { setInline(false); requestAnimationFrame(() => opener.current?.focus()); }}><span>Hide the editor</span></button></section>}
     <div className="tv-ggrid">
       <section className="tv-card tv-cdsec" aria-labelledby="tv-cd-lens"><header className="tv-colh"><h2 id="tv-cd-lens">Role prompt <span className="anc">lens</span></h2></header><pre className="tv-code">{cls.body}</pre></section>
       <aside className="tv-col" aria-label="Model, tools and hiring">

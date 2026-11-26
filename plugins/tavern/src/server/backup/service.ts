@@ -6,7 +6,7 @@ import { basename, dirname, join } from "node:path";
 import { parseDocument } from "yaml";
 import { backupContract, backupManifestSchema, type BackupBundle, type BackupEntry, type BackupManifest, type BackupPart, type BackupRestore } from "../../shared/backup";
 import type { Registry } from "../registry";
-import { parseRegistryDefinition } from "../registry-file";
+import { parseRegistryRecord } from "../registry-file";
 import type { SettingsStore } from "../settings/store";
 import { SettingsConflict } from "../settings/store";
 import { fileHash } from "../settings/files";
@@ -163,7 +163,7 @@ export class BackupService {
         for (const name of names) {
           const text = readText(join(path, name), LIMITS.backupFileBytes);
           let id: string | null = null;
-          try { id = parseRegistryDefinition(kind, text, join(path, name)).id; } catch (error) { problems.add(`${join(path, name)}: ${problem(error)}`); }
+          try { id = parseRegistryRecord(kind, text, join(path, name)).id; } catch (error) { problems.add(`${join(path, name)}: ${problem(error)}`); }
           add({ path: `${context ? `projects/${encodeURIComponent(context.id)}/` : ""}${directory}/${name}`, kind, effective: false, source: context ? "project" : "global", projectId: context?.id ?? null, id, text });
         }
       }
@@ -243,11 +243,18 @@ export class BackupService {
         const root = project ? join(project.path, ".agents/tavern") : this.root;
         const logical = kind === "scopes" ? join(root, "scopes.yml") : join(root, kind === "class" ? "classes" : "characters", basename(file.path));
         if (kind === "scopes") { const document = parseDocument(text); if (document.errors.length) throw document.errors[0]; policySchema.parse(document.toJS()); }
-        else if (parseRegistryDefinition(kind, text, logical).id !== file.id) throw new Error("Definition id does not match its manifest");
+        else if (parseRegistryRecord(kind, text, logical).id !== file.id) throw new Error("Definition id does not match its manifest");
         const target = this.target(logical, text, kind), existing = targets.find(other => other.path === target.path);
         if (existing && existing.text !== text) throw new Error(`Conflicting files target ${target.path}`);
         if (!existing) targets.push(target);
       } catch (error) { problems.push(`${file.path}: ${problem(error)}`); }
+    }
+    const definitions = new Map(targets.filter(target => target.kind === "class" || target.kind === "character").map(target => [target.logical, target.text]));
+    if (definitions.size) for (const projectPath of [undefined, ...projects.map(project => project.path)]) {
+      for (const issue of this.options.registry.validateRestore(definitions, projectPath)) {
+        const message = `${issue.path}: ${issue.message}`;
+        if (!problems.includes(message)) problems.push(message);
+      }
     }
     let data: RecordsSnapshot | null = null;
     const records: BackupRestore["records"] = { action: "none", counts: {}, reason: null };

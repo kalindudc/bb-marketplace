@@ -420,6 +420,17 @@ const ok = z.object({ ok: z.literal(true) });
 /** The class fields the Classes page edits (server registry.ts CLASS_EDITABLE). */
 export const classEditSchema = classDefSchema.pick({ label: true, plain: true, description: true, body: true, characters: true, startable: true, hireable: true, scope: true }).partial().strict();
 export type ClassEditInput = z.infer<typeof classEditSchema>;
+const registryTarget = z.enum(["global", "project"]);
+const registryProject = z.string().min(1).max(100).nullable();
+const registrySource = z.enum(["shipped", "global", "project"]);
+const registryFormat = z.enum(["full", "patch"]);
+const overrideSelection = z.strictObject({ kind: z.enum(["class", "character"]), id, projectId: registryProject, target: registryTarget });
+export type OverrideSelection = z.infer<typeof overrideSelection>;
+const resetSelection = overrideSelection.extend({ field: z.string().optional() });
+const resetRevision = z.string().min(1).max(100);
+const overrideInvalid = z.object({ code: z.literal("invalid"), problems: z.array(z.string()) });
+const overrideFallback = registrySource.nullable();
+const characterEditTarget = { target: registryTarget.optional(), projectId: registryProject.optional(), revision: resetRevision.optional() };
 
 export const TELL_KEEPER_LIMIT = 50;
 
@@ -678,22 +689,23 @@ export const rpcContract = defineContract({
   },
   // added by Builder D: persist the character sheet's presentation fields to the user's character override.
   saveCharacterVoice: {
-    input: z.object({ characterId: id, voice: characterVoiceSchema }).strict(),
+    input: z.object({ characterId: id, voice: characterVoiceSchema.partial().strict(), ...characterEditTarget }).strict(),
     output: characterDefSchema,
   },
   saveCharacterAvatar: {
-    input: z.object({ characterId: id, avatar: characterDefSchema.shape.avatar.unwrap() }).strict(),
+    input: z.object({ characterId: id, avatar: characterDefSchema.shape.avatar.unwrap(), ...characterEditTarget }).strict(),
     output: characterDefSchema,
   },
   // The Classes page editor (registry-rpc.ts). Reading and previewing are open; saving and removing an override are client-only.
   classEditor: {
     input: z.object({ classId: id, projectId: z.string().min(1).max(100).nullable() }).strict(),
     output: z.object({
-      current: classDefSchema, revision: z.string(), projectPath: z.string().nullable(),
-      layers: z.array(z.object({ source: z.enum(["shipped", "global", "project"]), path: z.string(), exists: z.boolean() })),
+      current: classDefSchema, revision: z.string(), projectPath: z.string().nullable(), projectName: z.string().nullable().optional(),
+      layers: z.array(z.object({ source: registrySource, path: z.string(), exists: z.boolean(), format: registryFormat.optional(), definition: classDefSchema.optional() })),
       models: executionFactsSchema,
       running: z.number().int().min(0),
     }),
+    tags: () => [tags.registry()],
   },
   classPreview: {
     input: z.object({ classId: id, projectId: z.string().min(1).max(100).nullable(), target: z.enum(["global", "project"]), edit: classEditSchema }).strict(),
@@ -719,6 +731,29 @@ export const rpcContract = defineContract({
       z.object({ code: z.literal("stale") }),
       z.object({ code: z.literal("invalid"), problems: z.array(z.string()) }),
     ]),
+  },
+  registryOverrides: {
+    input: z.strictObject({}),
+    output: z.object({ rows: z.array(z.object({ kind: overrideSelection.shape.kind, id, name: z.string(), projectId: registryProject,
+      projectName: z.string().nullable(), path: z.string(), format: registryFormat, fields: z.array(z.string()), canReset: z.boolean(), hasDefault: z.boolean().optional() })), problems: z.array(z.string()) }),
+    tags: () => [tags.registry()],
+  },
+  registryDefinition: {
+    input: overrideSelection,
+    output: z.object({ name: z.string(), definition: z.union([classDefSchema, characterDefSchema]), projectName: z.string().nullable(), canViewProject: z.boolean(),
+      revision: resetRevision, path: z.string().nullable(), format: registryFormat.nullable(), hasDefault: z.boolean(), canReset: z.boolean(),
+      shadowed: z.boolean(), fallback: overrideFallback, problem: z.string().nullable(),
+      fields: z.array(z.object({ field: z.string(), shipped: z.unknown(), current: z.unknown(), saved: z.boolean() })) }),
+    tags: () => [tags.registry()],
+  },
+  previewOverrideReset: {
+    input: resetSelection,
+    output: z.discriminatedUnion("code", [z.object({ code: z.literal("ok"), name: z.string(), path: z.string(), revision: resetRevision,
+      fields: z.array(z.string()), format: registryFormat.optional(), fallback: registrySource, shadowed: z.boolean(), widening: z.boolean() }), overrideInvalid]),
+  },
+  resetOverride: {
+    input: resetSelection.extend({ revision: resetRevision }),
+    output: z.discriminatedUnion("code", [z.object({ code: z.literal("ok") }), z.object({ code: z.literal("stale") }), overrideInvalid]),
   },
   /** The composer in a Keeper's thread pings this while the user types, so ticks hold until they send. */
   typing: {

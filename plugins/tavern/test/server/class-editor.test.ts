@@ -13,7 +13,7 @@ const directory = () => { const dir = mkdtempSync(join(tmpdir(), "tavern-class-e
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
 describe("class editor: saving an override", () => {
-  it("writes the whole class to the global override, never the shipped file, and reads back", () => {
+  it("writes a patch to the global override, never the shipped file, and reads back", () => {
     const home = directory(), registry = new Registry(root, home);
     const shipped = readFileSync(join(root, "classes/smith.md"), "utf8");
     const { revision } = registry.classLayers("smith");
@@ -21,7 +21,7 @@ describe("class editor: saving an override", () => {
     expect(saved.label).toBe("Mason");
     expect(readFileSync(join(root, "classes/smith.md"), "utf8")).toBe(shipped);
     const written = readFileSync(join(home, "classes/smith.md"), "utf8");
-    expect(written).toMatch(/^---\n[\s\S]*label: Mason[\s\S]*---\nBuild carefully\.\n$/);
+    expect(written).toMatch(/^---\nformat: tavern-registry-patch\/1\nid: smith\nfields:\n  label: Mason\n  body: Build carefully\.\n---\n$/);
     const reread = registry.read().classes.find((c) => c.id === "smith")!;
     expect(reread).toMatchObject({ label: "Mason", plain: saved.plain, body: "Build carefully.", source: join(home, "classes/smith.md") });
     expect(existsSync(join(home, "classes/smith.md.tmp"))).toBe(false);
@@ -152,6 +152,40 @@ describe("class editor: handlers", () => {
     expect((await h.removeClassOverride({ classId: "smith", projectId: null, target: "global", revision: next }, client)).code).toBe("ok");
     expect(existsSync(join(home, "classes/smith.md"))).toBe(false);
     expect(recordExternal).toHaveBeenLastCalledWith("user", expect.stringMatching(/removed the global override of smith/), [expect.objectContaining({ key: "class.smith", kind: "unset" })]);
+  });
+
+  it("only previews a reset for the person at the client to apply, and rejects an unconfirmed revision", async () => {
+    const { h, home, recordExternal, invalidate } = await handlers();
+    const { revision } = await h.classEditor({ classId: "smith", projectId: null });
+    await h.saveClass({ classId: "smith", projectId: null, target: "global", edit: { scope: "readonly" }, revision }, client);
+    recordExternal.mockClear(); invalidate.mockClear();
+    const input = { kind: "class", id: "smith", target: "global", projectId: null } as const;
+    await expect(h.previewOverrideReset(input, { experimental_caller: { kind: "plugin" } } as never)).rejects.toThrow(/explicit client action/);
+    const preview = await h.previewOverrideReset(input, client);
+    expect(preview).toMatchObject({ code: "ok", name: "Smith", fallback: "shipped", fields: ["scope"], widening: true });
+    if (preview.code !== "ok") throw new Error("Expected a reset preview");
+    const apply = { ...input, revision: preview.revision };
+    await expect(h.resetOverride(apply, { experimental_caller: { kind: "plugin" } } as never)).rejects.toThrow(/explicit client action/);
+    expect(await h.resetOverride({ ...apply, revision: "another-override" }, client)).toEqual({ code: "stale" });
+    expect(existsSync(join(home, "classes/smith.md"))).toBe(true);
+    expect(recordExternal).not.toHaveBeenCalled(); expect(invalidate).not.toHaveBeenCalled();
+    expect(await h.resetOverride(apply, client)).toMatchObject({ code: "ok" });
+    expect(existsSync(join(home, "classes/smith.md"))).toBe(false);
+    expect(recordExternal).toHaveBeenCalledOnce(); expect(invalidate).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the original override bytes when recording the reset fails", async () => {
+    const { h, home, recordExternal, invalidate } = await handlers();
+    const { revision } = await h.classEditor({ classId: "smith", projectId: null });
+    await h.saveClass({ classId: "smith", projectId: null, target: "global", edit: { label: "Mason" }, revision }, client);
+    const file = join(home, "classes/smith.md"), original = readFileSync(file, "utf8");
+    const input = { kind: "class", id: "smith", target: "global", projectId: null } as const;
+    const preview = await h.previewOverrideReset(input, client);
+    if (preview.code !== "ok") throw new Error("Expected a reset preview");
+    invalidate.mockClear(); recordExternal.mockImplementationOnce(() => { throw new Error("Injected history failure"); });
+    await expect(h.resetOverride({ ...input, revision: preview.revision }, client)).resolves.toMatchObject({ code: "invalid", problems: ["Injected history failure"] });
+    expect(readFileSync(file, "utf8")).toBe(original);
+    expect(invalidate).not.toHaveBeenCalled();
   });
 
   it("refuses a save from a plugin or agent caller", async () => {

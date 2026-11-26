@@ -12,7 +12,7 @@ import { hearthWords } from "../kit/hearth";
 export { isFinished, PHASE_STEPS, phaseIndex, phaseWord, pathProgress, questMove, keeperStatus, endedCounts, type MoveTone, type KeeperStatus } from "../kit";
 import { heldQuests, isFinished, keeperStatus, phaseWord, pathProgress, releaseWords, type MoveTone } from "../kit";
 
-export type PageRoute = { kind: "room" | "map" | "characters" | "classes" | "closing" | "digest" | "returned" | "archive" | "insights" | "memory" | "answers" | "missing" } | { kind: "quest" | "tale" | "character" | "class"; id: string; summaryId?: string; askId?: string } | { kind: "machines"; rule?: string; hire?: string };
+export type PageRoute = { kind: "room" | "map" | "characters" | "classes" | "closing" | "digest" | "returned" | "archive" | "insights" | "memory" | "answers" | "overrides" | "missing" } | { kind: "quest" | "tale" | "character" | "class"; id: string; summaryId?: string; askId?: string; scope?: string } | { kind: "machines"; rule?: string; hire?: string };
 export function decodePageRoute(subPath: string): PageRoute {
   let parts: string[];
   try { parts = subPath.split("/").map(decodeURIComponent); } catch { return { kind: "missing" }; }
@@ -20,6 +20,8 @@ export function decodePageRoute(subPath: string): PageRoute {
     const kind = parts[0] === "" ? "room" : parts[0];
     if (kind === "room" || kind === "map" || kind === "characters" || kind === "classes" || kind === "closing" || kind === "digest" || kind === "returned" || kind === "archive" || kind === "insights" || kind === "memory" || kind === "answers") return { kind };
   }
+  if (parts.length === 2 && parts[0] === "classes" && parts[1] === "overrides") return { kind: "overrides" };
+  if (parts.length === 3 && (parts[0] === "class" || parts[0] === "character") && parts[1] && parts[2]) return { kind: parts[0], id: parts[1], scope: parts[2] };
   if (parts[0] === "machines" && parts.length <= 3 && parts.slice(1).every(Boolean)) return { kind: "machines", ...(parts[1] ? { rule: parts[1] } : {}), ...(parts[2] ? { hire: parts[2] } : {}) };
   if (parts.length === 4 && parts[0] === "quest" && parts[1] && parts[3]) {
     if (parts[2] === "summary") return { kind: "quest", id: parts[1], summaryId: parts[3] };
@@ -39,6 +41,7 @@ export function restoreVerdict(path: string, room: Room | undefined, registry: {
   const route = decodePageRoute(path);
   if (route.kind === "missing") return "stale";
   if (route.kind === "quest" || route.kind === "tale") { if (!room) return "wait"; const quest = questsIn(room).find((q) => q.id === route.id); return quest && !quest.archivedAt ? "ok" : "stale"; }
+  if ((route.kind === "class" || route.kind === "character") && route.scope && route.scope !== "global") return "ok";
   if (route.kind === "character") return registry ? registry.characters.some((c) => c.id === route.id) ? "ok" : "stale" : "wait";
   if (route.kind === "class") return registry ? registry.classes.some((c) => c.id === route.id) ? "ok" : "stale" : "wait";
   return "ok";

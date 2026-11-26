@@ -54,7 +54,7 @@ Save private, server-local backups from **Settings** under **Data and backups** 
 
 > Data backups include user-authored notes, routing text, reports, and ledger history; keep them out of shared repositories unless reviewed. They never contain bb credentials, core thread transcripts, live Stop all state, or private placement tables.
 
-Bundles store explicit settings and pins (preserving forge profiles on restore), global overrides (plus local project overrides with `--projects`), and ledger records with `--with-data`. Limits are 8 MiB for UI downloads, 31 MiB for CLI export stdout, and 128 MiB for managed disk bundles; `data.backup_keep` defaults to 14 (0 keeps all).
+Bundles store explicit settings and pins (preserving forge profiles on restore), global overrides (plus local project overrides with `--projects`), and ledger records with `--with-data`. Backup restores keep the original registry files, whether they are older whole definitions or changed-fields patches. The effective exports are complete merged definitions for reference and are not installed on restore. Limits are 8 MiB for UI downloads, 31 MiB for CLI export stdout, and 128 MiB for managed disk bundles; `data.backup_keep` defaults to 14 (0 keeps all).
 
 Restore previews by default; `--apply` requires a user terminal or Settings. Restoring records requires an empty Tavern database with compatible migrations (otherwise config still restores while records are refused with counts) and shows **Finish handover** for any pending Keeper refresh.
 

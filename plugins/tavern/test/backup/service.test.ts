@@ -29,6 +29,22 @@ it("round trips settings, verbatim overrides, scope policy and data into a fresh
   expect(target.db.prepare("SELECT text FROM tavern_events").get()).toMatchObject({ text: "Private notes stay private" });
   expect(target.changed).toHaveBeenCalledOnce();
 });
+it("backs up raw patches, exports usable merged definitions, and restores over a bundled legacy layer", async () => {
+  const source = fixture(); override(source);
+  const folder = join(source.project, ".agents/tavern/classes"); mkdirSync(folder, { recursive: true });
+  const patch = "---\nformat: tavern-registry-patch/1\nid: smith\nfields:\n  description: Project change\n---\n";
+  writeFileSync(join(folder, "one-field.md"), patch);
+  const exported = await source.backup.export({ projects: true }), target = fixture();
+  const payload = JSON.parse(exported.json!);
+  expect(payload.files["projects/project/classes/one-field.md"]).toBe(patch);
+  expect(payload.files["effective/projects/project/classes/smith.md"]).toContain("label: My smith");
+  expect(payload.files["effective/projects/project/classes/smith.md"]).not.toContain("tavern-registry-patch/1");
+  const from = { bundle: exported.json! }, preview = await target.backup.restore({ from, apply: false });
+  expect(preview.code).toBe("preview");
+  expect((await target.backup.restore({ from, apply: true, previewHash: preview.previewHash })).code).toBe("applied");
+  expect(readFileSync(join(target.project, ".agents/tavern/classes/one-field.md"), "utf8")).toBe(patch);
+  expect(target.registry.read(target.project).classes.find(c => c.id === "smith")).toMatchObject({ label: "My smith", description: "Project change" });
+});
 it("normalises journal change texts from a pre-migration backup on restore", async () => {
   const source = fixture();
   source.db.exec("INSERT INTO questlog_logs (thread_id) VALUES ('thr_thread')");

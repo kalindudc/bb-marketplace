@@ -112,9 +112,6 @@ export function rpcHandlers(
   const wake = (threadId: string) => {
     void runtime.wakeKeeper(threadId, "user-action");
   };
-  const invalidateCharacter = () => runtime.bb.rpc.experimental_invalidate([
-    tags.registry(), tags.rows(), tags.room(), ...k.store.all("members").map(m => tags.thread(m.threadId)),
-  ]);
   const handlers = userActHandlers<OptionalRpcContext<ExperimentalPluginRpcHandlersWithContext<Omit<typeof rpcContract, "renameBoardQuest">>>>({
     ...stopAllHandlers(runtime),
     ...placementHandlers(runtime),
@@ -188,16 +185,6 @@ export function rpcHandlers(
       return { ok: true as const };
     },
     ...classEditorHandlers(runtime),
-    saveCharacterVoice: ({ characterId, voice }) => {
-      const character = runtime.registry.saveVoice(characterId, voice);
-      invalidateCharacter();
-      return character;
-    },
-    saveCharacterAvatar: ({ characterId, avatar }) => {
-      const character = runtime.registry.saveAvatar(characterId, avatar);
-      invalidateCharacter();
-      return character;
-    },
     decor: ({ threadId }): ThreadDecor => {
       const m = k.member(threadId), thread = k.store.runtime(threadId);
       const boardQuest = m?.boardQuestId ? k.quest(m.boardQuestId) : null;

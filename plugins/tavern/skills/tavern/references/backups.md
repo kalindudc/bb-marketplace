@@ -22,7 +22,7 @@ Managed backups save to `~/.agents/tavern/backups/YYYY-MM-DD-HHMM/` on the bb se
 | Part | Included | Excluded or preserved |
 | --- | --- | --- |
 | `settings.toml` | Explicit user settings and tuning pins | Automatic `[tuned]` state, live quest overrides, and `machines.forges` (preserved on restore) |
-| Overrides | Global class, character, and `scopes.yml` overrides, plus registered local project overrides with `--projects` | Remote-host paths; shipped defaults sit under `effective/` for reference and never overwrite overrides |
+| Overrides | Global class, character, and `scopes.yml` overrides, plus registered local project overrides with `--projects`. Changed-fields patches and legacy whole files keep their original format. | Remote-host paths; complete merged definitions sit under `effective/` for reference and never overwrite overrides |
 | `records.json` (`--with-data`) | Quests, plans, members, asks, decisions, rules, notes, gates, routes, reports, journals, events, setting history, Insights samples, service records, Keep flags, verdict receipts, built-in memory notes | Private placement tables (`tavern_placements`, `tavern_source_snapshots`, `tavern_placement_discoveries`, `tavern_snapshot_owners`), live Stop all state, and local tick-retry state |
 | `manifest.json` | Tavern and schema version, migration hashes, counts, sizes, SHA-256 per payload file | No credentials or core thread transcripts |
 

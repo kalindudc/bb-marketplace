@@ -25,6 +25,7 @@ import { AnswersPage } from "./answers";
 import { ClassStartCards } from "./start";
 import { useStartKeeper } from "../kit/keeper-draft";
 import { CharacterSheetEditor, CharacterSheets, ClassDetail, ClassesList } from "./sheets";
+import { OverridesList } from "./overrides";
 import { StopAllControls } from "./stop-all";
 import { StartQuest } from "./start-quest";
 import { MachinesPage } from "./machines";
@@ -36,7 +37,7 @@ import "./page.css";
 const destinations: [string, string, PageGlyphName][] = [["room", vocab("commonRoom"), "home"], ["map", vocab("connections"), "map"], ["memory", "Memory", "ledger"], ["answers", "Search answers", "question"], ["archive", vocab("cellar"), "archive"], ["characters", "Character sheets (records)", "shield"], ["classes", "Classes (types)", "file"], ["digest", "While closed (digest)", "moon"], ["closing", vocab("closing"), "lantern"]];
 /** The machine placement page joins the sidebar and the phone page picker once its server reads are live. */
 const pages = (): [string, string, PageGlyphName][] => PLACEMENT_RPC_LIVE ? [...destinations, ["machines", "Where work runs (machines)", "machine"]] : destinations;
-const isCurrent = (path: string, route: PageRoute) => path === route.kind || (path === "characters" && route.kind === "character") || (path === "classes" && route.kind === "class");
+const isCurrent = (path: string, route: PageRoute) => path === route.kind || (path === "characters" && route.kind === "character") || (path === "classes" && (route.kind === "class" || route.kind === "overrides"));
 
 function SideLink({ path, label, glyph, count, route, room }: { path: string; label: string; glyph: PageGlyphName; count?: React.ReactNode; route: PageRoute; room?: Room }) {
   const navigate = useBbNavigate();
@@ -214,16 +215,17 @@ export function TavernPage({ subPath }: PluginNavPanelProps) {
   else if (route.kind === "insights") body = <Surface.InsightsPage />;
   else if (route.kind === "memory") body = <Surface.MemoryPage />;
   else if (route.kind === "answers") body = <AnswersPage />;
+  else if (route.kind === "overrides") body = <OverridesList />;
   else if (route.kind === "machines") body = <Surface.MachinesPage rule={route.rule} hire={route.hire} />;
   else if (!registry.data) { const sk = routeSkeleton(route, room.data); body = sk ? <PageLoad error={registry.error} retry={registry.refetch} {...sk} /> : <ReadState error={registry.error} retry={registry.refetch} />; }
   else if (route.kind === "quest" || route.kind === "tale") body = <Surface.QuestRoute key={route.id} id={route.id} summaryId={route.summaryId} askId={route.askId} tale={route.kind === "tale"} registry={registry.data} room={room.data} />;
   else if (route.kind === "classes") body = <Surface.ClassesList registry={registry.data} />;
-  else if (route.kind === "class") body = <Surface.ClassDetail id={route.id} registry={registry.data} />;
+  else if (route.kind === "class") body = <Surface.ClassDetail key={here} id={route.id} scope={route.scope} registry={registry.data} />;
   else if (!room.data) { const sk = routeSkeleton(route, undefined); body = sk ? <PageLoad error={room.error} retry={room.refetch} {...sk} /> : <ReadState error={room.error} retry={room.refetch} />; }
   else if (route.kind === "map") body = <Surface.TheMap room={room.data} registry={registry.data} />;
   else if (route.kind === "returned" || route.kind === "archive") body = <Surface.ReturnedList key={route.kind} room={room.data} registry={registry.data} initialView={route.kind === "archive" ? "archive" : "board"} />;
   else if (route.kind === "characters") body = <Surface.CharacterSheets room={room.data} registry={registry.data} />;
-  else if (route.kind === "character") { const character = registry.data.characters.find((c) => c.id === route.id); body = character ? <Surface.CharacterSheetEditor key={character.id} character={character} room={room.data} registry={registry.data} /> : <Empty>Character not found: {route.id}</Empty>; }
+  else if (route.kind === "character") body = <Surface.CharacterSheetEditor key={here} id={route.id} scope={route.scope} room={room.data} registry={registry.data} />;
   else if (route.kind === "closing") body = <Surface.ClosingTimeSheet room={room.data} registry={registry.data} />;
   else if (route.kind === "digest") body = <Surface.ClosedDigest room={room.data} registry={registry.data} />;
   else body = <Surface.CommonRoom room={room.data} registry={registry.data} />;
@@ -238,6 +240,7 @@ export function TavernPage({ subPath }: PluginNavPanelProps) {
 }
 /** The phone picker's name for a page outside its list: the class or character it shows, as the page heading names it. */
 function currentPageName(route: { kind: string; id?: string }, registry: { classes: { id: string; label: string; plain: string }[]; characters: { id: string; name: string }[] } | undefined) {
+  if (route.kind === "overrides") return "Overrides";
   if (route.kind === "class") { const c = registry?.classes.find((x) => x.id === route.id); return c ? `${c.label} (${c.plain})` : null; }
   if (route.kind === "character") return registry?.characters.find((x) => x.id === route.id)?.name ?? null;
   return null;

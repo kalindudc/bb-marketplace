@@ -239,6 +239,10 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     // A revision that cannot match: the write path is exercised without touching any override file.
     saveClass: () => call("saveClass", { classId: "smith", projectId: null, target: "global", edit: { label: "Mason" }, revision: "stale" }),
     removeClassOverride: () => call("removeClassOverride", { classId: "smith", projectId: null, target: "global", revision: "stale" }),
+    registryOverrides: () => call("registryOverrides", {}),
+    registryDefinition: () => call("registryDefinition", { kind: "class", id: "smith", projectId: null, target: "global" }),
+    previewOverrideReset: () => call("previewOverrideReset", { kind: "character", id: character.id, projectId: null, target: "global" }),
+    resetOverride: () => call("resetOverride", { kind: "class", id: "smith", projectId: null, target: "global", revision: "stale" }),
     typing: () => call("typing", { threadId: "lead" }),
     scopeCallPage: () => call("scopeCallPage", { threadId: "lead", before: 1 }),
     placementModelFailures: () => call("placementModelFailures", {}),

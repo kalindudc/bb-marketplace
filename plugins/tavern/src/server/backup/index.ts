@@ -14,22 +14,31 @@ export function createBackupService(bb: BbPluginApi, settings: SettingsStore, re
     changed: kind => bb.rpc.experimental_invalidate(["tavern:backups", "tavern:registry", "tavern:settings", "tavern:insights", "tavern:board",
       ...(kind === "restored" ? [tags.deletedQuestCount()] : [])]),
     warn: message => bb.log.warn(message),
-    projects: async (): Promise<ProjectInventory> => {
-      const config = await bb.sdk.system.config();
-      if (!config.primaryHostId) throw new Error("Project backups require bb's registered server host; no project paths were read.");
-      const inventory: ProjectInventory = { projects: [], problems: [] };
-      for (const summary of await bb.sdk.projects.list({ includePersonal: true })) {
-        const project = await bb.sdk.projects.get({ projectId: summary.id });
-        const local = project.sources.filter(source => source.hostId === config.primaryHostId), source = local.find(source => source.isDefault) ?? local[0];
-        if (!source) {
-          if (project.sources.length) inventory.problems.push(`${project.name}: no server-local checkout; project override files were not read.`);
-          continue;
-        }
-        if (!isAbsolute(source.path)) throw new Error(`Project ${project.name} has no absolute server-local checkout path.`);
-        inventory.projects.push({ id: project.id, name: project.name, path: source.path });
-      }
-      inventory.projects.sort((a, b) => a.id.localeCompare(b.id));
-      return inventory;
-    },
+    projects: () => registryProjects(bb),
   });
+}
+
+export async function registryProjects(bb: BbPluginApi, onFailure: "stop" | "report" = "stop"): Promise<ProjectInventory> {
+  const config = await bb.sdk.system.config();
+  if (!config.primaryHostId && onFailure === "stop") throw new Error("Project backups require bb's registered server host; no project paths were read.");
+  const inventory: ProjectInventory = { projects: [], problems: [] };
+  for (const summary of await bb.sdk.projects.list({ includePersonal: true })) {
+    let name = summary.name ?? summary.id;
+    try {
+      const project = await bb.sdk.projects.get({ projectId: summary.id });
+      name = project.name;
+      const local = project.sources.filter(source => config.primaryHostId && source.hostId === config.primaryHostId), source = local.find(source => source.isDefault) ?? local[0];
+      if (!source) {
+        if (onFailure === "report" || project.sources.length) inventory.problems.push(`${name}: no server-local checkout; project override files were not read.`);
+        continue;
+      }
+      if (!isAbsolute(source.path)) throw new Error(`Project ${name} has no absolute server-local checkout path.`);
+      inventory.projects.push({ id: project.id, name, path: source.path });
+    } catch (error) {
+      if (onFailure === "stop") throw error;
+      inventory.problems.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  inventory.projects.sort((a, b) => a.id.localeCompare(b.id));
+  return inventory;
 }

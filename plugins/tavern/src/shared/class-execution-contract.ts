@@ -14,7 +14,7 @@ export const classFieldSchema = z.object({
 export const classModeFactsSchema = z.object({
   execution: classExecutionSchema.nullable(), fields: z.array(classFieldSchema), errors: z.array(z.string()), notes: z.array(z.string()),
   requiresPi: z.boolean(),
-  projectOverrides: z.array(z.object({ field: z.string(), message: z.string(), path: z.string() })),
+  projectOverrides: z.array(z.object({ field: z.string(), message: z.string(), path: z.string(), format: z.enum(["full", "patch"]).optional() })),
   body: z.object({ bytes: z.number(), limit: z.number() }),
 });
 export type ClassModeFacts = z.infer<typeof classModeFactsSchema>;

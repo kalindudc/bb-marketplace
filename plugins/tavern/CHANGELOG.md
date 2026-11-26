@@ -6,6 +6,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Added
 
+- Find class and character overrides under Classes → Overrides, or compare the definition on its sheet. Reset an override for every project or for one checkout, with a preview of what takes over. Patches also let you reset one field. Running turns and Settings are unchanged.
 - Tavern keeps local study measurements for Keeper model changes, turn usage, tool refusals, plan revisions, chat cards and scope hits. Export them from your terminal with `bb tavern study-events`. Set how long they stay in Settings under Data and backups.
 - Find the Keeper’s answers on each quest and search across Tavern by the answer or your original words. Quest pages flag unanswered questions and steers. New answers leave a quiet Ledger link; device pushes are off unless you turn them on in Settings.
 - Plans, briefs, asks and reports no longer have separate quotas for each field. Cards fold long labels and headlines without changing the saved text. Search Tavern Settings for the limits that still protect staffing, review time, storage and delivery. When Tavern shortens prose or the copy of a brief sent to a member, the tool names the setting. The full saved brief stays readable, and exact commands and drafts stay intact.
@@ -23,6 +24,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Changed
 
+- New class and character saves keep only the fields you change, so untouched fields still pick up newer defaults. Older whole-file copies keep their behavior, and backups restore either format.
 - Members who change files commit as they go on their own branches and resolve their own merge conflicts. Pushes, merges into shared branches, and publishing still need their usual approvals.
 - A Keeper can hire another Keeper for an approved side seat and forward your exact steers. The side Keeper reports back without marking work done, and the hiring Keeper posts the linked answer. Side Keepers cannot hire another Keeper. Older class files and settings still load; Keeper hiring no longer has a class switch or a chain depth setting.
 - A Keeper thread opens one quest. Existing threads with several quests keep them. If you bring an outside goal to a Keeper, choose a side quest under the named parent or open an editable draft for a new Keeper. The choice alone starts nothing.

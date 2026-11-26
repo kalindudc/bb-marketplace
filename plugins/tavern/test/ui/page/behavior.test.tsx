@@ -27,7 +27,14 @@ const handlers: Partial<Handlers> = {
 async function app() { return loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) })); }
 async function page(subPath = "", rpc: Partial<Handlers> = {}, options: { panelAccepts?: boolean } = {}) {
   const plugin = await app();
-  const slot = renderSlot(plugin.navPanels[0]!, { subPath }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { ...handlers, ...rpc } as Handlers, ...(options.panelAccepts ? { experimental_panel: { openTab: () => true } } : {}) });
+  const registryDefinition: Handlers["registryDefinition"] = async ({ kind, id }) => {
+    const data = await (rpc.registry ?? handlers.registry)!({});
+    const definition = (kind === "class" ? data.classes : data.characters).find(value => value.id === id);
+    if (!definition) throw new Error(`Unknown ${kind}`);
+    return { name: "label" in definition ? definition.label : definition.name, definition, projectName: null, canViewProject: false,
+      revision: "character-rev", path: null, format: null, hasDefault: true, canReset: false, shadowed: false, fallback: "shipped", problem: null, fields: [] };
+  };
+  const slot = renderSlot(plugin.navPanels[0]!, { subPath }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { ...handlers, registryDefinition, ...rpc } as Handlers, ...(options.panelAccepts ? { experimental_panel: { openTab: () => true } } : {}) });
   slots.push(slot); return slot;
 }
 
@@ -265,7 +272,7 @@ describe("Tavern page surfaces", () => {
   it("opens the voice editor in the side panel, never over the sheet", async () => {
     const slot = await page("character/wren", {}, { panelAccepts: true });
     fireEvent.click(await slot.findByRole("button", { name: /Edit Wren's voice/ }));
-    expect(slot.inspection.experimental_panelCalls).toContainEqual({ method: "openTab", options: { tab: { id: "character-voice", context: { kind: "nav-panel", panelId: "tavern" }, availability: "action" }, params: { characterId: "wren" } } });
+    expect(slot.inspection.experimental_panelCalls).toContainEqual({ method: "openTab", options: { tab: { id: "character-voice", context: { kind: "nav-panel", panelId: "tavern" }, availability: "action" }, params: { characterId: "wren", projectId: null, target: "global" } } });
     expect(slot.queryByRole("textbox", { name: "Voice style" })).toBeNull();
     expect(slot.queryByRole("dialog")).toBeNull();
   });
@@ -282,7 +289,7 @@ describe("Tavern page surfaces", () => {
       const sheet = await slot.findByRole("img", { name: "Wren's avatar" });
       expect(sheet.getAttribute("data-avatar-seed")).toBe("wren");
       fireEvent.click(slot.getByRole("button", { name: /Edit Wren's voice/ }));
-      const group = within(slot.getByRole("group", { name: "Avatar" }));
+      const group = within(await slot.findByRole("group", { name: "Avatar" }));
       const shown = () => group.getByRole("img", { name: "Wren's avatar" }).getAttribute("data-avatar-seed");
       const roll = () => fireEvent.click(group.getByRole("button", { name: "Roll" }));
       expect(group.getByText(/Pinned in the file:.*hat.*hair|Pinned in the file:.*hair.*hat/)).toBeTruthy();
@@ -307,7 +314,7 @@ describe("Tavern page surfaces", () => {
       expect(keep).not.toHaveBeenCalled();
       fireEvent.click(group.getByRole("button", { name: "Keep" }));
       await group.findByText("Avatar kept.");
-      expect(keep).toHaveBeenCalledExactlyOnceWith({ characterId: "wren", avatar: seed });
+      expect(keep).toHaveBeenCalledExactlyOnceWith({ characterId: "wren", avatar: seed, target: "global", projectId: null, revision: "character-rev" });
       expect(shown()).toBe(seed);
       expect(saveVoice).not.toHaveBeenCalled();
       expect((slot.getByRole("textbox", { name: "Voice style" }) as HTMLInputElement).value).toBe("Unsaved voice draft");
@@ -353,9 +360,9 @@ describe("Tavern page surfaces", () => {
     expect(slot.getByText(character.lines.hired)).toBeTruthy();
   });
 
-  it("sends the edited bubble lines with the voice and keeps other moods and legacy slots", async () => {
+  it("sends only the edited bubble field and keeps other moods and legacy slots", async () => {
     const character = { ...registry.characters.find(c => c.id === "wren")!, says: { idle: ["The hearth is warm."], working: ["Lantern lit."] } };
-    const save = vi.fn(({ voice }: { voice: CharacterVoice }) => ({ ...character, ...voice }));
+    const save = vi.fn(({ voice }: { voice: Partial<CharacterVoice> }) => ({ ...character, ...voice }));
     const slot = await page("character/wren", {
       registry: () => ({ ...registry, characters: [character] }), saveCharacterVoice: save,
     });
@@ -365,10 +372,9 @@ describe("Tavern page surfaces", () => {
     fireEvent.change(working, { target: { value: "Fair road as far as {waypoint}.\n\nWind steady." } });
     fireEvent.click(slot.getByRole("button", { name: "Save Wren" }));
     await slot.findByText("Voice saved to your character override.");
-    expect(save).toHaveBeenCalledExactlyOnceWith({ characterId: "wren", voice: expect.objectContaining({
-      lines: character.lines,
+    expect(save).toHaveBeenCalledExactlyOnceWith({ characterId: "wren", target: "global", projectId: null, revision: "character-rev", voice: {
       says: { idle: ["The hearth is warm."], working: ["Fair road as far as {waypoint}.", "Wind steady."] },
-    }) });
+    } });
   });
 
   it.each([

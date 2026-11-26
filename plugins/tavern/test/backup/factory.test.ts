@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { MIGRATIONS } from "../../src/server/migrations";
 import { Registry } from "../../src/server/registry";
 import { SettingsStore } from "../../src/server/settings/store";
-import { createBackupService } from "../../src/server/backup/index";
+import { createBackupService, registryProjects } from "../../src/server/backup/index";
 import { createFakePluginHost } from "../server/host";
 
 const builtin = fileURLToPath(new URL("../../", import.meta.url)), roots: string[] = [];
@@ -35,6 +35,19 @@ it("uses only registered server-local roots and records remote omissions", async
   expect(bundle.files["projects/local/classes/local-name.md"]).toBe(raw);
   expect(bundle.manifest.problems.join(" ")).toContain("remote: no server-local checkout");
   expect(f.host.harness.inspection.sdk.callsTo("projects.list")).toHaveLength(1);
+});
+it("names unreadable and remote projects without dropping the readable ones from Overrides", async () => {
+  const f = setup();
+  f.sdk.projects.list.mockResolvedValue([{ id: "local" }, { id: "remote" }, { id: "unavailable" }]);
+  const read = f.sdk.projects.get.getMockImplementation()!;
+  f.sdk.projects.get.mockImplementation(async input => {
+    if (input.projectId === "unavailable") throw new Error("Could not load the project record");
+    return read(input);
+  });
+  await expect(registryProjects(f.host.bb, "report")).resolves.toMatchObject({
+    projects: [{ id: "local", path: f.project }],
+    problems: [expect.stringMatching(/remote: no server-local checkout/), expect.stringMatching(/unavailable.*Could not load/)],
+  });
 });
 it("fails closed without a registered server host", async () => {
   const f = setup(); f.sdk.system.config.mockResolvedValue({ primaryHostId: null });

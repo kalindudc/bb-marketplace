@@ -1,6 +1,6 @@
 import { UrlLink, experimental_useAppPanel, experimental_usePluginId, experimental_useRpcMutation, experimental_useRpcQuery, useBbContext, type JsonValue, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
-import { EXECUTION_KEYS, type ExecutionFacts, type ExecutionKey } from "../../shared/class-execution";
+import { effectiveExecution, EXECUTION_KEYS, type ExecutionFacts, type ExecutionKey } from "../../shared/class-execution";
 import { CLASS_BODY_LIMIT, classRules, type TavernRole } from "../../shared/class-rules";
 import { rpcContract, type ClassEditInput } from "../../shared/contract";
 import type { ClassDef } from "../../shared/schema";
@@ -11,6 +11,11 @@ import { CLASS_EDIT_TAB } from "./panels";
 import { PageGlyph } from "./glyphs";
 import { FormSkeleton, PageLoad } from "./skeletons";
 import { RulesFold } from "./class-facts";
+import { useOverrideReset } from "./overrides";
+
+type EditorSelection = { projectId: string | null; target: "global" | "project" };
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const editsSince = (draft: ClassEditInput, base: ClassEditInput) => Object.fromEntries(Object.entries(draft).filter(([field, value]) => !same(value, base[field as keyof ClassEditInput])));
 
 const PRESETS = ["readonly", "checker", "worktree", "keeper", "open"] as const;
 const PRESET_WORD: Record<typeof PRESETS[number], string> = { readonly: "read only", checker: "checker (runs checks, no edits)", worktree: "worktree (edits its own checkout)", keeper: "keeper (leads, no domain edits)", open: "open (no Tavern limits)" };
@@ -30,11 +35,11 @@ export function requestClassEditorFocus(classId: string) { focusRequests.dispatc
  */
 export function useOpenClassEditor() {
   const panel = experimental_useAppPanel();
-  return (classId: string, label: string) => {
+  return (classId: string, label: string, selection?: EditorSelection) => {
     const open = (panel.getTabs?.().tabs ?? []).find((t) => t.detail.kind === "plugin" && t.detail.tab.id === CLASS_EDIT_TAB.id
-      && !!t.detail.params && typeof t.detail.params === "object" && !Array.isArray(t.detail.params) && t.detail.params.classId === classId);
+      && !!t.detail.params && typeof t.detail.params === "object" && !Array.isArray(t.detail.params) && t.detail.params.classId === classId && (t.detail.params.projectId ?? null) === (selection?.projectId ?? null) && (t.detail.params.target ?? null) === (selection?.target ?? null));
     if (open && panel.selectTab(open.key)) { requestClassEditorFocus(classId); return true; }
-    return panel.openTab({ tab: CLASS_EDIT_TAB, params: { classId, openedAt: Date.now() }, title: `Edit ${label}` });
+    return panel.openTab({ tab: CLASS_EDIT_TAB, params: { classId, ...(selection ? { projectId: selection.projectId, target: selection.target } : {}), openedAt: Date.now() }, title: `Edit ${label}` });
   };
 }
 const shown = (field: string, value: unknown) => field === "body" ? `${String(value ?? "").split("\n").length} lines` : field === "scope" ? String(presetOf(value as ClassDef["scope"]) ?? "none") : Array.isArray(value) ? value.join(", ") || "none" : typeof value === "boolean" ? (value ? "yes" : "no") : String(value ?? "none");
@@ -66,22 +71,34 @@ function useDebounced<T>(value: T, ms = 300) {
  * Edits one class's override file (global, or this project's), never the shipped file. Saving is the client's alone (registry-rpc.ts).
  * Provider, model and reasoning live in Settings, which wins over the file; permission is moot under Scopes; the rest stays in the file.
  */
-export function ClassEditForm({ classId, registry, focusOnOpen = false }: { classId: string; registry: Registry; focusOnOpen?: boolean }) {
-  const { projectId } = useBbContext();
+const useClassEditor = (classId: string, projectId: string | null) => experimental_useRpcQuery({ contract: rpcContract, method: "classEditor", input: { classId, projectId } });
+
+export function ClassEditForm({ classId, registry, selection, focusOnOpen = false }: { classId: string; registry: Registry; selection?: EditorSelection; focusOnOpen?: boolean }) {
+  const context = useBbContext();
+  const projectId = selection ? selection.projectId : context.projectId;
+  const info = useClassEditor(classId, projectId);
+  const [chosen, setTarget] = useState<EditorSelection["target"] | null>(selection?.target ?? null);
+  const d = info.data;
+  if (!d) return <PageLoad error={info.error} retry={info.refetch} label="the class" skeleton={<FormSkeleton fields={6} />} />;
+  const target = chosen ?? (d.layers.find(l => l.source === "project")?.exists ? "project" : d.layers.find(l => l.source === "global")?.exists || !d.projectPath ? "global" : "project");
+  return <ClassEditFields key={`${projectId}:${target}`} {...{ classId, registry, projectId, target, setTarget, focusOnOpen, info, d }} />;
+}
+
+function ClassEditFields({ classId, registry, projectId, target, setTarget, focusOnOpen, info, d }: {
+  classId: string; registry: Registry; projectId: string | null; target: EditorSelection["target"]; setTarget: (target: EditorSelection["target"]) => void; focusOnOpen: boolean;
+  info: ReturnType<typeof useClassEditor>; d: NonNullable<ReturnType<typeof useClassEditor>["data"]>;
+}) {
   const pluginId = experimental_usePluginId();
   const ids = useId();
-  const info = experimental_useRpcQuery({ contract: rpcContract, method: "classEditor", input: { classId, projectId } });
   const save = experimental_useRpcMutation({ contract: rpcContract, method: "saveClass" });
-  const remove = experimental_useRpcMutation({ contract: rpcContract, method: "removeClassOverride" });
-  const [stored, setStored] = useRemembered<ClassEditInput | null>(`class-edit:${classId}`, null, isEdit);
+  const key = `class-edit:${classId}:${projectId ?? "global"}:${target}`;
+  const [stored, setStored] = useRemembered<ClassEditInput | null>(key, null, isEdit);
   // The revision the draft began on: a save checks against it, so a change made elsewhere meanwhile is never overwritten unseen.
-  const [draftRev, setDraftRev] = useRemembered<string | null>(`class-edit:${classId}:rev`, null, isRev);
+  const [draftRev, setDraftRev] = useRemembered<string | null>(`${key}:rev`, null, isRev);
   // The class as it was then, so a newer version can be told apart field by field from the draft's own edits.
-  const [draftBase, setDraftBase] = useRemembered<ClassEditInput | null>(`class-edit:${classId}:base`, null, isEdit);
-  const [chosen, setTarget] = useState<"global" | "project" | null>(null);
-  const [outcome, setOutcome] = useState<null | { kind: "saved" | "removed" | "stale"; text: string }>(null);
+  const [draftBase, setDraftBase] = useRemembered<ClassEditInput | null>(`${key}:base`, null, isEdit);
+  const [outcome, setOutcome] = useState<null | { kind: "saved" | "stale"; text: string }>(null);
   const [problems, setProblems] = useState<string[]>([]);
-  const [confirmRemove, setConfirmRemove] = useState(false);
   const [follow, setFollow] = useState<null | { id: string; by: -1 | 1 }>(null);
   const orderRef = useRef<HTMLOListElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -107,24 +124,22 @@ export function ClassEditForm({ classId, registry, focusOnOpen = false }: { clas
     focusRequests.addEventListener("focus", onFocus);
     return () => focusRequests.removeEventListener("focus", onFocus);
   }, [classId]);
-  const revision = info.data?.revision ?? null;
-  useEffect(() => { if (stored && revision && draftRev === null && info.data) { setDraftRev(revision); setDraftBase(editOf(info.data.current)); } }, [!!stored, revision, draftRev]);
-  const d = info.data;
-  /** Until chosen: the override that already wins here, else this project (the narrower change), else every project. */
-  const target = chosen ?? (!d ? "global" : d.layers.find((l) => l.source === "project")?.exists ? "project" : d.layers.find((l) => l.source === "global")?.exists || !d.projectPath ? "global" : "project");
-  const base = d ? editOf(d.current) : null;
-  const draft = stored ?? base;
-  const debounced = useDebounced(draft);
-  const dirty = !!draft && !!base && JSON.stringify(draft) !== JSON.stringify(base);
-  const preview = experimental_useRpcQuery({ contract: rpcContract, method: "classPreview", input: { classId, projectId, target, edit: debounced ?? {} }, enabled: !!debounced && dirty });
-  if (!d || !draft || !base) return <PageLoad error={info.error} retry={info.refetch} label="the class" skeleton={<FormSkeleton fields={6} />} />;
-  const cls = d.current;
-  const set = (patch: ClassEditInput) => { setStored({ ...draft, ...patch }); setOutcome(null); setProblems([]); };
+  const targetLayer = d.layers.find(l => l.source === target);
+  const cls = targetLayer?.definition ?? d.current;
+  const base = editOf(cls), draft = stored ?? base;
+  const edit = editsSince(draft, draftBase ?? base);
+  const debounced = useDebounced(edit);
+  const dirty = Object.keys(edit).length > 0;
+  const preview = experimental_useRpcQuery({ contract: rpcContract, method: "classPreview", input: { classId, projectId, target, edit: debounced }, enabled: dirty });
+  const set = (patch: ClassEditInput) => {
+    if (!stored) { setDraftRev(d.revision); setDraftBase(base); }
+    setStored({ ...draft, ...patch }); setOutcome(null); setProblems([]);
+  };
   const forget = () => { setStored(null); setDraftRev(null); setDraftBase(null); };
+  const reset = useOverrideReset(info.refetch, forget);
   const discard = () => { forget(); setOutcome(null); setProblems([]); };
   const since = stored && draftRev ? draftRev : d.revision;
   const baseMoved = dirty && since !== d.revision;
-  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
   const fields = Object.keys(FIELD_WORD) as (keyof ClassEditInput)[];
   /** Fields changed elsewhere since the draft began, and which of them the draft also edited. Unknown for a draft saved before this was kept. */
   const elsewhere = baseMoved && draftBase ? fields.filter((k) => !same(draftBase[k], base[k])) : [];
@@ -140,7 +155,6 @@ export function ClassEditForm({ classId, registry, focusOnOpen = false }: { clas
   };
   const p = dirty && preview.data?.code === "ok" ? preview.data : null;
   const widening = p?.widening ?? [];
-  const targetLayer = d.layers.find((l) => l.source === target);
   const chosenIds = draft.characters ?? [];
   const picked = chosenIds.map((id) => registry.characters.find((c) => c.id === id)).filter((c): c is NonNullable<typeof c> => !!c);
   const unchosen = registry.characters.filter((c) => c.classes.includes(classId) && !chosenIds.includes(c.id));
@@ -153,26 +167,16 @@ export function ClassEditForm({ classId, registry, focusOnOpen = false }: { clas
   const chars = cls.characters.map((id) => registry.characters.find((c) => c.id === id)).filter((c): c is NonNullable<typeof c> => !!c);
   const persist = async () => {
     setOutcome(null); setProblems([]);
-    const out = await save.mutate({ classId, projectId, target, edit: draft, revision: since }).catch((e: unknown) => { setProblems([e instanceof Error ? e.message : String(e)]); return null; });
+    const out = await save.mutate({ classId, projectId, target, edit, revision: since }).catch((e: unknown) => { setProblems([e instanceof Error ? e.message : String(e)]); return null; });
     if (!out) return;
     if (out.code === "stale") { setOutcome({ kind: "stale", text: "This class changed since you opened it (another device, an editor or a restore). Nothing was saved; your draft is kept." }); return; }
     if (out.code === "invalid") { setProblems(out.problems); return; }
     forget(); setOutcome({ kind: "saved", text: `Saved to ${out.path.replace(/^\/(Users|home)\/[^/]+/, "~")}. It's in Settings' history.` }); void info.refetch();
   };
-  const unoverride = async () => {
-    setOutcome(null); setProblems([]); setConfirmRemove(false);
-    const out = await remove.mutate({ classId, projectId, target, revision: d.revision }).catch((e: unknown) => { setProblems([e instanceof Error ? e.message : String(e)]); return null; });
-    if (!out) return;
-    if (out.code === "stale") { setOutcome({ kind: "stale", text: "This class changed since you opened it. Nothing was removed." }); return; }
-    if (out.code === "invalid") { setProblems(out.problems); return; }
-    forget(); setOutcome({ kind: "removed", text: `Removed the ${target === "global" ? "every-project" : "project"} override. ${cls.label} falls back to the file below it.` }); void info.refetch();
-  };
-  const busy = save.isPending || remove.isPending;
+  const busy = save.isPending;
   const bodyBytes = utf8Bytes(draft.body ?? "");
   const bodyOver = bodyBytes > CLASS_BODY_LIMIT;
-  /** The file that wins today. A save writes the whole class, so saving to another layer copies every field from this one. */
-  const winner = [...d.layers].reverse().find((l) => l.exists) ?? null;
-  const copies = !!winner && winner.source !== target;
+  const models = effectiveExecution(cls, Object.fromEntries(EXECUTION_KEYS.filter(key => d.models[key].source === "settings").map(key => [key, d.models[key].value])));
   const preset = presetOf(draft.scope) as typeof PRESETS[number] | null;
 
   return <form className="tv-form tv-classedit" aria-label={`Edit the ${cls.label} class`} onSubmit={(e) => { e.preventDefault(); void persist(); }}>
@@ -180,8 +184,8 @@ export function ClassEditForm({ classId, registry, focusOnOpen = false }: { clas
 
     <fieldset className="tv-grpbox tv-ce-target" disabled={busy}><legend>Save for</legend>
       <label className="tv-chk"><input type="radio" name={`${ids}-t`} checked={target === "global"} onChange={() => setTarget("global")} /><span>Every project <code>{d.layers.find((l) => l.source === "global")!.path.replace(/^\/(Users|home)\/[^/]+/, "~")}</code></span></label>
-      {d.projectPath && <label className="tv-chk"><input type="radio" name={`${ids}-t`} checked={target === "project"} onChange={() => setTarget("project")} /><span>This project <code>.agents/tavern/classes/{classId}.md</code></span></label>}
-      <p className="m small">The shipped file is never changed. A project file wins over the every-project one.</p>
+      {d.projectPath && <label className="tv-chk"><input type="radio" name={`${ids}-t`} checked={target === "project"} onChange={() => setTarget("project")} /><span>This project <code>{d.layers.find(l => l.source === "project")?.path ?? `.agents/tavern/classes/${classId}.md`}</code></span></label>}
+      <p className="m small">The shipped file is never changed. A project override wins for the fields it saves.</p>
     </fieldset>
 
     <fieldset className="tv-fields" disabled={busy}><legend className="sr">Class</legend>
@@ -207,7 +211,7 @@ export function ClassEditForm({ classId, registry, focusOnOpen = false }: { clas
       </label>
       <div className="tv-field wide">
         <label htmlFor={`${ids}-body`}>Role prompt</label>
-        <p className="tv-ce-note" id={`${ids}-bodynote`}><PageGlyph name="note" size={13} /><span>Changes how every {cls.label} works from its next turn, running ones included.</span></p>
+        <p className="tv-ce-note" id={`${ids}-bodynote`}><PageGlyph name="note" size={13} /><span>Changes the prompt for new starts and hires. Existing turns keep their instructions.</span></p>
         <textarea id={`${ids}-body`} aria-describedby={`${ids}-bodynote ${ids}-bytes`} aria-invalid={bodyOver || undefined} className="tv-inp tv-ce-body" spellCheck={false} value={draft.body ?? ""} onChange={(e) => set({ body: e.target.value })} />
         <p id={`${ids}-bytes`} className={`tv-ce-bytes small ${bodyOver ? "bad" : "m"}`} aria-live={bodyOver ? "polite" : undefined}>
           <span className="num">{bodyBytes.toLocaleString("en-GB")}</span> of <span className="num">{CLASS_BODY_LIMIT.toLocaleString("en-GB")}</span> bytes{bodyOver ? `: ${(bodyBytes - CLASS_BODY_LIMIT).toLocaleString("en-GB")} over. Shorten it to save; Tavern refuses a longer role prompt.` : ""}
@@ -221,7 +225,7 @@ export function ClassEditForm({ classId, registry, focusOnOpen = false }: { clas
 
     <section className="tv-grpbox tv-ce-ro" aria-label="Set elsewhere"><div className="lbl">Set elsewhere</div>
       <dl className="tv-dl">
-        <ExecutionFactRows facts={d.models} />
+        <ExecutionFactRows facts={models} />
         <dd className="tv-ce-wide"><UrlLink href={settingsHref(pluginId)} className="tv-ilink act"><span>Change in Settings, Classes and models</span><OpensMark /></UrlLink></dd>
         <dt>Permission</dt><dd>Full while Scopes are on; the scope preset above is what limits members.</dd>
         <dt>Tools</dt><dd>Chosen by Tavern for the role (a Keeper, a hired member or a thread you start), not by the class file.</dd>
@@ -233,7 +237,7 @@ export function ClassEditForm({ classId, registry, focusOnOpen = false }: { clas
     <section className="tv-grpbox tv-ce-when" aria-label="When a change applies"><div className="lbl">When a change applies</div>
       <ul className="tv-ce-whenl">
         <li><b>Right away, everywhere:</b> name, plain word, description.</li>
-        <li><b>From each member's next turn:</b> role prompt. {d.running > 0 ? `${plural(d.running, "running member")} get${d.running === 1 ? "s" : ""} it too.` : "No members are running."}</li>
+        <li><b>Role prompt:</b> running turns keep their instructions. A later turn using the live class can pick up the new prompt.</li>
         <li><b>New starts and hires only:</b> characters, startable, hireable, scope preset. {d.running > 0 ? `${plural(d.running, "running member")} keep${d.running === 1 ? "s" : ""} what ${d.running === 1 ? "it was" : "they were"} hired with.` : ""}</li>
       </ul>
     </section>
@@ -243,7 +247,7 @@ export function ClassEditForm({ classId, registry, focusOnOpen = false }: { clas
         : !p ? <p className="m small" role="status">Checking the draft…</p>
         : <>
           <ul className="tv-changes">{p.changes.map((c) => <li key={c.field}><b>{FIELD_WORD[c.field] ?? c.field}</b> <span className="m">{shown(c.field, c.from)}</span> → {shown(c.field, c.to)}</li>)}</ul>
-          {copies && <p className="tv-ce-copies small" data-copies><PageGlyph name="note" size={13} /><span>Saving writes the whole class to <code>{(targetLayer?.path ?? "").replace(/^\/(Users|home)\/[^/]+/, "~")}</code>, copying every field as it is now in <code>{winner!.path.replace(/^\/(Users|home)\/[^/]+/, "~")}</code>. Later changes to that file won't reach this one.</span></p>}
+          <p className="tv-ce-copies small" data-save-mode><PageGlyph name="note" size={13} /><span>{targetLayer?.format === "full" ? "This override stays a whole-file copy. Fields remain pinned until you reset it." : "Only changed fields are saved. Untouched fields keep following the layer below."}</span></p>
           {p.shadowedBy && <p className="tv-holdnote"><PageGlyph name="note" /><span>This project has its own {cls.label} file, which still wins here. Save for this project to change it.</span></p>}
         </>}
     </section>}
@@ -253,13 +257,9 @@ export function ClassEditForm({ classId, registry, focusOnOpen = false }: { clas
     <footer className="tv-formf">
       <button className="btn pri" type="submit" disabled={busy || !dirty || bodyOver || preview.data?.code === "invalid"}><span>{save.isPending ? "Saving…" : widening.length ? "Save and allow" : "Save"}</span></button>
       <button className="btn" type="button" disabled={busy || !dirty} onClick={discard}><span>Discard</span></button>
-      {targetLayer?.exists && !confirmRemove && <button className="lnk-btn act" type="button" disabled={busy} onClick={() => setConfirmRemove(true)}><span>Remove this override</span></button>}
+      {targetLayer?.exists && d.layers.some(layer => layer.source === "shipped" && layer.exists) && <button className="lnk-btn act" type="button" disabled={busy} onClick={event => reset.open(event, { kind: "class", id: classId, target, projectId, projectName: d.projectName ?? null })}><span>Remove this override</span></button>}
     </footer>
-    {confirmRemove && <div className="tv-ce-confirm" role="group" aria-label="Remove this override?">
-      <span>Delete <code>{targetLayer!.path.replace(/^\/(Users|home)\/[^/]+/, "~")}</code>? {cls.label} goes back to the file below it{target === "global" ? ", the shipped one unless a project file exists" : ""}.</span>
-      <button className="btn sm danger" type="button" disabled={busy} onClick={() => void unoverride()}><span>Remove</span></button>
-      <button className="btn sm" type="button" autoFocus onClick={() => setConfirmRemove(false)}><span>Cancel</span></button>
-    </div>}
+    {reset.resetDialog}{reset.feedback}
     {!outcome && baseMoved && <p className="tv-problem" role="alert">
       This class changed since you started this draft (another device, an editor or a restore).{elsewhere.length > 0 && <> Changed since: <b>{words(elsewhere)}</b>.</>}
       {overlap.length > 0 && <> You edited {words(overlap)} too: yours will replace the newer {overlap.length === 1 ? "one" : "ones"}.</>}
@@ -278,11 +278,12 @@ export function ClassEditTab({ params }: PluginNavPanelProps & { params: JsonVal
   const p = params && typeof params === "object" && !Array.isArray(params) ? params : null;
   const id = p && typeof p.classId === "string" ? p.classId : null;
   const openedAt = p && typeof p.openedAt === "number" ? p.openedAt : 0;
-  const exists = registry.data?.classes.some((c) => c.id === id);
+  const selection = p && (p.target === "global" || p.target === "project") ? { projectId: typeof p.projectId === "string" ? p.projectId : null, target: p.target } as EditorSelection : undefined;
+  const exists = selection?.projectId || registry.data?.classes.some((c) => c.id === id);
   // Decided when the tab first draws this open, not on each render, so a slow load can't let the window lapse before the form is ready.
   const fresh = useMemo(() => Date.now() - openedAt < OPEN_FOCUS_MS, [openedAt]);
   useReturnFocus(id);
-  return <div className="tavern tv-page tv-paneltab">{registry.data ? exists && id ? <ClassEditForm key={`${id}:${openedAt}`} classId={id} registry={registry.data} focusOnOpen={fresh} /> : <p className="tv-empty" data-empty>Class not found{id ? `: ${id}` : ""}.</p> : <PageLoad error={registry.error} retry={registry.refetch} label="the class" skeleton={<FormSkeleton fields={6} />} />}</div>;
+  return <div className="tavern tv-page tv-paneltab">{registry.data ? exists && id ? <ClassEditForm key={`${id}:${openedAt}`} classId={id} registry={registry.data} selection={selection} focusOnOpen={fresh} /> : <p className="tv-empty" data-empty>Class not found{id ? `: ${id}` : ""}.</p> : <PageLoad error={registry.error} retry={registry.refetch} label="the class" skeleton={<FormSkeleton fields={6} />} />}</div>;
 }
 
 /** When the editor's panel tab closes, focus goes back to the Edit button that opened it, if focus was left nowhere. */

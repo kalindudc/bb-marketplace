@@ -1,0 +1,46 @@
+.tavern :is(.tv-overrides,.tv-override-panel){ min-width:0; overflow-wrap:anywhere; }
+.tavern .tv-overrides{ display:grid; gap:16px; justify-items:start; }
+.tavern .tv-overrides > :not(.btn){ width:100%; }
+.tavern .tv-override-title .lbl,.tavern .tv-override-title h1 .tv-g,.tavern .tv-override-group h2 .tv-g{ color:var(--primary); }
+.tavern.tv-page .tv-override-title h1{ display:flex; align-items:center; gap:10px; margin:4px 0 8px; font-size:clamp(32px,5vw,40px); line-height:1.15; }
+.tavern .tv-override-group h2{ display:flex; align-items:center; gap:8px; margin:0 0 8px; }
+.tavern .tv-override-group ul{ margin:0; padding:0; border-block:1px solid var(--border); list-style:none; }
+.tavern .tv-override-row{ display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) auto; align-items:center; gap:16px; padding:8px 12px; background:var(--card); }
+.tavern .tv-override-row + .tv-override-row{ border-top:1px solid var(--border); }
+.tavern .tv-override-row small{ display:block; color:var(--muted-foreground); }
+.tavern .tv-override-entry.btn{ display:flex; text-align:start; justify-content:flex-start; white-space:normal; min-width:0; }
+.tavern .tv-override-entry .tv-g{ flex:none; color:var(--primary); }
+.tavern.tv-page :is(.tv-overrides,.tv-override-panel) .btn{ min-height:36px; }
+.tavern .tv-override-fields canvas{ width:44px; height:51px; }
+.tavern .tv-override-scope{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:12px; border-bottom:1px solid var(--border); }
+.tavern .tv-override-scope [aria-pressed="true"]{ border-color:var(--primary); background:color-mix(in oklab,var(--primary) 10%,var(--card)); }
+.tavern .tv-override-summary,.tavern .tv-override-layer{ display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:16px; }
+.tavern .tv-override-summary h2,.tavern .tv-override-title p,.tavern .tv-override-layer p{ margin:0; }
+.tavern .tv-override-explain,.tavern .tv-override-panel > p{ margin:0; padding:0 16px 12px; }
+.tavern .tv-override-fields{ border-collapse:collapse; table-layout:fixed; width:100%; text-align:start; }
+.tavern .tv-override-fields caption{ padding:0 16px 8px; text-align:start; color:var(--muted-foreground); }
+.tavern .tv-override-fields :is(td,th){ text-align:start; vertical-align:top; border-top:1px solid var(--border); padding:12px 16px; white-space:pre-wrap; }
+.tavern .tv-override-fields th:first-child{ width:21%; }
+.tavern .tv-override-fields td:last-child,.tavern .tv-override-receipt{ background:color-mix(in oklab,var(--primary) 8%,var(--card)); }
+.tavern .tv-override-fields small{ display:none; }
+.tavern .tv-override-fields .btn{ display:flex; margin-top:8px; }
+.tavern .tv-override-layer{ border-top:1px solid var(--border); }
+.tavern .tv-override-receipt{ padding:10px 12px; border-inline-start:2px solid var(--primary); }
+.tavern .tv-override-receipt .btn{ margin-inline-start:8px; }
+.tavern .tv-override-dialog{ box-sizing:border-box; width:min(560px,calc(100% - 32px)); max-height:calc(100% - 32px); color:var(--foreground); background:var(--card); border:1px solid var(--border); padding:20px; overflow:auto; overflow-wrap:anywhere; }
+.tavern .tv-override-dialog::backdrop{ background:color-mix(in srgb,var(--background) 60%,transparent); }
+.tavern .tv-override-dialog footer{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; margin-top:16px; }
+@media (max-width:680px){
+  .tavern .tv-override-row{ grid-template-columns:minmax(0,1fr) auto; gap:0 8px; padding:6px 8px; }
+  .tavern .tv-override-row > div{ grid-column:1; padding:0 4px 4px 24px; }
+  .tavern .tv-override-row > button:last-child{ grid-column:2; grid-row:1/3; }
+  .tavern.tv-page :is(.tv-overrides,.tv-override-panel,.tv-override-dialog) .btn{ min-height:44px; }
+  .tavern :is(.tv-override-fields,.tv-override-fields tbody){ display:block; }
+  .tavern .tv-override-fields caption{ display:block; }
+  .tavern .tv-override-fields thead{ position:absolute; clip-path:inset(50%); width:1px; height:1px; overflow:hidden; }
+  .tavern .tv-override-fields tr{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); border-top:1px solid var(--border); }
+  .tavern .tv-override-fields :is(td,th){ padding:7px 12px; border-top:0; }
+  .tavern .tv-override-fields th:first-child{ width:auto; grid-column:1/-1; }
+  .tavern .tv-override-fields small{ display:block; color:var(--muted-foreground); }
+  .tavern .tv-override-summary,.tavern .tv-override-layer,.tavern .tv-override-dialog{ padding:12px; }
+}

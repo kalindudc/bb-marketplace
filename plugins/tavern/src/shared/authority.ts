@@ -14,7 +14,7 @@ export const AUTHORITY = {
   holdBoardQuest: explicit, resumeBoardQuest: explicit, allowReview: explicit, setSpendBudget: explicit, renameBoardQuest: explicit,
   archiveBoardQuests: explicit, deleteBoardQuest: explicit, restoreDeletedQuest: explicit,
   setTaleKept: explicit, journalEdit: explicit, resumeKeeper: explicit, refreshKeeper: explicit, cancelKeeperRefresh: explicit, finishKeeperHandover: explicit,
-  saveCharacterVoice: explicit, saveCharacterAvatar: explicit, saveClass: explicit, removeClassOverride: explicit,
+  saveCharacterVoice: explicit, saveCharacterAvatar: explicit, saveClass: explicit, removeClassOverride: explicit, previewOverrideReset: explicit, resetOverride: explicit,
   applyClassExecution: explicit, dismissClassNotice: explicit,
   settingsAgentChange: { level: "keeper", proof: "recorded user grant and calling thread", grant: "tavern.agentsMayChangeSettings" },
   settingsUpdate: explicit, settingsUndo: explicit, settingsImport: explicit,

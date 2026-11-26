@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { homeRebaseMatches } from "./act-patch";
 import { LimitPolicy } from "./limit-policy";
 import { approvedDrafts, invalidateDrafts } from "./communication";
@@ -187,7 +187,7 @@ export class TavernRuntime {
   private registryLoadedAt = new Map<string, number>();
   private registryFlights = new Map<string, Promise<RegistrySnapshot>>();
   private serverHostId: string | null = null;
-  private projectContexts = new Map<string, ProjectContext>();
+  private projectContexts = new Map<string, ProjectContext & { name?: string }>();
   scopes: BackendScopes | null = null;
   syncLegacyScopes: ((mode: TavernSettings["scopes"]["mode"]) => Promise<void>) | null = null;
   settings: SettingsStore | null = null;
@@ -1141,9 +1141,10 @@ export class TavernRuntime {
   projectPath(projectId: string) {
     return this.projectPaths.get(projectId) ?? null;
   }
-  async prepareRegistry(projectId: string): Promise<RegistrySnapshot> {
+  registryProjectName(projectId: string) { return this.projectContexts.get(projectId)?.name ?? null; }
+  async prepareRegistry(projectId: string, refresh = false): Promise<RegistrySnapshot> {
     const loadedAt = this.registryLoadedAt.get(projectId), now = this.keeper.now();
-    if (loadedAt !== undefined && now >= loadedAt && now - loadedAt < LIMITS.projectSourceCacheMs && this.projectContexts.has(projectId)) return this.snapshot(projectId);
+    if (!refresh && loadedAt !== undefined && now >= loadedAt && now - loadedAt < LIMITS.projectSourceCacheMs && this.projectContexts.has(projectId)) return this.snapshot(projectId);
     const active = this.registryFlights.get(projectId);
     if (active) return active;
     const work = this.loadRegistry(projectId);
@@ -1158,12 +1159,14 @@ export class TavernRuntime {
     this.serverHostId = config.primaryHostId ?? null;
     const project = await this.bb.sdk.projects.get({ projectId });
     const local = project.sources.filter(
-      (source) => source.hostId === this.serverHostId,
+      (source) => !!this.serverHostId && source.hostId === this.serverHostId,
     );
     const source = local.find((source) => source.isDefault) ?? local[0];
+    if (source && !isAbsolute(source.path)) throw new Error("Project overrides need an absolute server-local checkout path.");
     if (source) this.projectPaths.set(projectId, source.path);
     else this.projectPaths.delete(projectId);
     this.projectContexts.set(projectId, {
+      name: project.name,
       ...(source ? { projectRoot: source.path } : {}),
       remotes: project.gitRemoteUrl ? [project.gitRemoteUrl] : [],
     });
@@ -1350,12 +1353,13 @@ export class TavernRuntime {
   private projectClassNotice(threadId: string, classId: string, projectId: string) {
     const projectPath = this.projectPath(projectId);
     if (!projectPath) return;
-    const file = this.registry.file("class", classId, projectPath);
+    const file = this.registry.sourceFile("class", classId, projectPath);
     if (file.source !== "project") return;
-    const revision = this.registry.classLayers(classId, this.projectPath(projectId)).revision;
+    const revision = this.registry.classRevision(classId, projectPath);
     const state = this.keeper.store.runtime(threadId);
     if (state.projectClassRevision === revision) return;
-    const message = `Project class override: ${file.path} supplies this class execution, prompt, hire policy and limits. Effective limits cannot exceed your Tavern settings.`;
+    const patch = this.registry.patchedFields("class", classId, projectPath);
+    const message = `Project class override: ${file.path} ${patch ? `changes ${patch.join(", ")}. Other fields are inherited.` : "supplies this class execution, prompt, hire policy and limits."} Effective limits cannot exceed your Tavern settings.`;
     this.keeper.store.patch(threadId, { projectClassRevision: revision, classNotice: { message: state.classNotice ? `${state.classNotice.message} ${message}` : message, settings: true, switchExecution: state.classNotice?.switchExecution ?? null } });
     this.bb.rpc.experimental_invalidate([tags.thread(threadId)]);
   }

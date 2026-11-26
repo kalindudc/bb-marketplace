@@ -33,6 +33,22 @@ The shared test host validates every SDK call's arguments before fixture handler
 
 To add a new SDK call, add its Zod validator to `SDK_CONTRACTS` in `test/server/sdk-contract.ts` against `node_modules/@get-bb/plugin-sdk/bundled-types/bb-plugin-sdk.d.ts`, add coverage in `test/server/sdk-contract.test.ts`, run `node node_modules/vitest/vitest.mjs run test/server/sdk-call-inventory.test.ts test/server/sdk-contract.test.ts`, and update this table.
 
+## Class and character definition files
+
+A full Markdown definition replaces the lower layer and can define a custom ID. New editor saves for shipped definitions use explicit patches:
+
+```yaml
+---
+format: tavern-registry-patch/1
+id: smith
+fields:
+  description: Build and test one change.
+  body: ""
+---
+```
+
+Missing keys inherit from the next layer down. Lists and objects replace the field as a whole. Explicit `false`, `[]`, an empty prompt, and `null` on nullable fields are saved values. A patch requires a lower definition. Legacy full files are not converted on read, edit or restore. A reset of the last patch field removes that patch file. Duplicate parsed IDs in a layer must be resolved before editing or resetting the ID.
+
 ## Settings schema, precedence, and guardrails
 
 `src/shared/settings.ts` defines strict Zod schemas (`settingsSchema`, `settingsPatchSchema`, `settingsUpdateSchema`). Unknown keys and out-of-range values are rejected, and mutations require the current integer `revision` (mismatches return `code: "stale"` without writing).

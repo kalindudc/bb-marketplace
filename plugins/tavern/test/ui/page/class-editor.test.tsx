@@ -69,9 +69,9 @@ describe("Classes page: the class editor", () => {
     expect(slot.getByRole("link", { name: /Change in Settings/ })).toBeTruthy();
     expect(slot.getByText(/Full while Scopes are on/)).toBeTruthy();
     expect(slot.getByText(/In the class file only/)).toBeTruthy();
-    expect(slot.getByText(/2 running members get it too/)).toBeTruthy();
+    expect(slot.getByText(/running turns keep their instructions/)).toBeTruthy();
     expect(slot.getByText(/2 running members keep what they were hired with/)).toBeTruthy();
-    expect(slot.getByText("Changes how every Smith works from its next turn, running ones included.")).toBeTruthy();
+    expect(slot.getByText("Changes the prompt for new starts and hires. Existing turns keep their instructions.")).toBeTruthy();
     expect(slot.queryByRole("textbox", { name: /Tools|Permission|Model/ })).toBeNull();
   });
 
@@ -113,15 +113,16 @@ describe("Classes page: the class editor", () => {
   });
 
   it("removes an existing override after a confirm, with Cancel focused", async () => {
-    const removeClassOverride = vi.fn(() => ({ code: "ok" as const, path: "/Users/me/.agents/tavern/classes/smith.md" }));
-    const slot = await tab({ removeClassOverride, classEditor: () => editor({ layers: [{ source: "shipped", path: "/opt/s.md", exists: true }, { source: "global", path: "/Users/me/.agents/tavern/classes/smith.md", exists: true }] }) });
+    const resetOverride = vi.fn(() => ({ code: "ok" as const }));
+    const slot = await tab({ resetOverride, previewOverrideReset: () => ({ code: "ok", name: "Smith", path: "/fixture/smith.md", revision: "reset-rev", fields: ["description"], fallback: "shipped", shadowed: false, widening: false }),
+      classEditor: () => editor({ layers: [{ source: "shipped", path: "/opt/s.md", exists: true }, { source: "global", path: "/fixture/smith.md", exists: true }] }) });
     fireEvent.click(await slot.findByRole("button", { name: "Remove this override" }));
-    const confirm = slot.getByRole("group", { name: "Remove this override?" });
-    expect(confirm.textContent).toMatch(/~\/\.agents\/tavern\/classes\/smith\.md/);
+    const confirm = await slot.findByRole("dialog", { name: "Reset Smith to default?" });
+    expect(confirm.textContent).toMatch(/Every project.*Description/s);
     expect(document.activeElement?.textContent).toBe("Cancel");
-    fireEvent.click(slot.getByRole("button", { name: "Remove" }));
-    await slot.findByText(/Removed the every-project override/);
-    expect(removeClassOverride).toHaveBeenCalledWith(expect.objectContaining({ classId: "smith", target: "global", revision: "rev-1" }));
+    fireEvent.click(within(confirm).getByRole("button", { name: "Reset to default" }));
+    await slot.findByText(/Smith’s override reset in Every project/);
+    expect(resetOverride).toHaveBeenCalledWith(expect.objectContaining({ kind: "class", id: "smith", target: "global", revision: "reset-rev" }));
   });
 
   it("saves to this project by default in a project with no override, and to the override that already wins otherwise", async () => {
@@ -163,11 +164,11 @@ describe("Classes page: the class editor", () => {
     expect(fold.querySelector("textarea, input")).toBeNull();
     expect(fold.textContent).toContain("Tavern quality rules");
   });
-  it("says a save copies every field when it writes to another file than the one that wins", async () => {
+  it("says unchanged fields keep following the layer below", async () => {
     const slot = await tab();
     fireEvent.change(await slot.findByLabelText("Plain word", {}, { timeout: 3000 }), { target: { value: "maker" } });
-    const note = await waitFor(() => { const n = slot.container.querySelector<HTMLElement>("[data-copies]"); expect(n).not.toBeNull(); return n!; });
-    expect(note.textContent).toBe("Saving writes the whole class to ~/.agents/tavern/classes/smith.md, copying every field as it is now in /opt/tavern/classes/smith.md. Later changes to that file won't reach this one.");
+    const note = await waitFor(() => { const n = slot.container.querySelector<HTMLElement>("[data-save-mode]"); expect(n).not.toBeNull(); return n!; });
+    expect(note.textContent).toBe("Only changed fields are saved. Untouched fields keep following the layer below.");
   });
   it("lists the picked characters in pick order, the same as the class page, then the rest under Not in this class", async () => {
     const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
@@ -315,6 +316,6 @@ describe("the stale note names what changed elsewhere", () => {
     expect((again.getByRole("textbox", { name: "Name" }) as HTMLInputElement).value).toBe("Mason");
     expect((again.getByRole("textbox", { name: /Role prompt/ }) as HTMLTextAreaElement).value).toBe(newer.body);
     fireEvent.click(again.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(saveClass).toHaveBeenCalledWith(expect.objectContaining({ revision: "rev-2", edit: expect.objectContaining({ label: "Mason", body: newer.body }) })));
+    await waitFor(() => expect(saveClass).toHaveBeenCalledWith(expect.objectContaining({ revision: "rev-2", edit: { label: "Mason" } })));
   });
 });
