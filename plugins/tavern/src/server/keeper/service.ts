@@ -57,7 +57,7 @@ import { tags, type BoardQuestSummary } from "../../shared/contract";
 import { KeeperStore, type ReviewTarget } from "./store";
 import { renderRestatement } from "./restatement";
 import { planDiff } from "./plan-diff";
-import { waypointProof } from "./waypoint-journal";
+import { blockingNoteLine, waypointProof } from "./waypoint-journal";
 import { checkerAssignments } from "../assignments";
 import { reviewLimitation } from "../../shared/check-posture";
 import { KeeperMemory } from "./memory";
@@ -2708,7 +2708,7 @@ export class Keeper {
           } else if (w.actor === "user" && userAnswer?.done) resolutionReason = `You answered “${userAnswer.label}”.`;
         } else if (left.some(e => e.status === "blocked" || e.status === "rejected") || w.actor === "outside" && gate && !gate.answer) {
           state = left.some(e => e.status === "rejected") ? "rejected" : "blocked";
-          resolutionReason ??= left.find(e => e.status === "blocked")?.note ?? (gate && !gate.answer ? `Waiting for a reply from ${gate.askedWho}.` : null);
+          resolutionReason ??= blockingNoteLine(left.find(e => e.status === "blocked")?.note) ?? (gate && !gate.answer ? `Waiting for a reply from ${gate.askedWho}.` : null);
         } else if (left.some(e => e.status === "doing" && !released.has(e.threadId))) state = "doing";
         else if ((w.check === "warden" || w.check === "keeper") && left.length && left.every(e => (e.status === "done" || e.status === "verified") && e.evidence.length)) state = "reported";
         else state = linked.length ? "todo" : "planned";

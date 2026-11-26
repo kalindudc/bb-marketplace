@@ -2,6 +2,12 @@ import type { JournalEntry, Waypoint } from "../../shared/schema";
 import type { WaypointReceipt } from "../ports";
 import { waypointCheck } from "../../shared/waypoint";
 
+export function blockingNoteLine(note: string | null | undefined) {
+  const lines = note?.split("\n").map(line => line.trim().replace(/^\d\d:\d\d\s+/, "")).filter(Boolean).reverse() ?? [];
+  const prefix = "Blocked: ";
+  return lines.find(line => line.startsWith(prefix))?.slice(prefix.length).trim() ?? lines[0] ?? null;
+}
+
 export function waypointProof(waypoint: Waypoint, entry: JournalEntry, acceptance?: JournalEntry) {
   const { review, status } = entry;
   if (status !== "done" && status !== "verified") return null;

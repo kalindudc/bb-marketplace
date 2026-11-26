@@ -85,12 +85,22 @@ it("keeps unfinished released work open without erasing verified proof on the sa
   expect(f.k.store.openAsks("lead", f.q.id).find(ask => ask.kind === "conclude")?.effect?.type).toBe("close-early");
 });
 
+it("shows the most recent blocking line rather than the running journal note", async () => {
+  const f = await fixture();
+  const id = await f.link("w1");
+  await f.tool("maker", { action: "note", id, note: "Started the work. " + "Earlier progress. ".repeat(50) });
+  await f.tool("maker", { action: "block", id, reason: "Waiting for the fixture" });
+  await f.tool("maker", { action: "block", id, reason: "Waiting for the final result" });
+  await f.tool("maker", { action: "note", id, note: "Sent a reminder" });
+  expect(f.state("w1")).toMatchObject({ state: "blocked", resolutionReason: "Waiting for the final result" });
+});
+
 it("lets a replacement's verified work settle the waypoint without deleting the first maker's unfinished entry", async () => {
   const f = await fixture();
   const first = await f.link("w1");
   await f.tool("maker", { action: "block", id: first, reason: "No fixture" });
   await f.runtime.release("lead", "maker", "Replace");
-  expect(f.state("w1").state).toBe("blocked");
+  expect(f.state("w1")).toMatchObject({ state: "blocked", resolutionReason: "No fixture" });
   f.bind("successor", "smith", "w1");
   const second = await f.link("w1", "successor");
   await f.done(second, "successor");
