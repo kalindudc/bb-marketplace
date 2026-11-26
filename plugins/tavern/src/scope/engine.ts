@@ -2,6 +2,7 @@ import type { Scope } from "./schema";
 import { agentProgram, bbPositionals, nestedCommands } from "./legacy";
 import { actsForCommand, baselineHolds, closingAct, clusterCommandTarget, fallbackActs, fallbackPullRequestRoute, isCatalogueRule, pullRequestRoute, terraformStateFallback, terraformStateProblem, typedPullRequestAct, userControl, kubectlRead, type Act, type ActKind } from "./acts";
 import { actAskKind } from "./act-routing";
+import { closingTool } from "./away-policy";
 import { shellGrantTarget, type ShellGrantProjection } from "./shell-grants";
 import { namedCommunication } from "./communication";
 import { shellCommunication } from "./shell-communication";
@@ -129,6 +130,9 @@ export function authorityDecision(scope: Scope, call: ScopeCall, remote = false)
     if (targetsControlFile(paths, call.cwd, scope, call.scopeFile)) return controlBlock();
     if (targetsMakerWorktree(scope, paths, call.cwd)) return makerBlock();
   }
+  const approvedDraft = call.draftApproved === true && namedCommunication(scope.sendTools, call)?.act === "draft";
+  if (closingTool(scope, call.toolName, approvedDraft))
+    return blocked("tool " + call.toolName, "closing-act", "Closing time: this tool waits for your return");
   const source = call.input.command ?? call.input.cmd;
   if (typeof source !== "string") return;
   const closing = !call.clusterObservation && scope.shell.deny.some(rule => rule.id.startsWith("away:") || rule.id === "cluster-write-while-away");

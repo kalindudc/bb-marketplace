@@ -1,5 +1,22 @@
 import { AWAY_STOP_LIST, type AwayStopKind } from "../shared/away";
+import { glob } from "./paths";
 import type { Scope, ShellRule } from "./schema";
+
+const toolKinds: Record<string, AwayStopKind> = {
+  "*merge*": "merge", "*deploy*": "deploy", "*delete*": "delete", "*remove*": "delete",
+  "*send*": "sends-as-you", "*post*": "other-writes",
+  "*publish*": "other-writes", "*push*": "other-writes", "*create*": "other-writes", "*update*": "other-writes", "*_*write*": "other-writes", apply_patch: "other-writes",
+};
+
+export function awayToolPatterns(kinds: readonly AwayStopKind[]): string[] {
+  return Object.keys(toolKinds).filter(pattern => kinds.includes(toolKinds[pattern]!));
+}
+
+export function closingTool(scope: Scope, toolName: string, approvedDraft: boolean): boolean {
+  if (!scope.shell.deny.some(rule => rule.id.startsWith("away:"))) return false;
+  const kinds = selectedAwayGuards(scope) ?? AWAY_STOP_LIST;
+  return awayToolPatterns(kinds).some(pattern => !(pattern === "*send*" && approvedDraft) && glob(pattern, toolName));
+}
 
 const marker = /^away:([a-f0-9]{64}):policy:([1-9][0-9]?)$/;
 const neverMatches = "(?!)";

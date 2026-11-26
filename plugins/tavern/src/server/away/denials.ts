@@ -2,21 +2,16 @@ import { createHash } from "node:crypto";
 import type { registerScopes } from "../../scope";
 import type { Member } from "../../shared/schema";
 import type { Scope, ShellRule } from "../../scope/schema";
-import { awaySelectionRule } from "../../scope/away-policy";
+import { awaySelectionRule, awayToolPatterns } from "../../scope/away-policy";
 import { AWAY_STOP_LABELS, AWAY_STOP_LIST, windowStopKinds, type AwayStopKind, type AwayWindow } from "../../shared/away";
 
-const toolKinds: Record<string, AwayStopKind> = {
-  "*merge*": "merge", "*deploy*": "deploy", "*delete*": "delete", "*remove*": "delete",
-  "*send*": "sends-as-you", "*post*": "other-writes",
-  "*publish*": "other-writes", "*push*": "other-writes", "*create*": "other-writes", "*update*": "other-writes", "*_*write*": "other-writes", apply_patch: "other-writes",
-};
 const ruleKinds: Record<string, AwayStopKind> = {
   merge: "merge", push: "other-writes", github: "other-writes", deploy: "deploy", cluster: "production",
   send: "sends-as-you", "http-write": "other-writes", delete: "delete", "find-delete": "delete", "git-delete": "delete",
 };
 const policyKey = (window: AwayWindow) => createHash("sha256").update(JSON.stringify([window.id, window.version])).digest("hex");
 const selected = windowStopKinds;
-const tools = (window: AwayWindow) => Object.keys(toolKinds).filter(tool => selected(window).includes(toolKinds[tool]!));
+const tools = (window: AwayWindow) => awayToolPatterns(selected(window));
 function rules(window: AwayWindow): ShellRule[] {
   const prefix = `away:${policyKey(window)}:`;
   const why = "Closing time: merges, deployments, production work, sends-as-you and deletion wait for your return";

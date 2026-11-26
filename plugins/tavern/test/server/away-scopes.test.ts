@@ -219,7 +219,9 @@ describe("Closing time local scope integration", () => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);
     expect(f.runtime.away.snapshot()).toMatchObject({ watchedByQuest: [{ questId: f.q.id, watchedCount: 0 }] });
-    const before = structuredClone(f.runtime.scopes!.view("child")!.scope);
+    const before = structuredClone(f.runtime.scopes!.view("child")!.scope!);
+    const namedMerge = { kind: "tool" as const, toolName: "mcp__github__merge_pull_request", input: {}, cwd: f.work };
+    expect(evaluate(before, namedMerge)).toMatchObject({ allow: true });
     const result = await f.close();
     expect(result.state).toMatchObject({ watchedCount: 0, heldCount: 0 });
     expect(f.stop).not.toHaveBeenCalled();
@@ -227,8 +229,11 @@ describe("Closing time local scope integration", () => {
     expect(hasAwayDenials(current, result.state.window!)).toBe(true);
     expect(evaluate(current, { kind: "bash", toolName: "bash", input: { command: "rm draft.md" }, cwd: f.work }).allow).toBe(false);
     expect(evaluate(current, { kind: "write", toolName: "write", input: { path: join(f.work, "draft.md") }, cwd: f.work }).allow).toBe(true);
+    expect(evaluate(current, namedMerge)).toMatchObject({ allow: false, ruleId: "closing-act" });
     await f.runtime.away.return({ kind: "explicit-return", threadId: null, refId: null });
-    expect(f.runtime.scopes!.view("child")!.scope).toEqual(before);
+    const after = f.runtime.scopes!.view("child")!.scope!;
+    expect(after).toEqual(before);
+    expect(evaluate(after, namedMerge)).toMatchObject({ allow: true });
   });
   it("counts guarded and watched members together while interrupting only the watched default", async () => {
     const f = await fixture(); await f.runtime.hire("lead", "project", f.input);

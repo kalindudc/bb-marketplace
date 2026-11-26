@@ -25,7 +25,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 - Party size, Ranger count and Ranger minutes come from Settings. Old class-file budgets no longer override them, and Tavern warns when an older class copy differs from the shipped one.
 - Ticks ask the Keeper to check on silent members and leave it up to the Keeper whether there is anything the user needs to hear.
-- Act guard holds recognized sensitive acts without changing Keeper authority. Ordinary calls are recorded without waking the Keeper. Startup no longer migrates old presets or tool lists, and repeat violations create no extra notice. Closing time, Tavern control files, and Warden access to the maker’s checkout keep their separate protections.
+- Act guard holds recognized sensitive acts without changing Keeper authority. Ordinary calls are recorded without waking the Keeper. Startup no longer migrates old presets or tool lists, and repeat violations create no extra notice. Closing time, Tavern control files, and Warden access to the maker’s checkout keep their separate protections. Tool deny lists saved in `scopes.yml`, class files or per-hire overrides no longer block tools; Closing time still holds its stop list, and messaging tools stay held when marked as send tools in Settings.
 - Members can link their own journal entries to assigned waypoints. Any active Warden on the quest can check submitted work without a checker-slot change. Known same-family checks still refuse, unknown independence is labelled, and placed checks still use the exact snapshot.
 - Keepers can replace a maker without rewriting the plan or losing accepted work. Name waypoints in a follow-up brief to reopen only their journal entries; otherwise all of the member's linked work on the quest reopens. Reordering the party or retargeting an approved permanent slot leaves its greenlight in place.
 - In Lively, working members pace at their road stop and play their work cue. A timed remark can take them back to a passed stop before they return. Places and characters use only the first three quarters of the strip, folding older stops into milestones as needed.
@@ -44,6 +44,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- Closing time holds named tools that match your stop list again, including merge, deploy and delete tools. Ordinary tool calls still run.
 - Scope grants follow the same directory after a rename when the old name still links to it. Members can write to their own thread storage, use `mktemp` under allowed temporary roots, and write to `scratch/<quest id>` under their Keeper's storage on the same local host. Other thread storage is not shared.
 - After routing a rule, question or aside, a Keeper can continue existing quest work, including briefing the party. A steer for another quest still does not apply to this one.
 - Keepers can ask to schedule rounds for permanent members even while they are resting. New rounds still need your approval.

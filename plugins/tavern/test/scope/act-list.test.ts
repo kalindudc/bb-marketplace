@@ -8,7 +8,7 @@ import { evaluate } from "../../src/scope/engine";
 import { bindPaths } from "../../src/scope/paths";
 import { scopeForClass } from "../../src/scope/presets";
 import { narrowAwayScope } from "../../src/server/away/denials";
-import { LEGACY_AWAY_STOP_LIST, awayWindowSchema } from "../../src/shared/away";
+import { LEGACY_AWAY_STOP_LIST, awayWindowSchema, type AwayStopKind } from "../../src/shared/away";
 import { shellGrantTarget } from "../../src/scope/shell-grants";
 import { sandboxCommand, guardedShellSource } from "../../src/scope/sandbox";
 
@@ -57,11 +57,42 @@ it.each([
   expect(bash(command)).toMatchObject({ allow: false, act });
 });
 
+const awayWindow = (stopList?: AwayStopKind[]) => awayWindowSchema.parse({
+  id: "window", version: 1, closedAt: 1000, until: 2000, returnedAt: null, returnCause: null, note: null, quests: [],
+  stopList: stopList ?? [...LEGACY_AWAY_STOP_LIST], ...(stopList ? { guardPolicy: "selected" } : {}),
+  allowWatched: false, wakeRules: { blockers: true, productionAsksAfterTwoHours: false }, eventFloor: 0, eventCeiling: null,
+});
+const namedTool = (toolName: string) => ({ kind: "tool" as const, toolName, cwd, input: {} });
+it.each([
+  ["mcp__github__merge_pull_request", "merge"], ["quick_deploy", "deploy"], ["vault_delete_page", "delete"],
+  ["git_push", "other-writes"], ["publish_package", "other-writes"],
+] as const)("holds named tool %s only under its Closing time stop kind", (toolName, stopKind) => {
+  const call = namedTool(toolName);
+  for (const role of ["keeper", "ranger"]) {
+    const base = scope(role);
+    base.tools.deny.push(toolName, "read");
+    expect(evaluate(base, call)).toMatchObject({ allow: true });
+    for (const window of [awayWindow(), awayWindow([stopKind])]) {
+      const closing = narrowAwayScope(base, window);
+      expect(evaluate(closing, call)).toMatchObject({ allow: false, ruleId: "closing-act" });
+      expect(evaluate(closing, namedTool("read"))).toMatchObject({ allow: true });
+    }
+    for (const window of [awayWindow([]), awayWindow([stopKind === "merge" ? "deploy" : "merge"])])
+      expect(evaluate(narrowAwayScope(base, window), call)).toMatchObject({ allow: true });
+  }
+});
+
+it("keeps the draft exception for a named send pattern without waiving approval", () => {
+  const base = narrowAwayScope(scope("keeper"), awayWindow(["sends-as-you"]));
+  const call = namedTool("mcp__mail__send_draft");
+  expect(evaluate(base, call)).toMatchObject({ allow: false, ruleId: "closing-act" });
+  const draft = { ...base, sendTools: [{ pattern: "mcp__mail__send_draft", act: "draft" as const }] };
+  expect(evaluate(draft, call)).toMatchObject({ allow: false, ruleId: "draft-guard" });
+  expect(evaluate(draft, { ...call, draftApproved: true })).toMatchObject({ allow: true });
+});
+
 it.each(["bb plugin install fixture", "bb settings set unrelated.option true", "bb machine create example", "bb automation create"])("only holds generic configuration or allocation at Closing time: %s", command => {
-  const window = awayWindowSchema.parse({
-    id: "window", version: 1, closedAt: 1000, until: 2000, returnedAt: null, returnCause: null, note: null, quests: [],
-    stopList: [...LEGACY_AWAY_STOP_LIST], allowWatched: false, wakeRules: { blockers: true, productionAsksAfterTwoHours: false }, eventFloor: 0, eventCeiling: null,
-  });
+  const window = awayWindow();
   for (const role of ["ranger", "smith", "keeper"]) {
     expect(bash(command, role)).toMatchObject({ allow: true });
     for (const source of [command, command + " 'unparsed", "ssh fixture '" + command + "'"])
