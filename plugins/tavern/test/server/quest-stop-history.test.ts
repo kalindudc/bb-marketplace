@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,7 +32,7 @@ describe("quest stop history", () => {
   });
 
   it("persists a trimmed reason and exactly the open asks withdrawn by that stop", async () => {
-    const f = setup(), q = await seedQuest(f.k,"lead", "A", "A"), other = await seedQuest(f.k,"lead", "B", "B");
+    const f = setup(), q = await seedQuest(f.k,"lead", "A", "A"), other = seedLegacyQuest(f.k,"lead", "B", "B");
     const first = ask(f, q.id), second = ask(f, q.id), answered = ask(f, q.id), unrelated = ask(f, other.id), local = ask(f, null);
     f.k.answerAsk(answered.id, "yes", "Keep the answer", "page", "user");
     f.advance(1000);

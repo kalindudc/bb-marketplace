@@ -9,7 +9,7 @@ import { settingsHandlers } from "../../src/server/settings/rpc";
 import type { SettingsFiles } from "../../src/server/settings/files";
 import type { SettingsPatch } from "../../src/shared/settings";
 import { setup } from "../server/runtime-fixture";
-import { seedQuest } from "../server/support";
+import { seedLegacyQuest, seedQuest } from "../server/support";
 import { dispatch049 } from "../server/dispatch-fixture";
 import { makeThreadResponse } from "../server/host";
 
@@ -33,7 +33,7 @@ async function party() {
 it("bounds a loaded restatement using the chosen memory budget and keeps its leading sections", async () => {
   const f = fixture();
   for (let i = 0; i < 16; i++) {
-    await seedQuest(f.k, "lead", `Quest ${i} ${"x".repeat(110)}`, `Q${i}`);
+    seedLegacyQuest(f.k, "lead", `Quest ${i} ${"x".repeat(110)}`, `Q${i}`);
     f.k.addRule({ scope: "keeper", scopeId: "lead", source: "user", text: `Rule ${i} ${"detail ".repeat(65)}` }, "lead");
     f.k.addRule({ scope: "keeper", scopeId: "lead", source: "keeper-proposed", text: `Pending ${i} ${"detail ".repeat(65)}` }, "lead");
   }

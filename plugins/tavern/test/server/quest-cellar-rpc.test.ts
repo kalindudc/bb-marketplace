@@ -2,7 +2,7 @@
 import { putQuestFixture } from "./support";
 import { describe, expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { registerRpc } from "../../src/server/rpc";
 import { readStatus, statusInput } from "../../src/server/status";
 
@@ -23,7 +23,7 @@ describe("quest cellar RPC", () => {
   });
   it("cellars through runtime and returns pending cleanup and Keeper receipt notes", async () => {
     const f = await fixture();
-    await seedQuest(f.k, "lead", "Another goal", "Another goal");
+    seedLegacyQuest(f.k, "lead", "Another goal", "Another goal");
     const result = await f.call("archiveBoardQuests", { ids: [f.q.id], archived: true });
     expect(result).toMatchObject({ ok: true, changed: 1, notes: [expect.stringContaining("stays: it has another quest on the board")], pendingArchives: [] });
   });

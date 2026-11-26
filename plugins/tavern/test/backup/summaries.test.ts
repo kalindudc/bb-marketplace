@@ -4,7 +4,7 @@ import { BackupRecords } from "../../src/server/backup/records";
 import { SettingsStore } from "../../src/server/settings/store";
 import { rpcHandlers } from "../../src/server/rpc";
 import { setup } from "../server/runtime-fixture";
-import { planInput, seedQuest } from "../server/support";
+import { planInput, seedLegacyQuest, seedQuest } from "../server/support";
 
 const dbs: ReturnType<typeof setup>["k"]["store"]["db"][] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); });
@@ -40,7 +40,7 @@ it("rejects a summary whose payload and row IDs disagree, and restores summaries
   const record = source.k.postSummary("lead", { boardQuestId: quest.id, title: "Coverage", body: "The evidence is attached.", links: [], answers: [route.id] });
   const changeId = (await source.rpc.boardQuest({ id: quest.id })).visitChangeId!;
   await source.rpc.markVisitSeen({ summaryIds: [record.id], changeIds: [changeId] });
-  const other = await seedQuest(source.k, "lead", "Another watch", "Other");
+  const other = seedLegacyQuest(source.k, "lead", "Another watch", "Other");
   source.k.plan("lead", planInput(other.id));
   const unreadId = (await source.rpc.boardQuest({ id: other.id })).visitChangeId!;
   const snapshot = source.backup.capture();

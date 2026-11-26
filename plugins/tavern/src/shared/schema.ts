@@ -601,6 +601,7 @@ export const askEffectSchema = z.discriminatedUnion("type", [
     entryOnly: z.literal(true).optional(),
   }),
   z.object({ type: z.literal("user-waypoint"), waypointId: id, planVersion: z.number().int().positive(), completeOn: z.array(askOptionSchema.shape.id).min(1) }),
+  z.object({ type: z.literal("quest-start"), sourceMessageId: id, routeId: id, parentQuestId: id.nullable(), projectId: z.string().min(1), goal: z.string().min(1) }),
   z.object({ type: z.literal("member-schedules"), memberThreadId: threadId, permanentDecisionId: id, schedules: schedulesInputSchema }),
   z.object({ type: z.literal("soft-limit"), limit: z.enum(["party", "rangers"]), text: z.string().min(1).max(400), reason: z.string().max(600) }),
   z.object({ type: z.literal("pull-request-draft"), operation: pullRequestDraftOperationSchema }),

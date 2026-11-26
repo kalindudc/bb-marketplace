@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { fixtureActivity, patchThreadFixture } from "./member-fixture";
 import { concludeQuest } from "./support";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { planInput, waypointEntry } from "./support";
@@ -268,7 +268,7 @@ describe("live Keeper flow regressions", () => {
   it("lets one current steer govern both quests even after a newer queued message arrives", async () => {
     const f = setup();
     const a = await seedQuest(f.k,"lead", "README missing plugins", "README");
-    const b = await seedQuest(f.k,"lead", "TS lines", "LOC");
+    const b = seedLegacyQuest(f.k,"lead", "TS lines", "LOC");
     registerTools(f.bb, f.runtime);
     f.k.receiveUser(
       "lead",

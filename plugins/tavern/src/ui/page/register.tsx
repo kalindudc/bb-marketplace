@@ -1,5 +1,5 @@
 import { hasEndedEngagement } from "../../shared/member-engagement";
-import { UrlLink, experimental_usePluginId, experimental_useRpcQuery, useBbNavigate, useComposer, type ExperimentalPageTitle, type PluginAppBuilder, type PluginHomepageSectionProps, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import { UrlLink, experimental_usePluginId, experimental_useRpcQuery, useBbNavigate, type ExperimentalPageTitle, type PluginAppBuilder, type PluginHomepageSectionProps, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { rpcContract, type Room } from "../../shared/contract";
 import { Hearth, hearthWords, keeperStatus, onTheRoad, OpensMark, QuestRow, questNeedYouCount, rememberCount, useRegistry, vocab } from "../kit";
 import { ClosingTimeSheet, ClosedDigest } from "./closing";
@@ -22,8 +22,8 @@ import { QuestPage, ReturnedList } from "./quest";
 import { TalePage } from "./tale";
 import { CommonRoom } from "./room";
 import { AnswersPage } from "./answers";
-import { ClassStartCards, withClassPill } from "./start";
-import { armClassSettings } from "../kit/remember";
+import { ClassStartCards } from "./start";
+import { useStartKeeper } from "../kit/keeper-draft";
 import { CharacterSheetEditor, CharacterSheets, ClassDetail, ClassesList } from "./sheets";
 import { StopAllControls } from "./stop-all";
 import { StartQuest } from "./start-quest";
@@ -117,36 +117,17 @@ export function useTavernPageTitle({ subPath }: PluginNavPanelProps) {
   return narrow ? narrowTitle(full) : full;
 }
 
-/**
- * Start a Keeper thread in bb's own composer: open it first, so the click always lands somewhere, then put the Keeper pill in
- * the draft. Nothing is sent. The page never sets pickers (bb rejects setSelection from a surface outside any composer, and
- * that rejection used to swallow the navigation); it arms the class, and the composer's class banner applies its settings.
- */
-export function useStartKeeper(registry: Registry | undefined) {
-  const composer = useComposer();
-  const navigate = useBbNavigate();
-  const pluginId = experimental_usePluginId();
-  return () => {
-    const cls = registry?.classes.find((c) => c.id === "keeper");
-    const projectId = composer.scope.kind === "new-thread" ? composer.scope.projectId ?? undefined : undefined;
-    if (cls) armClassSettings(cls.id);
-    navigate.toCompose({ projectId, focusPrompt: true });
-    if (cls && composer.scope.kind === "new-thread") composer.replace((draft) => withClassPill(draft, cls, pluginId));
-  };
-}
-
-
 export function TavernHeader({ subPath }: PluginNavPanelProps) {
   const navigate = useBbNavigate();
   const openTab = useOpenPanelTab();
   const registry = useRegistry();
-  const start = useStartKeeper(registry.data);
+  const start = useStartKeeper(registry.data?.classes.find(cls => cls.id === "keeper"));
   // On a phone the title needs the room; Closing time stays in the page picker as "Closing time (away)".
   const narrow = useNarrowTitle(), folded = useFoldedHeader();
   return <div className={`tavern tv-page tv-head${folded ? " fold" : ""}`}>
     {!narrow && <button type="button" className="btn ghost" onClick={() => { if (!openTab(CLOSING_TAB)) navigate.toPluginPanel("tavern", { subPath: "closing" }); }} title="Closing time (away): opens the sheet in the side panel, beside the page" aria-label="Closing time"><PageGlyph name="lantern" /><span>Closing time</span></button>}
     {decodePageRoute(subPath).kind === "room" && <StopAllControls />}
-    <StartQuest registry={registry.data} startKeeper={start} onRoom={decodePageRoute(subPath).kind === "room"} />
+    <StartQuest startKeeper={start} />
   </div>;
 }
 

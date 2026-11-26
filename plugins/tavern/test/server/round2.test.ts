@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { withMemberFixtures } from "./member-fixture";
-import { concludeQuest } from "./support";
+import { concludeQuest, seedLegacyQuest } from "./support";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -146,6 +146,8 @@ describe("round 2 reservations and routing", () => {
     "M-1 applies the first steer with a later message queued or joined (%s)",
     async (joined) => {
       const f = await approved();
+      const other = seedLegacyQuest(f.k, "lead", "B", "B");
+      f.k.resetRoutes("lead");
       await f.runtime.dispatch(dispatch049({ text: "A: stage first" }));
       await f.runtime.dispatch({
         ...dispatch049({ text: "What is the ETA?", status: "active" }),
@@ -159,8 +161,7 @@ describe("round 2 reservations and routing", () => {
       expect(() => f.k.plan("lead", { ...planInput(f.q.id), fromSteer: route.id })).not.toThrow();
       f.k.route("lead", { kind: "question", summary: "eta" });
       expect(() => f.k.plan("lead", { ...planInput(f.q.id), fromSteer: route.id })).not.toThrow();
-      const other = await f.k.openQuest("lead", "B", "B").catch(() => null);
-      if (other) expect(() => f.k.plan("lead", planInput(other.id))).toThrow(/route/);
+      expect(() => f.k.plan("lead", planInput(other.id))).toThrow(/route/);
       f.k.endTurn("lead");
       expect(() => f.k.plan("lead", { ...planInput(f.q.id), fromSteer: route.id })).toThrow(
         /applicable|expired/,

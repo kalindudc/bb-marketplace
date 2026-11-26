@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { fixtureActivity, patchThreadFixture, runtimeFixture } from "./member-fixture";
 import { memberPlace } from "../../src/shared/member-place";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { makeQueueEntry } from "@get-bb/plugin-sdk/testing";
 import { MEMBER_STATES } from "../../src/shared/schema";
@@ -58,7 +58,7 @@ describe("re-briefs after routing a user message", () => {
 
   it.each(["steer", "new-quest"] as const)("still refuses a quest brief when a %s names only another quest", async kind => {
     const f = await questParty();
-    const other = await seedQuest(f.k, "lead", "Document", "Document");
+    const other = seedLegacyQuest(f.k, "lead", "Document", "Document");
     if (kind === "steer") {
       f.k.endTurn("lead");
       f.k.receiveUser("lead", "Document the changes too");

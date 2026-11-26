@@ -14,7 +14,7 @@ import { PageGlyph, type PageGlyphName } from "./glyphs";
 import { eventContext, eventLines, needYouCount, questsIn, type EventLine } from "./model";
 import { ClassStartCards } from "./start";
 import { usePanelState } from "./panel-state";
-import { Rail, jumpTo, takePendingJump } from "./rail";
+import { Rail } from "./rail";
 import { RoomAwayNotes } from "./away";
 import { SKEL } from "./skeletons";
 import { Board, RoomFold } from "./board";
@@ -213,7 +213,6 @@ function RoomActivity({ room, registry }: { room: Room; registry: Registry }) {
   const lines = showCellar ? allLines : allLines.filter((l) => !inCellar(l));
   const [filter, setFilter] = usePanelState<Filter>("room.events.filter", "all", (v) => FILTERS.some(([f]) => f === v));
   const since = useSinceLastVisit();
-  useEffect(() => { const id = takePendingJump(); if (id) requestAnimationFrame(() => jumpTo(id)); }, []);
   const navigate = useBbNavigate();
   const asks = needYouCount(room);
   const calls = attentionView(room.attention).decided ?? attentionView(room.attention).new;

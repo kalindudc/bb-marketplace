@@ -99,8 +99,8 @@ it("keeps permanent-member instructions in the scouting card within its boot bud
 });
 it("starts with the smallest party before considering a lead", () => {
   expect(sections.get("Size the party")).toMatch(/Start with the smallest party.*critical path/);
-  expect(sections.get("Size the party")).toMatch(/lead.*linked.*side quest/);
-  expect(body).toMatch(/Keeper lead.*linked side quest/);
+  expect(sections.get("Size the party")).toMatch(/side Keeper.*greenlit waypoint/);
+  expect(body).toMatch(/Open one quest.*outside goal.*side quest or a new Keeper/);
 });
 it("keeps the hand-back tool within the original 354-byte description budget", () => {
   expect(Buffer.byteLength(tools.get("tavern_note")!)).toBeLessThanOrEqual(354);

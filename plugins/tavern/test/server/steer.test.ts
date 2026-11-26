@@ -1,5 +1,5 @@
 import { withMemberFixtures } from "./member-fixture";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { KeeperStore } from "../../src/server/keeper/store";
@@ -18,7 +18,7 @@ beforeEach(() => {
 describe("two-quest steer replay", () => {
   it("changes only the named quest; questions and asides change neither plan", async () => {
     const a = await seedQuest(keeper,"lead", "Vault cutover", "Vault");
-    const b = await seedQuest(keeper,"lead", "Proxy retry", "Proxy");
+    const b = seedLegacyQuest(keeper,"lead", "Proxy retry", "Proxy");
     keeper.plan("lead", { ...planInput(a.id) });
     keeper.plan("lead", { ...planInput(b.id) });
     const replay = [

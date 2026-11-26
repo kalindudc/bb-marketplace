@@ -20,7 +20,7 @@ it("names the checklist Journal while preserving the shortcut and board quest wo
   expect(app.messageActions.find(a => a.id === "add-to-journal")?.title).toBe("Add to journal (checklist)");
   const composer = app.composerCustomizations.find(c => c.id === "tavern-thread")!;
   expect(composer.sendMenu?.find(m => m.id === "add-journal")?.label).toBe("Add to journal (checklist)");
-  expect(composer.sendMenu?.find(m => m.id === "new-quest")?.label).toContain("board quest");
+  expect(composer.sendMenu?.find(m => m.id === "new-quest")?.label).toBe("Send as a new goal");
 });
 it("renders the Journal heading and reads the canonical journal RPC", async () => {
   const app = await loadPluginApp(definePluginApp(registerThreadSurfaces));

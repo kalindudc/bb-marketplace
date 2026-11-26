@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { captureRequestSources, requestSourcePacket, readRequestSources } from "../../src/server/request-sources";
 import { setup } from "./runtime-fixture";
-import { planInput } from "./support";
+import { planInput, seedLegacyQuest } from "./support";
 
 const databases: ReturnType<typeof setup>["k"]["store"]["db"][] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
@@ -66,8 +66,7 @@ describe("server-owned request source packets", () => {
     const f = await fixture(), own = { manifestId: f.manifest.id };
     expect(readRequestSources(f.k, "checker", own).text).toContain('"unknown"');
     expect(readRequestSources(f.k, "lead", { ...own, memberThreadId: "maker" }).text).toContain('"unknown"');
-    f.k.receiveUser("lead", "Open another quest."); f.k.route("lead", { kind: "new-quest", summary: "Other", notes: [] });
-    const q2 = await f.k.openQuest("lead", "Other", "Other quest");
+    const q2 = seedLegacyQuest(f.k, "lead", "Other", "Other quest");
     f.k.bind("other", "smith", null, "project", { keeperThreadId: "lead", boardQuestId: q2.id, waypointId: null, title: "Other", errand: false, brief });
     expect(() => readRequestSources(f.k, "other", own)).toThrow(/manifest/i);
     expect(() => readRequestSources(f.k, "maker", { ...own, memberThreadId: "other" })).toThrow(/own/i);

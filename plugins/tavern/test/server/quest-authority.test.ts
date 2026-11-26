@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
-import { seedQuest, planInput } from "./support";
+import { seedLegacyQuest, seedQuest, planInput } from "./support";
 import { QuestAuthority } from "../../src/server/quest-authority";
 import { QUEST_LANES, requireUserAct } from "../../src/server/authority";
 import { SettingsStore } from "../../src/server/settings/store";
@@ -47,7 +47,7 @@ it("offers a third answer and routes later asks on this quest only", async () =>
   f.k.answerAsk(ask.id, "delegate", null, "page", "user", "client (unattested)", {}, receipt());
   expect(f.a.lane(f.k.store.get("asks", ask.id)!)).toBe("keeper");
   expect(f.a.lane(f.k.ask("lead", request(f.q.id)))).toBe("keeper");
-  const other = await seedQuest(f.k, "lead", "Other", "Other");
+  const other = seedLegacyQuest(f.k, "lead", "Other", "Other");
   expect(f.a.lane(f.k.ask("lead", request(other.id)))).toBe("user");
 });
 it("revokes immediately and ends grants when a quest stops", async () => {
@@ -94,7 +94,7 @@ it("matches only fitting greenlights and records the pre-approval provenance", a
   const ask = f.k.store.query("asks", "boardQuestId", f.q.id)[0]!;
   expect(f.k.quest(f.q.id).greenlitVersion).toBe(1);
   expect(ask.answer).toMatchObject({ by: "preapproval", preapproval: { surface: "client (unattested)" } });
-  const other = await seedQuest(f.k, "lead", "Other", "Other");
+  const other = seedLegacyQuest(f.k, "lead", "Other", "Other");
   f.a.preapprove(other.id, { greenlight: { maxMembers: 0, classes: ["smith"] }, placement: false, conclude: false, endsAt: null }, requireUserAct(client, "preapproveQuest"));
   f.k.plan("lead", { ...planInput(other.id), reversible: true, party: [{ classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] }] });
   expect(f.k.quest(other.id).greenlitVersion).toBeNull();

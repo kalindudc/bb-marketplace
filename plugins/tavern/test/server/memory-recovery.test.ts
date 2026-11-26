@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { withMemberFixtures } from "./member-fixture";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { describe, expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
 import {
@@ -258,7 +258,7 @@ describe("Keeper context-loss recovery", () => {
   it("keeps every current quest's last three steers in the user's own words", async () => {
     const f = setup();
     const a = await seedQuest(f.k,"lead", "A", "A");
-    const b = await seedQuest(f.k,"lead", "B", "B");
+    const b = seedLegacyQuest(f.k,"lead", "B", "B");
     for (let i = 0; i < 4; i++) {
       f.advance(1);
       f.k.receiveUser("lead", `Exact user steer ${i}`);

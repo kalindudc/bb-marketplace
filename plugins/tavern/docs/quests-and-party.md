@@ -16,7 +16,11 @@ When the Keeper needs you to finish a move, answer its ask instead of ticking a 
 
 ## Steering and verbatim wording
 
-Keep talking in the same Keeper thread to steer work, naming the quest when your Keeper holds more than one. Tavern routes each message before the Keeper acts so questions, unrelated asides, and standing rules stay separate from plan changes. Standing rules remain local to that Keeper until you widen them in the Ledger. To send one unchanged message to several Keepers at once, use **Tell selected Keepers** on the Common room.
+Keep talking in the same Keeper thread to steer its quest. If an older Keeper holds more than one quest, name the quest you mean. Tavern keeps questions, asides and standing rules separate from plan changes.
+
+For an outside goal, the Keeper offers a choice: **Side quest** records the goal under the named parent for the Keeper to handle. **New Keeper thread** opens a same-project draft with your goal. You can edit it before sending. If there is no open parent, the card offers only the new thread. If the parent ends while you’re deciding, the new-thread choice stays open. Folding the card starts nothing. A returned, stopped or cellared quest still takes that thread’s one slot. Reopen the same quest for follow-up work.
+
+Standing rules remain local to that Keeper until you widen them in the Ledger. To send one unchanged message to several Keepers at once, use **Tell selected Keepers** on the Common room.
 
 Open **Answers** on a quest to see the Keeper’s recorded replies and unanswered questions or steers. A new answer appears in the Ledger with a link to its place on the quest page. **Search answers** in Tavern looks across Keepers and quests, including the original words quoted by an answer. Device notifications for answers are off by default. In **Settings → Your attention**, you can turn them on or change how many answers load per page.
 

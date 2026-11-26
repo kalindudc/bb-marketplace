@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { patchThreadFixture, runtimeFixture } from "./member-fixture";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { makeMessageDispatchHookContext, makeQueueEntry } from "@get-bb/plugin-sdk/testing";
 import { setup } from "./runtime-fixture";
@@ -60,7 +60,7 @@ describe("Closing time runtime", () => {
     expect(g.runtime.away.blocked("child")).toBe(true);
   });
   it("holds unselected and unattached side quests while selected opted-in drafts and solos continue", async () => {
-    const f = await party(), other = await seedQuest(f.k,"lead", "Other", "Findings");
+    const f = await party(), other = seedLegacyQuest(f.k,"lead", "Other", "Findings");
     const bind = (threadId: string, questId: string | null) => f.k.bind(threadId, "ranger", "lark", "project", { keeperThreadId: "lead", boardQuestId: questId, waypointId: null, errand: true, title: "Scout", displayName: "Lark", brief: { outcome: "Scout", doneWhen: "Findings", mode: "make-it-work", outOfScope: "Production", context: [], questions: [], timeboxMinutes: null } });
     bind("attached", f.quest.id); bind("other", other.id); bind("unattached", null);
     f.k.bind("solo", "wanderer", "pip", "project");

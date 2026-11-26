@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { concludeQuest, putQuestFixture } from "./support";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { planInput, waypointEntry } from "./support";
@@ -158,7 +158,7 @@ describe("lasting character service record", () => {
     putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
     f.advance(1000); const boundary = f.time(); f.runtime.serviceRecords.backfill();
     f.setEntries([]); f.advance(1000);
-    const later = await seedQuest(f.k,"lead", "A later quest", "New work");
+    const later = seedLegacyQuest(f.k,"lead", "A later quest", "New work");
     f.k.plan("lead", { ...planInput(later.id), waypoints: [{ ...planInput(later.id).waypoints[0]!, optional: true }] });
     await concludeQuest(f.runtime, "lead", later.id, "No implementation needed", "", [{ waypointId: "w1", reason: "Not needed" }]);
     expect(f.record("wren")).toMatchObject({ completeSince: boundary, keeper: { stoppedQuests: 1, returnedQuests: 1, verifiedReturns: 0 } });

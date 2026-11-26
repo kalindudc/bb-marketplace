@@ -10,6 +10,7 @@ import { useRegistry } from "./registry";
 import { isCloseEffect, type PullRequestChoices } from "../../shared/closing";
 import { WaiverRows } from "./waiver-rows";
 import { scheduleLabel } from "../../shared/member-schedule";
+import { useStartKeeper } from "./keeper-draft";
 
 const KIND: Record<Ask["kind"], string> = { greenlight: "Greenlight", decision: "Decision", conclude: "Conclude", production: "Production", "cluster-write": "Cluster write", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", "drafts-as-you": "Draft as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
 const VIA: Record<string, string> = { banner: "in the thread", page: "in the common room", phone: "on the phone", chat: "in the chat", cli: "from the CLI", timer: "by its default", tavern: "by Tavern" };
@@ -86,6 +87,8 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
   const shellGrant = ask.effect?.type === "grant-shell-act" ? ask.effect : null;
   const repair = ask.effect?.type === "repair-guard";
   const userMove = ask.effect?.type === "user-waypoint" ? ask.effect : null;
+  const questStart = ask.effect?.type === "quest-start" ? ask.effect : null;
+  const startKeeper = useStartKeeper();
   const [optionId, setOption] = useState<string | null>(repair ? "done" : ask.kind === "decision" && !shellGrant ? ask.options.find(o => o.recommended)?.id ?? null : null);
   const [note, setNote] = useState("");
   const [error, setError] = useState<unknown>(null);
@@ -99,6 +102,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
     const label = ask.answer?.by === "tavern" ? "" : receipt?.label ?? ask.options.find(o => o.id === ask.answer?.optionId)?.label ?? ask.answer?.optionId ?? "";
     const at = receipt?.at ?? ask.answer?.at ?? null;
     const receiptNote = receipt?.note ?? ask.answer?.note ?? null;
+    const reopenDraft = questStart && (receipt ? optionId === "new-keeper" : ask.state === "answered" && ask.answer?.by === "user" && ask.answer.optionId === "new-keeper");
     return (
       <div ref={cardRef} className="tavern receipt" role="status" aria-label={`Ask answered: ${ask.question}`}>
         <Glyph name="check" />
@@ -109,6 +113,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
         {(receipt || ask.answer?.by === "user" && ask.answer?.surface === "client (unattested)") && <span className="m">answered from a client Tavern could not attribute</span>}
         {userMove && (receipt || ask.answer?.by === "user") && <span>{userMove.completeOn.includes(ask.answer?.optionId ?? optionId ?? "") ? "Your waypoint is done." : "Your waypoint stays open."}</span>}
         {receiptNote && <span className="receipt-note" data-content>“{receiptNote}”</span>}
+        {reopenDraft && <button type="button" className="btn" onClick={() => startKeeper(questStart)}>Open Keeper draft</button>}
         {cluster && ask.clusterApproval && <span>Approved {VIA[ask.clusterApproval.via]} at {clockTime(ask.clusterApproval.at)}</span>}
         {receipt?.clusterGrantError && <span role="alert" className="problem">{receipt.clusterGrantError}</span>}
         {receipt?.pullRequestErrors?.map(message => <span key={message} className="receipt-note problem" role="alert">{message}</span>)}
@@ -132,12 +137,14 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
       const at = Date.now();
       setReceipt({ label: result.clusterGrantError ? "No run granted" : ask.options.find(o => o.id === optionId)!.label, at, note: note.trim() || null, pullRequestErrors: result.pullRequestErrors, clusterGrantError: result.clusterGrantError });
       onAnswered?.({ ...ask, state: "answered", answer: { optionId, note: note.trim() || null, by: "user", via, at, surface: "client (unattested)" } });
+      if (questStart && optionId === "new-keeper") startKeeper(questStart);
     } catch (e) { setError(e); }
   }
   const why = ask.why ? `Yours because ${ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}` : "";
   return (
     <section ref={cardRef} className={`tavern ask k-${ask.kind}`} aria-label={`Ask: ${ask.question}`} data-ask>
       {headless ? why && <Clamp text={why} className="ask-why" /> : <><div className="ask-h"><span className="kind">{early ? "Close early" : KIND[ask.kind]}</span>{ask.createdAt > 0 && <span>asked <TimeAgo at={ask.createdAt} /></span>}{why && <Clamp text={`· ${why.charAt(0).toLowerCase() + why.slice(1)}`} className="ask-why" />}</div><h3 className="ask-q"><Clamp text={ask.question} /></h3></>}
+      {questStart && <dl className="sendbox" aria-label="Your goal"><dt>Goal</dt><dd className="draft" data-content>{questStart.goal}</dd></dl>}
       {ask.kind === "greenlight" && <p className="m small">Cluster writes always ask you, even after you approve the quest map.</p>}
       {ask.effect?.type === "member-schedules" && <dl className="sendbox" aria-label="Schedules to approve">
         {ask.effect.schedules.map((schedule, index) => <Fragment key={index}><dt>{scheduleLabel(schedule)} (server time)</dt><dd data-content>{schedule.duty}</dd></Fragment>)}
@@ -217,7 +224,7 @@ export function AskCard({ ask: originalAsk, via = "banner", onFold, onAnswered, 
       <QueryState error={error} />
       <div className="ask-f">
         <button type="button" className={`btn ${ask.kind === "greenlight" ? "pri seal" : "pri"}`} disabled={!optionId || answer.isPending || !canSend} aria-describedby={describeEffects ? `${name}-effect` : undefined} onClick={() => void submit()}>{ask.kind === "greenlight" && <Glyph name="wax-seal" />}{answer.isPending ? "Sending…" : action}</button>
-        {describeEffects && <span className="ask-effect" id={`${name}-effect`}>{repair ? "Checks whether the guard loaded. It does not run the blocked call." : communication || ask.kind === "sends-as-you" ? "Records your choice. Nothing is sent by the agent." : cluster || shellGrant ? "Records your choice; it does not run the command." : "Applies your choice and tells the Keeper."}</span>}
+        {describeEffects && <span className="ask-effect" id={`${name}-effect`}>{repair ? "Checks whether the guard loaded. It does not run the blocked call." : communication || ask.kind === "sends-as-you" ? "Records your choice. Nothing is sent by the agent." : cluster || shellGrant ? "Records your choice; it does not run the command." : questStart ? "Records your choice without starting a thread." : "Applies your choice and tells the Keeper."}</span>}
         {onFold && <>
           <button type="button" className="btn" aria-describedby={describeEffects ? `${name}-fold-effect` : undefined} onClick={onFold}>Not now</button>
           {describeEffects && <span className="ask-effect" id={`${name}-fold-effect`}>Hides the form without answering.</span>}

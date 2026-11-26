@@ -155,7 +155,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_route",
     "Read the user's message",
-    "Record how the oldest unrouted user message was read. notes is REQUIRED on every route kind: separate facts, promises and hand-backs with need (see tavern_note), or []. The goal itself is never a note: open a quest for it. A steer can name one boardQuestId or several boardQuestIds when the user means multiple goals. Asides must not name quests. For a quest question, name its boardQuestId; this grants no authority. Record an explicit checker-handoff hold with checkerHandoffHold: { reason }. It stays held until a user control releases it; a reporting promise never releases it. Route queued messages before quest writes. steer: apply to every named quest; ask and change nothing if targets are unclear. A still-applicable steer or new-quest route survives later messages until its following Keeper turn ends; never re-route to regain it. question: answer from the ledger or knowledge without changing a quest. aside: act directly or hire with errand:true, outside any quest. A rule, question or aside alone does not block existing quest work. new-quest: open the concrete goal with tavern_quest and scout; a greeting or class selection is not a goal. rule: save the user's standing rule verbatim with tavern_rule and source:message, active for this Keeper by default; global only when the user explicitly names all Keepers or all Tavern threads. Keeper proposals wait for ledger confirmation. Promises need dueAt in Unix milliseconds.",
+    "Record how the oldest unrouted user message was read. notes is REQUIRED on every route kind: separate facts, promises and hand-backs with need (see tavern_note), or []. The goal itself is never a note. A steer can name one boardQuestId or several boardQuestIds when the user means multiple goals. Asides must not name quests. For a quest question, name its boardQuestId; this grants no authority. Record an explicit checker-handoff hold with checkerHandoffHold: { reason }. It stays held until a user control releases it; a reporting promise never releases it. Route queued messages before quest writes. steer: apply to every named quest; ask and change nothing if targets are unclear. A still-applicable steer or new-quest route survives later messages until its following Keeper turn ends; never re-route to regain it. question: answer from the ledger or knowledge without changing a quest. aside: act directly or hire with errand:true, outside any quest. A rule, question or aside alone does not block existing quest work. new-quest: open your first goal, or offer the placement card for an outside goal; greetings and class selection are not goals. rule: save the user's standing rule verbatim with tavern_rule and source:message, active for this Keeper by default; global only when the user explicitly names all Keepers or all Tavern threads. Keeper proposals wait for ledger confirmation. Promises need dueAt in Unix milliseconds.",
     limit => z.object({
       kind: z.enum(ROUTE_KINDS),
       boardQuestId: optionalQuest,
@@ -223,14 +223,23 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_quest",
     "Named a board quest",
-    "Open a routed goal in scout phase (op: open, the default). To rename your own unarchived quest, pass op: rename, boardQuestId, title and short. Use journal for your checklist.",
-    questNamesSchema.extend({ op: z.enum(["open", "rename"]).default("open"), boardQuestId: id.optional() }).strict()
-      .refine(input => (input.op === "rename") === (input.boardQuestId !== undefined), {
-        path: ["boardQuestId"], message: "Pass boardQuestId only when renaming an existing quest.",
+    "Open one quest in scout phase (title, short, optional routeId); use journal. Outside goal: op: choice with its new-quest routeId and parent boardQuestId if ambiguous. Never answer it yourself. Rename: op: rename, boardQuestId, title and short.",
+    questNamesSchema.partial().extend({ op: z.enum(["open", "rename", "choice"]).default("open"), boardQuestId: id.optional(), routeId: id.optional() }).strict()
+      .refine(({ op, boardQuestId, routeId, title, short }) => op === "choice"
+        ? !!routeId && title === undefined && short === undefined
+        : !!title && !!short && (op === "rename" ? !!boardQuestId && routeId === undefined : boardQuestId === undefined), {
+        message: "Open: title, short and optional routeId. Rename: boardQuestId, title and short. Choice: routeId and optional parent boardQuestId.",
       }),
-    (input, threadId) => input.boardQuestId !== undefined
-      ? runtime.renameKeeperQuest(threadId, input.boardQuestId, input)
-      : k.openQuest(threadId, input.title, input.short),
+    (input, threadId) => {
+      if (input.op === "choice") {
+        const ask = k.offerQuestStart(threadId, input.routeId!, input.boardQuestId);
+        return `Quest placement card ${ask.id}. Do not start work from the route alone. Put this on its own line:\n::tavern-ask{id="${ask.id}"}`;
+      }
+      const names = questNamesSchema.parse(input);
+      return input.op === "rename"
+        ? runtime.renameKeeperQuest(threadId, input.boardQuestId!, names)
+        : k.openQuest(threadId, names.title, names.short, input.routeId);
+    },
   );
   register(
     "tavern_reopen",

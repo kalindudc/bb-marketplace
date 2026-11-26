@@ -24,9 +24,9 @@ bb tavern guard status
 
 ## Run your first quest
 
-1. **Open Tavern** in bb's left navigation and choose **Start a quest**. Give your Keeper the goal, what done looks like, and any boundaries.
+1. **Open Tavern** in bb’s left navigation and choose **Start a quest** to open a new Keeper draft. Give your Keeper the goal, what done looks like, and any boundaries.
 2. **Approve the plan.** The Keeper hires Rangers to scout, then proposes a quest map of deliverables (waypoints), check methods, and an optional spend cap. Explicit approval is the default before building starts.
-3. **Steer from the same thread.** Keep talking to the Keeper, naming the quest if it holds more than one. Questions, asides, and standing rules stay separate from plan changes.
+3. **Steer from the same thread.** Keep talking to the Keeper. Name the quest if an older Keeper holds more than one. Questions, asides, and standing rules stay separate from plan changes.
 4. **Answer Needs you.** Handle open asks on the Common room, quest page, or composer widget, and open member reports in the side panel for evidence.
 5. **Conclude and read the tale.** A quest never closes itself. Your answer to the Keeper's closing ask writes the tale and archives the party without committing, pushing, or merging for you.
 

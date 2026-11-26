@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { patchThreadFixture, putMemberFixture } from "./member-fixture";
 import { putQuestFixture } from "./support";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { setup } from "./runtime-fixture";
@@ -31,7 +31,7 @@ describe("Closing time RPC", () => {
     expect(result.state.window.id).toBeTruthy();
   });
   it("groups watched party members by quest, including unattached errands but not solos or inactive allocations", async () => {
-    const f = fixture(), first = await seedQuest(f.k,"lead", "First", "Draft"), second = await seedQuest(f.k,"lead", "Second", "Draft");
+    const f = fixture(), first = await seedQuest(f.k,"lead", "First", "Draft"), second = seedLegacyQuest(f.k,"lead", "Second", "Draft");
     bind(f, "first-a", first.id); bind(f, "first-b", first.id); bind(f, "second", second.id); bind(f, "unattached", null);
     bind(f, "released", first.id); patchThreadFixture(f.k.store, "released", { released: { reason: "Done", decisionId: "release" } });
     bind(f, "releasing", first.id); patchThreadFixture(f.k.store, "releasing", { releasePending: "Done" });

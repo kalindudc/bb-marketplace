@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { putQuestFixture } from "./support";
-import { seedQuest } from "./support";
+import { seedLegacyQuest } from "./support";
 import { describe, expect, it } from "vitest";
 import { registerRpc } from "../../src/server/rpc";
 import { readStatus, statusInput } from "../../src/server/status";
@@ -16,7 +16,7 @@ function fixture() {
     phase: BoardQuest["phase"] = "done",
     keeper = "lead",
   ) => {
-    const opened = await seedQuest(f.k,keeper, title, title);
+    const opened = seedLegacyQuest(f.k, keeper, title, title);
     return putQuestFixture(f.k.store, opened.id, {
       ...opened,
       phase,

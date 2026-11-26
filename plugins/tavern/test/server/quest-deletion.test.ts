@@ -2,7 +2,7 @@
 import { putQuestFixture } from "./support";
 import { describe, expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { boardQuestSchema } from "../../src/shared/schema";
 
 async function fixture() {
@@ -35,7 +35,7 @@ describe("quest deletion", () => {
   });
   it("refuses live deletion and ordinary Bring up of a deleted quest", async () => {
     const f = await fixture();
-    const live = await seedQuest(f.k, "lead", "Live work", "Live work");
+    const live = seedLegacyQuest(f.k, "lead", "Live work", "Live work");
     expect(() => f.k.deleteQuest(live.id, { kind: "user" })).toThrow(/done or stopped/);
     f.k.deleteQuest(f.q.id, { kind: "user" });
     expect(() => f.k.archiveQuests([f.q.id], false, { kind: "user" })).toThrow(/deleted/);

@@ -1,4 +1,5 @@
 import { PluginCliError, experimental_PluginRpcRefusal, type ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
+import type { Ask } from "../shared/schema";
 import type { KeeperStore } from "./keeper/store";
 
 import { AUTHORITY, type Act, type AuthorityLevel } from "../shared/authority";
@@ -35,6 +36,10 @@ export function requireUserAct(context: ExperimentalPluginRpcHandlerContext | un
   return receipt;
 }
 export type UserActReceipt = { act: Act; surface: string; attribution: string; threadId?: string; grant?: string; references?: Record<string, string> };
+export function assertQuestStartAnswer(ask: Ask, receipt: UserActReceipt | undefined, by: NonNullable<Ask["answer"]>["by"], via: NonNullable<Ask["answer"]>["via"]) {
+  if (by !== "user" || receipt?.act !== "answerAsk" || receipt.references?.askId !== ask.id || receipt.threadId || via === "cli" || via === "timer")
+    throw new Error("Quest placement needs your explicit answer on this card.");
+}
 const receiptListeners = new WeakMap<KeeperStore["db"], (eventId: number) => void>();
 export function onAuthorityReceipt(db: KeeperStore["db"], changed: () => void) {
   const pending: number[] = [];

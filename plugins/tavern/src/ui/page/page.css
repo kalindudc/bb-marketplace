@@ -1209,21 +1209,6 @@
 .tavern.tv-page .tv-gacts .lnk-btn { min-height: 28px; }
 @media (pointer: coarse), (max-width: 560px) { .tavern.tv-page .tv-gacts .lnk-btn { min-height: 44px; } }
 
-/* "Start a quest ▾": one Keeper per row, crest and full name first, the quest and a true status after. */
-.tavern.tv-page.tv-head .tv-sq-menu .tavern-menu { width: max-content; min-width: 280px; }
-.tavern .tv-sq { display: grid; grid-template-columns: 18px auto minmax(0, 1fr) auto; grid-template-areas: "c n q s" ". t t t"; align-items: center; column-gap: 8px; width: 100%; min-height: 20px; font-size: 12px; }
-.tavern .tv-sq > :first-child { grid-area: c; }
-.tavern .tv-sq-n { grid-area: n; white-space: nowrap; font-weight: 600; }
-.tavern .tv-sq-2 { grid-area: t; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--tavern-muted); }
-.tavern .tv-sq-q { grid-area: q; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tavern-muted); }
-.tavern .tv-sq > .tv-st { grid-area: s; white-space: nowrap; font-size: 11px; }
-.tavern .tv-sq.tv-sq-link { display: flex; gap: 8px; }
-.tavern .tv-sq.tv-sq-link .tv-sq-n { font-weight: 500; }
-/* The menu's muted words sit on the overlay's hover tint, 4.29:1 in gruvbox dark; the kit's lit-card lift, keyed the same way, brings them to AA. */
-@container style(--card: #3c3836) and style(--attention: #fabd2f) {
-  .tavern .tv-sq :is(.tv-sq-2, .tv-sq-q) { color: color-mix(in oklab, var(--muted-foreground) 54%, var(--foreground)); }
-}
-
 /* The ended quests' heading carries a split count and the cellar action; on a narrow column the action wraps under it. */
 .tavern.tv-page .tv-room-ended > .tv-colh { flex-wrap: wrap; row-gap: 2px; }
 .tavern.tv-page .tv-room-ended > .tv-colh > .lnk-btn { white-space: normal; text-align: left; }

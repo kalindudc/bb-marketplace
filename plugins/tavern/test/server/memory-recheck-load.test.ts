@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { planInput } from "./support";
@@ -27,7 +27,7 @@ describe("Re-check load, last reply and paused ticks", () => {
     const f = setup(),
       ids: string[] = [];
     for (let i = 0; i < 4; i++) {
-      const q = await seedQuest(f.k,"lead", pad(`QUEST-${i}`, 120), `Q${i}`);
+      const q = seedLegacyQuest(f.k, "lead", pad(`QUEST-${i}`, 120), `Q${i}`);
       ids.push(q.id);
       f.k.store.put("quests", q.id, { ...f.k.quest(q.id), delegations: Array.from({ length: 100 }, (_, n) => ({ id: `delegation-${n}`, kind: "credential", at: f.time(), surface: "client (unattested)", endedAt: null, revokedAt: n < 99 ? f.time() : null })), preapprovals: Array.from({ length: 100 }, (_, n) => ({ id: `preapproval-${n}`, at: f.time(), surface: "client (unattested)", endedAt: null, revokedAt: n < 99 ? f.time() : null, greenlight: null, placement: true, conclude: true, endsAt: null, retriesUsed: 0 })) });
       f.k.resetRoutes("lead");
@@ -128,7 +128,7 @@ describe("Re-check load, last reply and paused ticks", () => {
       ],
     });
     f.advance(60000);
-    const recent = await seedQuest(f.k,"lead", "RECENT", "New");
+    const recent = seedLegacyQuest(f.k, "lead", "RECENT", "New");
     f.k.plan("lead", planInput(recent.id));
     const text = f.k.restatement("lead");
     expect(text.indexOf("OLD-GATE")).toBeLessThan(text.indexOf("RECENT"));

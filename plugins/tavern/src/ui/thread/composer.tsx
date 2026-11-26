@@ -10,7 +10,7 @@ import { classDifferences, composerProjectId, fieldWords, rearmClassSettings, st
 import { rpcContract, type ThreadDecor } from "../../shared/contract";
 import type { Ask, CheckerHandoffHold, ClassDef, Phase as QuestPhase } from "../../shared/schema";
 import type { ClassNotice } from "../../shared/class-execution-contract";
-import { AskCard, Crest, KeeperNoteRows, PhaseStrip, StatusPill, DecidedForYou, useDecisionSeen, ExpandsMark, Glyph, IconButton, OpensMark, QueryState, Skeleton, SkCrest, SkLine, TimeAgo, Vocabulary, memberIdentity, plural, useRegistry, useSkeletonCount, useSkeletonDelay, type Registry, glowVars, QuietNotice, useArmedNewQuest, activeHold, heldQuests, releaseWords, Clamp, localTime, useNow } from "../kit";
+import { AskCard, Crest, KeeperNoteRows, PhaseStrip, StatusPill, DecidedForYou, useDecisionSeen, ExpandsMark, Glyph, IconButton, OpensMark, QueryState, Skeleton, SkCrest, SkLine, TimeAgo, Vocabulary, memberIdentity, plural, useRegistry, useSkeletonCount, useSkeletonDelay, type Registry, glowVars, QuietNotice, activeHold, heldQuests, releaseWords, Clamp, localTime, useNow } from "../kit";
 import { MODE_WORDS } from "../kit/guard";
 import { CallActivity } from "../kit/call-activity";
 import { PHASE_STEPS, phaseIndex, phaseWord } from "../kit/phase";
@@ -21,6 +21,7 @@ import { revealAsk, useWidgetPanel, threadDecorCache, type WidgetPanel } from ".
 import { useChangeCue, useTavernMotion } from "../kit/motion";
 import { ThreadPartyStrip } from "../engine/thread-party";
 import { takeArmedClass } from "../kit/remember";
+import { takeKeeperDraft, withClassPill } from "../kit/keeper-draft";
 import { MemberPanel, memberFinished } from "./member-brief";
 import { memberIdentityWords } from "../kit/member-identity";
 import { keeperGuards, keeperState, useKeeperStop } from "./keeper-state";
@@ -138,6 +139,12 @@ export function ClassBanner() {
   const [plainError, setPlainError] = useState<string | null>(null);
   // The page's armed record is spent here: a class pill gets its class's settings however it arrived.
   useEffect(() => { if (pillId) takeArmedClass(pillId); }, [pillId]);
+  useEffect(() => {
+    if (composer.scope.kind !== "new-thread" || !takeKeeperDraft(composerProjectId(composer), composer.draft.text)) return;
+    const keeper = registry.data?.classes.find(c => c.id === "keeper") ?? { id: "keeper", label: "Keeper" };
+    const seeded = composer.draft.text;
+    composer.replace(draft => draft.text === seeded ? withClassPill(draft, keeper, pluginId) : draft);
+  }, [composer, registry.data, pluginId]);
   if (!classId) return null;
   const cls = registry.data?.classes.find(c => c.id === classId);
   const label = cls?.label ?? classId;
@@ -240,10 +247,6 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   // The row's skeleton shows only where this device last saw a row (2 a Keeper's, 1 a member's), so a plain thread never flashes one.
   const lastRow = useSkeletonCount(`skel:thread:widget:${threadId}`, data ? (!data.member || data.hidden || data.widgetRow === false ? 0 : data.keeperView ? 2 : 1) : undefined, 0);
   const skeletonShown = useSkeletonDelay(!data && decor.isLoading && lastRow > 0);
-  const armed = useArmedNewQuest(threadId);
-  const isArmed = armed.armed && !!keeper;
-  // Any successful send ends the arm: "Send as a new quest" goes through the same submit, and a plain send was the user's choice.
-  useEffect(() => { if (!isArmed) return; return composer.onSubmitted(() => armed.disarm()); }, [isArmed, composer, armed.disarm]);
   useEffect(() => { if (data) threadDecorCache.set(threadId, data); return () => { threadDecorCache.delete(threadId); }; }, [threadId, data]);
   // Motion: the row holds still while an ask is in it, and for 2 s after the user types (the coordinator's hold; a restored draft doesn't
   // count); the busy dot pulses twice when its Keeper turns busy or the row comes into view busy, then holds solid.
@@ -290,10 +293,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   // A thread without a member has only its journal, which lives in bb's context row (journal-segment.tsx), so it gets no Tavern row.
   const notice = data.classNotice ?? null;
   if (!data.member) return <ClassNoticeLine threadId={threadId} notice={notice} standalone />;
-  const armedLine = isArmed ? <ArmedLine onCancel={armed.disarm} onError={setError} /> : null;
-  // Arming comes from the user's own pick on the page, so a hidden row, or one the Widget row setting turned off, shows the armed line
-  // alone until it ends.
-  if (data.hidden || data.widgetRow === false) return armedLine ? <section className="tavern twidget v-armed" aria-label="Tavern: new board quest" data-part="TavernWidget">{armedLine}<QueryState error={error} /></section> : <ClassNoticeLine threadId={threadId} notice={notice} standalone />;
+  if (data.hidden || data.widgetRow === false) return <ClassNoticeLine threadId={threadId} notice={notice} standalone />;
   const names = registry.data ?? { classes: [], characters: [] };
   const name = memberIdentityLabel(data.member, names);
   const identity = registry.data ? memberIdentity(registry.data, data.member) : null;
@@ -410,7 +410,6 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
       {variant === "member" && data.boardQuest && <WidgetWaypoints member={data.member} reported={data.lastReportedWaypointId} />}
       {open !== "brief" && <PlacementFacts placement={data.member.placement} memberName={name} />}
       <ClassNoticeLine threadId={threadId} notice={notice} />
-      {armedLine}
       <QueryState error={error} />
       {section && <div id={sectionId(threadId, section)} className={`tw-panel ${section === "asks" ? "tw-asks-p" : section === "decided" ? "tw-new-panel" : "tw-quest-popover"}`} role="region" aria-label={SECTION_LABEL[section]}>
         <div className="tw-section-body">
@@ -451,7 +450,6 @@ export function SkWidget({ keeper, shown }: { keeper: boolean; shown: boolean })
   </Skeleton>;
 }
 
-/** The page's "Start a quest" opened this Keeper: the user's next message can become a new board quest. bb's plain send can't be redirected, so the line carries the action. */
 /**
  * The server's note on how this thread started against its class (first turn only): a default class that couldn't start, a model or
  * reasoning that differs from the class's. It shows even with the row hidden, because a start is never changed silently. After a switch,
@@ -482,21 +480,6 @@ export function ClassNoticeLine({ threadId, notice, standalone = false }: { thre
     : <p className="tw-class-notice is-done" role="status" data-part="ClassNotice"><Glyph name="check" size={13} /><span className="tw-cn-t">{receipt}</span></p>;
   const body = <>{line}{error && <p className="problem tw-class-err" role="alert">{error}</p>}</>;
   return standalone ? <section className="tavern twidget v-notice" aria-label="Tavern: how this thread started" data-part="TavernWidget">{body}</section> : body;
-}
-
-function ArmedLine({ onCancel, onError }: { onCancel: () => void; onError: (e: unknown) => void }) {
-  const composer = useComposer();
-  const [sending, setSending] = useState(false);
-  const empty = composer.isEmpty;
-  const send = async () => { setSending(true); try { await composer.submit({ experimental_data: { route: "new-quest" } }); } catch (e) { onError(e); } finally { setSending(false); } };
-  return (
-    <div className="tw-armed" role="group" aria-label="New board quest" title="Your next message can start a new board quest (goal)">
-      <Glyph name="board-quest" size={14} />
-      <span className="tw-text">Your next message can start a new board quest <span className="anc">goal</span></span>
-      <button type="button" className="btn sm" disabled={empty || sending || composer.isSubmitting} aria-disabled={empty || sending} title={empty ? "Type the goal first, then send it as a new board quest" : "Send what you typed as a new board quest (goal) for this Keeper"} onClick={() => void send()}>Send as a new quest</button>
-      <button type="button" className="lnk-btn" title="Keep this a normal message" onClick={() => { onCancel(); composer.focus(); }}>Cancel</button>
-    </div>
-  );
 }
 
 function NeedYouChip({ threadId, count, open, title, onToggle }: { threadId: string; count: number; open: boolean; title?: string; onToggle: (kind: "asks", button: HTMLButtonElement) => void }) {

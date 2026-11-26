@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -83,7 +83,7 @@ describe("Closing time local scope integration", () => {
     await f.runtime.hire("lead", "project", f.input);
     f.runtime.keep("lead", "child", undefined, "Ongoing watch", true);
     f.runtime.keep("lead", "child", undefined, "Watch overnight", true, true);
-    const other = await seedQuest(f.k, "lead", "Other quest", "Other");
+    const other = seedLegacyQuest(f.k, "lead", "Other quest", "Other");
     const result = await f.runtime.away.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: other.id, endState: "pause" }], allowWatched: true });
     expect(f.runtime.away.blocked("child")).toBe(true);
     expect(f.stop).toHaveBeenCalledExactlyOnceWith({ threadId: "child" });
@@ -103,7 +103,7 @@ describe("Closing time local scope integration", () => {
 
   it("keeps the Ranger-only greenlight shortcut for ordinary slots, not permanent ones", async () => {
     const f = await fixture();
-    const q = await seedQuest(f.k, "lead", "Watch the signal", "Watch");
+    const q = seedLegacyQuest(f.k, "lead", "Watch the signal", "Watch");
     const input = planInput(q.id);
     const slot = { classId: "ranger", characterId: null, model: null, purpose: "Watch", waypointIds: ["w1"] };
     f.k.plan("lead", { ...input, party: [slot] });

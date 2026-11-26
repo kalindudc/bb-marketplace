@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { eventMoments, MOMENT_CARD_BYTES, parseKeeperCards, renderKeeperCards } from "../../src/server/keeper/cards";
 import type { TavernEvent } from "../../src/shared/schema";
 import { setup } from "./runtime-fixture";
-import { planInput, seedQuest } from "./support";
+import { planInput, seedLegacyQuest, seedQuest } from "./support";
 
 const raw = readFileSync(new URL("../../skills/tavern-keeper/SKILL.md", import.meta.url), "utf8");
 const label = "Reference from your skill (quoted)";
@@ -44,7 +44,7 @@ it("quotes the exact shipped section on a held act, only once per quest in an an
   expect(text).toContain(`\`\`\`text\n${section}\n\`\`\``);
   f.held();
   expect(await f.tick()).not.toContain(label);
-  const another = await seedQuest(f.k, "lead", "Check a different parser", "Different");
+  const another = seedLegacyQuest(f.k, "lead", "Check a different parser", "Different");
   f.k.store.patch("lead", { cursor: f.k.store.eventSequence("lead"), userAt: null });
   f.held(another.id);
   expect(await f.tick()).toContain("## Decide a member's request");

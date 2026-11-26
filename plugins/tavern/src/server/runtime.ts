@@ -917,6 +917,7 @@ export class TavernRuntime {
     const askId = ask.id;
     if (ask.effect?.type === "release-hold" && !clientAction) throw new Error("Releasing a checker-handoff hold requires an explicit client action; the Keeper cannot answer it.");
     if (ask.effect?.type === "lead-plan" && !clientAction) throw new Error("A lead plan needs your explicit answer on the card.");
+    if (ask.effect?.type === "quest-start" && !clientAction) throw new Error("Quest placement needs your explicit answer on the card.");
     if (isCloseEffect(ask.effect) && !clientAction && !(preapproved && ask.effect.type === "conclude")) throw new Error("Closing needs your explicit answer on the card.");
     if (pullRequestChoices.length && (!clientAction || !isCloseEffect(ask.effect) || optionId !== ask.effect.type)) throw new Error("Pull request choices need your explicit closing answer.");
     const wasOpen = ask.state === "open";
@@ -2264,7 +2265,7 @@ export class TavernRuntime {
     const briefPreview = briefForPrompt(input.brief, this.config(questId).limits.intake.briefPromptBytes);
     const scoutingText = scouting && q ? `Hire ${role.label} for reversible scouting: ${input.title}` : null;
     const scoutingDecision = scoutingText ? boundedData(scoutingText, DECISION_TEXT_MAX, "…") : null;
-    let brief = `Your brief:\n${briefPreview.notice ? `${briefPreview.notice}\n` : ""}${JSON.stringify(briefPreview.brief)}\n${leadHire ? "Open one linked child quest with tavern_quest. The hire is its receipt; do not route the brief as a user message." : "Report through tavern_report; do not message the Keeper directly."}`;
+    let brief = `Your brief:\n${briefPreview.notice ? `${briefPreview.notice}\n` : ""}${JSON.stringify(briefPreview.brief)}\n${leadHire ? "Open one side quest with tavern_quest. Use the hire receipt, not a user route. Bring outside goals to your lead." : "Report through tavern_report; do not message the Keeper directly."}`;
     if (reviewTarget)
       brief += `\nTrusted journal review target:\n${JSON.stringify(reviewTarget, null, 2)}\n${recordsSubject ? "Check the exact subject recorded by the Keeper. Verify or reject these entries in the Keeper's journal, not your own." : "Verify or reject these entry ids in the maker's thread, not in your own journal."} Keep the waypoint and target thread identifiers with your evidence.`;
     owner.assignmentText = brief;
@@ -3879,7 +3880,7 @@ export class TavernRuntime {
       k.store.put("members", m.threadId, { ...k.member(m.threadId)!, verifiedWins: verified.filter(w => w.madeBy?.includes(m.threadId)).length });
     }
     k.memory.closeQuest(threadId, id);
-    const withdrawnAskIds = (k.store.db.prepare("SELECT id FROM tavern_records WHERE kind='asks' AND json_extract(data,'$.boardQuestId')=? AND json_extract(data,'$.state')='open'").all(id) as { id: string }[]).map(row => row.id);
+    const withdrawnAskIds = k.endingQuestAskIds(threadId, id);
     const closed = transitionQuest(k.store, q, "done", leadCloser ? "conclude-lead" : effect.type, leadCloser ?? { kind: "user" }, receipt, at, { patch: { endedAt: at, outcome: closure, waivers }, text: draft.outcome, data: {
       outcome: draft.outcome, left: draft.left, closure, waivers, skipped, pullRequests: pullRequests.applied, withdrawnAskIds,
       verified: verified.length, accepted: summary.waypoints.filter(w => w.state === "accepted").length,

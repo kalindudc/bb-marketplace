@@ -7,12 +7,6 @@ const reducedMotion = () => typeof window.matchMedia === "function" && window.ma
  * scrolling, so the held columns' focus handler never adds a second scroll. An explicit smooth scroll would beat the CSS rule,
  * so reduced motion is asked for here.
  */
-let pending: { id: string; at: number } | null = null;
-/** A jump for the common room to make when it next shows, for links that open it from elsewhere ("All Keepers"). Kept 5 s. */
-export function jumpWhenShown(id: string) { pending = { id, at: Date.now() }; }
-/** The pending jump, once, if it is fresh. */
-export function takePendingJump(): string | null { const p = pending; pending = null; return p && Date.now() - p.at < 5000 ? p.id : null; }
-
 export function jumpTo(id: string) {
   const section = document.getElementById(id);
   if (!section) return;

@@ -4,7 +4,7 @@ import { createJournalStore } from "../../src/server/journal/store";
 import { PlacementStore } from "../../src/server/placement/store";
 import { placementRecord } from "./placement-fixture";
 import { setup } from "./runtime-fixture";
-import { planInput, seedQuest } from "./support";
+import { planInput, seedLegacyQuest, seedQuest } from "./support";
 
 const brief = { outcome: "Build", mode: "make-it-work" as const, outOfScope: "Publishing", doneWhen: "Tests pass", context: [], questions: [], timeboxMinutes: null };
 const proof = [{ kind: "command" as const, ref: "node check.js", detail: "Pass", exitCode: 0 }];
@@ -20,7 +20,7 @@ async function fixture(fallbackToRawRole = false) {
   });
   Object.assign(f.port, journal);
   const q = await seedQuest(f.k, "lead", "Build", "Build");
-  const foreign = await seedQuest(f.k, "lead", "Other work", "Other");
+  const foreign = seedLegacyQuest(f.k, "lead", "Other work", "Other");
   const bind = (threadId: string, classId: string, boardQuestId: string, waypointId: string | null, model?: string) => {
     f.k.bind(threadId, classId, classId === "warden" ? "rook" : "bram", "project", {
       keeperThreadId: "lead", boardQuestId, waypointId, title: "Work", brief, errand: false,

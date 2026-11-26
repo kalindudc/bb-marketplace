@@ -3,7 +3,7 @@ import { putQuestFixture } from "./support";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KEEPER_TOOLS } from "../../src/server/runtime";
 import { registerTools } from "../../src/server/tools";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { setup } from "./runtime-fixture";
 
 const databases: ReturnType<typeof setup>["k"]["store"]["db"][] = [];
@@ -12,7 +12,7 @@ afterEach(() => { vi.restoreAllMocks(); for (const db of databases.splice(0)) db
 async function fixture() {
   const f = setup(); databases.push(f.k.store.db);
   const returned = await seedQuest(f.k, "lead", "Returned work", "Returned work");
-  const stopped = await seedQuest(f.k, "lead", "Stopped work", "Stopped work");
+  const stopped = seedLegacyQuest(f.k, "lead", "Stopped work", "Stopped work");
   putQuestFixture(f.k.store, returned.id, { ...returned, phase: "done", planVersion: 3, greenlitVersion: 2, endedAt: f.time() });
   putQuestFixture(f.k.store, stopped.id, { ...stopped, phase: "stopped", planVersion: 1, greenlitVersion: 1, endedAt: f.time(), stoppingSince: f.time() - 5, stopReason: "You stopped it" });
   const member = (id: string) => ({
@@ -46,7 +46,7 @@ describe("quest re-open", () => {
 
   it("refuses every live or stopping quest, and leaves it untouched", async () => {
     const f = await fixture();
-    const live = await seedQuest(f.k, "lead", "Live work", "Live work");
+    const live = seedLegacyQuest(f.k, "lead", "Live work", "Live work");
     for (const phase of ["scout", "greenlight", "build", "check", "wrap", "stopping"] as const) {
       putQuestFixture(f.k.store, live.id, { ...f.k.quest(live.id), phase });
       expect(() => f.k.reopenQuest(live.id, { kind: "user" })).toThrow(/returned or stopped/);

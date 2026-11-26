@@ -125,7 +125,7 @@
 <g transform="translate(400,678) scale(1.0000)"><path d="M1.25 12c0-5.94 4.81-10.75 10.75-10.75c5.94 0 10.75 4.81 10.75 10.75c0 5.94-4.81 10.75-10.75 10.75c-5.94 0-10.75-4.81-10.75-10.75z" fill="#e5b1b2" stroke="#ebdbb2" stroke-width="1.6" stroke-linejoin="miter"/></g>
 <text x="434" y="691" font-size="14" font-weight="700" fill="#ebdbb2">Wanderer or Lead</text>
 <rect x="584" y="676" width="48" height="20" fill="#47393b"/><text x="608.0" y="690" text-anchor="middle" font-size="11" font-weight="700" fill="#e5b1b2">open</text>
-<text x="400" y="716" font-size="11.5" fill="#ccbfa0">Side quests (errands), or a child</text>
+<text x="400" y="716" font-size="11.5" fill="#ccbfa0">Errands, or a side Keeper</text>
 <text x="400" y="734" font-size="11.5" fill="#ccbfa0">Keeper leading a linked waypoint</text>
 <line x1="198" y1="760" x2="198" y2="794" stroke="#fe8019" stroke-width="2"/><polygon points="193,793 203,793 198,800" fill="#fe8019"/>
 <rect x="36" y="771" width="152" height="20" fill="#32302f"/>

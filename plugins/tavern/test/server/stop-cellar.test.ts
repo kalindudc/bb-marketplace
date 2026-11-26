@@ -2,7 +2,7 @@
 import { expect, it } from "vitest";
 import { rpcHandlers } from "../../src/server/rpc";
 import { setup } from "./runtime-fixture";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { makeThreadResponse } from "./host";
 
 const client = { experimental_caller: { kind: "client" as const }, experimental_signal: new AbortController().signal };
@@ -26,8 +26,8 @@ it.each([
 it("stops and cellars only the confirmed quests and records one receipt naming each", async () => {
   const f = setup();
   const first = await seedQuest(f.k, "lead", "First named quest", "A narrow goal");
-  const second = await seedQuest(f.k, "lead", "Second named quest", "Another goal");
-  const excluded = await seedQuest(f.k, "lead", "Not in the confirmation", "A later scope");
+  const second = seedLegacyQuest(f.k, "lead", "Second named quest", "Another goal");
+  const excluded = seedLegacyQuest(f.k, "lead", "Not in the confirmation", "A later scope");
   f.k.store.patch("lead", { archivedAt: f.time() });
   const result = await stop(f)({ ids: [first.id, second.id] }, client);
   const entries = [first, second].map(q => ({ questId: q.id, title: q.title }));

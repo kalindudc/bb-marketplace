@@ -1,4 +1,4 @@
-import { authorize, commitUserAct, type UserActReceipt } from "../authority";
+import { assertQuestStartAnswer, authorize, commitUserAct, type UserActReceipt } from "../authority";
 import { QuestAuthority } from "../quest-authority";
 import { MERGE_APPROVAL_MS } from "../merge-approvals";
 import { changeSpendBudget } from "../spend-budget";
@@ -608,7 +608,7 @@ export class Keeper {
     const text = goal.text.length > 1000
       ? `${goal.text.slice(0, 1000)} [More: read the original opening user message]`
       : goal.text;
-    return `If this opening message contains a concrete user goal, route it with tavern_route kind new-quest, then call tavern_quest. The goal itself is never a note. A class selection, greeting or question does not open a quest.\nOpening message (quoted data): ${JSON.stringify(text)}`;
+    return `If this opening message contains a concrete user goal, route it with tavern_route kind new-quest, then call tavern_quest with the route ID. The goal itself is never a note. A class selection, greeting or question does not open a quest.\nOpening message (quoted data): ${JSON.stringify(text)}`;
   }
   cancelUser(threadId: string, rowId: string) {
     const id = this.store.messageId(rowId);
@@ -732,62 +732,79 @@ export class Keeper {
     this.invalidate([...new Set([...stale, ...related])]);
     return next;
   }
-  async openQuest(threadId: string, title: string, short: string) {
-    const member = this.require(threadId, "keeper");
-    await this.journal.prepare(threadId);
+  private questGoal(threadId: string, route: Route) {
+    const sourceMessageId = route.sourceMessageId;
+    const receipt = sourceMessageId && this.store.messageReceipt(threadId, sourceMessageId, true);
+    if (!sourceMessageId || !receipt || route.classSelectionOnly)
+      throw new Error("The new-quest route needs its genuine accepted user receipt containing a goal; class selection is not a goal.");
+    if (this.store.messageWasCancelled(sourceMessageId)) throw new Error("The user cancelled this goal.");
+    return { sourceMessageId, goal: receipt.text };
+  }
+  async openQuest(threadId: string, title: string, short: string, openingRouteId?: string) {
     this.require(threadId, "keeper");
-    const link = currentLead(this.store, member);
-    if (link?.childQuestId) return this.quest(link.childQuestId);
-    const route = link ? null : this.applicableRoutes(threadId)
-      .filter(
-        (route) => route.kind === "new-quest" && route.boardQuestId === null,
-      )
-      .at(-1)?.id;
-    const source = route ? this.store.get("routes", route) : null;
-    if (!link) {
-      if (!source) throw new Error("Opening a board quest requires an unbound new-quest route from an accepted user message. Ask for the goal; never open a placeholder.");
-      const receipt = source.sourceMessageId && this.store.messageReceipt(threadId, source.sourceMessageId, true);
-      if (!receipt || source.classSelectionOnly) throw new Error("The new-quest route needs its genuine accepted user receipt containing a goal; class selection is not a goal.");
-      authorize("openQuest", { level: "user-in-words", receipt: source.sourceMessageId! });
-    }
-    const q: BoardQuest = {
-      id: this.store.id("quest"),
-      keeperThreadId: threadId,
-      title,
-      short,
-      phase: "scout",
-      planVersion: 0,
-      greenlitVersion: null,
-      waypointJournal: true,
-      createdAt: this.now(),
-      updatedAt: this.now(),
-      endedAt: null,
-      archivedAt: null,
-      ...(route && this.store.get("routes", route)?.checkerHandoffHold ? { checkerHandoffHold: this.checkerHoldFromRoute(this.store.get("routes", route)!) } : {}),
-    };
-    this.store.atomic(() => {
-      transitionQuest(this.store, q, "scout", link ? "open-lead" : "open", { kind: "agent", threadId },
-        link ? { kind: "hire", id: link.hireToken } : { kind: "user-message", id: source!.sourceMessageId! }, this.now(), { text: `Opened ${title}` });
-      if (link) saveLead(this, { ...link, childQuestId: q.id }, "lead.opened", { kind: "agent", threadId });
-      const routed = route ? this.store.get("routes", route) : null;
-      if (routed?.kind === "new-quest" && routed.boardQuestId === null)
-        this.store.put("routes", routed.id, {
-          ...routed,
-          boardQuestId: q.id,
-          boardQuestIds: [q.id],
-        });
-      this.journal.edit(
-        threadId,
-        {
-          op: "add",
-          descriptions: [`Quest: ${title} (${q.id})`],
-          parentId: null,
-        },
-        { kind: "agent", threadId },
-      );
+    // Pin the request to its route before journal preparation yields; a later message cannot retarget it.
+    const routeId = openingRouteId ?? this.applicableRoutes(threadId).filter(route => route.kind === "new-quest").at(-1)?.id;
+    await this.journal.prepare(threadId);
+    const { quest, opened } = this.store.atomic(() => {
+      const member = this.require(threadId, "keeper");
+      const link = currentLead(this.store, member);
+      if (link?.childQuestId) return { quest: this.quest(link.childQuestId), opened: false };
+      const routed = !link && routeId ? this.store.get("routes", routeId) : null;
+      const route = routed?.kind === "new-quest" && routed.keeperThreadId === threadId ? routed : null;
+      const source = route && this.questGoal(threadId, route);
+      if (route?.boardQuestId && source && this.store.questOpenedFrom(route.boardQuestId, source.sourceMessageId))
+        return { quest: this.owned(threadId, route.boardQuestId), opened: false };
+      if (this.store.query("quests", "keeperThreadId", threadId, 1).length)
+        throw new Error("This Keeper already has a quest. Reopen it for follow-up work, or use tavern_quest op: choice with the outside goal’s routeId for a quest placement card.");
+      if (!link) {
+        if (!route || routeQuestIds(route).length || !source || !this.applicableRoutes(threadId).some(active => active.id === route.id))
+          throw new Error("Opening a board quest requires a current, unbound new-quest route from an accepted user message. Ask for the goal; never open a placeholder.");
+        authorize("openQuest", { level: "user-in-words", receipt: source.sourceMessageId });
+      }
+      const quest: BoardQuest = {
+        id: this.store.id("quest"), keeperThreadId: threadId, title, short, phase: "scout",
+        planVersion: 0, greenlitVersion: null, waypointJournal: true, createdAt: this.now(), updatedAt: this.now(), endedAt: null, archivedAt: null,
+        ...(route?.checkerHandoffHold ? { checkerHandoffHold: this.checkerHoldFromRoute(route) } : {}),
+      };
+      transitionQuest(this.store, quest, "scout", link ? "open-lead" : "open", { kind: "agent", threadId },
+        link ? { kind: "hire", id: link.hireToken } : { kind: "user-message", id: source!.sourceMessageId }, this.now(), { text: `Opened ${title}` });
+      if (link) saveLead(this, { ...link, childQuestId: quest.id }, "lead.opened", { kind: "agent", threadId });
+      if (route) this.store.put("routes", route.id, { ...route, boardQuestId: quest.id, boardQuestIds: [quest.id] });
+      this.journal.edit(threadId, { op: "add", descriptions: [`Quest: ${title} (${quest.id})`], parentId: null }, { kind: "agent", threadId });
+      return { quest, opened: true };
     });
-    this.changed(threadId, q.id);
-    return q;
+    if (opened) this.changed(threadId, quest.id);
+    return quest;
+  }
+  offerQuestStart(threadId: string, routeId: string, parentQuestId?: string) {
+    return this.store.atomic(() => {
+      const member = this.require(threadId, "keeper");
+      if (currentLead(this.store, member)) throw new Error("Bring the outside goal to your hiring Keeper instead.");
+      if (!this.store.query("quests", "keeperThreadId", threadId, 1).length)
+        throw new Error("Open your first quest directly from the user's goal.");
+      const route = this.store.get("routes", routeId);
+      if (!route || route.keeperThreadId !== threadId || route.kind !== "new-quest" || routeQuestIds(route).length)
+        throw new Error("Cite the unbound new-quest route for the user's outside goal.");
+      const { sourceMessageId, goal } = this.questGoal(threadId, route);
+      const existing = this.store.questStartAsk(sourceMessageId);
+      if (existing) return existing;
+      if (!this.applicableRoutes(threadId).some(active => active.id === route.id))
+        throw new Error("This outside goal is no longer in the current routes.");
+      const projectId = this.store.runtime(threadId).projectId;
+      if (!projectId) throw new Error("This Keeper has no project for the new draft.");
+      const parents = this.store.visibleRecords("quests", threadId).filter(isOpenQuest);
+      if (parentQuestId === undefined && parents.length > 1) throw new Error("Name the intended parent quest, or clarify with the user first.");
+      const parent = parentQuestId === undefined ? parents[0] : this.liveQuest(threadId, parentQuestId);
+      return this.ask(threadId, {
+        boardQuestId: parent?.id, kind: "decision", question: "Where should this goal go?",
+        why: "Only you can choose where to take this new goal.",
+        options: [
+          ...(parent ? [{ id: "side-quest", label: `Side quest under ${parent.short}`, detail: "A separate Keeper runs it. Keep talking here.", recommended: false }] : []),
+          { id: "new-keeper", label: "New Keeper thread", detail: "Opens a draft for a separate quest, party and budget. Nothing is sent.", recommended: false },
+        ], meanwhile: "Your current work can continue.", holds: [],
+        effect: { type: "quest-start", sourceMessageId, routeId, parentQuestId: parent?.id ?? null, projectId, goal },
+      }, {}, true);
+    });
   }
   route(
     threadId: string,
@@ -1307,7 +1324,7 @@ export class Keeper {
       }
       case "answer": {
         const ask = this.store.get("asks", coveredBy.id);
-        valid = ask?.keeperThreadId === threadId && ask.boardQuestId === questId && ask.state === "answered" && ask.answer?.by === "user";
+        valid = ask?.keeperThreadId === threadId && ask.boardQuestId === questId && ask.state === "answered" && ask.answer?.by === "user" && ask.effect?.type !== "quest-start";
         break;
       }
       case "plan": {
@@ -1359,6 +1376,14 @@ export class Keeper {
     if (target) this.invalidate([tags.thread(target)]);
     return withdrawn;
   }
+  private detachQuestStartAsk(ask: Ask) {
+    if (ask.effect?.type !== "quest-start") return false;
+    this.store.put("asks", ask.id, { ...ask, boardQuestId: null, options: ask.options.filter(option => option.id === "new-keeper"), meanwhile: "This goal needs a new Keeper thread." });
+    return true;
+  }
+  endingQuestAskIds(keeperThreadId: string, questId: string) {
+    return this.store.openAsks(keeperThreadId, questId).filter(ask => !this.detachQuestStartAsk(ask)).map(ask => ask.id);
+  }
   pendingStopHires(id: string) {
     return this.store.db.prepare("SELECT h.id AS token,json_extract(h.data,'$.classId') AS classId,json_extract(h.data,'$.owner.title') AS title FROM tavern_records h WHERE h.kind='hires' AND json_extract(h.data,'$.owner.boardQuestId')=? AND NOT EXISTS (SELECT 1 FROM tavern_records m WHERE m.kind='members' AND m.id=json_extract(h.data,'$.memberThreadId'))").all(id) as { token: string; classId: string; title: string }[];
   }
@@ -1379,7 +1404,7 @@ export class Keeper {
         updatedAt: at,
         stopReason,
       };
-      const withdrawnAskIds = (this.store.db.prepare("SELECT id FROM tavern_records WHERE kind='asks' AND json_extract(data,'$.keeperThreadId')=? AND json_extract(data,'$.boardQuestId')=? AND json_extract(data,'$.state')='open'").all(quest.keeperThreadId, id) as { id: string }[]).map(ask => ask.id);
+      const withdrawnAskIds = this.endingQuestAskIds(quest.keeperThreadId, id);
       const actor: Actor = chainReceipt ? { kind: "tavern" } : { kind: "user" };
       const stopped = transitionQuest(this.store, quest, "stopping", chainReceipt ? "stop-chain" : "stop", actor,
         { kind: chainReceipt ? "chain-stop" : "user-act", id: chainReceipt ?? this.store.id("act"), surface, at }, at,
@@ -1494,7 +1519,7 @@ export class Keeper {
     if (input.kind === "greenlight" && input.effect.type !== "greenlight" && (input.effect.type !== "lead-plan" || !trusted))
       throw new Error("A greenlight ask needs its typed plan version; propose the plan instead.");
     if (input.kind === "conclude" && !isCloseEffect(input.effect)) throw new Error("A conclude ask needs its typed draft; tell the quest result instead.");
-    if (["placement-blocker", "communication-hold", "repair-guard", "member-schedules"].includes(input.effect.type) && !trusted) throw new Error("Only Tavern may open this typed ask");
+    if (["placement-blocker", "communication-hold", "repair-guard", "member-schedules", "quest-start"].includes(input.effect.type) && !trusted) throw new Error("Only Tavern may open this typed ask");
     if (input.kind === "drafts-as-you" && input.effect.type !== "communication-hold") throw new Error("Call the draft tool first so Tavern can record the exact arguments.");
     if (input.kind === "sends-as-you" && input.effect.type === "decision") input = { ...input,
       options: [{ id: "acknowledge", label: "I have the draft", detail: "Records your answer. The agent does not send anything.", recommended: false }, { id: "deny", label: "Dismiss", detail: "Nothing is sent.", recommended: false }],
@@ -1699,6 +1724,7 @@ export class Keeper {
     if (ask.kind === "cluster-write" && by === "user" && (receipt?.act !== "answerAsk" || via === "timer" || via === "cli")) throw new Error("Cluster writes require your explicit answer on the card.");
     if (ask.effect?.type === "user-waypoint" && (by !== "user" || receipt?.act !== "answerAsk" || receipt.threadId || via === "cli" || via === "timer"))
       throw new Error("This waypoint needs your explicit answer on the card.");
+    if (ask.effect?.type === "quest-start") assertQuestStartAnswer(ask, receipt, by, via);
     const scheduleApproval = ask.effect?.type === "greenlight" ? ask.effect.scheduledSlots : ask.effect?.type === "lead-plan" ? ask.effect.request.scheduledSlots : undefined;
     if ((ask.effect?.type === "member-schedules" || scheduleApproval?.length) &&
         (by !== "user" || receipt?.act !== "answerAsk" || receipt.threadId || via === "cli" || via === "timer"))
@@ -1748,7 +1774,7 @@ export class Keeper {
         assertQuestTransition(this.store, quest, to, closing ? effect.type : optionId === "hold" ? "keep-open" : "extensions", { kind: "user" }, { kind: "ask-answer", id: askId });
       }
     }
-    if (ask.boardQuestId && effect.type !== "retry-stop") this.liveQuest(ask.keeperThreadId, ask.boardQuestId);
+    if (ask.boardQuestId && effect.type !== "retry-stop" && effect.type !== "quest-start") this.liveQuest(ask.keeperThreadId, ask.boardQuestId);
     if (ask.kind === "cluster-write" && by === "user") {
       if (optionId === "confirm-run" && !ask.clusterApproval) throw new Error("Approve the exact cluster command before confirming it.");
       if (optionId === "approve" && via !== "cli" && via !== "timer") {
@@ -1762,8 +1788,11 @@ export class Keeper {
         return;
       }
     }
-    if (!ask.options.some((o) => o.id === optionId))
+    if (!ask.options.some((o) => o.id === optionId)) {
+      if (effect.type === "quest-start" && optionId === "side-quest" && effect.parentQuestId)
+        throw new Error("The parent quest ended. Choose New Keeper thread to keep this goal.");
       throw new Error("Unknown option");
+    }
     if (
       by === "default" &&
       (ask.kind !== "decision" ||
@@ -1788,6 +1817,18 @@ export class Keeper {
       });
       applyAskEffect(effect, {
         ...effects,
+        "quest-start": effect => {
+          if (effect.type !== "quest-start") return;
+          const route = this.store.get("routes", effect.routeId);
+          if (!route || route.keeperThreadId !== ask.keeperThreadId || route.kind !== "new-quest" ||
+              routeQuestIds(route).length || route.sourceMessageId !== effect.sourceMessageId ||
+              this.questGoal(ask.keeperThreadId, route).goal !== effect.goal)
+            throw new Error("This placement card no longer matches the user's outside goal.");
+          if (optionId === "side-quest") {
+            if (!effect.parentQuestId || effect.parentQuestId !== ask.boardQuestId) throw new Error("This side quest has no matching parent.");
+            this.liveQuest(ask.keeperThreadId, effect.parentQuestId);
+          }
+        },
         "grant-shell-act": () => {
           if (effect.type !== "grant-shell-act") return;
           if (by !== "keeper" && (by !== "user" || receipt?.act !== "answerAsk" || via === "timer")) throw new Error("A shell grant needs an explicit answer.");
@@ -1946,7 +1987,8 @@ export class Keeper {
         ask.keeperThreadId !== threadId ||
         ask.boardQuestId !== questId ||
         ask.state !== "answered" ||
-        ask.answer?.by !== "user"
+        ask.answer?.by !== "user" ||
+        ask.effect?.type === "quest-start"
       )
         throw new Error(`Decision source ${input.sourceRef ?? "(missing)"} must be an ask answered by the user for this quest. Read tavern_status section=asks for the recorded answer.`);
       if (input.askId && (input.askId !== ask.id || input.optionId !== ask.answer.optionId))
@@ -2893,7 +2935,8 @@ export class Keeper {
     for (const ask of asks) {
       if (!isLiveKeeper(this.store, this.member(ask.keeperThreadId))) continue;
       if (ask.boardQuestId && !isOpenQuest(this.store.get("quests", ask.boardQuestId))) {
-        if (ask.effect?.type !== "retry-stop") this.withdrawAsk(ask.id, "quest-returned");
+        if (this.detachQuestStartAsk(ask)) this.changed(ask.keeperThreadId, ask.boardQuestId);
+        else if (ask.effect?.type !== "retry-stop") this.withdrawAsk(ask.id, "quest-returned");
         continue;
       }
       if (

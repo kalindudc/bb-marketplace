@@ -49,8 +49,8 @@ describe("class selection is setup, not a goal", () => {
     f.k.route("new-keeper", { kind: "aside", summary: "Select Keeper", notes: [] });
     f.k.receiveUser("new-keeper", "Build labelCount with tests");
     f.k.route("new-keeper", { kind: "new-quest", summary: "Build labelCount", notes: [] });
-    await f.k.openQuest("new-keeper", "Build labelCount", "Labels");
-    await expect(f.k.openQuest("new-keeper", "Another placeholder", "Again")).rejects.toThrow(/unbound new-quest.*user/i);
+    const quest = await f.k.openQuest("new-keeper", "Build labelCount", "Labels");
+    await expect(f.k.openQuest("new-keeper", "Build labelCount", "Labels")).resolves.toEqual(quest);
     expect(f.k.store.all("quests")).toHaveLength(1);
   });
 
@@ -108,8 +108,8 @@ describe("class selection is setup, not a goal", () => {
   it("does not let two concurrent opens consume the same source goal", async () => {
     const f = setup(); f.k.receiveUser("lead", "Build labelCount");
     f.k.route("lead", { kind: "new-quest", summary: "Build", notes: [] });
-    const results = await Promise.allSettled([f.k.openQuest("lead", "First", "One"), f.k.openQuest("lead", "Second", "Two")]);
-    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    const [first, retry] = await Promise.all([f.k.openQuest("lead", "First", "One"), f.k.openQuest("lead", "Second", "Two")]);
+    expect(retry).toEqual(first);
     expect(f.k.store.all("quests")).toHaveLength(1);
   });
 });

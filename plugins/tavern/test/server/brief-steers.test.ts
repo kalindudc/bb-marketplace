@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
-import { seedQuest, planInput } from "./support";
+import { seedLegacyQuest, seedQuest, planInput } from "./support";
 import { captureRequestSources } from "../../src/server/request-sources";
 import { rpcHandlers } from "../../src/server/rpc";
 import { patchThreadFixture, putMemberFixture } from "./member-fixture";
@@ -11,7 +11,7 @@ async function fixture() {
   const f = setup();
   const q = await seedQuest(f.k, "lead", "Format", "Format");
   f.k.plan("lead", planInput(q.id));
-  const other = await seedQuest(f.k, "lead", "Other", "Other");
+  const other = seedLegacyQuest(f.k, "lead", "Other", "Other");
   const manifest = captureRequestSources(f.k, "lead", q.id);
   for (const [threadId, classId] of [["maker", "smith"], ["checker", "warden"]] as const)
     f.k.bind(threadId, classId, null, "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: "w1", title: "Work", errand: false, brief, requestSources: manifest });

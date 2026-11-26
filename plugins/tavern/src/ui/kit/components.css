@@ -685,15 +685,6 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .tw-chip.tw-where > b { min-width: 4ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tavern.v-member .tw-row > .tw-id { overflow: clip; overflow-clip-margin: 4px; }
 @container tavern-widget (max-width: 420px) { .tavern .tw-row { gap: 4px; } }
-/* Armed by the page's "Start a quest": one line under the row, the action carried by the line (bb's plain send can't be redirected). */
-.tavern .tw-armed { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 6px 4px 10px; border-top: 1px solid var(--tavern-line); box-shadow: inset 3px 0 0 var(--tavern-you); background: var(--tavern-you-fill); min-width: 0; }
-.tavern .tw-armed > .tavern-glyph { flex: none; color: var(--tavern-wax); }
-.tavern .tw-armed .tw-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tavern .tw-armed .btn, .tavern .tw-armed .lnk-btn { flex: none; }
-.tavern .twidget.v-armed .tw-armed { border-top: 0; }
-/* Narrow rows drop the words rather than cut them: the glyph, the button's label and the row's tooltip carry it. */
-@container tavern-widget (max-width: 420px) { .tavern .tw-armed { gap: 6px; } .tavern .tw-armed .tw-text { visibility: hidden; } }
-@media (pointer: coarse), (max-width: 560px) { .tavern .tw-armed .btn, .tavern .tw-armed .lnk-btn { min-height: 44px; } }
 @container tavern-widget (max-width: 420px) {
   .tavern.twidget.v-member .tw-row { gap: 4px; padding-inline: 6px; }
   .tavern.twidget.v-member .tw-row > .tw-member-id { min-width: 9ch; gap: 3px; }

@@ -5,7 +5,7 @@ import tavern from "../../server";
 import { rpcContract, tags } from "../../src/shared/contract";
 import { Keeper } from "../../src/server/keeper/service";
 import { KeeperStore } from "../../src/server/keeper/store";
-import { fakePort, planInput, putQuestFixture, seedQuest } from "../server/support";
+import { fakePort, planInput, putQuestFixture, seedLegacyQuest, seedQuest } from "../server/support";
 import { MIGRATIONS } from "../../src/server/migrations";
 import { withMemberFixtures } from "../server/member-fixture";
 
@@ -26,10 +26,10 @@ it("emits the tags read by unmanaged, member, and linked journal views", async (
       keeperThreadId: "lead", boardQuestId: quest.id, waypointId: "w1", errand: false, title: "Build",
       brief: { outcome: "Build", mode: "make-it-work", outOfScope: "", doneWhen: "Checks pass", context: [], questions: [], timeboxMinutes: null },
     });
-    const archived = await seedQuest(keeper, "lead", "Archived", "Archived");
+    const archived = seedLegacyQuest(keeper, "lead", "Archived", "Archived");
     keeper.plan("lead", planInput(archived.id));
     putQuestFixture(store, archived.id, { ...keeper.quest(archived.id), phase: "done", endedAt: Date.now(), archivedAt: Date.now() });
-    const deleted = await seedQuest(keeper, "lead", "Deleted", "Deleted");
+    const deleted = seedLegacyQuest(keeper, "lead", "Deleted", "Deleted");
     keeper.plan("lead", planInput(deleted.id));
     putQuestFixture(store, deleted.id, { ...keeper.quest(deleted.id), phase: "done", endedAt: Date.now(), archivedAt: Date.now(), deletedAt: Date.now() });
     await tavern(host.bb);

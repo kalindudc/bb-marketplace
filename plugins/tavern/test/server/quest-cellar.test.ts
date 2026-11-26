@@ -3,7 +3,7 @@ import { patchThreadFixture, putMemberFixture, runtimeFixture } from "./member-f
 import { putQuestFixture } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { makeThreadResponse } from "./host";
 import { registerTools } from "../../src/server/tools";
 import { readStatus, statusInput } from "../../src/server/status";
@@ -85,7 +85,7 @@ describe("quest cellar threads", () => {
 
   it("bulk cellar archives the Keeper once after all its quests leave the board", async () => {
     const f = await fixture();
-    const second = await seedQuest(f.k, "lead", "Other goal", "Other goal");
+    const second = seedLegacyQuest(f.k, "lead", "Other goal", "Other goal");
     putQuestFixture(f.k.store, second.id, { ...second, phase: "stopped" });
     const result = await f.runtime.archiveBoardQuests([f.q.id, second.id], true);
     expect(result).toMatchObject({ changed: 2, notes: [], pendingArchives: [] });
@@ -132,7 +132,7 @@ describe("quest cellar threads", () => {
   });
   it("keeps a Keeper with another uncellared quest and explains why", async () => {
     const f = await fixture();
-    await seedQuest(f.k, "lead", "Other goal", "Other goal");
+    seedLegacyQuest(f.k, "lead", "Other goal", "Other goal");
     const result = await f.runtime.archiveBoardQuests([f.q.id], true);
     expect(f.archive).toHaveBeenCalledExactlyOnceWith({ threadId: "child" });
     expect(result.notes).toEqual([expect.stringContaining("stays: it has another quest on the board")]);
@@ -150,7 +150,7 @@ describe("quest cellar threads", () => {
     const result = await f.runtime.archiveBoardQuests([f.q.id], true);
     expect(result.pendingArchives.sort()).toEqual(["child", "lead"]);
     expect(f.archive).not.toHaveBeenCalled();
-    await seedQuest(f.k, "lead", "Another goal", "Another goal");
+    seedLegacyQuest(f.k, "lead", "Another goal", "Another goal");
     vi.mocked(f.runtime.away.cleanupHeld).mockReturnValue(false);
     await f.runtime.sweep();
     expect(f.archive).toHaveBeenCalledExactlyOnceWith({ threadId: "child" });

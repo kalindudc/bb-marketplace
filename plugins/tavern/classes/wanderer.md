@@ -2,7 +2,7 @@
 id: wanderer
 label: Wanderer
 plain: general
-description: A single agent with a character and a journal. Also runs side quests for a Keeper.
+description: A single agent with a character and a journal. Also runs bounded errands for a Keeper.
 shape: roundel
 startable: true
 hireable: true

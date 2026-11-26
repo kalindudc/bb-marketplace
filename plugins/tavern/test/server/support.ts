@@ -1,6 +1,7 @@
 import type { JournalPort } from "../../src/server/ports";
 import type { Keeper } from "../../src/server/keeper/service";
-import { journalEntrySchema } from "../../src/shared/schema";
+import { journalEntrySchema, type BoardQuest, type Route } from "../../src/shared/schema";
+import { transitionQuest } from "../../src/server/keeper/quest-lifecycle";
 
 import { stampWaypoint } from "../../src/server/keeper/waypoint-journal";
 
@@ -86,6 +87,24 @@ export async function seedQuest(keeper: Keeper, threadId: string, title: string,
   keeper.receiveUser(threadId, title);
   keeper.route(threadId, { kind: "new-quest", summary: title, notes: [] });
   return keeper.openQuest(threadId, title, short);
+}
+export function seedLegacyQuest(keeper: Keeper, threadId: string, title: string, short: string, opening?: Route) {
+  if (!opening) {
+    keeper.receiveUser(threadId, title);
+    opening = keeper.route(threadId, { kind: "new-quest", summary: title, notes: [] });
+  }
+  const sourceMessageId = opening.sourceMessageId!;
+  const at = keeper.now(), id = keeper.store.id("quest");
+  const quest: BoardQuest = { id, keeperThreadId: threadId, title, short, phase: "scout", planVersion: 0,
+    greenlitVersion: null, createdAt: at, updatedAt: at, endedAt: null, archivedAt: null,
+    ...(opening.checkerHandoffHold ? { checkerHandoffHold: { id: keeper.store.id("hold"), routeId: opening.id, sourceMessageId,
+      sourceText: keeper.store.messageText(sourceMessageId)!.slice(0, 2000), reason: opening.checkerHandoffHold.reason, createdAt: at, release: null } } : {}),
+  };
+  keeper.store.atomic(() => {
+    transitionQuest(keeper.store, quest, "scout", "open", { kind: "agent", threadId }, { kind: "user-message", id: sourceMessageId }, at, { text: `Opened ${title}` });
+    keeper.store.put("routes", opening.id, { ...opening, boardQuestId: id, boardQuestIds: [id] });
+  });
+  return quest;
 }
 export function putQuestFixture(store: import("../../src/server/keeper/store").KeeperStore, id: string, quest: import("../../src/shared/schema").BoardQuest) {
   store.writeRecords("INSERT INTO tavern_records(kind,id,data,archived_at) VALUES('quests',?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data,archived_at=excluded.archived_at", id, JSON.stringify(quest), quest.archivedAt ?? null);

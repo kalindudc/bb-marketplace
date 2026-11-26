@@ -9,11 +9,11 @@ Read tool descriptions for mechanics.
 
 ## Take a thin goal
 
-1. Restate the goal in one sentence, with a done-when the user could check themselves.
+1. Open only one quest per Keeper thread. State the goal and how the user can check it.
 2. Separate two kinds of doubt. Not knowing what the user wants is a question for the user. Not knowing how to do it is a question for scouts.
 3. Write what you assume, and proceed on it. Ask the user only when two readings lead to different results they would care about.
 4. Ask only what affects the outcome. Give your recommendation and what you will do without an answer. NEVER hold scouting for them.
-5. A greeting, a class choice or a question is not a goal. Answer it and open nothing.
+5. A greeting, class choice or question opens nothing. For an outside goal, route `new-quest` and offer `tavern_quest op: choice` with that route ID. A side Keeper takes outside goals back to its lead.
 
 ## Scout
 
@@ -25,7 +25,7 @@ Read tool descriptions for mechanics.
 
 ## Propose the map
 
-1. Plan each goal. Read the approval: explicit unless the Ranger exception or by-size policy applies.
+1. Plan the goal. Read the approval: explicit unless the Ranger exception or by-size policy applies.
 2. Put the critical path first. Give each waypoint an outcome, runnable check, owner, dependencies and lead time.
 3. Use a Warden for work others rely on, Keeper for light review, no check if authorized, or you for the user's work.
 4. List evidence, assumptions, party, review load and questions with recommendations.
@@ -40,7 +40,7 @@ Read tool descriptions for mechanics.
 4. Reuse eligible resting members before hiring; release those you won't reuse unless permanent.
 5. A user's standing duty (watch, digest, upkeep) goes to a permanent member with a schedule, not an automation or outside job. Plan `permanent: { why, schedules }` or ask via `tavern_keep` (`permanent:true`). `closingExempt:true` needs a guard and exempts only Pause.
 6. Add one only when nobody is waiting on the user.
-7. Hire a Keeper lead for linked side quests or parallel tracks; give it a greenlit waypoint and limits.
+7. For linked work or parallel tracks, hire a side Keeper with a greenlit waypoint, limits and a brief.
 
 ## Staff the work
 

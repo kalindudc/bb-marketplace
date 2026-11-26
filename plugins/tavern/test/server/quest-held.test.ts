@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
-import { planInput, seedQuest, putQuestFixture } from "./support";
+import { planInput, seedLegacyQuest, seedQuest, putQuestFixture } from "./support";
 import { registerRpc } from "../../src/server/rpc";
 import { registerTools } from "../../src/server/tools/index";
 import { placementRecord } from "./placement-fixture";
@@ -59,7 +59,7 @@ describe("held quests", () => {
       f.advance(1);
       f.k.receiveUser("lead", hold ? "Pause here" : "Resume now");
       const route = f.k.route("lead", { kind: "steer", boardQuestId: q.id, summary: "User direction", notes: [] });
-      const other = await seedQuest(f.k, "lead", "Other", "Other");
+      const other = seedLegacyQuest(f.k, "lead", "Other", "Other");
       expect(() => f.k.setQuestHeld(other.id, hold, { kind: "agent", threadId: "lead" }, route.sourceMessageId!)).toThrow(/user's own routed/);
       await f.harness.behavior.invokeAgentTool(hold ? "tavern_hold" : "tavern_resume", { boardQuestId: q.id, messageId: route.sourceMessageId! }, { threadId: "lead" });
       expect(f.k.store.events("lead").at(-1)?.data.receipt).toEqual({ kind: "user-message", id: route.sourceMessageId, text: hold ? "Pause here" : "Resume now" });

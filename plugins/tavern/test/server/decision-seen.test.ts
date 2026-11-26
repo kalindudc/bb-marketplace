@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { withMemberFixtures } from "./member-fixture";
 import { putQuestFixture } from "./support";
-import { seedQuest } from "./support";
+import { seedLegacyQuest } from "./support";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardQuest, Decision } from "../../src/shared/schema";
@@ -27,7 +27,7 @@ function fixture() {
     sourceRef: null, reversible: true, undone: false, createdAt: f.time(), ...extra,
   });
   const quest = async (phase: BoardQuest["phase"], archived = false) => {
-    const q = await seedQuest(f.k,"lead", phase, phase);
+    const q = seedLegacyQuest(f.k, "lead", phase, phase);
     putQuestFixture(f.k.store, q.id, { ...q, phase, endedAt: f.time(), archivedAt: archived ? f.time() : null });
     return q.id;
   };

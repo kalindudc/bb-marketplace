@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { concludeQuest } from "./support";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { dispatch049, queued049 } from "./dispatch-fixture";
@@ -592,7 +592,7 @@ describe("remaining review coverage", () => {
   it("enforces tell guards, user route corrections, decision undo and inactive proposals", async () => {
     const { k, runtime } = setup();
     const q = await seedQuest(k, "lead", "A", "A");
-    const other = await seedQuest(k, "lead", "B", "B");
+    const other = seedLegacyQuest(k, "lead", "B", "B");
     k.endTurn("lead");
     bind(k, "child", q.id, "w1");
     k.receiveUser("lead", "Change the plan");

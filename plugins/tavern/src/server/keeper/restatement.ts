@@ -322,7 +322,7 @@ export function renderRestatement(
       "Open user asks",
       asks.map(
         (a) =>
-          `${a.id} [${a.kind}]: ${quoted(priorities ? short(a.question, 100) : a.question)}; recommended ${a.options.find((o) => o.recommended)?.label ?? "none"}; ${a.proceedAt === null ? "waits for the user" : `defaults at ${clock(a.proceedAt)}`}; holds ${a.holds.join(",") || "none"}; meanwhile ${quoted(priorities ? short(a.meanwhile, 80) : a.meanwhile)}`,
+          `${a.id} [${a.effect?.type === "quest-start" ? "quest placement" : a.kind}]: ${quoted(priorities ? short(a.question, 100) : a.question)}; recommended ${a.options.find((o) => o.recommended)?.label ?? "none"}; ${a.proceedAt === null ? "waits for the user" : `defaults at ${clock(a.proceedAt)}`}; holds ${a.holds.join(",") || "none"}; meanwhile ${quoted(priorities ? short(a.meanwhile, 80) : a.meanwhile)}`,
       ),
       priorities ? 1800 : 6000,
       "more asks; call tavern_status section=asks",

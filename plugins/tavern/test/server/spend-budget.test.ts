@@ -10,7 +10,7 @@ import { dispatch049, queued049 } from "./dispatch-fixture";
 import { makeThreadResponse } from "./host";
 import { attention } from "../../src/server/attention";
 import { rpcHandlers } from "../../src/server/rpc";
-import { planInput, seedQuest } from "./support";
+import { planInput, seedLegacyQuest, seedQuest } from "./support";
 import { setup } from "./runtime-fixture";
 import { ownershipSteps } from "../../src/server/keeper/succession-ownership";
 
@@ -205,7 +205,7 @@ describe("quest spend", () => {
 
   it("splits shared Keeper costs only over that Keeper's active quests and keeps measured zero distinct", async () => {
     const f = await fixture();
-    const sibling = await seedQuest(f.k, "lead", "Sibling", "Sibling");
+    const sibling = seedLegacyQuest(f.k, "lead", "Sibling", "Sibling");
     f.k.bind("other", "keeper", "wren", "project");
     const other = await seedQuest(f.k, "other", "Other", "Other");
     f.entry("a", 80);

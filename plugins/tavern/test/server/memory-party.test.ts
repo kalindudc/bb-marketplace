@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { rpcHandlers } from "../../src/server/rpc";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { planInput } from "./support";
@@ -148,7 +148,7 @@ describe("Durable member and review memory", () => {
   it("does not use another quest's allowance and restores an allowance after a definite spawn refusal", async () => {
     const f = await approved();
     vi.spyOn(f.runtime, "review").mockReturnValue({ waiting: 3, budget: 3, items: [] });
-    const other = await seedQuest(f.k, "lead", "Other", "Other");
+    const other = seedLegacyQuest(f.k, "lead", "Other", "Other");
     const handlers = rpcHandlers(f.runtime), client = { experimental_caller: { kind: "client" } } as never;
     await handlers.allowReview({ id: other.id }, client);
     await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow(/review/);

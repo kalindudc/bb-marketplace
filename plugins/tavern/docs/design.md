@@ -14,7 +14,7 @@ Every thread in bb also gets a Journal, which is a live checklist with steps, ev
 
 A Keeper is a lead thread that holds one or more goals for you. Keepers delegate by default and act directly only for tiny one-turn work or when you ask.
 
-Before a Keeper acts on your message, Tavern routes it as a steer for a named quest, a quick question, an unrelated aside, a new quest, or a standing rule. Standing rules stay local to that Keeper unless you make them global. When a Keeper thread grows heavy, you can refresh it onto a fresh thread without losing its quests or open requests. For large tracks of work, a Keeper can also hire a child Keeper lead under shared team and spend limits.
+A Keeper opens one board quest. Tavern records whether your message is a steer, a question, an aside, a new goal or a standing rule. A new goal in an occupied Keeper thread gets a placement card, not another quest in that thread. Refreshing a Keeper moves its existing quests and open requests to the new thread. Existing threads with multiple quests keep them.
 
 ## Members and classes
 
@@ -26,7 +26,7 @@ A class defines a thread's job, tools, and guardrails. Tavern ships five classes
 | Ranger | Scout | Read-only | Answers numbered questions with evidence inside a timed check-in box. |
 | Smith | Builder | Worktree | Edits on a branch in an isolated checkout, commits changes, runs checks, and opens draft pull requests. |
 | Warden | Checker | Checker | Inspects a maker's deliverable in a clean context, prefers another model family, and verifies or rejects it. |
-| Wanderer | General | Open when hired | Handles a bounded side quest or errand outside the full map-and-check flow. |
+| Wanderer | General | Open when hired | Handles a bounded errand outside the full map-and-check flow. |
 
 You can customize classes from the Classes page or through Markdown override files. Characters are separate from classes: a character supplies a name, pixel-art avatar, crest, and speech lines, never permissions or expertise.
 

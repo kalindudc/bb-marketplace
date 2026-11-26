@@ -54,8 +54,19 @@ it("uses the parent environment, accounts for the seat, and opens just one verif
   expect(a.keeperThreadId).toBe(member.threadId);
   expect(f.k.store.all("leadLinks")).toEqual([expect.objectContaining({ parentQuestId: f.q.id, parentWaypointId: "w1", childQuestId: a.id, childKeeperThreadId: member.threadId, parentPlan: expect.objectContaining({ version: 1, receipt: expect.objectContaining({ kind: "ask-answer" }) }), state: "linked" })]);
   expect(f.k.store.query("routes", "keeperThreadId", member.threadId)).toEqual([]);
-  await expect(f.k.openQuest("lead", "Not authorized", "No")).rejects.toThrow(/new-quest route/);
+  f.k.endTurn("lead");
+  await expect(f.k.openQuest("lead", "Not authorized", "No")).rejects.toThrow(/already has a quest/);
   await expect(f.runtime.hire("lead", "project", request(f.q.id))).rejects.toThrow(/greenlit party has no free seat for another keeper/);
+});
+
+it("refuses to open a placement card for an outside goal in a side Keeper", async () => {
+  const f = await fixture();
+  const child = await f.runtime.hire("lead", "project", request(f.q.id));
+  await f.k.openQuest(child.threadId, "Write the guide", "Guide");
+  f.k.receiveUser(child.threadId, "Also publish a separate site");
+  const route = f.k.route(child.threadId, { kind: "new-quest", summary: "Publish a separate site", notes: [] });
+  expect(() => f.k.offerQuestStart(child.threadId, route.id)).toThrow(/hiring Keeper/i);
+  expect(f.k.store.openAsks(child.threadId)).toEqual([]);
 });
 
 it("uses the global Keeper roster for an automatically assigned child lead", async () => {

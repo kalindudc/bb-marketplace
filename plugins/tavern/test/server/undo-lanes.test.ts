@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
-import { planInput, seedQuest, waypointEntry } from "./support";
+import { planInput, seedLegacyQuest, seedQuest, waypointEntry } from "./support";
 import { registerRpc } from "../../src/server/rpc";
 import { registerTools } from "../../src/server/tools";
 import type { Ask } from "../../src/shared/schema";
@@ -18,7 +18,7 @@ async function fixture(count = 10) {
   const f = setup(); dbs.push(f.k.store.db);
   registerRpc(f.bb, f.runtime); registerTools(f.bb, f.runtime);
   const q = await seedQuest(f.k, "lead", "Read the reports", "Read");
-  const next = await seedQuest(f.k, "lead", "Read another report", "Another");
+  const next = seedLegacyQuest(f.k, "lead", "Read another report", "Another");
   f.k.resetRoutes("lead");
   for (const [quest, n] of [[q, count + 1], [next, 1]] as const) {
     const base = planInput(quest.id);

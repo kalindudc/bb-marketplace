@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { rpcHandlers } from "../../src/server/rpc";
 import { setup } from "./runtime-fixture";
-import { planInput, seedQuest } from "./support";
+import { planInput, seedLegacyQuest } from "./support";
 
 it("shares room projections across keepers, quests, and waypoint owners", async () => {
   let statements = 0;
@@ -13,7 +13,7 @@ it("shares room projections across keepers, quests, and waypoint owners", async 
     for (const keeperId of ["lead", "second", "third"]) {
       k.bind(keeperId, "keeper", "wren", "project");
       for (let i = 0; i < 3; i++) {
-        const quest = await seedQuest(k, keeperId, `Quest ${i}`, `Q${i}`);
+        const quest = seedLegacyQuest(k, keeperId, `Quest ${i}`, `Q${i}`);
         k.plan(keeperId, planInput(quest.id));
         k.bind(`${keeperId}-maker-${i}`, "smith", "lark", "project", {
           keeperThreadId: keeperId, boardQuestId: quest.id, waypointId: "w1", errand: false, title: "Build",

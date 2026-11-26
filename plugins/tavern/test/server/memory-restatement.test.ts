@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { putMemberFixture } from "./member-fixture";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { describe, expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
 import { planInput } from "./support";
@@ -119,9 +119,9 @@ describe("Complete Keeper restatement", () => {
       let q;
       if (held) {
         f.k.receiveUser("lead", pad("Hold the checker handoff until my explicit signal", 2000));
-        f.k.route("lead", { kind: "new-quest", summary: title, notes: [], checkerHandoffHold: { reason: pad("Wait for my signal", 1000) } });
-        q = await f.k.openQuest("lead", title, `Q${i}`);
-      } else q = await seedQuest(f.k, "lead", title, `Q${i}`);
+        const route = f.k.route("lead", { kind: "new-quest", summary: title, notes: [], checkerHandoffHold: { reason: pad("Wait for my signal", 1000) } });
+        q = seedLegacyQuest(f.k, "lead", title, `Q${i}`, route);
+      } else q = seedLegacyQuest(f.k, "lead", title, `Q${i}`);
       ids.push(q.id);
       const base = planInput(q.id).waypoints[0]!;
       f.k.plan("lead", {
@@ -239,7 +239,7 @@ describe("Complete Keeper restatement", () => {
       "Missing plugins in README",
       "Missing",
     );
-    const loc = await seedQuest(f.k,"lead", "TypeScript line totals", "LOC");
+    const loc = seedLegacyQuest(f.k,"lead", "TypeScript line totals", "LOC");
     const entries = new Map<
       string,
       ReturnType<typeof journalEntrySchema.parse>[]

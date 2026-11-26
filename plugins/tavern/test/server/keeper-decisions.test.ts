@@ -7,7 +7,7 @@ import { TavernRuntime } from "../../src/server/runtime";
 import { registerJournal } from "../../src/server/journal";
 import { withMemberFixtures } from "./member-fixture";
 import { setup } from "./runtime-fixture";
-import { planInput, seedQuest, waypointEntry } from "./support";
+import { planInput, seedLegacyQuest, seedQuest, waypointEntry } from "./support";
 
 const databases: ReturnType<typeof setup>["k"]["store"]["db"][] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
@@ -52,7 +52,7 @@ it.each([
 
 it("uses the opening route before greenlight, but not as proof for another quest", async () => {
   const f = await fixture();
-  const thin = await seedQuest(f.k, "lead", "Scout another parser", "Scout");
+  const thin = seedLegacyQuest(f.k, "lead", "Scout another parser", "Scout");
   const opening = f.k.store.query("routes", "keeperThreadId", "lead", 50).find(route => route.boardQuestId === thin.id)!;
   await expect(f.decide({ boardQuestId: thin.id, coveredBy: { kind: "route", id: opening.id } })).resolves.toContain("Run the staging check");
   await expect(f.decide({ coveredBy: { kind: "route", id: opening.id } })).rejects.toThrow(/coveredBy.*route/i);
@@ -120,7 +120,7 @@ it("records a widget answer by its exact quest ask and selected option without a
 
   const exact = { source: "ask", askId: ask.id, optionId: "local", coveredBy: undefined, options: undefined };
   await expect(f.decide({ ...exact, optionId: "staging" })).rejects.toThrow(new RegExp(`${ask.id}.*local`));
-  const wrong = await seedQuest(f.k, "lead", "Unrelated work", "Other");
+  const wrong = seedLegacyQuest(f.k, "lead", "Unrelated work", "Other");
   await expect(f.decide({ ...exact, boardQuestId: wrong.id })).rejects.toThrow(new RegExp(`${ask.id}.*${f.q.id}`));
   await expect(f.decide({ source: "user", coveredBy: { kind: "answer", id: ask.id } })).rejects.toThrow(/cannot assert user consent/);
   await f.decide(exact);

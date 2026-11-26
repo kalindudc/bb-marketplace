@@ -2,7 +2,7 @@
 import { fixtureActivity, patchThreadFixture } from "./member-fixture";
 import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
-import { seedQuest, waypointEntry } from "./support";
+import { seedLegacyQuest, seedQuest, waypointEntry } from "./support";
 import { readStatus, statusInput } from "../../src/server/status";
 
 export async function restingFixture(classId = "ranger") {
@@ -17,7 +17,7 @@ export async function restingFixture(classId = "ranger") {
 }
 it("lists a resting Ranger across quests before hiring, with its last work and reuse scope", async () => {
   const f = await restingFixture();
-  await seedQuest(f.k, "lead", "Quest B", "B");
+  seedLegacyQuest(f.k, "lead", "Quest B", "B");
   const text = f.k.restatement("lead");
   expect(text).toContain("Free hands:");
   expect(text).toContain("Find the source");

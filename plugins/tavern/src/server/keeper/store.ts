@@ -805,6 +805,19 @@ export class KeeperStore {
     const row = this.db.prepare("SELECT thread_id, text, at, accepted FROM tavern_messages WHERE id=?").get(id) as { thread_id: string; text: string; at: number; accepted: number } | undefined;
     return row && (!settled || row.accepted === 2 && row.text.trim()) && this.keeperEventOwners(keeperId).includes(row.thread_id) ? row : undefined;
   }
+  messageWasCancelled(receiptId: string) {
+    return !!this.db.prepare(`SELECT 1 FROM tavern_events WHERE type='route.cancelled'
+      AND json_extract(data,'$.receiptId')=? LIMIT 1`).get(receiptId);
+  }
+  questOpenedFrom(questId: string, sourceMessageId: string) {
+    return !!this.db.prepare(`SELECT 1 FROM tavern_events WHERE board_quest_id=? AND type='quest.opened'
+      AND json_extract(data,'$.receipt.kind')='user-message' AND json_extract(data,'$.receipt.id')=? LIMIT 1`).get(questId, sourceMessageId);
+  }
+  questStartAsk(sourceMessageId: string): Ask | null {
+    const row = this.db.prepare(`SELECT data FROM tavern_records WHERE kind='asks' AND json_extract(data,'$.effect.type')='quest-start'
+      AND json_extract(data,'$.effect.sourceMessageId')=? LIMIT 1`).get(sourceMessageId) as { data: string } | undefined;
+    return row ? this.decode("asks", row.data) : null;
+  }
   partyMessageReceipt(keeperId: string, receiptId: string) {
     return this.db.prepare(`SELECT m.thread_id, m.text, m.at, m.accepted, e.board_quest_id
       FROM tavern_messages m JOIN tavern_events e ON json_extract(e.data,'$.receiptId')=m.id

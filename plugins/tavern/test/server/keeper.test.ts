@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { withMemberFixtures } from "./member-fixture";
 import { concludeQuest } from "./support";
-import { seedQuest } from "./support";
+import { seedLegacyQuest, seedQuest } from "./support";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 import {
@@ -436,7 +436,7 @@ describe("host boundaries", () => {
   it("stop halts only that quest's party and withdraws its asks without a model", async () => {
     const { k, runtime, harness } = setup();
     const q = await seedQuest(k,"lead", "A", "A");
-    const other = await seedQuest(k,"lead", "B", "B");
+    const other = seedLegacyQuest(k,"lead", "B", "B");
     for (const [threadId, boardQuestId] of [
       ["a", q.id],
       ["b", other.id],

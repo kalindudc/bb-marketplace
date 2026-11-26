@@ -39,6 +39,7 @@ export const ASK_EFFECTS: Record<AskEffect["type"], { act: Act; handler: keyof E
   "release-hold": { act: "releaseCheckerHandoff", handler: "release-hold" },
   "settle-waypoint": { act: "answerAsk", handler: "settle-waypoint" },
   "user-waypoint": { act: "answerAsk", handler: "user-waypoint" },
+  "quest-start": { act: "answerAsk", handler: "quest-start" },
   "member-schedules": { act: "answerAsk", handler: "member-schedules" },
   "soft-limit": { act: "answerAsk", handler: "soft-limit" },
   "communication-hold": { act: "answerAsk", handler: "communication-hold", answerOnly: true },
@@ -71,6 +72,7 @@ export function applyAskEffect(effect: AskEffect, handlers: Partial<EffectHandle
   const row = ASK_EFFECTS[effect.type];
   if (row.noticeOnly) throw new Error("This block belongs to the Keeper, not to a user answer.");
   if (receipt.by === "preapproval" && effect.type === "close-early") throw new Error("Closing early requires your explicit answer");
+  if (effect.type === "quest-start" && receipt.by !== "user") throw new Error("This quest placement needs your explicit answer.");
   if (effect.type === "lead-plan" && receipt.by !== "user") throw new Error("This lead plan needs your explicit answer.");
   if (receipt.by === "preapproval" && effect.type === "grant-shell-act") throw new Error("Pre-approval cannot issue a shell grant");
   if (receipt.by === "keeper" && !row.keeperRecovery && effect.type !== "decision" && !(effect.type === "communication-hold" && effect.hold.act === "draft") && effect.type !== "pull-request-draft" && effect.type !== "grant-shell-act") throw new Error("Keeper answers cannot apply user-only transitions");

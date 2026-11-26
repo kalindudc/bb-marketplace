@@ -7,7 +7,7 @@ export { QuestAuthority } from "./quest-authority";
 export { AskCard, wideningWords } from "./ask-card";
 export { QuestMap, layoutWaypoints, taleFigures, FigureRow, type Figure } from "./quest-map";
 export { KeptInMind, KeeperNoteRows, GateRows } from "./memory";
-export { useRemembered, useRememberedView, readRemembered, writeRemembered, armNewQuest, disarmNewQuest, useArmedNewQuest, ARMED_TTL_MS } from "./remember";
+export { useRemembered, useRememberedView, readRemembered, writeRemembered } from "./remember";
 export { Kpi, Chart, formatValue, type ChartSeries, type Format } from "./charts";
 export { RULE_SCOPE, ruleScopeLabel, useWidenRule } from "./rules";
 export { useRegistry, memberIdentity, voiceShown, type Registry } from "./registry";

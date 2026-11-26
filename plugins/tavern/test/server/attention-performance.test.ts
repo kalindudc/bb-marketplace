@@ -1,11 +1,11 @@
 // @vitest-environment node
 import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
-import { seedQuest } from "./support";
+import { seedLegacyQuest } from "./support";
 import { rpcHandlers } from "../../src/server/rpc";
 async function loadData(f: ReturnType<typeof setup>) {
   const ids: string[] = [];
-  for (let i = 0; i < 40; i++) ids.push((await seedQuest(f.k, "lead", `Q${i}`, `Q${i}`)).id);
+  for (let i = 0; i < 40; i++) ids.push(seedLegacyQuest(f.k, "lead", `Q${i}`, `Q${i}`).id);
   const put = f.k.store.db.prepare("INSERT INTO tavern_records(kind,id,data) VALUES(?,?,?)");
   f.k.store.atomic(() => {
     for (let i = 0; i < 4000; i++) put.run("notes", `n${i}`, JSON.stringify({ id: `n${i}`, keeperThreadId: "lead", boardQuestId: ids[i % 40], kind: i % 2 ? "fact" : "waiting-on-user", text: "x".repeat(200), action: "a", dueAt: null, condition: null, validUntil: null, sourceMessageId: null, routeId: null, state: i % 10 ? "done" : "open", createdAt: 1, updatedAt: 1 }));
