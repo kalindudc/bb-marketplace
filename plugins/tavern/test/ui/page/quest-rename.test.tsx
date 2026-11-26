@@ -56,7 +56,7 @@ it("renames on the quest page, validates inline, retains the draft on refusal an
     expect(document.activeElement).toBe(open);
     await page.behavior.experimental_invalidateRpc([tags.boardQuest(quest.id), tags.room()]);
     expect(await page.findByRole("heading", { name: quest.title })).toBeTruthy();
-    expect(await page.findByRole("option", { name: /^Signal lamp/ })).toBeTruthy();
+    expect(await page.findByRole("button", { name: /^Tavern pages: Repair the signal lamp/ })).toBeTruthy();
     expect(await page.findByText("renamed the quest")).toBeTruthy();
     expect(page.getByText(`Renamed “${detail.quest.title}” to “${quest.title}” · Short name: “${detail.quest.short}” to “${quest.short}”`)).toBeTruthy();
   } finally { page.lifecycle.unmount(); }
@@ -89,7 +89,7 @@ it("renders the current quest name on the sidebar, in the common room, on the ma
     <QuestMapCard detail={{ ...detail, quest }} version={null} />
   </> }, {}, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { registry: () => registry, room: () => board } });
   try {
-    await waitFor(() => expect(page.container.querySelector(".tv-squest[title='Repair the signal lamp']")?.textContent).toContain(quest.short));
+    expect((await page.findByRole("button", { name: /^Repair the signal lamp · / })).textContent).toContain(quest.short);
     await waitFor(() => expect(page.container.querySelector(".tv-room [data-quest-name]")?.textContent).toContain(quest.short));
     expect((await page.findByRole("button", { name: /^Focus on Repair the signal lamp/ })).textContent).toBe(quest.short);
     expect(await page.findByRole("article", { name: /^Quest map .*Repair the signal lamp/ })).toBeTruthy();

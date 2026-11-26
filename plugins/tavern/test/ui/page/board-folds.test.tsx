@@ -3,7 +3,7 @@ import { act, fireEvent, within, cleanup, waitFor } from "@testing-library/react
 import { afterEach, expect, it, vi } from "vitest";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { Board } from "../../../src/ui/page/board";
-import { MobileQuestOptions, QuestNav } from "../../../src/ui/page/nav";
+import { MobileNav, TavernNavItems } from "../../../src/ui/page/nav";
 import { CommonRoom } from "../../../src/ui/page/room";
 import { StopKeeperGone } from "../../../src/ui/page/stop-all";
 import { useArchive } from "../../../src/ui/page/archive";
@@ -54,15 +54,17 @@ it("agrees with the sidebar and phone picker about what is active, without mergi
   const second = { ...main, member: { ...main.member, threadId: "second", displayName: "Wren II" },
     boardQuests: [{ ...vault, id: "second-quest", keeperThreadId: "second", title: "Second quest", short: "Second quest" }] };
   const data = { ...room, keepers: [main, second, room.keepers[1]!] };
-  const slot = renderSlot({ component: () => <><nav aria-label="Sidebar"><QuestNav room={data} registry={registry} route={{ kind: "room" }} /></nav>
-    <select aria-label="Phone quests"><MobileQuestOptions room={data} /></select><CommonRoom room={data} registry={registry} /></> }, {}, {});
+  const slot = renderSlot({ component: () => <><nav aria-label="Sidebar"><TavernNavItems subPath="room" room={data} registry={registry} /></nav>
+    <MobileNav subPath="room" room={data} registry={registry} onPage={() => {}} /><CommonRoom room={data} registry={registry} /></> }, {}, {});
   const nav = within(slot.getByRole("navigation", { name: "Sidebar" }));
   expect(nav.getByText("2 active")).toBeTruthy();
   expect(nav.queryByRole("button", { name: /Keeper gone quest/ })).toBeNull();
   expect(nav.getByRole("button", { name: /^Wren, Keeper/ })).toBeTruthy();
   expect(nav.getByRole("button", { name: /^Wren II, Keeper/ })).toBeTruthy();
-  expect(slot.container.querySelectorAll(".tv-sgroup")).toHaveLength(2);
-  expect(within(slot.getByRole("combobox", { name: "Phone quests" })).queryByRole("option", { name: /Keeper gone quest/ })).toBeNull();
+  const phone = within(slot.getByRole("navigation", { name: "Tavern pages" }));
+  fireEvent.click(phone.getByRole("button", { name: /Tavern pages.*Common room/ }));
+  expect(phone.getByText("2 active")).toBeTruthy();
+  expect(phone.queryByRole("button", { name: /Keeper gone quest/ })).toBeNull();
   fireEvent.click(slot.getByRole("button", { name: /Needs a Keeper.*1/ }));
   expect(within(slot.container.querySelector<HTMLElement>("[data-board-fold=gone]")!).getByRole("button", { name: gone.short })).toBeTruthy();
 });

@@ -24,6 +24,8 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Changed
 
+- The sidebar keeps the Common room and what needs you in view. Each active quest shows what needs you and has a separate shortcut to its Keeper’s thread. Closing time shows **Away** while you are out. Open **More places** for Classes, While closed and Where work runs. On narrow pages, **Tavern pages** opens the same navigation.
+
 - New class and character saves keep only the fields you change, so untouched fields still pick up newer defaults. Older whole-file copies keep their behavior, and backups restore either format.
 - Members who change files commit as they go on their own branches and resolve their own merge conflicts. Pushes, merges into shared branches, and publishing still need their usual approvals.
 - A Keeper can hire another Keeper for an approved side seat and forward your exact steers. The side Keeper reports back without marking work done, and the hiring Keeper posts the linked answer. Side Keepers cannot hire another Keeper. Older class files and settings still load; Keeper hiring no longer has a class switch or a chain depth setting.

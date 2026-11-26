@@ -487,7 +487,7 @@ describe("Tavern page surfaces", () => {
     const slot = await sidebar("", { room: () => ({ ...room, asks: [ask], keepers: [{ ...room.keepers[0]!, boardQuests: [detail.quest, ...done, stopped, archived] }] }) });
     await slot.findByText("1 active");
     const row = slot.getByRole("button", { name: new RegExp(`^${detail.quest.title} · .* · 1 needs you$`) });
-    expect(row.getAttribute("title")).toBe(detail.quest.title);
+    expect(row.hasAttribute("title")).toBe(false);
     const fold = slot.getByRole("button", { name: "Returned and stopped: 6 returned · 1 stopped" });
     expect(fold.textContent).toContain("Returned and stopped");
     expect(fold.getAttribute("aria-expanded")).toBe("false");
@@ -500,7 +500,7 @@ describe("Tavern page surfaces", () => {
     fireEvent.click(slot.getByRole("button", { name: /Show all 7/ }));
     expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "tavern", options: { subPath: "returned" } });
   });
-  it("groups sidebar quests by Keeper when there is more than one, and is honest when only returned quests exist", async () => {
+  it("links to each quest's Keeper and is honest when only returned quests exist", async () => {
     const other = { ...room.keepers[0]!, member: { ...room.keepers[0]!.member, threadId: "keeper2" }, boardQuests: [{ ...detail.quest, id: "q2", title: "Second quest", keeperThreadId: "keeper2" }], errands: [] };
     const two = await sidebar("quest/q2", { room: () => ({ ...room, keepers: [room.keepers[0]!, other] }) });
     await two.findByText("2 active");
@@ -513,10 +513,10 @@ describe("Tavern page surfaces", () => {
   });
   it("lists the quests in the phone page picker and marks the current one", async () => {
     const slot = await page(`quest/${detail.quest.id}`);
-    const picker = await slot.findByRole("combobox", { name: "Tavern page" }) as HTMLSelectElement;
-    await waitFor(() => expect(picker.querySelector('optgroup[label="Quests on the board"]')?.textContent).toContain(detail.quest.title));
-    expect(picker.value).toBe(`quest/${detail.quest.id}`);
-    expect(picker.selectedOptions[0]!.textContent).toContain(detail.quest.title);
+    const nav = within(await slot.findByRole("navigation", { name: "Tavern pages" }));
+    fireEvent.click(await nav.findByRole("button", { name: new RegExp(`Tavern pages.*${detail.quest.title}`) }));
+    const current = nav.getByRole("button", { name: new RegExp(`^${detail.quest.title} · `) });
+    expect(current.getAttribute("aria-current")).toBe("page");
   });
   it("keeps Insights apart from The tavern, in its own Observability group with Settings", async () => {
     const slot = await sidebar("insights");
@@ -605,7 +605,7 @@ describe("Tavern page surfaces", () => {
     expect(slot.queryByText("Returned (done)")).toBeNull();
     const cellar = slot.getByRole("button", { name: /Cellar/ });
     expect(cellar.textContent).toContain("3");
-    expect(cellar.textContent).toContain("archived");
+    expect(cellar.hasAttribute("title")).toBe(false);
     const page2 = await page("archive", { room: () => structuredClone(withArchive), registry: () => structuredClone(scenes.registry), archivedBoardQuests: () => ({ quests: [], nextCursor: null }) } as never);
     const filter = await page2.findByRole("group", { name: "Show returned quests" });
     expect(within(filter).getByRole("button", { name: /Cellar/ }).getAttribute("aria-pressed")).toBe("true");

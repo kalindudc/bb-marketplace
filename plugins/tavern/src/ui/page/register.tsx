@@ -1,22 +1,21 @@
-import { hasEndedEngagement } from "../../shared/member-engagement";
-import { UrlLink, experimental_usePluginId, experimental_useRpcQuery, useBbNavigate, type ExperimentalPageTitle, type PluginAppBuilder, type PluginHomepageSectionProps, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import { experimental_usePluginId, experimental_useRpcQuery, useBbNavigate, type ExperimentalPageTitle, type PluginAppBuilder, type PluginHomepageSectionProps, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { rpcContract, type Room } from "../../shared/contract";
-import { Hearth, hearthWords, keeperStatus, onTheRoad, OpensMark, QuestRow, questNeedYouCount, rememberCount, useRegistry, vocab } from "../kit";
+import { QuestRow, questNeedYouCount, rememberCount, useRegistry } from "../kit";
 import { ClosingTimeSheet, ClosedDigest } from "./closing";
 import { ClassEditTab } from "./class-editor";
 import { CLASS_EDIT_TAB, CLOSING_TAB, CharacterVoiceTab, ClosingTimeTab, REPORTS_TAB, VOICE_TAB, useOpenPanelTab } from "./panels";
 import { ReportsTab } from "./reports";
 import { isPresentationProblem } from "./authorship";
-import { Ago, CrestOf, Empty, PageButton, PhaseMark, ReadState, type Registry, plural } from "./common";
+import { Empty, PageButton, ReadState, type Registry, plural } from "./common";
 import { TheMap } from "./connections";
-import { MobileQuestOptions, QuestNav, mobileQuestPaths } from "./nav";
-import { PageGlyph, type PageGlyphName } from "./glyphs";
-import { boardQuestState, decodePageRoute, isFinished, needYouCount, questsIn, restoreVerdict, roomAway, type PageRoute } from "./model";
+import { MobileNav, TavernNavItems } from "./nav";
+import { PageGlyph } from "./glyphs";
+import { boardQuestState, decodePageRoute, isFinished, needYouCount, questsIn, restoreVerdict, type PageRoute } from "./model";
 import { QuestAwayNotes } from "./away";
 import { MapSkeleton, PageLoad, QuestSkeleton, RoomSkeleton, RouteSkeleton, SKEL, SideNavSkeleton, StartCardsSkeleton, TaleSkeleton, FoldLoad, useRememberSideNav, useRememberShape } from "./skeletons";
 import { PanelStateProvider, panelStorageKey, readPanel, rememberPath, useRestoreScroll } from "./panel-state";
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { InsightsPage, settingsHref } from "./insights";
+import { InsightsPage } from "./insights";
 import { SettingsPage } from "./settings";
 import { QuestPage, ReturnedList } from "./quest";
 import { TalePage } from "./tale";
@@ -30,49 +29,17 @@ import { StopAllControls } from "./stop-all";
 import { StartQuest } from "./start-quest";
 import { MachinesPage } from "./machines";
 import { MemoryPage } from "./durable-memory";
-import { PLACEMENT_RPC_LIVE } from "./machines-contract";
 import { narrowTitle, useFoldedHeader, useNarrowTitle, usePageColumn } from "./page-title";
 import "./page.css";
 
-const destinations: [string, string, PageGlyphName][] = [["room", vocab("commonRoom"), "home"], ["map", vocab("connections"), "map"], ["memory", "Memory", "ledger"], ["answers", "Search answers", "question"], ["archive", vocab("cellar"), "archive"], ["characters", "Character sheets (records)", "shield"], ["classes", "Classes (types)", "file"], ["digest", "While closed (digest)", "moon"], ["closing", vocab("closing"), "lantern"]];
-/** The machine placement page joins the sidebar and the phone page picker once its server reads are live. */
-const pages = (): [string, string, PageGlyphName][] => PLACEMENT_RPC_LIVE ? [...destinations, ["machines", "Where work runs (machines)", "machine"]] : destinations;
-const isCurrent = (path: string, route: PageRoute) => path === route.kind || (path === "characters" && route.kind === "character") || (path === "classes" && (route.kind === "class" || route.kind === "overrides"));
-
-function SideLink({ path, label, glyph, count, route, room }: { path: string; label: string; glyph: PageGlyphName; count?: React.ReactNode; route: PageRoute; room?: Room }) {
-  const navigate = useBbNavigate();
-  const [word, anchor] = label.split(" (");
-  const words = room ? hearthWords(room.keepers.map(keeperStatus), { away: roomAway(room), onRoad: onTheRoad(room) }) : null;
-  const lit = words?.state === "working";
-  return <button type="button" className="tv-snav act" aria-label={lit && room ? `${label}, lit: ${words.detail.split(" · ").join(", ")}, ${needYouCount(room)} need you` : undefined} aria-current={isCurrent(path, route) ? "page" : undefined} onClick={() => navigate.toPluginPanel("tavern", { subPath: path })}>
-    {lit && room ? <Hearth words={words} surface="page" size={14} iconOnly replay={room.hearthFlicker !== false} ambientMotion={room.ambientMotion} repeatSeconds={room.repeatSeconds} /> : <PageGlyph name={glyph} />}<span className="tv-snav-l" title={label}><span className="tv-snav-w">{word}</span>{anchor && <span className="anc">{anchor.replace(/\)$/, "")}</span>}</span>{count}
-  </button>;
-}
-
 export function TavernSidebar({ subPath }: PluginNavPanelProps) {
-  const navigate = useBbNavigate();
   const pluginId = experimental_usePluginId();
   const room = experimental_useRpcQuery({ contract: rpcContract, method: "room", input: {} });
   const registry = useRegistry();
-  const route = decodePageRoute(subPath);
-  const data = room.data;
-  const asks = data ? needYouCount(data) : 0;
   const navRef = useRef<HTMLElement>(null);
-  useRememberSideNav(navRef, !!data);
-  const errands = data ? data.keepers.flatMap((k) => k.errands).filter((m) => !hasEndedEngagement(m)) : [];
+  useRememberSideNav(navRef, !!room.data);
   return <PanelStateProvider value={panelStorageKey(pluginId)}><nav ref={navRef} className="tavern tv-page tv-sidebar" aria-label="Tavern navigation">
-    <SideLink path="room" label="Common room (home)" glyph="home" route={route} room={data} count={data ? <span className={`tv-snav-c ${asks ? "y" : ""}`}>{asks > 0 && <PageGlyph name="you" size={10} />}<span>{asks} need you</span></span> : undefined} />
-    {data ? <QuestNav room={data} registry={registry.data} route={route} /> : !room.error && <SideNavSkeleton />}
-    {errands.length > 0 && <><div className="tv-shead">Side quests <span className="anc">errands</span><span className="tv-snav-c">{errands.length} out</span></div>
-      {errands.map((m) => <button type="button" key={m.threadId} className="tv-squest act" onClick={() => navigate.toThread(m.threadId)} title={`Open the side quest thread: ${m.title ?? ""}`}>{registry.data ? <CrestOf member={m} registry={registry.data} size={18} /> : <span />}<span className="tv-squest-t">{m.title ?? m.doing ?? "Side quest"}</span><Ago at={m.lastActiveAt ?? m.createdAt} /></button>)}</>}
-    <div className="tv-shead tv-shead-tavern">The tavern</div>
-    {pages().slice(1).map(([path, label, glyph]) => <SideLink key={path} path={path} label={label} glyph={glyph} route={route} count={data && path === "archive" ? <span className="tv-snav-c">{data.archivedCount}</span> : registry.data && path === "characters" ? <span className="tv-snav-c">{registry.data.characters.length}</span> : registry.data && path === "classes" ? <span className="tv-snav-c">{registry.data.classes.length}</span> : undefined} />)}
-    {!data && room.error && <ReadState error={room.error} retry={room.refetch} />}
-    <div className="tv-sfoot" role="group" aria-label="Observability">
-      <div className="tv-shead">Observability</div>
-      <SideLink path="insights" label="Insights (all data)" glyph="report" route={route} />
-      <UrlLink href={settingsHref(pluginId)} className="tv-snav act" title="Tavern's settings: opens its page in bb's Settings"><PageGlyph name="rule" /><span className="tv-snav-l"><span className="tv-snav-w">Settings</span><span className="anc">tuning</span></span><OpensMark /></UrlLink>
-    </div>
+    <TavernNavItems subPath={subPath} room={room.data} registry={registry.data} loading={!room.error && <SideNavSkeleton />} error={!room.data && room.error && <ReadState error={room.error} retry={room.refetch} />} />
   </nav></PanelStateProvider>;
 }
 
@@ -123,7 +90,7 @@ export function TavernHeader({ subPath }: PluginNavPanelProps) {
   const openTab = useOpenPanelTab();
   const registry = useRegistry();
   const start = useStartKeeper(registry.data?.classes.find(cls => cls.id === "keeper"));
-  // On a phone the title needs the room; Closing time stays in the page picker as "Closing time (away)".
+  // On a phone, Closing time stays in Tavern pages so the title bar has room.
   const narrow = useNarrowTitle(), folded = useFoldedHeader();
   return <div className={`tavern tv-page tv-head${folded ? " fold" : ""}`}>
     {!narrow && <button type="button" className="btn ghost" onClick={() => { if (!openTab(CLOSING_TAB)) navigate.toPluginPanel("tavern", { subPath: "closing" }); }} title="Closing time (away): opens the sheet in the side panel, beside the page" aria-label="Closing time"><PageGlyph name="lantern" /><span>Closing time</span></button>}
@@ -198,7 +165,6 @@ const Surface = {
 
 export function TavernPage({ subPath }: PluginNavPanelProps) {
   const route = decodePageRoute(subPath);
-  const navigate = useBbNavigate();
   const registry = useRegistry();
   const room = experimental_useRpcQuery({ contract: rpcContract, method: "room", input: {} });
   const key = panelStorageKey(experimental_usePluginId());
@@ -206,6 +172,7 @@ export function TavernPage({ subPath }: PluginNavPanelProps) {
   const here = subPath || "room";
   useEffect(() => { if (!restoring && route.kind !== "missing") rememberPath(key, here); }, [key, here, restoring, route.kind]);
   const scroller = useRef<HTMLElement>(null);
+  const routeContent = useRef<HTMLDivElement>(null);
   usePageColumn(scroller);
   const [surface, root] = shapeOf(route);
   useRememberShape(scroller, surface, root);
@@ -231,19 +198,14 @@ export function TavernPage({ subPath }: PluginNavPanelProps) {
   else body = <Surface.CommonRoom room={room.data} registry={registry.data} />;
   if (restoring) body = <p className="tv-empty" role="status">Opening where you left off…</p>;
   return <PanelStateProvider value={key}><main ref={scroller} className="tavern tv-page tv-page-root"><div className="tv-pagebody">
-    <nav className="tv-mobile-nav" aria-label="Tavern pages"><label>Page<select aria-label="Tavern page" value={subPath || "room"} onChange={(event) => navigate.toPluginPanel("tavern", { subPath: event.target.value })}><optgroup label="Pages">{pages().map(([path, label]) => <option value={path} key={path}>{label}</option>)}</optgroup><optgroup label="Observability"><option value="insights">Insights (all data)</option></optgroup>{room.data && <MobileQuestOptions room={room.data} />}{subPath !== "" && !destinations.some(([path]) => path === subPath) && subPath !== "insights" && !(room.data && mobileQuestPaths(room.data).includes(subPath)) && <option value={subPath}>{route.kind === "quest" ? "Quest (goal)" : route.kind === "tale" ? "The tale (credits)" : currentPageName(route, registry.data) ?? "This page"}</option>}</select></label></nav>
-    {registry.error && registry.data && <div className="tv-problem" role="alert" data-stuck>Registry refresh failed: {registry.error.message}. Showing the last loaded definitions.<button type="button" className="btn sm" onClick={() => void registry.refetch()}>Retry</button></div>}
-    {room.error && room.data && <div className="tv-problem" role="alert" data-stuck>Room refresh failed: {room.error.message}. Showing the last loaded board.<button type="button" className="btn sm" onClick={() => void room.refetch()}>Retry</button></div>}
-    {registry.data?.problems.filter((p) => !isPresentationProblem(p)).map((p, i) => <p className="tv-problem" role="alert" key={`${p.path}:${i}`}>{p.path}: {p.message}</p>)}
-    {body}
+    <MobileNav subPath={subPath} room={room.data} registry={registry.data} onPage={() => routeContent.current?.focus({ preventScroll: true })} />
+    <div className="tv-route-content" ref={routeContent} tabIndex={-1}>
+      {registry.error && registry.data && <div className="tv-problem" role="alert" data-stuck>Registry refresh failed: {registry.error.message}. Showing the last loaded definitions.<button type="button" className="btn sm" onClick={() => void registry.refetch()}>Retry</button></div>}
+      {room.error && room.data && <div className="tv-problem" role="alert" data-stuck>Room refresh failed: {room.error.message}. Showing the last loaded board.<button type="button" className="btn sm" onClick={() => void room.refetch()}>Retry</button></div>}
+      {registry.data?.problems.filter((p) => !isPresentationProblem(p)).map((p, i) => <p className="tv-problem" role="alert" key={`${p.path}:${i}`}>{p.path}: {p.message}</p>)}
+      {body}
+    </div>
   </div></main></PanelStateProvider>;
-}
-/** The phone picker's name for a page outside its list: the class or character it shows, as the page heading names it. */
-function currentPageName(route: { kind: string; id?: string }, registry: { classes: { id: string; label: string; plain: string }[]; characters: { id: string; name: string }[] } | undefined) {
-  if (route.kind === "overrides") return "Overrides";
-  if (route.kind === "class") { const c = registry?.classes.find((x) => x.id === route.id); return c ? `${c.label} (${c.plain})` : null; }
-  if (route.kind === "character") return registry?.characters.find((x) => x.id === route.id)?.name ?? null;
-  return null;
 }
 export function useTavernBadge() {
   const query = experimental_useRpcQuery({ contract: rpcContract, method: "attentionCount", input: {} });

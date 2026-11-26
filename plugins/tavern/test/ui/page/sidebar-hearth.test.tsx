@@ -14,10 +14,10 @@ async function sidebar(lit:boolean) {
  const s=renderSlot({component:app.navPanels[0]!.experimental_sidebar!},{subPath:"map"},{pluginId:"tavern",rpc:{room:()=>room,registry:()=>scenes.registry}});
  slots.push(s);return s;
 }
-it("uses the lit14px hearth and names its work without moving the attention count",async()=>{
+it("keeps the working hearth as large as the unlit glyph and names its work",async()=>{
  const s=await sidebar(true);
  const link=await s.findByRole("button",{name:/Common room.*lit:/i});
- expect(link.querySelector(".tavern-hearth.working svg")?.getAttribute("width")).toBe("14");
+ expect(link.querySelector(".tavern-hearth.working svg")?.getAttribute("width")).toBe("22");
  expect(link.querySelector(".tv-snav-c .tavern-hearth")).toBeNull();
  expect(link.getAttribute("aria-label")).toMatch(/lit: 1 Keeper busy, 4 on the road, 4 need you/);
  expect(link.getAttribute("aria-label")).not.toContain("·");
@@ -26,4 +26,5 @@ it("keeps the home glyph when banked",async()=>{
  const s=await sidebar(false);
  const link=await s.findByRole("button",{name:/Common room/});
  expect(link.querySelector(".tavern-hearth")).toBeNull();
+ expect(link.querySelector(".tv-home-icon svg")?.getAttribute("width")).toBe("22");
 });

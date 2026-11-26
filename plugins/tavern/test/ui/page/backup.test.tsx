@@ -190,9 +190,7 @@ describe("Export menu on Classes and Character sheets", () => {
 
   it("names the class or character in the phone page picker instead of 'Current page'", async () => {
     const slot = await page("class/smith");
-    const picker = (await slot.findByLabelText("Tavern page")) as HTMLSelectElement;
-    await waitFor(() => expect(picker.selectedOptions[0]?.textContent).toBe("Smith (builder)"));
-    expect(slot.queryByRole("option", { name: "Current page" })).toBeNull();
+    expect(await slot.findByRole("button", { name: /^Tavern pages: Smith/ })).toBeTruthy();
   });
 
   it("hides the Export menu while the server has no backup calls yet", async () => {

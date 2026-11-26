@@ -2,6 +2,12 @@
 
 Use this guide to start and steer quests, manage budgets and delegation, scale long-running work, and customize classes and characters. See [How Tavern works](design.md) for the architecture and term definitions.
 
+## Find your way around
+
+The Common room stays at the top of the sidebar. **Need you** counts moves waiting on you across Tavern, with a breakdown when their kinds are known. Each quest row counts what needs you on that quest, including review holds, not just open asks. Choose the quest title to open it, or choose the crest next to it to open its Keeper’s thread. Long Keeper names wrap beside the quest.
+
+Open **Returned and stopped** for recent finished quests or **Show all** for the full list when there are more. The **Cellar** is separate. **Closing time** comes first under **The tavern** and shows **Away** while the tavern is closed. **More places** contains Classes, While closed and Where work runs when placement is available. On a narrow page, open **Tavern pages** to see the same destinations.
+
 ## Starting, scouting, and greenlighting
 
 Open **Tavern**, choose **Start a quest**, and give your Keeper the goal, what a checked result looks like, and anything the team must avoid.

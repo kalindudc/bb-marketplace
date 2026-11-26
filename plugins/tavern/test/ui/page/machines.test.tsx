@@ -470,8 +470,9 @@ describe("Where work runs page", () => {
     const actual = await vi.importActual<typeof import("../../../src/ui/page/machines-contract")>("../../../src/ui/page/machines-contract");
     expect(actual.PLACEMENT_RPC_LIVE).toBe(true);
     const slot = await page("machines");
-    const picker = slot.getByRole("combobox", { name: "Tavern page" }) as HTMLSelectElement;
-    expect([...picker.options].map((o) => o.value)).toContain("machines");
+    const picker = within(slot.getByRole("navigation", { name: "Tavern pages" }));
+    fireEvent.click(picker.getByRole("button", { name: /^Tavern pages: Where work runs/ }));
+    expect(picker.getByRole("button", { name: "Where work runs" }).getAttribute("aria-current")).toBe("page");
     const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
     expect(settingsGroups.some(s => s.id === "machines")).toBe(true);
     const side = renderSlot({ component: plugin.navPanels[0]!.experimental_sidebar! }, { subPath: "machines" }, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { room: () => machinesRoom, registry: () => registry } as Partial<Handlers> as Handlers });
@@ -488,7 +489,7 @@ describe("Where work runs page", () => {
     const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
     const side = renderSlot({ component: plugin.navPanels[0]!.experimental_sidebar! }, { subPath: "room" }, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { room: () => machinesRoom, registry: () => registry } as Partial<Handlers> as Handlers });
     slots.push(side);
-    await within(side.container).findByText("Common room");
+    fireEvent.click(await within(side.container).findByRole("button", { name: /^More places/ }));
     expect(within(side.container).queryByText("Where work runs")).toBeNull();
   });
 });

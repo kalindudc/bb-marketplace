@@ -175,7 +175,7 @@ describe("a checker-handoff hold in the common room", () => {
     return slot;
   }
   const needYou = (slot: RenderedSlot) => Number(slot.container.querySelector("[data-room] .rm-sline .tv-hero b")!.textContent);
-  const sideCount = (slot: RenderedSlot) => Number(slot.container.querySelector(".tv-snav-c")?.textContent?.match(/\d+/)?.[0] ?? 0);
+  const sideCount = (slot: RenderedSlot) => Number(slot.container.querySelector(".tv-home-count b")?.textContent ?? 0);
   const openAsks = scenes.richRoom.asks.filter((a) => a.state === "open").length;
 
   it("counts an active hold in need you, on the status line and in the sidebar, and lists it in the queue with its release control", async () => {

@@ -357,7 +357,7 @@ export function QuietNotice(props: QuietProps) {
 }
 
 export function useNow() { const [now, setNow] = useState(Date.now); useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 60000); return () => clearInterval(timer); }, []); return now; }
-export const TimeAgo = memo(function TimeAgo({ at }: { at: number }) { const now = useNow(); return <time className="ago" dateTime={new Date(at).toISOString()} title={new Date(at).toLocaleString()}>{timeAgo(at, now)}</time>; });
+export const TimeAgo = memo(function TimeAgo({ at, showTitle = true }: { at: number; showTitle?: boolean }) { const now = useNow(); return <time className="ago" dateTime={new Date(at).toISOString()} title={showTitle ? new Date(at).toLocaleString() : undefined}>{timeAgo(at, now)}</time>; });
 
 export { QueryState } from "./skeleton";
 

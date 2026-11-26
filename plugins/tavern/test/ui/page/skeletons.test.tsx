@@ -181,7 +181,7 @@ describe("the sidebar's held quests", () => {
     slots.push(slot);
     const box = await waitFor(() => { const b = slot.container.querySelector<HTMLElement>(".sk-sidenav"); expect(b).not.toBeNull(); return b!; });
     const held = parseFloat(box.style.height);
-    expect(held).toBe(gap - 4);
+    expect(held).toBe(gap);
     // Each skeleton row stands 42 px with its gap, under a 36 px heading row.
     const rows = box.querySelectorAll(".tv-squest").length;
     expect(rows).toBeGreaterThan(0);

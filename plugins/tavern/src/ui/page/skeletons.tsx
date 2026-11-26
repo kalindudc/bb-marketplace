@@ -264,45 +264,31 @@ export function FoldLoad({ error, retry, label, lines = 3, children }: { error: 
 
 /**
  * The sidebar's quests while the room loads, in the space they last took on this device, so "The tavern" and its links below stay
- * put. The sidebar measures that space itself (rememberSideNav).
+ * put. The sidebar measures the board and errands as one block.
  */
 export function SideNavSkeleton() {
   const [gap] = useStateOnce(() => readRemembered<number>(SKEL.sideNav));
-  const h = typeof gap === "number" && gap > 0 ? gap - 4 : 0;
+  const h = typeof gap === "number" && gap > 0 ? gap : 0;
   return <QueryState error={null} loading label="the quests" skeleton={<div className="sk-sidenav" style={h ? { height: h } : undefined}>
     <div className="tv-shead"><SkLine w="14ch" /></div>
     {repeat(h ? Math.max(1, Math.floor((h - 36) / 42)) : 3, (i) => <div key={i} className="tv-squest"><SkCrest size={18} /><span className="tv-squest-t"><SkLine w={`${[70, 55, 62][i % 3]}%`} /></span></div>)}
   </div>} />;
 }
-/**
- * Remembers the space between the sidebar's home link and "The tavern" when it can change, never on a plain re-render (a Keeper tick):
- * once when the data arrives, then when a block between them resizes (a quest arrives, the Returned fold opens, the width wraps a name)
- * or is added or removed. A resize is read in the observer's callback, after layout, so it forces no layout of its own.
- */
 export function useRememberSideNav(nav: RefObject<HTMLElement | null>, ready: boolean) {
   useLayoutEffect(() => {
-    const el = nav.current;
-    if (!ready || !el) return;
-    const last = { current: -1 };
-    const measure = () => rememberSideNav(el, last);
+    const board = nav.current?.querySelector(".tv-sboard");
+    if (!ready || !board) return;
+    let last = 0;
+    const measure = () => {
+      const height = Math.round(board.getBoundingClientRect().height);
+      if (height > 0 && height !== last) { last = height; writeRemembered(SKEL.sideNav, height); }
+    };
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const sizes = new ResizeObserver(measure);
-    const watch = () => { sizes.disconnect(); for (const child of el.children) { if (child.classList.contains("tv-shead-tavern")) break; sizes.observe(child); } };
-    watch();
-    // A removed block resizes nothing that is still watched, so a change in the blocks themselves is measured at the next frame.
-    let frame = 0;
-    const blocks = new MutationObserver(() => { watch(); if (!frame) frame = requestAnimationFrame(() => { frame = 0; measure(); }); });
-    blocks.observe(el, { childList: true });
-    return () => { sizes.disconnect(); blocks.disconnect(); if (frame) cancelAnimationFrame(frame); };
+    sizes.observe(board);
+    return () => sizes.disconnect();
   }, [nav, ready]);
-}
-/** Remembers the space between the sidebar's home link and "The tavern", if it changed. */
-export function rememberSideNav(nav: HTMLElement | null, last: { current: number }) {
-  const first = nav?.querySelector(".tv-snav"), head = nav?.querySelector(".tv-shead-tavern");
-  if (!first || !head) return;
-  const gap = Math.round(head.getBoundingClientRect().top - first.getBoundingClientRect().bottom);
-  if (gap !== last.current) { last.current = gap; writeRemembered(SKEL.sideNav, gap); }
 }
 function useStateOnce<T>(init: () => T) { const r = useRef<{ v: T } | null>(null); if (!r.current) r.current = { v: init() }; return [r.current.v] as const; }
 
