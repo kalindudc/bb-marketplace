@@ -14,7 +14,7 @@ Use this reference for scoped hire rules, detection-only exceptions, scope adjus
 - Scoped Pi threads start with class tool lists and every discoverable skill's name and location. Rangers already have web search and fetch if installed. Use `tavern_hire`'s `loadout` to add exact installed names for other tools or full skill descriptions. Pi checks tool names against your session; check that the tools are also installed on the member's host. This is not a scope grant or an approval.
 - Do not write home or project class or character overrides from a party member thread. Class loadouts and saved override files never authorize a held act.
 - Use the existing typed decision for a held act. NEVER route around it with another interpreter or tool.
-- Repair a bad maker binding instead of widening a checker's scope. Ask the user to restart a missing Pi guard only when prevention is needed.
+- A guarded Warden can check a local snapshot after the maker submits evidence. Rebrief after a fresh submission. Repair a bad binding instead of widening the scope. Ask for a Pi restart only when prevention is needed.
 
 ## Cross-repo machine placement
 

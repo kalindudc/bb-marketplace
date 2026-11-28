@@ -191,11 +191,11 @@ export function wardenReview(entry: JournalEntry, threadId: string, role: Return
   if (!role.checkerEntryReview) return { problem: "Warden review authorization is unavailable for this entry." };
   return role.checkerEntryReview(entry);
 }
-export function requireWarden(entry: JournalEntry, actor: Actor, roleOf: JournalDeps["roleOf"]): string | null | undefined {
+export function requireWarden(entry: JournalEntry, actor: Actor, roleOf: JournalDeps["roleOf"]) {
   const threadId = actor.kind === "agent" ? actor.threadId : "";
   const review = wardenReview(entry, threadId, threadId ? roleOf(threadId) : null);
   if (review.problem) throw new Error(review.problem);
-  return review.note;
+  return review;
 }
 export function canManageLinks(actor: Actor, roleOf: JournalDeps["roleOf"]): boolean {
   return actor.kind === "tavern" || (actor.kind === "agent" && roleOf(actor.threadId)?.classId === "keeper");
@@ -280,9 +280,10 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
       }
       if (action.owner !== undefined && action.action !== "start") throw new Error("owner only goes with add, split, add_step, start or update.");
       for (const e of targets) {
+        let snapshotCommit: string | undefined;
         if (action.action === "start" && action.owner !== undefined && e.owner !== action.owner) { e.owner = action.owner; touch(e); }
         if (action.action === "verify" || action.action === "reject") {
-          requireWarden(e, actor, ctx.roleOf);
+          snapshotCommit = requireWarden(e, actor, ctx.roleOf).snapshotCommit;
           if (e.status !== "done") throw new Error("Only reported done entries awaiting review can receive a Warden verdict.");
           if (!e.evidence.length) throw new Error("The maker's submission needs evidence before it can be checked.");
         }
@@ -308,7 +309,9 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
         if (status === "verified" && !action.evidence?.length) throw new Error("Verification needs the Warden's own evidence.");
         if (status === "doing" && !delegated(e)) for (const other of entries) if (other.id !== e.id && other.status === "doing" && !delegated(other)) setStatus(other, "todo");
         if (action.action === "verify" || action.action === "reject") {
-          e.review = { actor, at: ctx.now, evidence: action.evidence ?? [], reason: action.reason ?? null, previousNote: e.note, memberEvidenceAt: null }; touch(e);
+          const evidence = [...action.evidence ?? []];
+          if (snapshotCommit) evidence.push({ kind: "note", ref: snapshotCommit, detail: "Tavern checker snapshot commit", exitCode: null });
+          e.review = { actor, at: ctx.now, evidence, reason: action.reason ?? null, previousNote: e.note, memberEvidenceAt: null }; touch(e);
         }
         if (action.reason !== undefined && !e.note?.includes(action.reason)) {
           e.note = action.action === "reject" && e.note ? note.parse(`Rejected: ${action.reason}\nPrevious note: ${e.note}`)

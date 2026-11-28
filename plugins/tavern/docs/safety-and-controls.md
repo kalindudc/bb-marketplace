@@ -18,6 +18,8 @@ Named sends, user-only Tavern controls, member hiring and archival restrictions,
 
 A Warden cannot edit or commit in the bound maker checkout. On macOS the ordinary shell overlay also protects the checkout and its Git metadata from child processes. Guarded check commands can write to verified ignored outputs and scratch, not to tracked files, Git metadata, or the network. Checks on a host without that containment are not described as sandboxed. Smiths keep their assigned-branch and draft ownership conditions; they don't need a path grant for an ordinary file edit. Own storage and quest scratch are conventions, not confinement.
 
+When the maker submitted work from a primary Git checkout on the server host, Tavern can bind a guarded Warden to a detached snapshot in its own storage. The snapshot contains modified and new non-ignored files, and leaves the original files, Git index, HEAD, branches and stash alone. After Tavern removes the worktree, objects written for untracked files remain unreachable in the source repository until Git's normal cleanup removes them. Report a check that needs ignored files, such as dependencies or build outputs, as blocked rather than rejected. The journal keeps the snapshot commit with the verdict. A new submission needs a new snapshot. Tavern removes the checkout when the check settles or the Warden is released, and cleans up abandoned snapshots on startup. The local snapshot uses the guarded Pi shell on macOS. Without that sandbox or when Git cannot take the snapshot, the Warden can still read but cannot run checks against the maker's checkout.
+
 ## Prevention versus detection
 
 | Surface | Guarded local Pi (macOS) | Guarded local Pi (Linux) | Claude Code, Codex, or remote |

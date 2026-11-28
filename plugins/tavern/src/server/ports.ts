@@ -76,7 +76,7 @@ export interface JournalDeps {
     canLinkWaypoint?: (link: WaypointLink) => boolean;
     canReadWaypoint?: (link: WaypointLink) => boolean;
     checkerWaypointIds?: readonly string[];
-    checkerEntryReview?: (entry: JournalEntry) => { problem?: string; note?: string | null };
+    checkerEntryReview?: (entry: JournalEntry) => { problem?: string; note?: string | null; snapshotCommit?: string };
   } | null;
   invalidate(tags: string[]): void;
   /** A Tavern member's character name for a thread, so delegated entries name their owner; null for other threads. */

@@ -58,10 +58,19 @@ export function sandboxCommand(scope: Scope, command: string, checking = false, 
     return command;
   }
   const maker = !checking && checkerWorktree(scope);
-  const roots = [...controlPaths(scope, file, cwd), ...(maker ? [maker, ...gitWriteRoots(maker)] : [])], ancestors = new Set<string>();
+  const source = scope.preset === "checker" ? scope.checks?.sourceWorktree : undefined;
+  const snapshotWorktree = checking && source ? checkerWorktree(scope) : undefined;
+  const roots = [...controlPaths(scope, file, cwd), ...(maker ? [maker, ...gitWriteRoots(maker)] : []),
+    ...(source ? [source, ...gitWriteRoots(source)] : [])], ancestors = new Set<string>();
   for (const root of roots) for (let parent = dirname(root); parent !== dirname(parent); parent = dirname(parent)) ancestors.add(parent);
   const profile = [checking ? checkerProfile(scope) : "(version 1)\n(allow default)",
-    ...roots.map(path => "(deny file-write* (subpath " + JSON.stringify(path) + "))"),
+    ...roots.map(path => {
+      const filter = "(subpath " + JSON.stringify(path) + ")";
+      // The checker profile already limits writes inside the bound snapshot to verified ignored outputs.
+      return snapshotWorktree && realPath(path) === dirname(dirname(snapshotWorktree))
+        ? `(deny file-write* (require-all ${filter} (require-not (subpath ${JSON.stringify(snapshotWorktree)}))))`
+        : `(deny file-write* ${filter})`;
+    }),
     ...[...ancestors].map(path => "(deny file-write-unlink (literal " + JSON.stringify(path) + "))"),
     "(deny file-write* (regex " + regexLiteral(".*" + projectControl(scope)) + "))",
   ].join("\n");

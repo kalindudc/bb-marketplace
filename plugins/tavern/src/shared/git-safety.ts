@@ -45,6 +45,7 @@ interface Options {
   timeoutMs?: number;
   signal?: AbortSignal;
   privateIndex?: string;
+  snapshotWorktreeDir?: string;
   metadata?: GitMetadata | null;
   readOnly?: boolean;
   childGit?: boolean;
@@ -299,7 +300,13 @@ function reciprocalWorktree(checkout: string, { gitDir, commonDir }: GitMetadata
 function containedCommand(file: string, program: string, root: string, argv: readonly string[], checkout: string, metadata: GitMetadata, options: Options): GitInvocation {
   const outside = [metadata.gitDir, metadata.commonDir].filter(path => path !== checkout && !path.startsWith(checkout + sep));
   const outsideMetadataDenied = outside.length > 0 && !reciprocalWorktree(checkout, metadata);
-  const directories = outsideMetadataDenied ? [checkout] : [checkout, ...outside];
+  let directories = outsideMetadataDenied ? [checkout] : [checkout, ...outside];
+  if (options.snapshotWorktreeDir) {
+    const temporary = fs.realpathSync(options.snapshotWorktreeDir);
+    if (outsideMetadataDenied || temporary === checkout || temporary.startsWith(checkout + sep) || checkout.startsWith(temporary + sep))
+      throw new Error("Tavern cannot isolate the checker snapshot's Git writes.");
+    directories = [metadata.gitDir, metadata.commonDir, temporary];
+  }
   const subcommand = argv[subcommandIndex(argv)], network = subcommand === "fetch" || subcommand === "push" || subcommand === "ls-remote";
   const files: string[] = [];
   if (options.privateIndex) {

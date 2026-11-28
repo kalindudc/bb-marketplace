@@ -12,8 +12,8 @@ export function checkerWorktree(scope: Scope): string | undefined {
 }
 
 export function targetsMakerWorktree(scope: Scope, paths: string[], cwd: string, destructive = false): boolean {
-  const root = checkerWorktree(scope);
-  return !!root && targetsProtectedPath(paths, cwd, scope.env.variables.HOME, target => within(target, root) || destructive && within(root, target));
+  const roots = [checkerWorktree(scope), scope.preset === "checker" ? scope.checks?.sourceWorktree : undefined];
+  return targetsProtectedPath(paths, cwd, scope.env.variables.HOME, target => roots.some(root => root && (within(target, root) || destructive && within(root, target))));
 }
 
 export function bindChecks(scope: Scope): Scope {

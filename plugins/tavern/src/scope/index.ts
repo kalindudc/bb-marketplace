@@ -15,6 +15,7 @@ import { bindWorktree, needsWorktree } from "./worktree";
 import { ensureGuardInstalled, guardStatus, piAgentDir, type GuardOptions } from "./install";
 import { ScopePolicy, type PolicyOptions, type ProjectContext } from "./policy";
 import { bindChecks } from "./checker";
+import { checkerSnapshotsPath } from "./control-files";
 
 import { withMemoryCommandPolicy } from "./memory-policy";
 
@@ -63,7 +64,7 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
   const guard = { entryPath: extensionCandidates.find(path => existsSync(path)) ?? extensionCandidates[0], ...deps.guard };
   const installation = deps.installGuard === false ? "disabled" : ensureGuardInstalled(guard);
   const database = deps.dataDir ? undefined : bb.storage.database().name;
-  const controlRoots = [join(guard.agentDir ?? piAgentDir(), "extensions/tavern-guard"), guard.entryPath,
+  const controlRoots = [join(guard.agentDir ?? piAgentDir(), "extensions/tavern-guard"), guard.entryPath, checkerSnapshotsPath(dataDir),
     ...(database ? [database, database + "-wal", database + "-shm", database + "-journal"] : [])];
   const updates = new Map<string, Promise<unknown>>();
   const enqueue = <T>(threadId: string, work: (check: (bindingChanged?: boolean) => void) => Promise<T>) => {
@@ -203,6 +204,11 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
       issueActGrant(store.file(grant.threadId), grant, check);
     },
     writeScope,
+    setCheckerChecks: (threadId: string, checks: NonNullable<Scope["checks"]>) => enqueue(threadId, async check => {
+      const record = store.records.get(threadId);
+      if (record?.template?.preset !== "checker") return;
+      return bindAndWrite(threadId, { ...record.template, checks }, check, true);
+    }),
     rebindScope,
     refreshPullRequestPolicy(threadId: string) {
       const record = store.records.get(threadId);

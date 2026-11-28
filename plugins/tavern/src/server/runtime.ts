@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { homeRebaseMatches } from "./act-patch";
 import { LimitPolicy } from "./limit-policy";
@@ -24,7 +25,7 @@ import type {
   PluginAgentConfigurationContext,
   PluginThreadEventPayloads,
 } from "@get-bb/plugin-sdk";
-import { actorSchema, classKind, DECISION_TEXT_MAX, type Actor, type Brief, type ClassDef, type LeadLink, type Member, type Report } from "../shared/schema";
+import { actorSchema, classKind, DECISION_TEXT_MAX, type Actor, type Brief, type ClassDef, type JournalEntry, type LeadLink, type Member, type Report } from "../shared/schema";
 import { TICK_PREFIX } from "../shared/text";
 import { KEEPER_SUBJECT_OWNER, keeperSubject, settled, verifiedWaypoint } from "../shared/waypoint";
 import { isCloseEffect, unsettledWaypointSchema, waiverLine, type PullRequestChoices } from "../shared/closing";
@@ -96,6 +97,7 @@ import { PlacementStore } from "./placement/store";
 import { StopAll } from "./stop-all";
 import { PlacementController } from "./placement/controller";
 import { reviewWaypointFingerprint } from "./placement/review";
+import { journalEntryFingerprint } from "./placement/submission";
 import { wardenReview } from "./journal/engine";
 
 import { undoPullRequestReady } from "./pull-request-rules";
@@ -159,6 +161,7 @@ type Hire = {
 type Thread = PluginThreadEventPayloads["thread.active"]["thread"];
 type QueuedMessage = PluginThreadEventPayloads["message.queued"]["entry"];
 const NUDGE_PREFIX = "[Tavern report reminder] ";
+const CHECKER_SNAPSHOT_LIMITATION = "If a check needs ignored files missing from the snapshot, such as dependencies or build outputs, report it as blocked rather than rejected.";
 const briefMessageId = (text: string) => /^\[Tavern brief\] id=([^\r\n]+)\n/.exec(text)?.[1];
 
 import { authorize, commitUserAct, type UserActReceipt } from "./authority";
@@ -197,6 +200,7 @@ export class TavernRuntime {
   private maintenanceAt: number | null = null;
   private initialBriefs = new Map<string, Promise<{ briefPending: boolean }>>();
   private replacingBriefs = new Set<string>();
+  private refreshingCheckerSnapshots = new Set<string>();
   private notifiedAsks = new Set<string>();
   private queueResets = new Map<string, Promise<void>>();
   private memberObservations = new Map<string, Promise<void>>();
@@ -535,6 +539,7 @@ export class TavernRuntime {
         if (member.keeperThreadId !== keeperId || this.briefQuest(member) !== briefQuestId || this.spend.held(briefQuestId)) throw new Error("The brief's owner, quest or spend gate changed. No replacement was queued.");
         if (briefQuestId) this.keeper.assertQuestNotHeld(briefQuestId);
         if (sourceRouteId) forwardedSteer(this.keeper, member.keeperThreadId!, member.boardQuestId!, sourceRouteId);
+        if (member.classId === "warden") await this.refreshCheckerSnapshot(member);
         delivery = this.queueRebrief(member, text, targets, { old: delivery, receipt: receipt?.state ?? "not-attempted", removedQueueIds }, undefined, sources);
       } finally { this.replacingBriefs.delete(threadId); }
     } else if (delivery && ((delivery.assignmentText ?? delivery.text) !== text || sources && delivery.requestSources?.id !== sources.id || waypointIds && !isDeepStrictEqual(delivery.waypointIds, targets))) {
@@ -543,6 +548,11 @@ export class TavernRuntime {
         ? "Wait for this delivery attempt to settle, then read tavern_status section=pending."
         : `To replace it, call tavern_tell for ${threadId} with supersedeBriefId: "${brief.id}".`;
       throw new Error(`A different brief is already pending for ${this.keeper.name(member)}: ${brief.id} (${brief.state}, ${Math.floor(brief.ageMs / 1000)}s old). ${next}`);
+    }
+    if (!delivery && member.classId === "warden") {
+      await this.refreshCheckerSnapshot(member);
+      member = this.requireBriefableMember(threadId);
+      if (current()) throw new Error("Another Warden brief was queued. Read the pending brief before retrying.");
     }
     return this.sendInitialBrief(threadId, (delivery ?? this.queueRebrief(member, text, targets, undefined, undefined, sources)).text);
   }
@@ -568,7 +578,10 @@ export class TavernRuntime {
     const k = this.keeper, { threadId, keeperThreadId, boardQuestId } = member, at = k.now();
     const requestSources = selectedSources ?? captureRequestSources(k, keeperThreadId!, boardQuestId);
     const actor = { kind: "agent" as const, threadId: keeperThreadId! };
-    const delivery: PendingBrief = { id: `brief_${randomUUID()}`, text: `${text}\n\n${requestSourcePacket(k, requestSources)}`, assignmentText: text, requestSources, waypointIds, ...(rangerContinuation ? { rangerContinuation } : {}), createdAt: at, state: "queued", attempts: 0, nextAttemptAt: at, attemptedAt: null, hostAfterSeq: null, error: null };
+    const target = member.classId === "warden" ? k.store.runtime(threadId).reviewTarget : undefined;
+    const snapshot = target?.localSnapshot && target.checks?.worktree
+      ? `\n\nCheck snapshot commit ${target.localSnapshot.commit} in ${target.checks.worktree} for journal entries ${target.entryIds.join(", ")}. Never run tests in the maker's checkout. ${CHECKER_SNAPSHOT_LIMITATION}` : "";
+    const delivery: PendingBrief = { id: `brief_${randomUUID()}`, text: `${text}${snapshot}\n\n${requestSourcePacket(k, requestSources)}`, assignmentText: text, requestSources, waypointIds, ...(rangerContinuation ? { rangerContinuation } : {}), createdAt: at, state: "queued", attempts: 0, nextAttemptAt: at, attemptedAt: null, hostAfterSeq: null, error: null };
     k.store.atomic(() => {
       if (member.engagement === "resting")
         transitionMember(k.store, member, "briefing", "rebrief", actor, { kind: "brief", id: delivery.id }, at, { details: { delivery } });
@@ -839,6 +852,14 @@ export class TavernRuntime {
   enableScopes(options: BackendScopeOptions = {}) {
     if (this.scopes) throw new Error("Tavern scopes are already registered");
     this.scopes = new BackendScopes(this, options);
+    this.bb.onDispose(this.keeper.journal.onChange((maker, _entries, questIds) => {
+      for (const questId of questIds) for (const member of this.keeper.store.query("members", "boardQuestId", questId, -1)) {
+        if (member.classId !== "warden" || wasReleased(member)) continue;
+        const target = this.keeper.store.runtime(member.threadId).reviewTarget;
+        if (target?.makerThreadId === maker && target.localSnapshot && target.checks?.worktree && this.checkerSnapshotSettled(target))
+          void this.closeCheckerSnapshot(member.threadId, target);
+      }
+    }));
     this.keeper.syncShellGrants = threadId => this.scopes!.syncGrants(threadId);
     this.keeper.assertDraftApprovalOpen = () => {
       if (this.closingClusterGate || this.away.store.snapshot().status.closed) throw new Error("Return from Closing time before approving this draft.");
@@ -1872,9 +1893,10 @@ export class TavernRuntime {
       },
     };
     if (!active) return null;
+    const checkerWaypointIds = this.keeper.checkerWaypoints(threadId);
     return {
       ...member,
-      checkerWaypointIds: this.keeper.checkerWaypoints(threadId),
+      checkerWaypointIds,
       checkerEntryReview: entry => {
         const link = entry.link!;
         const target = this.keeper.store.runtime(threadId).reviewTarget;
@@ -1894,9 +1916,76 @@ export class TavernRuntime {
           return { problem: "Machine-placed work needs a Warden with its pinned submission snapshot." };
         const posture = this.serviceRecords.reviewPosture(maker, member);
         if (posture === "same-family") return { problem: "A same-family Warden cannot verify or reject this maker's work." };
-        return { note: reviewLimitation(posture) };
+        const note = reviewLimitation(posture);
+        if (target?.localSnapshot && entry.status === "done") {
+          if (link.boardQuestId !== target.boardQuestId || entry.threadId !== target.makerThreadId || !checkerWaypointIds.includes(link.waypointId) ||
+              target.localSnapshot.fingerprints[entry.id] !== this.checkerSnapshotFingerprint(entry) ||
+              !target.checks?.worktree || !existsSync(target.checks.worktree))
+            return { problem: "This entry is not in the Warden's current checker snapshot. Take a fresh snapshot of the submission before its verdict." };
+          return { note, snapshotCommit: target.localSnapshot.commit };
+        }
+        return { note };
       },
     };
+  }
+  private checkerSnapshotEntries(target: ReviewTarget, waypointIds: ReadonlySet<string>) {
+    return this.keeper.journal.get(target.makerThreadId).entries.filter(entry =>
+      entry.link?.boardQuestId === target.boardQuestId && waypointIds.has(entry.link.waypointId) &&
+      entry.status === "done" && entry.evidence.length > 0);
+  }
+  private checkerSnapshotFingerprint(entry: JournalEntry) {
+    return `${entry.doneAt}:${journalEntryFingerprint(entry)}`;
+  }
+  private checkerSnapshotFingerprints(entries: JournalEntry[]) {
+    return Object.fromEntries(entries.map(entry => [entry.id, this.checkerSnapshotFingerprint(entry)]));
+  }
+  private checkerSnapshotSettled(target: ReviewTarget) {
+    const entries = this.keeper.journal.get(target.makerThreadId).entries;
+    return Object.keys(target.localSnapshot!.fingerprints).every(id =>
+      !entries.some(entry => entry.id === id && entry.status !== "verified" && entry.status !== "rejected"));
+  }
+  async removeCheckerSnapshot(id: string) {
+    try { await this.scopes?.checkerSnapshots.remove(id); }
+    catch (error) { this.bb.log.warn(`Tavern checker snapshot cleanup: ${String(error)}`); }
+  }
+  async closeCheckerSnapshot(threadId: string, target: ReviewTarget, rebind = true) {
+    if (!target.localSnapshot || !target.checks?.worktree) return;
+    const { worktree: _removed, ...checks } = target.checks;
+    this.keeper.store.patch(threadId, { reviewTarget: { ...target, checks } });
+    if (rebind) {
+      try { await this.scopes?.api.setCheckerChecks(threadId, checks); }
+      catch (error) { this.bb.log.warn(`Tavern checker scope cleanup: ${String(error)}`); }
+    }
+    await this.removeCheckerSnapshot(target.localSnapshot.id);
+  }
+  private async refreshCheckerSnapshot(member: Member) {
+    const k = this.keeper, scopes = this.scopes, id = member.threadId;
+    const target = k.store.runtime(id).reviewTarget;
+    if (!target?.localSnapshot || !target.checks || !scopes) return;
+    const entries = this.checkerSnapshotEntries(target, new Set(k.checkerWaypoints(id)));
+    if (!entries.length) return;
+    const fingerprints = this.checkerSnapshotFingerprints(entries);
+    if (target.checks.worktree && existsSync(target.checks.worktree) && isDeepStrictEqual(fingerprints, target.localSnapshot.fingerprints)) return;
+    if (this.refreshingCheckerSnapshots.has(id)) throw new Error("The Warden's next snapshot is already being prepared.");
+    this.refreshingCheckerSnapshots.add(id);
+    let unusedSnapshot: string | undefined;
+    try {
+      const [checker, maker] = await Promise.all([id, target.makerThreadId].map(threadId => this.bb.sdk.threads.get({ threadId })));
+      if (!checker || !maker || !isQuiescentThread(checker)) throw new Error("Wait for the Warden to finish its turn before binding a new checker snapshot.");
+      const { checks, snapshot, problems } = await scopes.checkerChecks(maker.environmentId, target.checks.commands, randomUUID());
+      if (!snapshot) throw new Error(problems.join("\n") || "The maker's checkout changed type. Release the Warden and hire it against the new checkout.");
+      unusedSnapshot = snapshot.id;
+      const ready = await this.bb.sdk.threads.get({ threadId: id });
+      if (!isQuiescentThread(ready) || k.store.runtime(id).reviewTarget?.localSnapshot?.id !== target.localSnapshot.id || !isLiveMember(k.store, k.member(id), "brief"))
+        throw new Error("The checker assignment changed before rebinding its snapshot.");
+      await scopes.api.setCheckerChecks(id, checks);
+      k.store.patch(id, { reviewTarget: { ...target, checks, entryIds: entries.map(entry => entry.id), localSnapshot: { ...snapshot, fingerprints } } });
+      unusedSnapshot = undefined;
+      await this.removeCheckerSnapshot(target.localSnapshot.id);
+    } finally {
+      this.refreshingCheckerSnapshots.delete(id);
+      if (unusedSnapshot) await this.removeCheckerSnapshot(unusedSnapshot);
+    }
   }
   async plan(threadId: string, input: PlanInput) {
     const q = this.keeper.owned(threadId, input.boardQuestId);
@@ -2396,6 +2485,7 @@ export class TavernRuntime {
     let placement: import("../shared/placement").PlacementRecord | null = null;
     let attempted = false;
     let childCreated: string | null = null;
+    let localSnapshot: string | undefined;
     let selectedExecution: { providerId: string; model?: string } | undefined;
     try {
       const parent = await this.bb.sdk.threads.get({ threadId });
@@ -2417,24 +2507,6 @@ export class TavernRuntime {
           this.bb.log.warn(`Tavern checker maker model ${reviewTarget.makerThreadId}: ${String(error)}`);
         }
       }
-      if (scopeResolution?.scope.preset === "checker" && this.scopes) {
-        if (checkerCommands.length > 100)
-          throw new Error(`This plan records ${checkerCommands.length} check commands; a checker scope supports at most 100. Simplify its explicit done-when commands before hiring.`);
-        const checking = reviewTarget?.snapshotId
-          ? { checks: { commands: checkerCommands }, problems: [] as string[] }
-          : await this.scopes.checkerChecks(maker?.environmentId ?? null, checkerCommands);
-        scopeResolution.scope.checks = checking.checks;
-        scopeResolution.problems.push(...checking.problems);
-        if (reviewTarget) {
-          reviewTarget = { ...reviewTarget, checks: checking.checks };
-          owner.reviewTarget = reviewTarget;
-        }
-        brief += reviewTarget?.snapshotId
-          ? `\nTrusted checker execution:\n${JSON.stringify(checking.checks, null, 2)}\nRun checks in your own checkout, using the cwd returned by tavern_ready. The pinned submitted tree is ${reviewTarget.expectedTree}, snapshot ${reviewTarget.snapshotId}. Default test/check/lint/typecheck runners accepted by the checker preset need no tool-name widening or user-run workaround. Additional commands above are verbatim from this plan, not the brief. The observed checker posture is shown once the machine is ready; use the posture returned by tavern_ready. Tracked files, Git metadata, publishing and network writes remain protected.`
-          : `\nTrusted checker execution:\n${JSON.stringify(checking.checks, null, 2)}\nDefault test/check/lint/typecheck runners accepted by the checker preset need no tool-name widening or user-run workaround. Additional commands above are verbatim from this plan, not the brief. ${recordsSubject ? "Run checks only in the trusted checkout and only if it matches the recorded subject." : "Run checks inside the exact maker worktree (or change to it first), never the Warden/Keeper checkout."} Tracked files, Git metadata, publishing and network writes remain protected.`;
-        if (!reviewTarget?.snapshotId && !checking.checks.worktree) brief += `\n${checking.problems.join("\n")} Do not run checks until the trusted maker binding is repaired.`;
-        this.keeper.store.put("hires", token, { ...this.keeper.store.get("hires", token)!, owner, initialInput: brief, scopeResolution });
-      }
       const { notes, checkIndependence, ...execution } = await resolveHireExecution(
         this.bb,
         this.scopes ? { ...executionRole, permission: "full" } : executionRole,
@@ -2448,6 +2520,37 @@ export class TavernRuntime {
         },
       );
       if (checkIndependence === "same-family") throw new Error("Cannot hire a same-family Warden for this maker. Choose a different model family.");
+      if (scopeResolution?.scope.preset === "checker" && this.scopes) {
+        if (checkerCommands.length > 100)
+          throw new Error(`This plan records ${checkerCommands.length} check commands; a checker scope supports at most 100. Simplify its explicit done-when commands before hiring.`);
+        const initialTarget = reviewTarget;
+        const requestedEntries = new Set(initialTarget?.entryIds);
+        const submitted = initialTarget && !initialTarget.snapshotId
+          ? this.checkerSnapshotEntries(initialTarget, new Set([initialTarget.waypointId, ...slot?.waypointIds ?? []]))
+            .filter(entry => entry.link!.waypointId !== initialTarget.waypointId || requestedEntries.has(entry.id)) : [];
+        const fingerprints = this.checkerSnapshotFingerprints(submitted);
+        const checking = reviewTarget?.snapshotId
+          ? { checks: { commands: checkerCommands }, problems: [] as string[], snapshot: undefined }
+          : await this.scopes.checkerChecks(maker?.environmentId ?? null, checkerCommands, submitted.length ? token : undefined,
+            execution.providerId !== "pi" || process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+              ? "A local checker snapshot needs a guarded Pi shell with the macOS sandbox" : undefined);
+        scopeResolution.scope.checks = checking.checks;
+        scopeResolution.problems.push(...checking.problems);
+        if (reviewTarget) {
+          localSnapshot = checking.snapshot?.id;
+          reviewTarget = { ...reviewTarget, checks: checking.checks,
+            ...(checking.snapshot ? { entryIds: submitted.map(entry => entry.id), localSnapshot: { ...checking.snapshot, fingerprints } } : {}) };
+          owner.reviewTarget = reviewTarget;
+        }
+        const checkout = checking.snapshot
+          ? `Check snapshot commit ${checking.snapshot.commit} in the named worktree for journal entries ${reviewTarget!.entryIds.join(", ")}. Never run tests in the maker's checkout. ${CHECKER_SNAPSHOT_LIMITATION}`
+          : recordsSubject ? "Run checks only in the trusted checkout and only if it matches the recorded subject." : "Run checks inside the exact maker worktree (or change to it first), never the Warden/Keeper checkout.";
+        brief += reviewTarget?.snapshotId
+          ? `\nTrusted checker execution:\n${JSON.stringify(checking.checks, null, 2)}\nRun checks in your own checkout, using the cwd returned by tavern_ready. The pinned submitted tree is ${reviewTarget.expectedTree}, snapshot ${reviewTarget.snapshotId}. Default test/check/lint/typecheck runners accepted by the checker preset need no tool-name widening or user-run workaround. Additional commands above are verbatim from this plan, not the brief. The observed checker posture is shown once the machine is ready; use the posture returned by tavern_ready. Tracked files, Git metadata, publishing and network writes remain protected.`
+          : `\nTrusted checker execution:\n${JSON.stringify(checking.checks, null, 2)}\nDefault test/check/lint/typecheck runners accepted by the checker preset need no tool-name widening or user-run workaround. Additional commands above are verbatim from this plan, not the brief. ${checkout} Tracked files, Git metadata, publishing and network writes remain protected.`;
+        if (!reviewTarget?.snapshotId && !checking.checks.worktree) brief += `\n${checking.problems.join("\n")} Do not run checks until the trusted maker binding is repaired.`;
+        this.keeper.store.put("hires", token, { ...this.keeper.store.get("hires", token)!, owner, initialInput: brief, scopeResolution });
+      }
       if (ruleModel) notes.unshift(...(["provider", "model", "reasoning"] as const)
         .filter(field => ruleModel[field] !== undefined)
         .map(field => `${field} ${beforeRuleRole[field] ?? (field === "provider" ? parent.providerId : "provider default")} -> ${ruleModel[field]} (rule ${modelRule!.id})`));
@@ -2652,6 +2755,7 @@ export class TavernRuntime {
         `Tavern hire.failed keeper=${threadId} class=${role.id} token=${token}: ${String(error)}`,
       );
       if (childCreated) throw new SpawnedHireNeedsRecovery(childCreated, error);
+      if (localSnapshot && (!attempted || rejectedSpawn(error))) await this.removeCheckerSnapshot(localSnapshot);
       if (attempted) this.record(rejectedSpawn(error) ? "spawn.failed" : "spawn.uncertain", { classId: role.id, error: String(error).slice(0, 2000), token }, threadId, questId, `spawn:${token}`);
       if (placement && !childCreated) {
         if (attempted && !rejectedSpawn(error)) throw error;
@@ -4662,6 +4766,17 @@ export class TavernRuntime {
     await this.maintain("service record backfill", null, [{ name: "history", run: () => this.serviceRecords.backfill() }]);
     this.keeper.store.pruneTicks();
     await this.maintain("startup hires", null, [{ name: "recovery", run: () => this.stopAll.reason() ? undefined : recoverHires(this.bb, this.keeper, undefined, id => this.spawnBriefDelivered(id), id => this.preserveCancelledHire(id)) }]);
+    if (this.scopes) {
+      const keep = new Set<string>();
+      for (const hire of this.keeper.store.all("hires")) if (hire.owner.reviewTarget?.localSnapshot) keep.add(hire.owner.reviewTarget.localSnapshot.id);
+      for (const member of this.keeper.store.all("members")) {
+        const target = this.keeper.store.runtime(member.threadId).reviewTarget;
+        if (!target?.localSnapshot || !target.checks?.worktree) continue;
+        if (wasReleased(member) || this.checkerSnapshotSettled(target)) await this.closeCheckerSnapshot(member.threadId, target);
+        else keep.add(target.localSnapshot.id);
+      }
+      await this.scopes.checkerSnapshots.sweep(keep, error => this.bb.log.warn(`Tavern checker snapshot startup cleanup: ${String(error)}`));
+    }
     const projects = new Set(
       this.keeper.store
         .all("members")

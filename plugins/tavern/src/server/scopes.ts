@@ -6,7 +6,8 @@ import { existsSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { CheckerSnapshots } from "./checker-snapshots";
 import { realPath } from "../scope/paths";
 import {
   registerScopes,
@@ -68,6 +69,7 @@ export type BackendScopeOptions = Pick<
 >;
 export class BackendScopes {
   readonly api: ReturnType<typeof registerScopes>;
+  readonly checkerSnapshots: CheckerSnapshots;
   private resolvingProject: string | undefined;
   private resolvingClass: import("../shared/schema").ClassDef | undefined;
   private readonly cwd = new Map<string, string>();
@@ -78,6 +80,7 @@ export class BackendScopes {
     readonly runtime: TavernRuntime,
     private readonly options: BackendScopeOptions = {},
   ) {
+    this.checkerSnapshots = new CheckerSnapshots(options.dataDir ?? dirname(runtime.bb.storage.database().name));
     this.api = registerScopes(runtime.bb, {
       ...options,
       pathsForThread: (threadId) => this.paths(threadId),
@@ -420,18 +423,25 @@ export class BackendScopes {
       this.resolvingClass = undefined;
     }
   }
-  async checkerChecks(environmentId: string | null, commands: string[]) {
+  async checkerChecks(environmentId: string | null, commands: string[], id?: string, snapshotProblem?: string): Promise<{
+    checks: NonNullable<Scope["checks"]>; problems: string[]; snapshot?: { id: string; commit: string };
+  }> {
     const checks: NonNullable<Scope["checks"]> = { commands };
     try {
       if (!environmentId) throw new Error("The maker has no ready environment");
       const environment = await this.runtime.bb.sdk.environments.get({ environmentId });
-      if (!environment.isWorktree || !environment.path)
-        throw new Error("The maker environment is not a linked Git worktree");
+      if (!environment.path) throw new Error("The maker environment has no checkout path");
       const config = await this.runtime.bb.sdk.system.config();
       if (environment.hostId !== config.primaryHostId)
         throw new Error("The maker worktree is not on the server host");
-      checks.worktree = gitWorktreeRoot(environment.path);
-      return { checks, problems: [] as string[] };
+      if (environment.isWorktree) {
+        checks.worktree = gitWorktreeRoot(environment.path);
+        return { checks, problems: [] };
+      }
+      if (snapshotProblem) throw new Error(snapshotProblem);
+      if (!id) throw new Error("The maker must submit journal evidence before Tavern can take a checker snapshot");
+      const { snapshot, worktree, sourceWorktree } = await this.checkerSnapshots.capture(environment.path, id);
+      return { checks: { ...checks, worktree, sourceWorktree }, problems: [], snapshot };
     } catch (error) {
       const problem = `Maker worktree unavailable; checks are closed, ordinary reads remain available: ${String(error)}`;
       this.runtime.bb.log.warn(`Tavern checker binding: ${problem}`);
@@ -1009,6 +1019,8 @@ export class BackendScopes {
     const record = this.api.localScopeRecord(threadId);
     removeShellGrantProjection(this.api.scopeFile(threadId));
     this.api.clearScope(threadId);
+    const target = k.store.runtime(threadId).reviewTarget;
+    if (target?.localSnapshot) void this.runtime.closeCheckerSnapshot(threadId, target, false);
     for (const grant of k.store.issuedShellGrants("memberThreadId", threadId)) {
       if (record && grant.scope === "once" && shellGrantUse(record.file, grant.id) !== null) this.recordGrantUse(threadId, grant.id);
       else settleShellGrant(k.store, grant.id, "expired", k.now(), "The member's scope ended.");

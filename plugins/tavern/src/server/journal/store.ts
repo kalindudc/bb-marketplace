@@ -567,7 +567,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
             const assigned = role?.checkerWaypointIds?.includes(waypointId) ?? (role?.waypointId === null || role?.waypointId === waypointId);
             if (!assigned) throw new Error("Only the Keeper or an assigned Warden can reopen another thread's linked entry.");
           }
-          const note = requireWarden(entry, actor, deps.roleOf);
+          const { note } = requireWarden(entry, actor, deps.roleOf);
           if (note && (action.action === "verify" || action.action === "reject")) verdictNotes.add(note);
         }
       }

@@ -14,6 +14,7 @@ export interface GitOptions {
   env?: Record<string, string>;
   kind?: GitKind;
   privateIndex?: string;
+  snapshotWorktreeDir?: string;
   metadata?: GitMetadata | null;
   networkRemote?: boolean;
   readOnly?: boolean;
@@ -43,7 +44,7 @@ async function runGitProcess(root: string, argv: readonly string[], options: Pro
   try {
     const signal = budget ? AbortSignal.any([budget.signal, ...(options.signal ? [options.signal] : [])]) : options.signal;
     const timeoutMs = Math.min(options.timeoutMs, remaining);
-    const setup = { kind: git.kind, extra: git.env, privateIndex: git.privateIndex, metadata: git.metadata, networkRemote: git.networkRemote, readOnly: git.readOnly, signal, timeoutMs };
+    const setup = { kind: git.kind, extra: git.env, privateIndex: git.privateIndex, snapshotWorktreeDir: git.snapshotWorktreeDir, metadata: git.metadata, networkRemote: git.networkRemote, readOnly: git.readOnly, signal, timeoutMs };
     const { env, invocation } = await (async () => {
       try {
         const env = await gitEnvironment(root, setup);

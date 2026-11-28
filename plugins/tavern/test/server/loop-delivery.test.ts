@@ -49,7 +49,7 @@ describe("Keeper loop delivery failures", () => {
 
   it("does not mark a live Keeper stopped for a reconcile scope-row 404", async () => {
     const f = setup();
-    f.runtime.scopes = { refreshScopeProjections: vi.fn(), pinWorktree: vi.fn().mockRejectedValue(Object.assign(new Error("scope missing"), { status: 404 })) } as unknown as BackendScopes;
+    f.runtime.scopes = { checkerSnapshots: { sweep: vi.fn().mockResolvedValue(undefined) }, refreshScopeProjections: vi.fn(), pinWorktree: vi.fn().mockRejectedValue(Object.assign(new Error("scope missing"), { status: 404 })) } as unknown as BackendScopes;
     await f.runtime.reconcile();
     expect(f.k.member("lead")?.state).not.toBe("stopped");
   });

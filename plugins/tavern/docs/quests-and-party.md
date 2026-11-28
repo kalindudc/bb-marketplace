@@ -57,7 +57,7 @@ Smiths and Wanderers who change files in their own worktrees commit as they go a
 
 Rangers leave the work unchanged. Wardens never edit tracked files, commit, or switch refs in the maker's checkout. Tavern's preservation before archive remains a safety net, not a substitute for commits.
 
-Only a Warden verdict counts as verified work. The journal records Keeper reviews, outside replies, and optional skips separately. Reports deliver news without moving the waypoint. On the quest page, a blocked waypoint shows the blocker, not the member’s running journal note. A Keeper can record an existing branch, pull request, or path for a Warden to check without hiring a builder. Replacing a maker or re-briefing after a rejection doesn’t require a new plan: name the affected waypoints to keep unrelated checks intact.
+Only a Warden verdict counts as verified work. The journal records Keeper reviews, outside replies, and optional skips separately. Reports deliver news without moving the waypoint. On the quest page, a blocked waypoint shows the blocker, not the member’s running journal note. A Keeper can record an existing branch, pull request, or path for a Warden to check without hiring a builder. For submitted work in a local primary checkout, a guarded Warden can check a snapshot instead of running in your checkout. Replacing a maker or re-briefing after a rejection doesn’t require a new plan: name the affected waypoints to keep unrelated checks intact.
 
 Finished members rest rather than being released on a timer. Keepers must reuse an eligible resting member before hiring a new one, can keep a working or resting member for expected follow-ups (up to seven days by default), and archive a member's thread once it is released and its work is preserved.
 

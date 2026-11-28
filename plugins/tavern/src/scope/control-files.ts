@@ -12,6 +12,7 @@ const keeperPattern = pattern([controls]), memberPattern = pattern([controls, ..
 const keeperRule = new RegExp(keeperPattern), memberRule = new RegExp(memberPattern);
 const protectsOverrides = (scope: Scope) => scope.role !== "keeper" && !scope.keeperClass;
 export const projectControl = (scope: Scope) => protectsOverrides(scope) ? memberPattern : keeperPattern;
+export const checkerSnapshotsPath = (dataDir: string) => join(dataDir, "checker-snapshots");
 
 function checkoutRoot(cwd?: string): string | undefined {
   for (let dir = cwd; dir; dir = dirname(dir)) {

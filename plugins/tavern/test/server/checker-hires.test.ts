@@ -88,8 +88,13 @@ describe("Warden checker scope at strict-host hire", () => {
     expect(f.scope().checks!.commands).toEqual(["node --test"]);
     expect(evaluate(f.scope(), { kind: "bash", toolName: "bash", input: { command: "./bin/unapproved-check" }, cwd: f.makerRoot })).toEqual({ allow: true });
   });
-  it("keeps ordinary reads available but checks closed when no linked maker root is known", async () => {
+  it("keeps ordinary reads available but checks closed when the maker checkout path is unavailable", async () => {
     const f = await fixture(false);
+    const getEnvironment = f.bb.sdk.environments.get;
+    f.bb.sdk.environments.get = async args => {
+      const environment = await getEnvironment(args);
+      return args.environmentId === "maker-env" ? { ...environment, path: null } : environment;
+    };
     await f.runtime.hire("lead", "project", f.input);
     expect(f.scope()).toMatchObject({ preset: "checker", checks: { commands: ["npm test", "./bin/check-duration --strict", "node --test"] } });
     expect(f.scope().checks!.worktree).toBeUndefined();

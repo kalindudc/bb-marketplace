@@ -96,7 +96,7 @@ describe("R4 brake regressions", () => {
     f.k.store.put("stopAll", "tavern", { state: "stopped", since: f.time(), by: { kind: "user" }, receipt: { startedAt: f.time(), completedAt: null, elapsedMs: 0, stopped: 0, keepersStopped: 0, membersStopped: 0, stillStopping: 1, failed: 0, alreadyIdle: 0, entries: [{ threadId: "member", role: "member", status: "still-stopping", error: null, confirmedAt: null }] } });
     const restarted = new TavernRuntime(f.bb, f.k, f.runtime.registry);
     const pinWorktree = vi.fn(async () => {}), refreshScopeProjections = vi.fn();
-    restarted.scopes = { pinWorktree, refreshScopeProjections, pending: () => null, clearScope: vi.fn() } as never;
+    restarted.scopes = { checkerSnapshots: { sweep: vi.fn().mockResolvedValue(undefined) }, pinWorktree, refreshScopeProjections, pending: () => null, clearScope: vi.fn() } as never;
     const repair = vi.spyOn(restarted as unknown as { repairPartyArchives(): void }, "repairPartyArchives");
     const prepareRegistry = vi.spyOn(restarted, "prepareRegistry");
     const recoverTick = vi.spyOn((restarted as unknown as { loop: { recover(id: string): Promise<void> } }).loop, "recover");

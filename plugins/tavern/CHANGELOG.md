@@ -65,6 +65,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 ### Fixed
 
 - If you ask for separate work, even a small task, the Keeper offers a side quest or a new Keeper thread instead of treating it as an aside.
+- A guarded Warden can check work submitted from a primary Git checkout without running in your checkout. Tavern records the snapshot commit with the verdict and cleans up the temporary worktree. A new submission gets its own snapshot.
 - Side quest answers follow your answer-alert setting and do not post twice for the same steer. Navigation keeps the quest title readable and shows clipped Keeper names in full on hover, and an override save error uses the saved class name.
 - Plan revisions use less memory when comparing long notes and still show the same changes.
 - Closing time holds named tools that match your stop list again, including merge, deploy and delete tools. Ordinary tool calls still run.

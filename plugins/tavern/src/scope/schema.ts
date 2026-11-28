@@ -41,7 +41,7 @@ export const scopeSchema = z.object({
   sendTools: sendToolsSchema.optional(),
   communicationAuthority: communicationAuthoritySchema.optional(),
   workspaceKind: workspaceKindSchema.optional(),
-  checks: z.object({ worktree: z.string().min(1).optional(), commands: z.array(z.string().min(1).max(8000)).max(100) }).strict().optional(),
+  checks: z.object({ worktree: z.string().min(1).optional(), sourceWorktree: z.string().min(1).optional(), commands: z.array(z.string().min(1).max(8000)).max(100) }).strict().optional(),
   controlRoots: z.array(z.string()).optional(),
   enforceFrom: z.number().int().nonnegative().optional(),
   writes: z.object({ mode: z.enum(["none", "worktree", "paths", "any"]), allow: patterns, deny: patterns }).strict(),

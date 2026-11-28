@@ -126,6 +126,7 @@ export interface ReviewTarget {
   makerThreadId: string;
   entryIds: string[];
   checks?: Scope["checks"];
+  localSnapshot?: { id: string; commit: string; fingerprints: Record<string, string> };
   snapshotId?: string;
   expectedTree?: string;
   makerSubmissionId?: string;
