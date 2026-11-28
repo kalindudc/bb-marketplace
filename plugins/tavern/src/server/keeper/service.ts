@@ -208,7 +208,7 @@ export class Keeper {
     )
       return;
     this.store.patch(keeperId, { manualStopAt: null });
-    this.reanchor(keeperId, reason);
+    this.reanchor(keeperId, reason, force);
     this.store.patch(keeperId, { queuedTickResetId: randomUUID() });
   }
   member(threadId: string) {
@@ -461,7 +461,7 @@ export class Keeper {
     });
     this.changed(q.keeperThreadId, id);
     this.invalidate([tags.mapHistory()]);
-    this.reanchor(q.keeperThreadId, "quest reopened for deviations");
+    this.reanchor(q.keeperThreadId, "quest reopened for deviations", true);
     return this.quest(id);
   }
   owned(threadId: string, id: string) {
@@ -711,7 +711,7 @@ export class Keeper {
       this.store.event(this.now(), quest.keeperThreadId, questId, "checker-handoff.released", `You released the checker handoff for ${quest.title}`, { holdId, askId, via }, { kind: "user" });
     });
     this.userAction(quest.keeperThreadId);
-    this.reanchor(quest.keeperThreadId, "user released the checker handoff");
+    this.reanchor(quest.keeperThreadId, "user released the checker handoff", true);
     this.changed(quest.keeperThreadId, questId);
     return released;
   }
@@ -1361,7 +1361,7 @@ export class Keeper {
   withdrawStaleClosing(ask: Ask, reason: string) {
     this.store.atomic(() => {
       if (this.withdrawAsk(ask.id, "closing-stale", this.now(), { kind: "tavern" }, reason))
-        this.reanchor(ask.keeperThreadId, "the closing card went stale; review the quest before proposing closing again");
+        this.reanchor(ask.keeperThreadId, "the closing card went stale; review the quest before proposing closing again", true);
     });
   }
   asks(threadId: string) {
@@ -3062,7 +3062,7 @@ export class Keeper {
         lastActiveAt: this.now(),
       });
   }
-  reanchor(threadId: string, reason: string) {
+  reanchor(threadId: string, reason: string, actionRequired = false) {
     const m = this.member(threadId);
     if (!isKeeperIdentity(this.store, m)) return;
     this.store.patch(threadId, {
@@ -3075,7 +3075,7 @@ export class Keeper {
       null,
       "reanchor.requested",
       `Re-anchor after ${reason}`,
-      { cause: reason },
+      { cause: reason, ...(actionRequired ? { actionRequired } : {}) },
     );
     this.changed(threadId);
   }

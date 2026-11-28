@@ -49,6 +49,7 @@ it("quotes the exact shipped section on a held act, only once per quest in an an
   f.held(another.id);
   expect(await f.tick()).toContain("## Decide a member's request");
   f.k.reanchor("lead", "after compaction");
+  f.held();
   expect(await f.tick()).toMatch(/Reference from your skill \(quoted\)[\s\S]*## Recover after compaction/);
   f.held();
   expect(await f.tick()).toContain("## Decide a member's request");

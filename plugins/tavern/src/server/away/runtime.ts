@@ -199,7 +199,7 @@ export class AwayRuntime {
     for (const threadId of this.keepersWithWork()) affected.add(threadId);
     for (const member of this.keepers()) {
       this.k.store.patch(member.threadId, { queuedTickResetId: randomUUID() });
-      if (affected.has(member.threadId)) this.k.reanchor(member.threadId, CLOSE_REANCHOR_REASON);
+      if (affected.has(member.threadId)) this.k.reanchor(member.threadId, CLOSE_REANCHOR_REASON, true);
     }
     await this.sweep();
     const state = this.snapshot();
@@ -218,7 +218,7 @@ export class AwayRuntime {
       await this.refreshLocalScopes();
       for (const member of this.keepers()) {
         this.k.store.patch(member.threadId, { queuedTickResetId: randomUUID() });
-        if (affected.has(member.threadId)) this.k.reanchor(member.threadId, "Tavern reopened. Read the since-return digest; held members need fresh tavern_tell instructions. Nothing resumes automatically.");
+        if (affected.has(member.threadId)) this.k.reanchor(member.threadId, "Tavern reopened. Read the since-return digest; held members need fresh tavern_tell instructions. Nothing resumes automatically.", true);
       }
       this.changed();
       await this.runtime.recheckDispatch();

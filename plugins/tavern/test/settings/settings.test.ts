@@ -50,7 +50,7 @@ describe("settings compatibility and validation", () => {
   it("keeps today's defaults, units, opt-in timers and unlimited history", () => {
     const settings = settingsSchema.parse({});
     expect(settings.knobs).toEqual({ tickSeconds: 60, typingHoldSeconds: 45, afterMessageHoldSeconds: 60,
-      staleMinutes: 20, reportBatchSeconds: 60, rangerTimeboxMaxMinutes: 30, ledgerRefreshMinutes: 10 });
+      staleMinutes: 20, reportBatchSeconds: 60, rangerTimeboxMaxMinutes: 30 });
     expect(settings.keepers).toMatchObject({ staleStrikes: 2, restatementBytes: 28000, tickFactChars: 14000 });
     expect(settings.data).toEqual({ historyDays: 0, autoArchiveDays: 0, backupKeep: 14, studyRetentionDays: 30, studyFollowupSeconds: 60 });
     expect(settings.keepers.decisionTimerMax).toBe(10080);
@@ -61,12 +61,13 @@ describe("settings compatibility and validation", () => {
     const { db } = fixture(), warnings: string[] = [];
     const store = new SettingsStore(db as unknown as Database, Date.now, undefined, message => { warnings.push(message); });
     db.prepare("UPDATE tavern_settings SET data=? WHERE id=1").run(JSON.stringify({
-      user: { removedSection: true, attention: { reviewBudget: 7, renamedSetting: true }, knobs: { tickSeconds: 90, typingHoldSeconds: "old-format", rangerTimeboxMaxMinutes: 24 }, classes: { smith: { model: "custom", removedThinking: true } }, tuning: { mode: "apply" } },
+      user: { removedSection: true, attention: { reviewBudget: 7, renamedSetting: true }, knobs: { tickSeconds: 90, typingHoldSeconds: "old-format", rangerTimeboxMaxMinutes: 24, ledgerRefreshMinutes: 8 }, classes: { smith: { model: "custom", removedThinking: true } }, tuning: { mode: "apply" } },
       pinned: { afterMessageHoldSeconds: 75, removedKnob: 90 }, tuned: { rangerTimeboxMaxMinutes: 30 }, overrides: { q1: { staleMinutes: 45, removedKnob: 70 } }, removedLayer: {},
     }));
     expect(store.read("q1")).toMatchObject({ attention: { reviewBudget: 7 }, knobs: { tickSeconds: 90, typingHoldSeconds: 45, afterMessageHoldSeconds: 75, staleMinutes: 45, rangerTimeboxMaxMinutes: 24 }, classes: { smith: { model: "custom" } } });
     expect(() => settingsSnapshotSchema.parse(store.snapshot("q1"))).not.toThrow();
     expect(warnings.some(message => message.includes("removedSection"))).toBe(true); expect(warnings.some(message => message.includes("typingHoldSeconds"))).toBe(true);
+    expect(warnings.some(message => message.includes("ledgerRefreshMinutes"))).toBe(true);
     const count = warnings.length; store.read(); store.snapshot(); expect(warnings).toHaveLength(count);
   });
   it("falls back safely for invalid stored JSON and skips obsolete saved suggestions", () => {
@@ -124,7 +125,7 @@ describe("settings compatibility and validation", () => {
       journal: { journalReminders: false, journalQuietMinutes: 24, remindEveryMinutes: 42, reportGraceMinutes: 18 },
       data: { historyDays: 90, autoArchiveDays: 14, backupKeep: 42 },
       tuning: { mode: "apply", minSamples: 42, windowDays: 17, cooldownDays: 3 },
-      knobs: { tickSeconds: 95, typingHoldSeconds: 60, afterMessageHoldSeconds: 72, staleMinutes: 24, reportBatchSeconds: 95, rangerTimeboxMaxMinutes: 17, ledgerRefreshMinutes: 8 },
+      knobs: { tickSeconds: 95, typingHoldSeconds: 60, afterMessageHoldSeconds: 72, staleMinutes: 24, reportBatchSeconds: 95, rangerTimeboxMaxMinutes: 17 },
       machines: { maxMakers: 8, maxCheckers: 4 },
     });
     store.update({ patch, revision: 0, why: "Exercise every control" });
@@ -134,6 +135,13 @@ describe("settings compatibility and validation", () => {
     expect(preview.user).toEqual(patch);
     target.replace(preview.user, preview.pinned, preview.tuned, 0, "Restore settings");
     expect(target.read()).toEqual(store.read());
+  });
+  it("ignores the retired full ledger timer without losing the other knobs", () => {
+    expect(settingsPatchSchema.safeParse({ knobs: { ledgerRefreshMinutes: 8 } }).success).toBe(false);
+    const { store } = fixture();
+    expect(previewToml("[knobs]\nledger_refresh_minutes=8\ntick_seconds=95\n", store.snapshot())).toMatchObject({
+      problems: [], user: { knobs: { tickSeconds: 95 } },
+    });
   });
   it("replaces a class picker value and clears an override with an empty object", () => {
     const { store } = fixture();

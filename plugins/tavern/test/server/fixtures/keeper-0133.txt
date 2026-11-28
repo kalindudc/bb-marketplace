@@ -34,12 +34,8 @@ None
 Free hands:
 None
 
-Decided for you since the last tick: None
-
 Errands in flight:
 None
-
-Review queue: 2 of 3
 
 Steers still in force:
 Q-LOC, 01:33 (local with offset): user "Close LOC like missing-plugins: a plan and Warden check of loc.md"; not yet applied to a plan or decision

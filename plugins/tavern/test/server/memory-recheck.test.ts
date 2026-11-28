@@ -58,11 +58,11 @@ describe("Memory re-check regressions", () => {
       }
     },
   );
-  it("N-1 a ten-minute refresh changes the next real tick, not its wake schedule", async () => {
+  it("N-1 elapsed time alone does not wake or force a full snapshot", async () => {
     const f = setup();
     await seedQuest(f.k, "lead", "Awaiting the user", "Wait");
     f.k.store.patch("lead", { userAt: null });
-    f.k.reanchor("lead", "initial");
+    f.k.store.event(f.time(), "lead", null, "member.failed", "Initial fact");
     await f.runtime.tick("lead");
     f.advance(8 * 3600_000);
     await f.runtime.tick("lead");
@@ -70,13 +70,13 @@ describe("Memory re-check regressions", () => {
     f.k.store.event(f.time(), "lead", null, "member.failed", "New fact");
     await f.runtime.tick("lead");
     expect(sends(f)).toHaveLength(2);
-    expect(sends(f).at(-1)).toContain("Ledger as of");
+    expect(sends(f).at(-1)).toContain("No ledger changes");
   });
   it("N-3 tells the Keeper to use a newer configure version instead of the older tick", async () => {
     const f = setup();
     await seedQuest(f.k, "lead", "A", "A");
     f.k.store.patch("lead", { userAt: null });
-    f.k.reanchor("lead", "initial");
+    f.k.store.event(f.time(), "lead", null, "member.failed", "Initial fact");
     await f.runtime.tick("lead");
     const tickVersion = Number(/version (\d+)/.exec(sends(f)[0]!)![1]);
     f.k.memory.note("lead", {

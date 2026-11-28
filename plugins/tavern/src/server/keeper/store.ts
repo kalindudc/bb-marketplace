@@ -176,7 +176,7 @@ export interface TickBatch {
   heldNewsProgress?: Record<string, number>;
   continuation?: { eventId: number; offset: number } | null;
   reportIds: string[];
-  ledger?: { hash: string; version: number; asOf: number };
+  ledger?: { hash: string; version: number; asOf: number; text?: string; clipped?: boolean; loadId?: string };
   fullLedger?: boolean;
   gateReminderKeys?: string[];
   gateWarnings?: { key: string; value: string }[];
@@ -245,7 +245,7 @@ export interface Runtime {
   placementFirstTurnSettled?: boolean;
   turnStartedAt?: number | null;
   ledger?: { hash: string; version: number; asOf: number };
-  lastLedger?: { hash: string; version: number; at: number };
+  lastLedger?: { hash: string; version: number; at: number; text?: string; clipped?: boolean; loadId?: string };
   briefWarningsSeen?: Record<string, string>;
   manualStopAt?: number | null;
   queuedTickResetId?: string | null;
@@ -897,7 +897,7 @@ export class KeeperStore {
   }
   putTick(batch: TickBatch) {
     const stored = ["delivered", "cancelled"].includes(batch.state)
-      ? { ...batch, text: "" }
+      ? { ...batch, text: "", ...(batch.ledger ? { ledger: { hash: batch.ledger.hash, version: batch.ledger.version, asOf: batch.ledger.asOf } } : {}) }
       : batch;
     this.db
       .prepare(

@@ -125,7 +125,6 @@ const NUMBER_HELP: Record<{ [G in keyof typeof KNOB_FIELDS]: keyof typeof KNOB_F
   minSamples: "How much recorded work Tavern needs before it can suggest a change.",
   windowDays: "How far back Tavern looks for evidence when tuning.",
   cooldownDays: "How long Tavern waits before automatically changing the same knob again.",
-  ledgerRefreshMinutes: "How often the Keeper gets the full ledger even when nothing has changed.",
 };
 
 function AgentLimits({ title, hint, groups }: { title: string; hint: string; groups: (keyof typeof KNOB_FIELDS)[] }) {
@@ -737,7 +736,7 @@ export function TunedSection() {
         </div>
       </li>;
     })}</ul>
-    <AgentLimits title="Ledger and tuner limits" hint="These limits control ledger refresh and the tuner’s evidence. They are not auto-tuned." groups={["knobs", "tuning"]} />
+    <AgentLimits title="Tuner limits" hint="These limits control the tuner’s evidence. They are not auto-tuned." groups={["tuning"]} />
     <h4>Live quest overrides</h4>
     <p className="tv-set-intro">A Keeper’s override ends with its quest and is not exported to TOML.</p>
     {d.liveOverrides?.length ? <ul className="tv-settings-keys">{d.liveOverrides.map(o => <li className="tv-set-row" key={`${o.questId}:${o.key}`} data-settings-row={`knobs.${o.key}`}>

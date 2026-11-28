@@ -61,17 +61,6 @@ it("clips a large tick fact at the selected cap and preserves its continuation",
   expect(limited.measurements?.facts.chars).toBeLessThan(4500);
 });
 
-it("sends the ledger earlier without faking a ledger change", () => {
-  const f = fixture();
-  f.k.store.patch("lead", { reanchor: null });
-  const ledger = f.k.ledger("lead");
-  f.k.store.patch("lead", { lastLedger: { hash: ledger.hash, version: ledger.version, at: f.time() - 180_000 } });
-  f.k.store.event(f.time(), "lead", null, "member.hired", "new fact", {}, { kind: "tavern" });
-  expect(f.runtime["loop"]["batch"]("lead")!.fullLedger).toBe(false);
-  f.save({ knobs: { ledgerRefreshMinutes: 2 } });
-  expect(f.runtime["loop"]["batch"]("lead")!.fullLedger).toBe(true);
-});
-
 it("asks after the chosen number of refusals and uses the configured retry gap", () => {
   const f = fixture();
   f.save({ keepers: { failuresBeforeAsk: 3, retryAfterSeconds: 13 } });

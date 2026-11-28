@@ -97,3 +97,24 @@ it("hints once about working with recent thread activity but no evidence, withou
     expect.objectContaining({ data: { memberThreadId: "waiting" } }),
   ]);
 });
+
+it("carries a quiet member in the next ledger without waking until there is actionable news", async () => {
+  const f = await party();
+  f.k.activity("other", "working");
+  f.k.activity("waiting", "working");
+  f.advance(20 * 60_000);
+  f.k.touch("waiting");
+  f.k.touch("other");
+  f.k.stale();
+  await f.runtime.tick("lead");
+  const sends = () => f.harness.inspection.sdk.callsTo("threads.send");
+  expect(sends()).toHaveLength(0);
+  expect(f.k.restatement("lead")).toMatch(/no progress evidence since [^;]+; "waiting"/);
+  f.advance(20 * 60_000);
+  f.k.touch("waiting");
+  f.k.stale();
+  await f.runtime.tick("lead");
+  expect(sends()).toHaveLength(1);
+  expect(JSON.stringify(sends()[0]?.args)).toContain("member.stale");
+  expect(JSON.stringify(sends()[0]?.args)).not.toContain("member.quiet");
+});

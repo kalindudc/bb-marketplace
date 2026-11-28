@@ -61,8 +61,11 @@ it("delivers a once-only reminder to an idle Keeper through the real tick loop",
 it("puts a resting, settled member and its held machine in the ledger and status", async () => {
   const f = await fixture();
   f.runtime.placements().store.reserve(placementRecord({ memberThreadId: f.m.threadId, keeperThreadId: "lead", questId: f.q.id }), { maxMakers: 2, maxCheckers: 2 });
-  f.advance(40 * 60_000);
-  expect(f.k.restatement("lead")).toContain("resting 40 min; machine held");
+  f.advance(35 * 60_000);
+  const ledger = f.k.ledger("lead");
+  f.advance(5 * 60_000);
+  expect(ledger.text).toMatch(/resting since .*; machine held/);
+  expect(f.k.ledger("lead")).toEqual(ledger);
   expect(JSON.stringify(readStatus(f.runtime, "lead", statusInput.parse({})))).toContain('"machineHeld":true');
   expect(f.runtime.restNote(f.m)).not.toContain("Releases at");
   expect((await rpcHandlers(f.runtime).room({}, {} as never)).keepers[0]).toHaveProperty("freeHands", 1);
@@ -111,7 +114,7 @@ it("lists a stale Warden in the tick even without a rejected waypoint", async ()
   await f.runtime.tick("lead");
   expect(sends()).toHaveLength(1);
   const text = (sends()[0]!.args[0] as { input: { text: string }[] }).input[0]!.text;
-  expect(text.split("Free hands:")[1]?.split("\n\n")[0]).toMatch(/\(warden, resting\).*resting 42 min.*re-brief or release/);
+  expect(text.split("Free hands:")[1]?.split("\n\n")[0]).toMatch(/\(warden, resting\).*resting since .*re-brief or release/);
   expect(f.bb.sdk.threads.stop).not.toHaveBeenCalled();
 });
 it("lists a resting Warden as soon as the quest's work is complete", async () => {
@@ -121,7 +124,7 @@ it("lists a resting Warden as soon as the quest's work is complete", async () =>
   expect(f.k.restatement("lead").split("Free hands:")[1]?.split("\n\n")[0]).toBe("\nNone");
   f.port.linkedEntries = () => [waypointEntry("maker", f.q.id)];
   f.k.settle("lead", { boardQuestId: f.q.id, waypointId: "w1", as: "accepted", reason: "Read the source" });
-  expect(f.k.restatement("lead").split("Free hands:")[1]?.split("\n\n")[0]).toMatch(/\(warden, resting\).*resting 0 min.*re-brief or release/);
+  expect(f.k.restatement("lead").split("Free hands:")[1]?.split("\n\n")[0]).toMatch(/\(warden, resting\).*resting since .*re-brief or release/);
 });
 it.each(["verified", "rejected"] as const)("does not automatically release a Warden after a %s verdict", async status => {
   const f = await fixture("warden");

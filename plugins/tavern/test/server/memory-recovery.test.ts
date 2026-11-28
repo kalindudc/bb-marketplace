@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { withMemberFixtures } from "./member-fixture";
 import { seedLegacyQuest, seedQuest } from "./support";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import {
   makePluginAgentConfigurationContext,
@@ -9,7 +9,7 @@ import {
 } from "./host";
 import { Keeper } from "../../src/server/keeper/service";
 import { TavernRuntime } from "../../src/server/runtime";
-import { queued049 } from "./dispatch-fixture";
+import { dispatch049, queued049 } from "./dispatch-fixture";
 import { planInput } from "./support";
 
 function observeEvents(f: ReturnType<typeof setup>, events: unknown[]) {
@@ -127,64 +127,160 @@ describe("Keeper context-loss recovery", () => {
     ]);
     expect(f.k.store.runtime("lead").failureCount).toBe(0);
   });
-  it("dates plain fenced snapshots, shares versions with configure and refreshes changed and ten-minute ledgers", async () => {
+  const news = (f: ReturnType<typeof setup>) => f.k.store.event(f.time(), "lead", null, "route.corrected", "A factual notification");
+  it("sends added and removed ledger lines, never a periodic full refresh", async () => {
     const f = setup();
     await seedQuest(f.k, "lead", "Live goal", "Live");
     f.k.store.patch("lead", { userAt: null });
-    f.k.memory.note("lead", {
-      kind: "fact",
-      text: "Remember this ``` fence safely",
-    });
-    const config = f.runtime.configure(
-      makePluginAgentConfigurationContext({ thread: { id: "lead" } }),
-    ).instructions!;
-    const version = /Ledger as of .*version (\d+)/.exec(config)![1];
-    expect(config).toContain("highest ledger version wins");
-    expect(config).toContain("```text\nStanding rules:");
-    expect(config).not.toContain('"Standing rules:\\n');
-    f.k.reanchor("lead", "thread/compacted");
+    f.k.memory.note("lead", { kind: "fact", text: "Remember this ``` fence safely" });
+    const expiring = f.k.memory.note("lead", { kind: "fact", text: "This note will expire", validUntil: f.time() + 180_000 });
+    news(f);
     await f.runtime.tick("lead");
-    expect(sends(f)[0]).toContain(`version ${version}`);
-    expect(sends(f)[0]).toContain("after compaction");
+    const first = sends(f)[0]!;
+    expect(first).toContain("Ledger as of");
+    expect(first).toContain("```text\nStanding rules:");
+    expect(first).toContain("Remember this `\u200b`` fence safely");
+    const version = /Ledger as of .*version (\d+)/.exec(first)![1];
     f.advance(61_000);
-    f.k.store.event(
-      f.time(),
-      "lead",
-      null,
-      "route.corrected",
-      "A factual notification",
-    );
+    news(f);
     await f.runtime.tick("lead");
-    expect(sends(f).at(-1)).toContain("Ledger unchanged since");
-    expect(sends(f).at(-1)).toContain("Priorities");
-    f.k.memory.note("lead", { kind: "fact", text: "A new durable fact" });
-    f.advance(61_000);
-    f.k.store.event(
-      f.time(),
-      "lead",
-      null,
-      "route.corrected",
-      "Another notification",
-    );
-    await f.runtime.tick("lead");
-    expect(sends(f).at(-1)).toContain("A new durable fact");
-    expect(sends(f).at(-1)).not.toContain("Ledger unchanged since");
-    expect(Number(/version (\d+)/.exec(sends(f).at(-1)!)![1])).toBeGreaterThan(
-      Number(version),
-    );
+    expect(sends(f).at(-1)).toContain(`You last saw version ${version}`);
+    expect(sends(f).at(-1)).toContain("No ledger changes");
+    expect(f.k.ledger("lead").version).toBe(Number(version));
     f.advance(600_001);
-    const count = sends(f).length;
     await f.runtime.tick("lead");
-    expect(sends(f)).toHaveLength(count);
-    f.k.store.event(
-      f.time(),
-      "lead",
-      null,
-      "member.failed",
-      "Real news after quiet",
-    );
+    expect(sends(f)).toHaveLength(2);
+    f.k.memory.note("lead", { kind: "fact", text: "A new durable fact" });
+    news(f);
     await f.runtime.tick("lead");
-    expect(sends(f).at(-1)).not.toContain("Ledger unchanged since");
+    const delta = sends(f).at(-1)!;
+    expect(delta).toContain(`Facts, promises and hand-backs:\n- ${expiring.id}`);
+    expect(delta).toContain("A new durable fact");
+    expect(delta).not.toContain("Remember this");
+    expect(delta).not.toContain("Live goal");
+    expect(delta).not.toContain("Ledger as of");
+  });
+  it("holds a compaction re-anchor until actionable news or an unrouted user message", async () => {
+    const f = setup();
+    news(f);
+    await f.runtime.tick("lead");
+    await observeEvents(f, [{ seq: 1, type: "thread/compacted", data: {}, createdAt: f.time() }]);
+    f.advance(61_000);
+    await f.runtime.tick("lead");
+    expect(sends(f)).toHaveLength(1);
+    expect(f.k.store.runtime("lead").reanchor).toBe("after compaction");
+    await seedQuest(f.k, "lead", "New live title", "Live");
+    f.k.receiveUser("lead", "Read the updated ledger");
+    const humanContext = f.runtime.configure(makePluginAgentConfigurationContext({ thread: { id: "lead" } })).instructions;
+    expect(humanContext).toContain("New live title");
+    f.advance(61_000);
+    await f.runtime.tick("lead");
+    expect(sends(f).at(-1)).toContain('Not yet routed: "Read the updated ledger"');
+    expect(sends(f).at(-1)).toContain("after compaction");
+    expect(sends(f).at(-1)).toContain("Ledger as of");
+    expect(f.k.store.runtime("lead").reanchor).toBeNull();
+  });
+  it("restates on plugin reload and when the Keeper gets another provider session", async () => {
+    const f = setup();
+    news(f);
+    await f.runtime.tick("lead");
+    f.advance(61_000);
+    news(f);
+    const reloaded = new TavernRuntime(f.bb, f.k, f.runtime.registry);
+    await reloaded.tick("lead");
+    expect(sends(f)[1]).toContain("Ledger as of");
+    f.advance(61_000);
+    await observeEvents({ ...f, runtime: reloaded }, [{ seq: 1, type: "thread/started", data: { threadId: "lead" }, createdAt: f.time() }]);
+    news(f);
+    await reloaded.tick("lead");
+    expect(sends(f)[2]).toContain("Ledger as of");
+  });
+  it("uses the full ledger when the delta is larger or clipping changes", async () => {
+    const f = setup();
+    const snapshot = f.k.ledger("lead");
+    const ledger = vi.spyOn(f.k, "ledger");
+    const large = "Test:\n" + Array.from({ length: 20 }, (_, i) => `Unchanged fact ${i}`).join("\n");
+    for (const [index, text] of ["Test:\nOld fact", "Test:\nNew fact", large, `${large}\n[Truncated; call tavern_status for the rest.]`].entries()) {
+      f.advance(61_000);
+      ledger.mockReturnValue({ ...snapshot, text, version: index + 1 });
+      news(f);
+      await f.runtime.tick("lead");
+      expect(sends(f).at(-1)).toContain("Ledger as of");
+    }
+  });
+  it("sends a delta when windowed notes or decisions overflow and treats lines leaving the window as out of view", async () => {
+    const f = setup();
+    for (let i = 0; i < 20; i++) {
+      f.advance(1);
+      f.k.memory.note("lead", { kind: "fact", text: `Unchanged note ${i}: ${"context ".repeat(36)}` });
+      f.k.decide("lead", { text: `Prior choice ${i}: ${"detail ".repeat(25)}`, why: "Keep the recorded result", reversible: true, source: "keeper" });
+    }
+    const before = f.k.ledger("lead");
+    expect(before.text).toMatch(/\d+ more notes/);
+    expect(before.text).toMatch(/\d+ more decisions/);
+    news(f);
+    await f.runtime.tick("lead");
+    f.advance(61_000);
+    const decision = f.k.decide("lead", { text: `New visible decision: ${"detail ".repeat(25)}`, why: "Keep the recorded result", reversible: true, source: "keeper" });
+    f.k.memory.note("lead", { kind: "fact", text: `New visible note: ${"context ".repeat(36)}` });
+    news(f);
+    await f.runtime.tick("lead");
+    expect(sends(f).at(-1)).toContain(`You last saw version ${before.version}`);
+    expect(sends(f).at(-1)).toContain("out of view");
+    expect(sends(f).at(-1)).toMatch(/- note_/);
+    expect(sends(f).at(-1)).toContain(`+ ${decision.id}`);
+    expect(sends(f).at(-1)).not.toContain("Unchanged note 19");
+  });
+  it("does not advance the delivered ledger or consume a report or answer when a queued tick is cancelled", async () => {
+    const f = setup();
+    f.k.store.onEvent = undefined;
+    const send = vi.spyOn(f.bb.sdk.threads, "send");
+    news(f);
+    await f.runtime.tick("lead");
+    const basis = f.k.store.runtime("lead").lastLedger;
+    const ask = f.k.ask("lead", { kind: "decision", effect: { type: "decision" }, question: "Pick a result", why: "Test delivery", options: [{ id: "yes", label: "Yes", detail: "Accept", recommended: true }], meanwhile: "Wait", holds: [] });
+    f.k.answerAsk(ask.id, "yes", null, "page", "user");
+    f.k.bind("maker", "smith", null, "project", { keeperThreadId: "lead", boardQuestId: null, waypointId: null, errand: true, title: "Check the result",
+      brief: { outcome: "Check it", mode: "make-it-work", doneWhen: "Report", outOfScope: "", questions: [], context: [], timeboxMinutes: null } });
+    const report = f.k.report("maker", { status: "blocked", outcome: "A new report", evidence: [], artifacts: [], confidence: null, voice: null });
+    f.k.memory.note("lead", { kind: "fact", text: "New state in queued tick" });
+    f.advance(61_000);
+    send.mockResolvedValueOnce({ delivery: "queued" } as never);
+    await f.runtime.tick("lead");
+    const queued = f.k.store.pendingTick("lead")!;
+    expect(queued.text).toContain(ask.id);
+    expect(queued.text).toContain("New state in queued tick");
+    expect(f.k.store.runtime("lead").lastLedger).toEqual(basis);
+    expect(f.k.store.get("reports", report.id)?.deliveredAt).toBeNull();
+    f.runtime.cancelTick(queued.text);
+    await f.runtime.tick("lead");
+    expect(sends(f).at(-1)).toContain("Ask answer (data)");
+    expect(sends(f).at(-1)).toContain(ask.id);
+    expect(sends(f).at(-1)).toContain("New state in queued tick");
+    expect(sends(f).at(-1)).toContain("A new report");
+    expect(f.k.store.get("reports", report.id)?.deliveredAt).toBe(f.time());
+    expect(f.k.store.runtime("lead").lastLedger).not.toEqual(basis);
+  });
+  it("rebuilds a queued delta rather than delivering it after compaction", async () => {
+    const f = setup();
+    const send = vi.spyOn(f.bb.sdk.threads, "send");
+    news(f);
+    await f.runtime.tick("lead");
+    f.advance(61_000);
+    news(f);
+    send.mockResolvedValueOnce({ delivery: "queued" } as never);
+    await f.runtime.tick("lead");
+    const queued = f.k.store.pendingTick("lead")!;
+    expect(queued.fullLedger).toBe(false);
+    await observeEvents(f, [{ seq: 1, type: "thread/compacted", data: {}, createdAt: f.time() }]);
+    const row = queued049("queued-tick", queued.text, f.time(), { pluginId: "tavern" });
+    expect(await f.runtime.dispatch(dispatch049({ rows: [row] }))).toMatchObject({ action: "wait" });
+    expect(f.k.store.runtime("lead").queuedTickResetId).toBe(queued.id);
+    f.bb.sdk.threads.queuedMessages.list = vi.fn().mockResolvedValueOnce([row]).mockResolvedValue([]);
+    f.bb.sdk.threads.queuedMessages.delete = vi.fn().mockResolvedValue({ ok: true });
+    await f.runtime.tick("lead");
+    expect(f.k.store.tick(queued.id)?.state).toBe("cancelled");
+    expect(sends(f).at(-1)).toContain("after compaction");
     expect(sends(f).at(-1)).toContain("Ledger as of");
   });
   it("does not treat an old drained row or a queue announcement as permission to resume manual Stop", async () => {

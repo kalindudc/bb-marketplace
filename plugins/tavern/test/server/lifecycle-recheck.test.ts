@@ -3,7 +3,7 @@ import { fixtureActivity, patchThreadFixture, runtimeFixture } from "./member-fi
 import { seedQuest } from "./support";
 import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
-import { makeThreadResponse } from "./host";
+import { makePluginAgentConfigurationContext, makeThreadResponse } from "./host";
 import { planInput, waypointEntry } from "./support";
 import { DEFAULT_SETTINGS } from "../../src/shared/settings";
 import { LIMITS } from "../../src/server/limits";
@@ -216,7 +216,7 @@ it.each(["member", "hire"] as const)("the real sweep retains a %s Stop blocker t
   expect(f.k.quest(f.q.id).phase).toBe("stopped");
   expect(f.k.store.get("asks", ask.id)?.state).toBe("withdrawn");
 });
-it("the Keeper ledger uses the automatic review count while the user keeps the present count", async () => {
+it("the human-turn Keeper context uses the automatic review count while the user keeps the present count", async () => {
   const f = await fixture();
   f.k.plan("lead", planInput(f.q.id));
   bind(f);
@@ -225,7 +225,7 @@ it("the Keeper ledger uses the automatic review count while the user keeps the p
   f.k.bind("observer", "keeper", "wren", "project");
   expect(f.runtime.review().waiting).toBe(1);
   expect(f.k.memory.review().waiting).toBe(0);
-  expect(f.k.restatement("observer")).toContain("Review queue: 0 of 3");
+  expect(f.runtime.configure(makePluginAgentConfigurationContext({ thread: { id: "observer" } })).instructions).toContain("Review queue: 0 of 3");
 });
 it("the Keeper tick uses the automatic review count while the user keeps the present count", async () => {
   const f = await fixture();

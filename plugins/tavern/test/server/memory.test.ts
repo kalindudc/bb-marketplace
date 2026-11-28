@@ -95,6 +95,7 @@ describe("durable Keeper memory", () => {
     });
     f.advance(61_000);
     f.k.reanchor("lead", "thread/compacted");
+    f.k.store.event(f.time(), "lead", null, "route.corrected", "New facts after recovery");
     await f.runtime.tick("lead");
     const send = f.harness.inspection.sdk.callsTo("threads.send")[0]!
       .args[0] as { input: { text: string }[] };

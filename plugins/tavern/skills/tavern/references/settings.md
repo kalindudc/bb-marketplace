@@ -98,7 +98,6 @@ The main table uses snake_case paths for TOML. The Limits table uses the camelCa
 | `knobs.stale_minutes` | Sets how long a quiet member has before it is stale. A Keeper can set a bounded quest override. | `20` | User; Granted; Tuned |
 | `knobs.report_batch_seconds` | Sets how long to gather reports before delivery. A Keeper can set a bounded quest override. | `60` | User; Granted; Tuned |
 | `knobs.ranger_timebox_max_minutes` | Ranger check-in interval: how long a Ranger scouts before it reports to its Keeper; continuations share the same minutes budget. | `30` | User; Plain |
-| `knobs.ledger_refresh_minutes` | Sets the time between full ledger refreshes. | `10` | User; Granted |
 
 ## Limits
 

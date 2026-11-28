@@ -118,7 +118,7 @@ it("opens only matching folds, including profile fields, then restores open and 
  const s = await settingsPage();
  const search = s.getByRole("searchbox", { name: "Search settings" }) as HTMLInputElement;
  const details = (await s.findByText("Keeper pacing and memory")).closest("details")!;
- const tuner = (await s.findByText("Ledger and tuner limits")).closest("details")!;
+ const tuner = (await s.findByText("Tuner limits")).closest("details")!;
  const profile = (await s.findByText("Test notes", { selector: "summary > span" })).closest("details")!;
  tuner.open = true;
  expect(details.open).toBe(false);
@@ -178,7 +178,7 @@ it("registers Setup first, kit descriptions for each section, and history last",
 });
 it.each([
  ["keepers","Keeper pacing and memory"],
- ["tuning","Ledger and tuner limits"],
+ ["tuning","Tuner limits"],
 ])("marks the %s limits as expandable",async(id,title)=>{
  const s=await section(id);
  const summary=(await s.findByText(title)).closest("summary");

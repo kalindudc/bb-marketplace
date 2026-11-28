@@ -68,7 +68,7 @@ Tavern moves source code through clean Git snapshots without touching your local
 
 ## The Ledger, memory, and service records
 
-The Ledger is Tavern's SQLite database and the single source of truth for every Keeper. When chat compacts, Tavern re-anchors Keepers from the Ledger, and the Ledger tab shows the same quests, asks, rules, decisions, and guardrails.
+The Ledger is Tavern's SQLite database and the single source of truth for every Keeper. On the next actionable tick after compaction, reload, or a new provider session, Tavern sends the full Ledger. Between those points, ticks carry only changed lines unless the full Ledger is shorter or its truncated text changed. The Ledger tab shows the same quests, asks, rules, decisions, and guardrails.
 
 Tavern also keeps Durable memory for project notes that outlive a single quest (built-in by default, or connected to an external note store) and lasting Service records that track each character's verified work across returned quests.
 

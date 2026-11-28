@@ -552,7 +552,7 @@ describe("round 2 release, ask and scout policies", () => {
 describe("round 2 delivery and cleanup", () => {
   it("L-d compacts final tick text while retaining its dedupe receipt", async () => {
     const f = setup();
-    f.k.reanchor("lead", "wake");
+    f.k.store.event(f.time(), "lead", null, "route.corrected", "Actionable fact");
     await f.runtime.tick("lead");
     const row = f.k.store.db
       .prepare("SELECT id,data FROM tavern_outbox WHERE state='delivered'")
@@ -619,7 +619,7 @@ describe("round 2 delivery and cleanup", () => {
       .fn()
       .mockResolvedValueOnce({ delivery: "queued" })
       .mockResolvedValue({ delivery: "sent" });
-    f.k.reanchor("lead", "wake");
+    f.k.store.event(f.time(), "lead", null, "route.corrected", "Actionable fact");
     await f.runtime.tick("lead");
     const batch = f.k.store.pendingTick("lead")!;
     const failed = {

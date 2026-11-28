@@ -203,6 +203,12 @@ describe("Keeper loop scheduling and startup", () => {
     const restarted = new TavernRuntime(f.bb, f.k, f.runtime.registry);
     await restarted.reconcile();
     expect(f.k.store.runtime("lead").reanchor).toMatch(type === "thread/compacted" ? /compaction/ : /host-daemon-restarted/);
+    if (type === "thread/compacted") {
+      await restarted.tick("lead");
+      expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
+      expect(f.k.store.runtime("lead").reanchor).toMatch(/compaction/);
+      fact(f);
+    }
     await restarted.tick("lead");
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1);
     expect(f.k.store.runtime("lead").reanchor).toBeNull();

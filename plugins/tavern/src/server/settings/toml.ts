@@ -79,6 +79,10 @@ export function previewToml(source: string, snapshot: Pick<SettingsSnapshot, "us
     delete converted.keepers.chainDepth;
     if (!Object.keys(converted.keepers).length) delete converted.keepers;
   }
+  if (isObject(converted.knobs)) {
+    delete converted.knobs.ledgerRefreshMinutes;
+    if (!Object.keys(converted.knobs).length) delete converted.knobs;
+  }
   const tuning = isObject(converted.tuning) ? converted.tuning : null;
   const pins = tuning?.pinned ?? {};
   if (tuning) delete tuning.pinned;

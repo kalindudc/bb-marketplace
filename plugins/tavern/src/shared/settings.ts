@@ -48,9 +48,6 @@ export const KNOB_FIELDS = {
     windowDays: { default: 30, min: 7, max: 90, unit: "days", label: "Tuner reads the last" },
     cooldownDays: { default: 7, min: 1, max: 30, unit: "days", label: "Wait between automatic changes" },
   },
-  knobs: {
-    ledgerRefreshMinutes: { default: 10, min: 2, max: 60, unit: "minutes", label: "Full ledger refresh" },
-  },
 } as const;
 
 type NumberBounds = { min: number; max: number; default: number };
@@ -157,7 +154,7 @@ const sections = {
   journal: z.object({ journalReminders: z.boolean(), journalQuietMinutes: z.number().int().min(1).max(120), ...numberFields(KNOB_FIELDS.journal) }).strict(),
   data: z.object({ historyDays: z.number().int().min(0).max(3650).describe("Retains optional Insights samples only. Zero keeps them forever; orchestration records are never pruned."), autoArchiveDays: z.number().int().min(0).max(3650), backupKeep: z.number().int().min(0).max(365).describe("Saved backups to keep. Zero keeps every backup; this never prunes live Tavern records."), ...numberFields(KNOB_FIELDS.data) }).strict(),
   tuning: z.object({ mode: z.enum(["apply", "suggest", "off"]), ...numberFields(KNOB_FIELDS.tuning) }).strict(),
-  knobs: tunablesSchema.extend({ rangerTimeboxMaxMinutes: z.number().int().min(3).max(30), ...numberFields(KNOB_FIELDS.knobs) }),
+  knobs: tunablesSchema.extend({ rangerTimeboxMaxMinutes: z.number().int().min(3).max(30) }),
 };
 export const settingsSchema = z.object({
   limits: limitsSettingsSchema,
@@ -178,7 +175,7 @@ export const settingsSchema = z.object({
   journal: sections.journal.extend(defaultNumbers(KNOB_FIELDS.journal)).prefault({ journalReminders: true, journalQuietMinutes: 10 }),
   data: sections.data.extend(defaultNumbers(KNOB_FIELDS.data)).prefault({ historyDays: 0, autoArchiveDays: 0, backupKeep: 14 }),
   tuning: sections.tuning.extend(defaultNumbers(KNOB_FIELDS.tuning)).prefault({ mode: "off" }),
-  knobs: sections.knobs.extend(defaultNumbers(KNOB_FIELDS.knobs)).prefault({ ...Object.fromEntries(TUNABLE_KEYS.map(key => [key, TUNABLES[key].default])), rangerTimeboxMaxMinutes: 30 } as Tunables & { rangerTimeboxMaxMinutes: number }),
+  knobs: sections.knobs.prefault({ ...Object.fromEntries(TUNABLE_KEYS.map(key => [key, TUNABLES[key].default])), rangerTimeboxMaxMinutes: 30 } as Tunables & { rangerTimeboxMaxMinutes: number }),
 }).strict();
 export const DEFAULT_SETTINGS = settingsSchema.parse({});
 export const settingsPatchSchema = z.object({

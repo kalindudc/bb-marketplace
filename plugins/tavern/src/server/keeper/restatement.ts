@@ -107,10 +107,16 @@ function ruleLine(rule: Rule) {
 function noteLine(note: KeeperNote) {
   return `${note.id} [${note.kind}${note.boardQuestId ? `; ${note.boardQuestId}` : ""}] ${quoted(note.kind === "waiting-on-user" ? note.action ?? note.text : note.text)}${note.dueAt !== null ? `; due ${clock(note.dueAt)}` : note.kind === "commitment" ? "; no deadline" : ""}${note.condition ? `; when ${quoted(note.condition)}` : ""}${note.validUntil !== null ? `; valid until ${clock(note.validUntil)}` : ""}`;
 }
+function quietMember(k: Keeper, member: BoardQuestSummary["members"][number]) {
+  const state = k.store.runtime(member.threadId);
+  if (state.quietHintAt === undefined || member.state !== "working") return "";
+  const evidenceAt = Math.max(member.createdAt, member.lastReportAt ?? 0, state.lastBriefAt ?? 0, k.journal.progress(member.threadId).lastEvidenceAt ?? 0);
+  return evidenceAt === state.quietHintAt ? `; no progress evidence since ${clock(evidenceAt)}` : "";
+}
 function memberLines(k: Keeper, summary: BoardQuestSummary) {
   return summary.members.map(
     (m) =>
-      `${k.name(m)} (${m.classId})${m.repo ? `, repo ${m.repo}` : ""}, ${memberActivityWord(m, !isOpenQuest(summary))}${m.permanent ? m.permanent.closingExemption ? "; permanent; Closing time pause exempt (guard required)" : "; permanent" : ""}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}; waypoint ${m.waypointId ?? (m.classId === "warden" ? k.checkerWaypoints(m.threadId).join(",") : "none")}; strikes ${m.strikes}; doing ${quoted(short(memberDoing(k, m.threadId, m.doing), needsAttention(k, m.threadId) ? 300 : 120))}`,
+      `${k.name(m)} (${m.classId})${m.repo ? `, repo ${m.repo}` : ""}, ${memberActivityWord(m, !isOpenQuest(summary))}${m.permanent ? m.permanent.closingExemption ? "; permanent; Closing time pause exempt (guard required)" : "; permanent" : ""}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}; waypoint ${m.waypointId ?? (m.classId === "warden" ? k.checkerWaypoints(m.threadId).join(",") : "none")}; strikes ${m.strikes}${quietMember(k, m)}; doing ${quoted(short(memberDoing(k, m.threadId, m.doing), needsAttention(k, m.threadId) ? 300 : 120))}`,
   );
 }
 function needsAttention(k: Keeper, threadId: string) {
@@ -191,6 +197,52 @@ function questBlock(k: Keeper, summary: BoardQuestSummary) {
     );
   return lines.join("\n");
 }
+function ledgerSections(text: string) {
+  const sections = new Map<string, string[]>();
+  let inQuests = false;
+  for (const part of text.split("\n\n")) {
+    const lines = part.split("\n");
+    const heading = lines[0]!.endsWith(":") ? lines.shift() : undefined;
+    if (heading) inQuests = heading === "Board quests:";
+    const questId = inQuests ? /\((quest_[\w-]+)\)(?: — |:)/.exec(lines[0] ?? "")?.[1] : undefined;
+    const key = questId ? `Board quests (${questId}):` : heading ?? "Other ledger facts:";
+    const existing = sections.get(key) ?? [];
+    for (const line of lines) if (line) existing.push(line);
+    sections.set(key, existing);
+  }
+  return sections;
+}
+
+function extraLines(lines: string[], previous: string[]) {
+  const counts = new Map<string, number>();
+  for (const line of previous) counts.set(line, (counts.get(line) ?? 0) + 1);
+  return lines.filter(line => {
+    const count = counts.get(line) ?? 0;
+    if (count === 0) return true;
+    counts.set(line, count - 1);
+    return false;
+  });
+}
+
+export function ledgerChanges(before: string, after: string) {
+  if (before === after) return "No ledger changes.";
+  const previous = ledgerSections(before);
+  const current = ledgerSections(after);
+  const changes: string[] = [];
+  for (const heading of new Set([...current.keys(), ...previous.keys()])) {
+    const from = previous.get(heading) ?? [];
+    const to = current.get(heading) ?? [];
+    const added = extraLines(to, from);
+    const removed = extraLines(from, to);
+    if (added.length || removed.length) changes.push([
+      heading,
+      ...removed.map(line => `- ${line.trim().split(/\s+/, 3).join(" ")}`),
+      ...added.map(line => `+ ${line}`),
+    ].join("\n"));
+  }
+  return changes.length ? `Lines marked - are out of view, not necessarily removed from the Ledger.\n\n${changes.join("\n\n")}` : "No ledger changes.";
+}
+
 export function renderRestatement(
   k: Keeper,
   threadId: string,
@@ -350,12 +402,12 @@ export function renderRestatement(
   ];
   const resting = restingParty(k, threadId);
   parts.push(section("Free hands", resting.filter(showInFreeHands).map(m => [
-    `${m.name} (${m.classId}, ${m.threadId}); quest ${m.quest}; resting ${m.restedMinutes} min${m.machineHeld ? "; machine held" : ""}; last work ${quoted(short(m.lastWork, 160))}`,
+    `${m.name} (${m.classId}, ${m.threadId}); quest ${m.quest}; resting since ${clock(m.since)}${m.machineHeld ? "; machine held" : ""}; last work ${quoted(short(m.lastWork, 160))}`,
     ...(m.needsCleanup ? ["re-brief or release"] : []),
     ...(m.machineLost ? ["machine lost: can't take new work; release it"] : m.mayRebriefFor ? [`may be re-briefed for: ${m.mayRebriefFor}`] : ["no eligible re-brief"]),
   ].join("; ")), 2200, "more free hands; call tavern_status"));
   const settledMembers = resting.filter(m => m.settled);
-  if (settledMembers.length) parts.push(section("Resting, settled", settledMembers.map(m => `${m.name} (${m.threadId}); resting ${m.restedMinutes} min${m.machineHeld ? "; machine held" : ""}${m.machineLost ? "; machine lost: can't take new work; release it" : m.permanent ? "; permanent" : m.kept ? `; kept until ${clock(m.kept.until)}: ${quoted(short(m.kept.why, 120))}` : "; release or keep"}`), 1500, "more resting members; call tavern_status"));
+  if (settledMembers.length) parts.push(section("Resting, settled", settledMembers.map(m => `${m.name} (${m.threadId}); resting since ${clock(m.since)}${m.machineHeld ? "; machine held" : ""}${m.machineLost ? "; machine lost: can't take new work; release it" : m.permanent ? "; permanent" : m.kept ? `; kept until ${clock(m.kept.until)}: ${quoted(short(m.kept.why, 120))}` : "; release or keep"}`), 1500, "more resting members; call tavern_status"));
   if (!priorities) {
     const steers = summaries.flatMap((q) =>
       k.memory.steers(threadId, q.id).map((route) => {
@@ -378,28 +430,17 @@ export function renderRestatement(
       .filter(
         (m) => m.errand && isLiveMember(k.store, m, "work") && m.state !== "failed",
       );
-    const recent = decisions.filter(
-      (d) =>
-        d.source === "keeper" &&
-        !d.undone &&
-        d.createdAt > (k.store.runtime(threadId).tickAt ?? 0),
-    );
-    parts.push(
-      `Decided for you since the last tick: ${recent.length ? `${recent.length}; see Recent decisions below, or tavern_status section=decisions for the complete list` : "None"}`,
-    );
     parts.push(
       section(
         "Errands in flight",
         errands.map(
           (m) =>
-            `${k.name(m)} (${m.classId})${m.repo ? `, repo ${m.repo}` : ""}, ${memberActivityWord(m)}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}, strikes ${m.strikes}; ${quoted(m.title ?? "errand")}; doing ${quoted(short(m.doing ?? "none", 120))}`,
+            `${k.name(m)} (${m.classId})${m.repo ? `, repo ${m.repo}` : ""}, ${memberActivityWord(m)}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}, strikes ${m.strikes}${quietMember(k, m)}; ${quoted(m.title ?? "errand")}; doing ${quoted(short(m.doing ?? "none", 120))}`,
         ),
         1500,
         "more errands; call tavern_status section=errands",
       ),
     );
-    const review = k.memory.review();
-    parts.push(`Review queue: ${review.waiting} of ${review.budget}`);
     parts.push(
       section(
         "Steers still in force",
@@ -440,10 +481,6 @@ export function renderRestatement(
           "more messages; call tavern_status section=pending",
         ),
       );
-  }
-  if (priorities) {
-    const review = k.memory.review();
-    parts.push(`Review queue: ${review.waiting} of ${review.budget}`);
   }
   return boundedData(
     parts.join("\n\n"),

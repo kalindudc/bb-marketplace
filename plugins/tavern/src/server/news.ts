@@ -34,7 +34,6 @@ export const NEWS = new Set([
   "lead.plan-refused",
   "member.failed",
   "member.stale",
-  "member.quiet",
   "member.permanent-quiet",
   "user.told-member",
   "decision.undone",
@@ -67,6 +66,7 @@ export const NEWS = new Set([
 export function isNewsEvent(event: Pick<TavernEvent, "type" | "actor" | "data">, keeperId: string) {
   return (
     NEWS.has(event.type) &&
+    !(event.type === "reanchor.requested" && event.data.actionRequired !== true) &&
     !(event.type === "ask.answered" && event.data.optionId === "confirm-run") &&
     !(event.actor.kind === "agent" && event.actor.threadId === keeperId) &&
     !(event.type === "thread.archived" && event.data.keeperArchiveRequested === true)

@@ -222,13 +222,13 @@ describe("archived Keeper reopening", () => {
     expect(f.harness.inspection.sdk.callsTo("threads.get")).toEqual([]);
   });
   it.each(["archived", "deleted"])("refuses a tick when a fresh SDK read discovers a %s Keeper", async kind => {
-    const f = await fixture(); f.k.reanchor("lead", "Facts ready");
+    const f = await fixture(); f.k.store.event(f.time(), "lead", null, "route.corrected", "Facts ready");
     f.bb.sdk.threads.get = async ({ threadId }) => makeThreadResponse({ id: threadId, status: "idle", ...(kind === "archived" ? { archivedAt: f.time() } : { deletedAt: f.time() }) });
     await f.runtime.tick("lead");
     expect(f.send).not.toHaveBeenCalled();
   });
   it("rechecks cached archival immediately before sending after awaited event reads", async () => {
-    const f = await fixture(); f.k.reanchor("lead", "Facts ready");
+    const f = await fixture(); f.k.store.event(f.time(), "lead", null, "route.corrected", "Facts ready");
     f.bb.sdk.threads.events.list = async () => { patchThreadFixture(f.k.store, "lead", { archivedAt: f.time() }); return []; };
     await f.runtime.tick("lead");
     expect(f.send).not.toHaveBeenCalled();

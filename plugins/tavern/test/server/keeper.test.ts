@@ -151,18 +151,21 @@ describe("ticks and lifecycle", () => {
     const { k, runtime, harness } = setup();
     await seedQuest(k, "lead", "A", "A");
     k.store.patch("lead", { userAt: null });
-    k.reanchor("lead", "failed turn");
+    k.reanchor("lead", "failed turn", true);
     await runtime.tick("lead");
     await runtime.tick("lead");
     let calls = harness.inspection.sdk.callsTo("threads.send");
     expect(calls).toHaveLength(1);
     expect(JSON.stringify(calls[0])).toContain("queue-if-active");
     expect(JSON.stringify(calls[0])).toContain("agent-only");
-    expect(JSON.stringify(calls[0])).toContain("Priorities restated:");
+    expect(JSON.stringify(calls[0])).toContain("Ledger (quoted data):");
     now += 60_000;
     await runtime.tick("lead");
     expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1);
     k.reanchor("lead", "compacted");
+    await runtime.tick("lead");
+    expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1);
+    k.store.event(now, "lead", null, "route.corrected", "Actionable fact");
     await runtime.tick("lead");
     expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(2);
     now += 60_000;
@@ -172,7 +175,7 @@ describe("ticks and lifecycle", () => {
   it("holds while typing, after a user message and with queued messages", async () => {
     const { k, runtime, harness } = setup();
     await seedQuest(k,"lead", "A", "A");
-    k.reanchor("lead", "failed turn");
+    k.reanchor("lead", "failed turn", true);
     k.store.patch("lead", { typingAt: now });
     await runtime.tick("lead");
     expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
@@ -191,7 +194,7 @@ describe("ticks and lifecycle", () => {
   it("does not send a tick with a queued message or a running user turn", async () => {
     const { k, runtime, thread, harness } = setup();
     await seedQuest(k,"lead", "A", "A");
-    k.reanchor("lead", "failed turn");
+    k.reanchor("lead", "failed turn", true);
     thread.status = "active";
     await runtime.tick("lead");
     expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);

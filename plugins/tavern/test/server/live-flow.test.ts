@@ -643,8 +643,9 @@ describe("live Keeper flow regressions", () => {
       holds: [],
     });
     f.k.store.patch("lead", { userAt: null });
-    f.k.reanchor("lead", "test logging");
+    f.k.store.event(f.time(), "lead", null, "route.corrected", "First event");
     await f.runtime.tick("lead");
+    f.k.store.event(f.time(), "lead", null, "route.corrected", "Next event");
     await f.runtime.tick("lead");
     const lines = vi.mocked(f.bb.log.info).mock.calls.flat().join(" ");
     expect(lines).toContain("ask.opened");

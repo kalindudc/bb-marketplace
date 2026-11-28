@@ -174,8 +174,8 @@ describe("tick delivery regressions", () => {
   it("M2 isolates missing Keepers and broken defaults while the next Keeper ticks", async () => {
     const { k, runtime, harness, advance } = setup();
     k.bind("next", "keeper", "wren", "project");
-    k.reanchor("lead", "failed");
-    k.reanchor("next", "failed");
+    k.reanchor("lead", "failed", true);
+    k.reanchor("next", "failed", true);
     const bad = k.ask("lead", { effect: {type:"decision"}, ...askInput, proceedInMinutes: 1 });
     k.store.put("asks", bad.id, { ...bad, options: [] });
     advance(61_000);
@@ -190,7 +190,7 @@ describe("tick delivery regressions", () => {
   });
   it("M3 sends a failed Keeper its re-anchor", async () => {
     const { runtime, k, harness } = setup();
-    k.reanchor("lead", "failed turn");
+    k.reanchor("lead", "failed turn", true);
     runtime.bb.sdk.threads.get = async () =>
       makeThreadResponse({ id: "lead", status: "error" });
     await runtime.tick("lead");
@@ -263,7 +263,7 @@ describe("tick delivery regressions", () => {
   });
   it("L4 reconciles uncertain delivery from its accepted-input history without a repeat", async () => {
     const { k, runtime, harness } = setup();
-    k.reanchor("lead", "failed");
+    k.reanchor("lead", "failed", true);
     runtime.bb.sdk.threads.send = async () => {
       throw new Error("connection closed after send");
     };

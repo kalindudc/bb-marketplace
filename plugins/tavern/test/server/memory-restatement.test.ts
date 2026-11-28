@@ -7,7 +7,7 @@ import { planInput } from "./support";
 import { makePluginAgentConfigurationContext } from "./host";
 import { readStatus, statusInput } from "../../src/server/status";
 import { journalEntrySchema } from "../../src/shared/schema";
-import { criticalWaypoints } from "../../src/server/keeper/restatement";
+import { criticalWaypoints, ledgerChanges } from "../../src/server/keeper/restatement";
 import { localClock } from "../../src/server/clock";
 
 const brief = {
@@ -27,6 +27,16 @@ function approve(f: ReturnType<typeof setup>) {
     .filter((a) => a.kind === "greenlight"))
     f.k.answerAsk(ask.id, "approve", null, "page", "user");
 }
+
+it("ignores reordered quests and identifies the quest of a changed waypoint", () => {
+  const first = 'First (quest_one) — work\nw1 [ready] "Make the patch"';
+  const second = 'Second (quest_two) — work\nw1 [ready] "Make the patch"';
+  const ledger = (blocks: string[]) => "Board quests:\n" + blocks.join("\n\n") + "\n\nFree hands:\nNone";
+  expect(ledgerChanges(ledger([first, second]), ledger([second, first]))).toBe("No ledger changes.");
+  expect(ledgerChanges(ledger([first, second]), ledger([second.replace("[ready]", "[verified]"), first]))).toBe(
+    'Lines marked - are out of view, not necessarily removed from the Ledger.\n\nBoard quests (quest_two):\n- w1 [ready] "Make\n+ w1 [verified] "Make the patch"',
+  );
+});
 
 describe("Complete Keeper restatement", () => {
   it("puts newest standing rules first, labels proposals, and pages every overflow rule", () => {
@@ -207,7 +217,7 @@ describe("Complete Keeper restatement", () => {
     ).instructions!;
     expect(Buffer.byteLength(configured)).toBeLessThanOrEqual(32_000);
     expect(configured).not.toContain("�");
-    expect(configured).toContain("see Recent decisions below");
+    expect(configured).toContain("Recent decisions:");
     if (held) for (const id of ids) expect(configured).not.toContain(f.k.quest(id).checkerHandoffHold!.id);
     for (const output of [text, configured]) {
       for (let i = 0; i < 4; i++) {
@@ -226,8 +236,7 @@ describe("Complete Keeper restatement", () => {
         "release train Thursday 10:00",
         "Lunch menus",
         "defaults at",
-        "Review queue:",
-        "Decided for you since the last tick",
+        "Recent decisions:",
       ])
         expect(output).toContain(wanted);
     }
