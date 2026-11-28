@@ -4,13 +4,14 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { isDeepStrictEqual as same } from "node:util";
 import { scopeForClass } from "../scope/presets";
-import { characterDefSchema, characterVoiceSchema, type CharacterDef, type CharacterVoice, type ClassDef } from "../shared/schema";
+import type { PiLoadout, Scope } from "../scope/schema";
+import { characterDefSchema, characterVoiceSchema, classKind, type CharacterDef, type CharacterVoice, type ClassDef } from "../shared/schema";
 import { applyRegistryRecord, formatDefinition, formatPatch, parseRegistryRecord, withCharacterField, type Definition, type RegistryKind, type RegistryRecord } from "./registry-file";
 import { LIMITS } from "./limits";
 
 export interface RegistrySnapshot { classes: ClassDef[]; characters: CharacterDef[]; problems: { path: string; message: string }[] }
 export interface RegistryFile { filename: string; source: Source; path: string | null; text: string }
-export const CLASS_EDITABLE = ["label", "plain", "description", "body", "characters", "startable", "hireable", "scope"] as const;
+export const CLASS_EDITABLE = ["label", "plain", "description", "body", "characters", "startable", "hireable", "scope", "piTools", "piSkills"] as const;
 export type ClassEdit = Partial<Pick<ClassDef, typeof CLASS_EDITABLE[number]>>;
 export type CharacterEdit = Partial<CharacterVoice & Pick<CharacterDef, "avatar">>;
 export type ClassTarget = { target: "global" | "project"; projectPath?: string | null };
@@ -119,6 +120,16 @@ export class Registry {
     return loaded;
   }
   read(projectPath?: string | null): RegistrySnapshot { return this.cached(projectPath).snapshot; }
+  piLoadout(role: ClassDef, preset: Scope["preset"], optIns?: PiLoadout): Scope["piLoadout"] {
+    const fallback = classKind(role) === "keeper" ? "keeper"
+      : preset === "checker" ? "warden" : preset === "worktree" ? "smith" : preset === "readonly" ? "ranger" : "wanderer";
+    const shipped = this.cached().layers[0]!.resolved;
+    const defaults = (shipped.get(keyFor("class", role.id)) ?? shipped.get(keyFor("class", fallback)))?.definition as ClassDef | undefined;
+    const tools = role.piTools ?? defaults?.piTools;
+    const skills = role.piSkills ?? defaults?.piSkills;
+    if (!tools && !skills && !optIns) return undefined;
+    return { tools: tools ?? [], skills: skills ?? [], ...(optIns ? { optIns } : {}) };
+  }
   directories() { return { builtin: this.builtin, global: this.home }; }
   invalidate() { this.cache.clear(); }
   private resolved(kind: RegistryKind, id: string, projectPath?: string | null) {

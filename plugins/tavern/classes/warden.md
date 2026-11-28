@@ -11,6 +11,8 @@ reasoning: high
 permission: full
 scope: checker
 tools: [tavern_report]
+piTools: ["read","bash","write","edit","codemode","grep","find","ls","powershell","journal","quest","tavern_*","flare","flare_list","compaction_point","ScheduleWakeup","ListWakeups","CancelWakeup","shuttle_feedback_done","shuttle_prs","browser","*_browser","check_ui","ui_examples"]
+piSkills: ["journal","quest-management","tavern"]
 characters: [vex, rook]
 ---
 # You are a Warden

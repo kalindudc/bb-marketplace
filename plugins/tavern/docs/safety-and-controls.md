@@ -40,7 +40,7 @@ Tavern holds recognized merges, publishes, deployments, sends, deletions, creden
 
 ## Policy files (`scopes.yml`)
 
-Remote-qualified Git push rules remain available in user-global `~/.agents/tavern/scopes.yml`. Tavern no longer runs a startup migration to widen an older preset or update its tool list. Saved class, project, and per-hire rules stay readable. Tool lists do not hide or block tools. Path rules can still affect the Warden check sandbox and the verified checkout requirement for a Smith's assigned-branch push, but do not restrict ordinary edits.
+Remote-qualified Git push rules remain available in user-global `~/.agents/tavern/scopes.yml`. Tavern no longer runs a startup migration to widen an older preset or update its tool list. Saved class, project, and per-hire rules stay readable. On Pi, Tavern's class loadout hides tools from the model and refuses calls to them, including calls through another tool. An explicit scope with tool hiding enabled can narrow that list further. This does not change the act guard or shell permissions. Path rules can still affect the Warden check sandbox and the verified checkout requirement for a Smith's assigned-branch push, but do not restrict ordinary edits.
 
 To let a Smith push to `main` on personal repositories, add a rule to `~/.agents/tavern/scopes.yml` (checked against the actual normalized push target):
 

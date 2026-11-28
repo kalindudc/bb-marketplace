@@ -28,7 +28,7 @@ A class defines a thread's job, tools, and guardrails. Tavern ships five classes
 | Warden | Checker | Checker | Inspects a maker's deliverable in a clean context, prefers another model family, and verifies or rejects it. |
 | Wanderer | General | Open when hired | Handles a bounded errand outside the full map-and-check flow. |
 
-You can customize classes from the Classes page or through Markdown override files. Characters are separate from classes: a character supplies a name, pixel-art avatar, crest, and speech lines, never permissions or expertise.
+You can customize classes from the Classes page or through Markdown override files. In class frontmatter, `piTools` lists tool names or patterns using `*`, and `piSkills` lists names whose full descriptions Pi should load. Other discoverable skills still show their names and locations. An empty list is explicit; an omitted field in a changed-field patch inherits from the lower layer. A custom class without lists takes the Keeper’s lists if it is a Keeper. Other custom classes take the Warden, Smith or Ranger lists for checker, worktree or read-only scope respectively, and the Wanderer’s lists otherwise. Characters are separate from classes: a character supplies a name, pixel-art avatar, crest, and speech lines, never permissions or expertise.
 
 ## Quests and quest maps
 

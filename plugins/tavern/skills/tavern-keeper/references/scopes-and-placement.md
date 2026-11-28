@@ -10,7 +10,8 @@ Use this reference for scoped hire rules, detection-only exceptions, scope adjus
 
 ## Scope rules and violations
 
-- Act guard (`enforce`) holds recognized merges, publishes, deploys, sends, deletions, credential disclosures and cluster writes. Ordinary calls are recorded, not refused. Do not ask to widen a member's tool or path scope for ordinary work. Saved tool lists do not hide tools, and legacy presets are not widened at startup.
+- Act guard (`enforce`) holds recognized merges, publishes, deploys, sends, deletions, credential disclosures and cluster writes. Ordinary calls are recorded, not refused. Do not ask to widen a member's tool or path scope for ordinary work. Legacy presets are not widened at startup.
+- Scoped Pi threads start with class tool lists and every discoverable skill's name and location. Rangers already have web search and fetch if installed. Use `tavern_hire`'s `loadout` to add exact installed names for other tools or full skill descriptions. Pi checks tool names against your session; check that the tools are also installed on the member's host. This is not a scope grant or an approval.
 - Use the existing typed decision for a held act. NEVER route around it with another interpreter or tool.
 - Repair a bad maker binding instead of widening a checker's scope. Ask the user to restart a missing Pi guard only when prevention is needed.
 

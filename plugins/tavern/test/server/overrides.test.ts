@@ -38,6 +38,20 @@ it("skips a no-op, writes only changed keys, and inherits a later shipped update
   expect(registry.fieldFile("class", "smith", "body").source).toBe("global");
 });
 
+it("saves changed Pi list fields independently and inherits defaults for custom classes by role", () => {
+  const { registry, home, local, projectPath, builtin } = fixture();
+  const shipped = readFileSync(join(builtin, "classes/ranger.md"), "utf8");
+  write(join(local, "classes/surveyor.md"), shipped.replace(/^id: ranger$/m, "id: surveyor").replace(/^characters: .*/m, "characters: []").replace(/^pi(?:Tools|Skills): .*\n/gm, ""));
+  const base = registry.read(projectPath).classes.find(c => c.id === "surveyor")!;
+  expect(registry.piLoadout(base, "readonly")).toMatchObject({ tools: expect.arrayContaining(["web_search", "web_fetch"]), skills: expect.arrayContaining(["journal"]) });
+  registry.saveClass("ranger", { piSkills: ["journal", "field-notes"] }, { ...global, revision: registry.classLayers("ranger").revision });
+  const file = join(home, "classes/ranger.md");
+  expect(parseRegistryRecord("class", readFileSync(file, "utf8"), file)).toEqual({ format: "patch", id: "ranger", fields: { piSkills: ["journal", "field-notes"] } });
+  registry.saveClass("ranger", { piTools: ["read", "web_search"] }, { target: "project", projectPath, revision: registry.classLayers("ranger", projectPath).revision });
+  const edited = registry.read(projectPath).classes.find(c => c.id === "ranger")!;
+  expect(registry.piLoadout(edited, "readonly")).toEqual({ tools: ["read", "web_search"], skills: ["journal", "field-notes"] });
+});
+
 it("isolates a global save from a project layer, and merges a patch over a legacy whole definition", () => {
   const { registry, builtin, home, local, projectPath } = fixture();
   const legacy = join(home, "classes/the-smith.md");

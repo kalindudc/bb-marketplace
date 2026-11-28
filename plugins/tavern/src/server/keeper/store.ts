@@ -142,6 +142,7 @@ export interface HireIntent {
   initialInput?: string;
   scopeResolution?: ScopeResolution | null;
   scopeOverride?: ScopeOverride;
+  loadout?: import("../../scope/schema").PiLoadout;
   scopePrepared?: boolean;
   limitDecisionIds?: string[];
   guardApprovalAskId?: string;
@@ -219,6 +220,7 @@ export interface PendingBrief {
 export interface Runtime {
   memberEngagement?: MemberEngagementData;
   placementExecution?: HireIntent["placementExecution"];
+  piLoadoutOptIns?: HireIntent["loadout"];
   keeperTitleSet?: string;
   keeperTitleReplaced?: string;
   keeperTitleRetired?: boolean;

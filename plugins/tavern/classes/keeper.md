@@ -11,6 +11,8 @@ reasoning: high
 permission: full
 scope: open
 tools: [tavern_route, tavern_note, tavern_summary, tavern_gate, tavern_quest, tavern_hire, tavern_keep, tavern_release, tavern_scope, tavern_tell, tavern_plan, tavern_ask, tavern_decide, tavern_rule, tavern_status, tavern_pull_request, tavern_wrap]
+piTools: ["read","bash","write","edit","codemode","grep","find","ls","powershell","journal","quest","tavern_*","flare","flare_list","compaction_point","ScheduleWakeup","ListWakeups","CancelWakeup","shuttle_feedback_done","shuttle_prs","browser","*_browser","cortex_*","shuttle_link","check_ui","ui_examples"]
+piSkills: ["journal","quest-management","tavern","tavern-keeper","cortex","flare","wakeup","shuttle"]
 hires: [ranger, smith, warden, wanderer]
 greenlight: explicit
 characters: [wren, moss, ada]

@@ -1,7 +1,7 @@
 import { readFileSync, rmSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { authorityDecision, communicationAct, evaluate, blocked, BLOCK_MARKER, clusterWriteBlock, mergeBlock, type ScopeCall } from "../../src/scope/engine";
-import { scopeFileSchema, scopeRenderedFileSchema, type Scope } from "../../src/scope/schema";
+import { piLoadoutSchema, scopeFileSchema, scopeRenderedFileSchema, type Scope } from "../../src/scope/schema";
 import { armedFile, armScope, MessagePolicyError, readMessagePolicy, type NativeScopeReceipt } from "../../src/scope/store";
 import { prepareCall } from "../../src/scope/prepare";
 import { communicationCallDigest, namedCommunication, sendRulesDigest } from "../../src/scope/communication";
@@ -15,13 +15,15 @@ import { sandboxCommand } from "../../src/scope/sandbox";
 import { bindChecks } from "../../src/scope/checker";
 import { bindWorktree, gitWorktreeRoot, needsWorktree, readerFallback } from "../../src/scope/worktree";
 import { receiveSpend, type SpendSession } from "./spend";
+import { allowPiTool, trimPiPrompt, type PiPromptOptions } from "./loadout";
 
 // Structural API keeps the installed shim independent of a second copy of pi.
 interface PiContext { cwd: string; sessionManager?: SpendSession }
-interface PiEvent { toolName?: string; toolCallId?: string; input?: Record<string, unknown>; content?: unknown[]; structuredContent?: unknown; messageEntryId?: string }
+interface PiEvent { toolName?: string; toolCallId?: string; input?: Record<string, unknown>; content?: unknown[]; structuredContent?: unknown; messageEntryId?: string; systemPromptOptions?: PiPromptOptions }
 export interface PiGuardApi {
   on(name: "session_start" | "before_agent_start" | "tool_call" | "tool_result" | "turn_end", handler: (event: PiEvent, ctx: PiContext) => unknown): unknown;
   getActiveTools(): string[];
+  getAllTools?(): { name: string; exposure?: string }[];
   setActiveTools(names: string[]): void;
 }
 export default function tavernGuard(pi: PiGuardApi): void {
@@ -48,6 +50,7 @@ export default function tavernGuard(pi: PiGuardApi): void {
   const actReceipts = new Map<string, string>();
   const draftReceipts = new Map<string, string>();
   let lastReadableScope: Scope | undefined;
+  let lastLoadoutScope: Scope | undefined;
   let mode: Scope["mode"] = process.env.TAVERN_SCOPE_MODE === "off" ? "off" : process.env.TAVERN_SCOPE_MODE === "watch" ? "watch" : "enforce";
   const load = (): Scope => {
     nativeReceipt = undefined;
@@ -66,6 +69,7 @@ export default function tavernGuard(pi: PiGuardApi): void {
     }
     mode = scope.mode;
     if (process.env.BB_THREAD_ID && scope.threadId !== process.env.BB_THREAD_ID) throw new Error("Scope belongs to another thread");
+    lastLoadoutScope = scope;
     try {
       scope = readMessagePolicy(file, scope, nativeReceipt?.hostBinding.scopeDigest);
       lastReadableScope = scope;
@@ -89,17 +93,41 @@ export default function tavernGuard(pi: PiGuardApi): void {
     try { scope = load(); } catch { rmSync(armedFile(file), { force: true }); return; }
     arm(scope);
   };
+  const suppressed = new Set<string>();
+  const filterLoadout = (options?: PiPromptOptions) => {
+    const scope = lastLoadoutScope;
+    if (!scope || !scope.piLoadout && !scope.tools.hide && !suppressed.size) return;
+    const active = pi.getActiveTools(), selected = options?.selectedTools ?? active;
+    const allowed: string[] = [];
+    const candidates = new Set([...selected, ...suppressed]);
+    suppressed.clear();
+    for (const name of candidates) {
+      if (allowPiTool(scope, name)) allowed.push(name);
+      else suppressed.add(name);
+    }
+    if (options?.selectedTools) options.selectedTools = allowed;
+    if (allowed.length !== active.length || allowed.some((name, index) => active[index] !== name)) pi.setActiveTools(allowed);
+    if (options) trimPiPrompt(options, scope.piLoadout);
+  };
+  const outsideLoadout = (scope: Scope | undefined, name: string) => scope && !allowPiTool(scope, name)
+    ? { block: true, reason: `${BLOCK_MARKER} This tool is not in the Pi loadout. Use a listed tool or ask your Keeper to include it in a hire.\nTavern scope rule: pi-loadout` }
+    : undefined;
   const spend = receiveSpend(file);
   pi.on("session_start", (_event, ctx) => {
     worktree = undefined;
     localArm = undefined;
+    suppressed.clear();
     refresh();
+    filterLoadout();
     if (ctx?.sessionManager) spend.backfill(ctx.sessionManager);
   });
   pi.on("turn_end", (event, ctx) => {
     if (ctx.sessionManager && event.messageEntryId) spend.turn(ctx.sessionManager, event.messageEntryId);
   });
-  pi.on("before_agent_start", refresh);
+  pi.on("before_agent_start", event => {
+    refresh();
+    filterLoadout(event?.systemPromptOptions);
+  });
   pi.on("tool_call", (event, ctx) => {
     const name = event.toolName ?? "unknown";
     const wasMismatched = !!messagePolicyProblem;
@@ -115,7 +143,19 @@ export default function tavernGuard(pi: PiGuardApi): void {
       const shell = name.toLowerCase() === "bash" && typeof event.input?.command === "string" ? event.input.command : undefined;
       if (event.input && shell !== undefined) event.input.command = sandboxCommand(fallback, shell, false, file);
     };
-    try { scope = load(); } catch { return unavailable(); }
+    if (name === "tavern_hire") {
+      const loadout = piLoadoutSchema.safeParse(input.input.loadout);
+      if (loadout.success && loadout.data.tools?.length) {
+        const registered = pi.getAllTools?.();
+        if (!registered) return { block: true, reason: "Not hired. This Pi session cannot check named tool opt-ins. Omit them or update Pi." };
+        const available = new Set(registered.filter(tool => tool.exposure !== "hidden").map(tool => tool.name));
+        const missing = loadout.data.tools.filter(tool => !available.has(tool));
+        if (missing.length) return { block: true, reason: `Not hired. Tool opt-ins not registered in this Pi session: ${missing.join(", ")}. Check the exact names or omit them.` };
+      }
+    }
+    try { scope = load(); } catch { return outsideLoadout(lastLoadoutScope, name) ?? unavailable(); }
+    const hidden = outsideLoadout(scope, name);
+    if (hidden) return hidden;
     let protectedCall = false;
     try {
       const contained = !nativeReceipt && process.platform === "darwin" && scope.sandbox && ["bash", "Bash"].includes(name);

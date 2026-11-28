@@ -19,6 +19,11 @@ export const shellRuleSchema = z.object({
 export const prGrantIdSchema = z.string().regex(/^[a-zA-Z\d_-]{1,120}$/);
 export const prGrantSchema = z.object({ id: prGrantIdSchema, digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export const pullRequestPolicySchema = z.object({ alwaysAsk: z.boolean(), owned: z.array(z.url()).max(1000), legacyOwned: z.array(z.url()).max(1000).optional(), heads: z.record(z.url(), z.string()).optional(), grants: z.array(prGrantSchema).max(100) }).strict();
+export const piSkillNames = z.array(z.string().regex(/^[A-Za-z0-9_-]+$/));
+export const piToolPatterns = z.array(z.string().regex(/^[A-Za-z0-9_*-]+$/));
+export const piLoadoutSchema = z.object({ skills: piSkillNames.optional(), tools: piSkillNames.optional() }).strict();
+export type PiLoadout = z.infer<typeof piLoadoutSchema>;
+const resolvedPiLoadoutSchema = z.object({ tools: piToolPatterns, skills: piSkillNames, optIns: piLoadoutSchema.optional() }).strict();
 export const scopeSchema = z.object({
   v: z.literal(1),
   threadId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),
@@ -40,6 +45,7 @@ export const scopeSchema = z.object({
   enforceFrom: z.number().int().nonnegative().optional(),
   writes: z.object({ mode: z.enum(["none", "worktree", "paths", "any"]), allow: patterns, deny: patterns }).strict(),
   tools: z.object({ allow: patterns, deny: patterns, hide: z.boolean() }).strict(),
+  piLoadout: resolvedPiLoadoutSchema.optional(),
   shell: z.object({ deny: z.array(shellRuleSchema).max(200), allow: z.array(shellRuleSchema).max(200) }).strict(),
   network: z.enum(["any", "none"]),
   github: z.enum(["none", "read", "draft-pr-only"]),

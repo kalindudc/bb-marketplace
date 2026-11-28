@@ -67,6 +67,25 @@ async function detectionAsk(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe("scoped provider admission through the strict host", () => {
+  it("carries named Ranger tool and skill opt-ins into the scope file and through refresh", async () => {
+    const f = await fixture("ranger");
+    const piLoadout = { skills: ["research"], tools: ["web_fetch", "chat_read"] };
+    await f.harness.behavior.invokeAgentTool("tavern_hire", { ...f.input, loadout: piLoadout }, { threadId: "lead" });
+    const scopes = f.runtime.scopes!;
+    expect(scopes.api.localScopeRecord("child")?.scope.piLoadout).toMatchObject({ tools: expect.arrayContaining(["web_search", "web_fetch"]), optIns: piLoadout });
+    const live = scopes.api.localScopeRecord("child")!.scope.piLoadout;
+    await scopes.refreshLiveScopes();
+    expect(scopes.api.localScopeRecord("child")?.scope.piLoadout).toEqual(live);
+    scopes.api.clearScope("child");
+    await scopes.ensure(f.k.member("child")!);
+    expect(scopes.api.localScopeRecord("child")?.scope.piLoadout).toEqual(live);
+    expect(f.k.store.openAsks("lead").filter(ask => ask.kind === "scope")).toEqual([]);
+  });
+  it("does not accept wildcard hire opt-ins", async () => {
+    const f = await fixture("ranger");
+    await expect(f.harness.behavior.invokeAgentTool("tavern_hire", { ...f.input, loadout: { tools: ["web_*"] } }, { threadId: "lead" })).rejects.toThrow();
+    expect(f.spawns()).toHaveLength(0);
+  });
   it("hires an open-scope Wanderer on its configured provider without a detection-only ask", async () => {
     const f = await fixture("wanderer", false);
     await f.hire();

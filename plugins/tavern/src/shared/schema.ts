@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { classScopeSchema, scopeOverrideSchema } from "../scope/schema";
+import { classScopeSchema, piSkillNames, piToolPatterns, scopeOverrideSchema } from "../scope/schema";
 import { CLASS_BODY_LIMIT } from "./class-rules";
 import { LOOK_BUILDS, LOOK_HAIRS, LOOK_HAIR_COLOURS, LOOK_HATS, LOOK_LIGHTS, LOOK_SKINS } from "./look";
 import { SPEECH_KEYS } from "./says";
@@ -38,6 +38,8 @@ export const classDefSchema = z.object({
   scope: classScopeSchema.optional(),
   environment: z.enum(["shared", "worktree"]).nullable(),
   tools: z.array(z.string()),
+  piTools: piToolPatterns.optional(),
+  piSkills: piSkillNames.optional(),
   hires: z.array(z.string()),
   greenlight: z.enum(["explicit", "none"]).nullable(),
   budget: z.object({ members: z.number().int(), rangers: z.number().int(), rangerMinutes: z.number().int() }).nullable(),

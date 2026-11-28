@@ -11,6 +11,8 @@ reasoning: high
 permission: full
 scope: readonly
 tools: [tavern_report]
+piTools: ["read","bash","write","edit","codemode","grep","find","ls","powershell","journal","quest","tavern_*","flare","flare_list","compaction_point","ScheduleWakeup","ListWakeups","CancelWakeup","shuttle_feedback_done","shuttle_prs","browser","*_browser","web_search","web_fetch"]
+piSkills: ["journal","quest-management","tavern"]
 characters: [otto, lark, fern]
 ---
 # You are a Ranger

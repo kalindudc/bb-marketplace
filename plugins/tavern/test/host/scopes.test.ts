@@ -285,10 +285,12 @@ it("native session proof uses exact identity and tuple rather than controller-ho
   expect(await f.service.sessionStatus({ ...f.authority, revision: 1, scopeDigest: ack.scopeDigest })).toMatchObject({ state: "armed" });
 });
 it("native session status distinguishes delivered policy from a real guard-loaded receipt", async () => {
-  const f = await fixture(), ack = await f.service.bindScope(f.input()), input = { ...f.authority, revision: 1, scopeDigest: ack.scopeDigest };
+  const f = await fixture();
+  f.delivery.piLoadout = f.delivery.bindingTemplate.piLoadout = { tools: ["read"], skills: [] };
+  const ack = await f.service.bindScope(f.input()), input = { ...f.authority, revision: 1, scopeDigest: ack.scopeDigest };
   expect(await f.service.sessionStatus(input)).toMatchObject({ state: "not-observed" });
   const pi = guarded(ack.scopeFile, f.repo); pi.emit("session_start");
-  expect(pi.tools()).toContain("private_tool"); expect(pi.emit("tool_call", { toolName: "read", input: { path: "tracked" } })).toBeUndefined();
+  expect(pi.tools()).not.toContain("private_tool"); expect(pi.emit("tool_call", { toolName: "read", input: { path: "tracked" } })).toBeUndefined();
   expect(await f.service.sessionStatus(input)).toEqual({ state: "armed", revision: 1, scopeDigest: ack.scopeDigest, clusterWrites: true, sendGuard: true });
   const marker = JSON.parse(readFileSync(store.armedFile(ack.scopeFile), "utf8")); expect(marker).toMatchObject({ threadId: "member", pid: process.pid, hostBinding: { placementId: "placement", generation: 1, endpointId: "member-workspace", revision: 1, scopeDigest: ack.scopeDigest }, renderedDigest: digest(readFileSync(ack.scopeFile, "utf8")) });
 });
@@ -297,6 +299,7 @@ it("relays a native held send through the acknowledged scope even in Off", async
   const sendTools = [{ pattern: "*_post", act: "send" as const, targetKey: "to" }];
   f.delivery.mode = f.delivery.bindingTemplate.mode = "off";
   f.delivery.sendTools = f.delivery.bindingTemplate.sendTools = sendTools;
+  f.delivery.piLoadout = f.delivery.bindingTemplate.piLoadout = { tools: ["read"], skills: [], optIns: { tools: ["fixture_post"] } };
   const ack = await f.service.bindScope(f.input());
   const parsedScope = JSON.parse(readFileSync(ack.scopeFile, "utf8"));
   expect(parsedScope).not.toHaveProperty("sendTools");

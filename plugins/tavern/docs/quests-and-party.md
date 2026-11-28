@@ -38,6 +38,8 @@ Open **Answers** on a quest to see the Keeper’s recorded replies and unanswere
 
 When a Keeper hires or re-briefs a member, Tavern attaches your exact opening request and routed steers in order, omitting unrelated questions and asides. Builders and checkers always read your literal words rather than a paraphrase. Requests up to 4,000 characters appear inline, and longer ones page cleanly without clipping. If you steer a quest after a member starts work, the Ledger and quest page flag that member until a fresh brief is delivered. Quoted chat text never grants tools, widens scopes, or bypasses approvals.
 
+Tavern gives scoped Pi threads the tools their class needs and keeps an index of every discoverable skill. Rangers start with web search and fetch if those tools are installed. A Keeper can add exact names through a hire's `loadout.skills` and `loadout.tools`. Pi refuses the hire if a named tool is not registered in the Keeper's session. If the member runs elsewhere, make sure the tool is also installed there. Opt-ins do not install tools or approve acts.
+
 ## Quest controls
 
 | Control | Where | What it does |
@@ -83,7 +85,7 @@ If you choose **Side quest**, the hiring Keeper reserves a greenlit waypoint and
 
 ## Classes, characters, and service records
 
-Open **Classes** to view effective models and scopes, or edit a class in the side panel. Class and character edits save either for every project (`~/.agents/tavern/`) or for one server-local checkout (`<project>/.agents/tavern/`). A project inherits the every-project values, which inherit Tavern’s shipped values. An override changes only the fields it saves; an older whole-file override still replaces the entire definition. Class files can only narrow shipped scope presets.
+Open **Classes** to view effective models and scopes, or edit a class in the side panel. Class and character edits save either for every project (`~/.agents/tavern/`) or for one server-local checkout (`<project>/.agents/tavern/`). A project inherits the every-project values, which inherit Tavern’s shipped values. An override changes only the fields it saves; an older whole-file override still replaces the entire definition. Class files can only narrow shipped scope presets. Set `piTools` and `piSkills` in a Markdown class override to change which tools Pi exposes and which skills get full descriptions. They are independent fields: omitting a field from a patch inherits it.
 
 Open **Classes → Overrides** (also linked from **Characters**) to see the registry files by scope, or compare a definition on its sheet. Reset removes just that override in the selected scope. For changed-fields overrides you can also reset one saved field. Tavern previews what will take over before asking you to confirm. It does not reset Settings, delete custom definitions, restart running turns or rewrite saved hire instructions. If a saved patch’s character pool becomes incompatible, Tavern keeps the patch’s scope and other fields, reports the problem on the class sheet and Overrides list, and refuses to hire from that pool until it is fixed.
 

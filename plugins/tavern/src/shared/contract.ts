@@ -423,7 +423,7 @@ export type JournalEdit = z.infer<typeof journalEditSchema>;
 const ok = z.object({ ok: z.literal(true) });
 
 /** The class fields the Classes page edits (server registry.ts CLASS_EDITABLE). */
-export const classEditSchema = classDefSchema.pick({ label: true, plain: true, description: true, body: true, characters: true, startable: true, hireable: true, scope: true }).partial().strict();
+export const classEditSchema = classDefSchema.pick({ label: true, plain: true, description: true, body: true, characters: true, startable: true, hireable: true, scope: true, piTools: true, piSkills: true }).partial().strict();
 export type ClassEditInput = z.infer<typeof classEditSchema>;
 const registryTarget = z.enum(["global", "project"]);
 const registryProject = z.string().min(1).max(100).nullable();

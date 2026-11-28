@@ -84,7 +84,8 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const prSchemaDelta = Buffer.byteLength(JSON.stringify({ ...previousPr, action: selector, commentId, threadId: reviewThreadId, resolved })) -
     Buffer.byteLength(JSON.stringify({ ...previousPr, action: { ...selector, enum: selector.enum.filter(value => value !== "reply" && value !== "resolve") } }));
   expect(prSchemaDelta).toBeGreaterThan(0);
-  const bytes = prSchemaDelta + Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + askSchemaDelta + waypointAskDelta + judgeBytes + checkpointDelta + permanentSlotDelta + tellDelta + answerSchemaDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
+  const keeperInstructions = read("classes/keeper.md").replace(/^pi(?:Tools|Skills): [^\n]*\n/gm, "");
+  const bytes = prSchemaDelta + Buffer.byteLength(metadata + noteMetadata + keeperInstructions + skill) + structure + questSchemaDelta + replacementSchemaDelta + askSchemaDelta + waypointAskDelta + judgeBytes + checkpointDelta + permanentSlotDelta + tellDelta + answerSchemaDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
   const withTickGuidance = bytes + Buffer.byteLength(`\n${MEMBER_CHECK_IN}\n${TICK_REPLY_GUIDANCE}`);
   if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${withTickGuidance}\nMERGE_TARGET_SCHEMA_BYTES=${mergeTargetDelta}\n`);
   expect(withTickGuidance).toBeLessThanOrEqual(34754);

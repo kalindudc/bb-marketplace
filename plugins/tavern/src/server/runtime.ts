@@ -69,7 +69,7 @@ import { captureRequestSources, forwardedSteer, requestSourcePacket } from "./re
 import { isHireCancelled, recoverHires, rejectedSpawn, releaseHire, settleCancelledHire, SpawnedHireNeedsRecovery } from "./hires";
 import { briefForPrompt } from "./brief-prompt";
 import { BackendScopes, type BackendScopeOptions } from "./scopes";
-import type { ProjectContext, ScopeOverride } from "../scope";
+import { piLoadoutSchema, type PiLoadout, type ProjectContext, type ScopeOverride } from "../scope";
 import type { Ask, BoardQuest } from "../shared/schema";
 import { DEFAULT_SETTINGS, type TavernSettings, type SparseTunables } from "../shared/settings";
 import type { SettingsStore } from "./settings/store";
@@ -149,6 +149,7 @@ type Hire = {
   characterId?: string | null;
   title: string;
   scope?: ScopeOverride;
+  loadout?: PiLoadout;
   requestDetectionOnly?: boolean;
   detectionOnlyAskId?: string;
   placementRuleId?: string;
@@ -1819,6 +1820,7 @@ export class TavernRuntime {
   }
   private async prepareHiredScope(member: Member, token: string, intent: HireIntent) {
     if (intent.scopePrepared) return;
+    if (intent.loadout) this.keeper.store.patch(member.threadId, { piLoadoutOptIns: intent.loadout });
     if (this.scopes && intent.scopeResolution) {
       if (!intent.initialInput) throw new Error("A scoped hire needs its recorded spawn input");
       await this.scopes.hired(
@@ -1991,6 +1993,7 @@ export class TavernRuntime {
     const keeperProjectId = projectId;
     this.keeper.require(threadId, "keeper");
     if (input.placement) placementPickSchema.parse(input.placement);
+    const loadout = input.loadout === undefined ? undefined : piLoadoutSchema.parse(input.loadout);
     let makerRepo: string | null = null;
     if (input.classId === "warden" && input.boardQuestId && input.waypointId) {
       this.keeper.owned(threadId, input.boardQuestId);
@@ -2222,8 +2225,9 @@ export class TavernRuntime {
       after = page[page.length - 1].id;
     }
     const scopeResolution = this.scopes?.api.shouldScope(role.id, "hire")
-      ? await this.scopes.resolve(role.id, projectId, input.scope, role)
+      ? await this.scopes.resolve(role.id, projectId, input.scope, role, loadout)
       : null;
+    if (loadout && !scopeResolution) throw new Error("Named Pi tool and skill opt-ins require a Tavern scope.");
     if (!providerPlacement && scopeResolution && scopeResolution.scope.preset !== "open") {
       const parent = await this.bb.sdk.threads.get({ threadId });
       if (parent.environmentId) {
@@ -2333,6 +2337,7 @@ export class TavernRuntime {
       initialInput: brief,
       scopeResolution,
       scopeOverride: input.scope,
+      ...(loadout ? { loadout } : {}),
       classId: role.id,
       classDefinition: executionRole,
       characterId: character?.id ?? null,
@@ -2806,6 +2811,7 @@ export class TavernRuntime {
           classId: member.classId, boardQuestId: member.boardQuestId, waypointId: member.waypointId,
           errand: member.errand, title: member.title ?? replacement.brief.outcome, brief: replacement.brief,
           characterId: member.characterId, repo: member.repo ?? state.projectId ?? undefined,
+          loadout: state.piLoadoutOptIns,
         }, memberId);
         return { state: "replaced", threadId: hired.threadId, briefPending: hired.briefPending } as const;
       } catch (error) {

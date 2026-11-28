@@ -98,7 +98,7 @@ it("applies the same availability and boundary checks to calls emitted from code
   const store = new ScopeStore(root);
   vi.stubEnv("TAVERN_SCOPE_FILE", store.file("t1")); vi.stubEnv("BB_THREAD_ID", "t1");
   for (const preset of ["readonly", "checker", "worktree", "keeper", "open"] as const) {
-    const s = bindPaths({ ...scopeForClass("test", undefined, preset), threadId: "t1", issuedAt: 1 }, { home: root, tmp: [join(root, "temp")], threadStorage: join(root, "storage"), scopesDir: store.directory });
+    const s = bindPaths({ ...scopeForClass("test", undefined, preset), threadId: "t1", issuedAt: 1, piLoadout: { tools: [...tools, "codemode", "write"], skills: [] } }, { home: root, tmp: [join(root, "temp")], threadStorage: join(root, "storage"), scopesDir: store.directory });
     store.write("t1", s);
     const handlers = new Map<string, Parameters<PiGuardApi["on"]>[1]>();
     const pi: PiGuardApi = { on: (name, handler) => handlers.set(name, handler), getActiveTools: () => tools, setActiveTools: () => {} };

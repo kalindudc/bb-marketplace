@@ -13,6 +13,7 @@ import {
   scopeSchema,
   evaluate,
   type Scope,
+  type PiLoadout,
   type ProjectContext,
   type ScopeOverride,
   type ScopeResolution,
@@ -49,6 +50,7 @@ import type { TavernRuntime } from "./runtime";
 function scopeChanges(before: Scope, after: Scope) {
   const phrases: string[] = [];
   if (!isDeepStrictEqual(before.tools, after.tools)) phrases.push("saved tool rules changed");
+  if (!isDeepStrictEqual(before.piLoadout, after.piLoadout)) phrases.push("Pi tool and skill lists changed");
   if (!isDeepStrictEqual(before.writes, after.writes)) phrases.push("saved path rules changed");
   if (!isDeepStrictEqual(before.shell, after.shell)) phrases.push("shell rules changed");
   if (before.preset !== after.preset) phrases.push(`class baseline is now ${after.preset}`);
@@ -297,12 +299,13 @@ export class BackendScopes {
           const { context, files } = project;
           const resolved = this.api.resolveForRefresh(member.classId, context, definition.scope, files, input?.initial);
           if (!input) {
-            const { threadId: _id, issuedAt: _issued, mode: _mode, checks: _checks, expectedWorktree: _root, assignedBranch: _branch, pullRequestPolicy: _prs, sendTools: _send, communicationAuthority: _communication, workspaceKind: _kind, enforceFrom: _from, env: priorEnv, ...prior } = withMemoryCommandPolicy(template, []);
+            const { threadId: _id, issuedAt: _issued, mode: _mode, checks: _checks, expectedWorktree: _root, assignedBranch: _branch, pullRequestPolicy: _prs, sendTools: _send, communicationAuthority: _communication, workspaceKind: _kind, enforceFrom: _from, piLoadout: _priorLoadout, env: priorEnv, ...prior } = withMemoryCommandPolicy(template, []);
             const { threadId: _nextId, issuedAt: _nextIssued, mode: _nextMode, checks: _nextChecks, expectedWorktree: _nextRoot, assignedBranch: _nextBranch, pullRequestPolicy: _nextPrs, sendTools: _nextSend, communicationAuthority: _nextCommunication, workspaceKind: _nextKind, enforceFrom: _nextFrom, env: nextEnv, ...next } = resolved.scope;
             if (!isDeepStrictEqual({ ...prior, variables: priorEnv.variables }, { ...next, variables: nextEnv.variables })) continue;
             k.store.put("scopeInputs", row.threadId, { changes: [] });
           }
           let scope = resolved.scope;
+          scope.piLoadout = runtime.registry.piLoadout(definition, scope.preset, state.piLoadoutOptIns ?? template.piLoadout?.optIns);
           for (const change of input?.changes ?? []) scope = this.api.replayOverride(scope, context, files, change.override, change.approved).scope;
           const version = createHash("sha256").update(JSON.stringify(files.sources)).digest("hex");
           const fingerprint = createHash("sha256").update(JSON.stringify([scope, version, this.api.mode()])).digest("hex");
@@ -397,13 +400,15 @@ export class BackendScopes {
       ...(keeperScratch ? { keeperScratch } : {}),
     };
   }
-  async resolve(classId: string, projectId?: string, override?: ScopeOverride, definition?: import("../shared/schema").ClassDef) {
+  async resolve(classId: string, projectId?: string, override?: ScopeOverride, definition?: import("../shared/schema").ClassDef, loadout?: PiLoadout) {
     if (projectId) await this.runtime.prepareRegistry(projectId);
     // The scope callback has only a class id; resolution itself is synchronous and project-specific.
     this.resolvingProject = projectId;
     this.resolvingClass = definition;
     try {
       const result = this.api.resolve(classId, projectId ? this.runtime.scopeProjectContext(projectId) : {}, override);
+      const role = definition ?? this.runtime.snapshot(projectId).classes.find(role => role.id === classId);
+      if (role) result.scope.piLoadout = this.runtime.registry.piLoadout(role, result.scope.preset, loadout);
       if (override) this.validateTools(override, result.scope);
       return result;
     } finally {
@@ -514,11 +519,10 @@ export class BackendScopes {
     let resolution: ScopeResolution;
     if (state.builtinKeeperFallback) {
       if (member.role !== "keeper") throw new Error("Only a Keeper can use the built-in fallback scope");
-      this.resolvingClass = this.runtime.builtinSnapshot().classes.find(role => role.id === "keeper");
-      if (!this.resolvingClass) throw new Error("The built-in Keeper class is missing");
-      try { resolution = this.api.resolve("keeper", {}); }
-      finally { this.resolvingClass = undefined; }
-    } else resolution = await this.resolve(member.classId, projectId);
+      const definition = this.runtime.builtinSnapshot().classes.find(role => role.id === "keeper");
+      if (!definition) throw new Error("The built-in Keeper class is missing");
+      resolution = await this.resolve("keeper", undefined, undefined, definition, state.piLoadoutOptIns);
+    } else resolution = await this.resolve(member.classId, projectId, undefined, undefined, state.piLoadoutOptIns);
     const checks = this.runtime.keeper.store.runtime(member.threadId).reviewTarget?.checks;
     if (resolution.scope.preset === "checker" && checks) resolution.scope.checks = checks;
     this.recordProblems(member.threadId, resolution.problems);

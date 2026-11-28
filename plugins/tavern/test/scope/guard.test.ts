@@ -11,6 +11,15 @@ import { scopeForClass } from "../../src/scope/presets";
 import { bindPaths, realPath } from "../../src/scope/paths";
 import { linkedWorktree } from "./git-fixture";
 import { bindWorktree, gitWorktreeRoot } from "../../src/scope/worktree";
+import { Registry } from "../../src/server/registry";
+import { fileURLToPath } from "node:url";
+
+const shipped = fileURLToPath(new URL("../../", import.meta.url));
+const registry = new Registry(shipped, shipped);
+const classScope = (role: string) => {
+  const base = scopeForClass(role);
+  return { ...base, piLoadout: registry.piLoadout(registry.read().classes.find(c => c.id === role)!, base.preset) };
+};
 
 const dirs: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -33,45 +42,45 @@ it("does not authorize protected acts with a missing scope, while keeping ordina
   expect(emit("tool_call", { toolName: "bash", input: { command: "git push origin main" } })).toMatchObject({ block: true });
   expect(pi.setActiveTools).not.toHaveBeenCalled();
 });
-it("arms, keeps tools visible, and protects a symlink to control files", () => {
+it("arms, hides tools outside the loadout, and protects a symlink to control files", () => {
   const root = temp(), { worktree } = linkedWorktree(root), outside = temp();
   vi.spyOn(process, "cwd").mockReturnValue(worktree);
   const store = new ScopeStore(root);
   symlinkSync(store.directory, join(worktree, "escape"));
   symlinkSync(outside, join(worktree, "ordinary"));
-  const scope = bindPaths({ ...scopeForClass("smith"), threadId: "t1", issuedAt: Date.now() - 1, sandbox: false }, { home: root, tmp: [join(root, "scratch")], worktree, scopesDir: store.directory }, realPath);
+  const scope = bindPaths({ ...classScope("smith"), threadId: "t1", issuedAt: Date.now() - 1, sandbox: false }, { home: root, tmp: [join(root, "scratch")], worktree, scopesDir: store.directory }, realPath);
   store.write("t1", scope); vi.stubEnv("TAVERN_SCOPE_FILE", store.file("t1")); vi.stubEnv("BB_THREAD_ID", "t1");
   const { pi, emit } = host(); extension(pi); emit("session_start", {}, worktree);
-  expect(store.isArmed("t1")).toBe(true); expect(pi.getActiveTools()).toContain("slack_post");
+  expect(store.isArmed("t1")).toBe(true); expect(pi.getActiveTools()).not.toContain("slack_post");
   expect(emit("tool_call", { toolName: "write", input: { path: "escape/new/file" } }, worktree)).toMatchObject({ block: true });
   expect(emit("tool_call", { toolName: "bash", input: { command: "echo x > escape/new/file" } }, worktree)).toMatchObject({ block: true });
   expect(emit("tool_call", { toolName: "write", input: { path: "ok" } }, worktree)).toBeUndefined();
   scope.tools.deny.push("write"); store.write("t1", scope);
   expect(emit("tool_call", { toolName: "write", input: { path: "ordinary/file" } }, worktree)).toBeUndefined();
 });
-it.each(["ranger", "warden"])("keeps renderer checks and other tools visible for %s", role => {
+it.each(["ranger", "warden"])("applies the prompt loadout independently of %s act checks", role => {
   const root = temp(), store = new ScopeStore(root);
-  const scope = bindPaths({ ...scopeForClass(role), threadId: "t1", issuedAt: 1, sandbox: false }, { home: root, tmp: ["/tmp"], threadStorage: join(root, "storage"), scopesDir: store.directory }, realPath);
+  const scope = bindPaths({ ...classScope(role), threadId: "t1", issuedAt: 1, sandbox: false }, { home: root, tmp: ["/tmp"], threadStorage: join(root, "storage"), scopesDir: store.directory }, realPath);
   expect(scope.tools.hide).toBe(false);
   store.write("t1", scope);
   vi.stubEnv("TAVERN_SCOPE_FILE", store.file("t1")); vi.stubEnv("BB_THREAD_ID", "t1");
   const { pi, emit } = host(["read", "check_ui", "ui_examples", "flare", "web_fetch", "slack_post", "other_write_file", "spawn", "write"]);
   extension(pi); emit("session_start");
   for (const toolName of ["check_ui", "ui_examples"]) {
-    expect(pi.getActiveTools()).toContain(toolName);
-    expect(emit("tool_call", { toolName, input: {} })).toBeUndefined();
+    expect(pi.getActiveTools().includes(toolName)).toBe(role === "warden");
+    expect(Boolean(emit("tool_call", { toolName, input: {} }))).toBe(role !== "warden");
   }
-  for (const toolName of ["slack_post", "other_write_file", "spawn"]) expect(pi.getActiveTools()).toContain(toolName);
+  for (const toolName of ["slack_post", "other_write_file", "spawn"]) expect(pi.getActiveTools()).not.toContain(toolName);
   expect(emit("tool_call", { toolName: "write", input: { path: "/repo/notes" } })).toBeUndefined();
 });
-it("keeps every Keeper tool visible and permits direct work except protected paths", () => {
+it("keeps Keeper rendering tools and permits direct work except protected paths", () => {
   const root = temp(), store = new ScopeStore(root);
-  const scope = bindPaths({ ...scopeForClass("keeper"), threadId: "t1", issuedAt: 1 }, { home: root, tmp: ["/tmp"], scopesDir: store.directory }, realPath);
+  const scope = bindPaths({ ...classScope("keeper"), threadId: "t1", issuedAt: 1 }, { home: root, tmp: ["/tmp"], scopesDir: store.directory }, realPath);
   store.write("t1", scope);
   vi.stubEnv("TAVERN_SCOPE_FILE", store.file("t1")); vi.stubEnv("BB_THREAD_ID", "t1");
   const { pi, emit } = host(["read", "check_ui", "ui_examples", "slack_post", "write"]);
   extension(pi); emit("session_start");
-  expect(pi.getActiveTools()).toEqual(["read", "check_ui", "ui_examples", "slack_post", "write"]);
+  expect(pi.getActiveTools()).toEqual(["read", "check_ui", "ui_examples", "write"]);
   expect(emit("tool_call", { toolName: "write", input: { path: "/repo/direct-work" } })).toBeUndefined();
   expect(emit("tool_call", { toolName: "write", input: { path: join(root, ".ssh/config") } })).toBeUndefined();
   expect(emit("tool_call", { toolName: "write", input: { path: join(root, ".agents/tavern/scopes.yml") } })).toMatchObject({ block: true });

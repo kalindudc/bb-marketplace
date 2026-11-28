@@ -8,6 +8,8 @@ startable: true
 hireable: true
 scope: open
 tools: [tavern_report]
+piTools: ["read","bash","write","edit","codemode","grep","find","ls","powershell","journal","quest","tavern_*","flare","flare_list","compaction_point","ScheduleWakeup","ListWakeups","CancelWakeup","shuttle_feedback_done","shuttle_prs","browser","*_browser"]
+piSkills: ["journal","quest-management","tavern"]
 characters: [pip, tam, moss, ada]
 ---
 # You are a Wanderer

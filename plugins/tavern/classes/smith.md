@@ -12,6 +12,8 @@ permission: full
 scope: worktree
 environment: worktree
 tools: [tavern_report]
+piTools: ["read","bash","write","edit","codemode","grep","find","ls","powershell","journal","quest","tavern_*","flare","flare_list","compaction_point","ScheduleWakeup","ListWakeups","CancelWakeup","shuttle_feedback_done","shuttle_prs","browser","*_browser","cortex_*"]
+piSkills: ["journal","quest-management","tavern"]
 characters: [juno, bram]
 ---
 # You are a Smith

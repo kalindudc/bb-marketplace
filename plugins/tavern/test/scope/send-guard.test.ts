@@ -24,7 +24,8 @@ const policy: Rule[] = [{ pattern: "*_post_message", act: "send", targetKey: "re
 function fixture(mode: "enforce" | "watch" | "off", sendTools = policy) {
   const root = mkdtempSync(join(tmpdir(), "send-guard-")); roots.push(root);
   const store = new ScopeStore(root);
-  const scope = bindPaths({ ...scopeForClass("keeper"), threadId: "lead", issuedAt: 1, mode }, { home: root, tmp: [root], scopesDir: store.directory, worktree: root });
+  const piLoadout = { skills: [], tools: ["bash", "read", "mcp__fixture__POST_MESSAGE", "proxy", "search", "fixture_read_message", "fixture_post_message", "fixture_create_draft", "fixture_unrelated"] };
+  const scope = bindPaths({ ...scopeForClass("keeper"), threadId: "lead", issuedAt: 1, mode, piLoadout }, { home: root, tmp: [root], scopesDir: store.directory, worktree: root });
   const file = store.file("lead");
   const replace = (rules: Rule[]) => store.write("lead", { ...scope, sendTools: rules });
   replace(sendTools);
