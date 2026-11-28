@@ -2092,18 +2092,17 @@ export class TavernRuntime {
     };
     const { party, reserved } = checkStaffing();
     const limitDecisionIds: string[] = [];
-    const review = this.review("automatic");
-    const reviewAllowance = role.id === "smith" && review.waiting >= review.budget && limits.reviewAvailable(questId);
-    if (
-      role.id === "smith" &&
-      review.waiting >= review.budget &&
-      !reviewAllowance
-    ) {
-      this.record("review-budget.held", { waiting: review.waiting, budget: review.budget, classId: role.id }, threadId, questId);
-      throw new Error(
-        `The review budget is full: ${review.waiting} of ${review.budget}; wait, or use Allow one more review on the quest page. ${limitMessage("attention.reviewBudget", review.budget)}`,
-      );
-    }
+    const checkReview = () => {
+      if (role.id !== "smith" || !questId) return false;
+      const { waiting, budget } = this.review("automatic");
+      if (waiting < budget) return false;
+      if (limits.reviewAvailable(questId)) return true;
+      this.keeper.assertQuestNotHeld(questId);
+      const ask = limits.reviewAsk(threadId, questId, waiting, budget);
+      this.record("review-budget.held", { waiting, budget, classId: role.id }, threadId, questId);
+      throw new Error(`The review budget is full: ${waiting} of ${budget}. Wait for the user's answer to ask ${ask.id} or for the queue to have room. ${limitMessage("attention.reviewBudget", budget)}`);
+    };
+    let reviewAllowance = checkReview();
     const waypoint =
       input.waypointId && q
         ? this.keeper
@@ -2360,7 +2359,8 @@ export class TavernRuntime {
     }
     this.keeper.assertCheckerHandoff(role.id, questId);
     if (questId) await this.spend.assert(questId);
-    const displayName = this.keeper.store.atomic(() => {
+    if (reviewAllowance && !limits.reviewAvailable(questId)) reviewAllowance = checkReview();
+    const { displayName, reviewAskId } = this.keeper.store.atomic(() => {
       if (this.spend.held(questId)) throw new Error("The quest reached its spend budget. Only you can raise or remove it on the quest page.");
       const staffing = checkStaffing();
       if (plannedPermanent && q) {
@@ -2389,8 +2389,10 @@ export class TavernRuntime {
       if (authorization) intent.leadLinkId = reserveLead(this.keeper, this.keeper.owned(threadId, questId!),
         { classId: role.id, waypointId: input.waypointId!, token, sideQuestAskId: input.sideQuestAskId }, authorization);
       this.keeper.store.put("hires", token, intent);
-      return owner.displayName;
+      const reviewAskId = role.id === "smith" && questId ? limits.clearReviewHold(questId, "A Smith hire has been reserved.") : null;
+      return { displayName: owner.displayName, reviewAskId };
     });
+    if (reviewAskId) this.keeper.changed(threadId, questId);
     let placement: import("../shared/placement").PlacementRecord | null = null;
     let attempted = false;
     let childCreated: string | null = null;
@@ -3418,7 +3420,7 @@ export class TavernRuntime {
         );
       }
     }
-    return { waiting: items.length, budget: this.config().attention.reviewBudget, items };
+    return { waiting: items.filter(item => item.waitingFor?.who === "you").length, budget: this.config().attention.reviewBudget, items };
   }
   held(threadId: string, rt: Runtime = this.keeper.store.runtime(threadId), member: Member | null = this.keeper.member(threadId)) {
     const now = this.keeper.now();
@@ -3520,6 +3522,25 @@ export class TavernRuntime {
     }
     return pending;
   }
+  private releaseReviewHolds() {
+    const k = this.keeper;
+    const blocked = k.store.questsAwaitingReviewRoom();
+    if (!blocked.length) return;
+    const { waiting, budget } = this.review("automatic");
+    if (waiting >= budget) return;
+    const limits = new LimitPolicy(k);
+    const reason = "The review queue has room. Retry the held Smith hire.";
+    for (const { id, keeperThreadId } of blocked) {
+      if (this.succession.state.fence(keeperThreadId)) continue;
+      const released = k.store.atomic(() => {
+        const askId = limits.clearReviewHold(id, reason);
+        if (!askId) return false;
+        k.store.event(k.now(), keeperThreadId, id, "review-budget.available", reason, { askId, boardQuestId: id, waiting, budget }, { kind: "tavern" });
+        return true;
+      });
+      if (released) k.changed(keeperThreadId, id);
+    }
+  }
   async sweep() {
     this.study.prune(this.config().data.studyRetentionDays);
     if (this.stopAll.reason()) return;
@@ -3534,6 +3555,7 @@ export class TavernRuntime {
     try { this.reviewCache = this.readReview(); }
     catch (error) { this.bb.log.warn(`Tavern review cache: ${String(error)}`); }
     try {
+      await this.maintain("Review budget", null, [{ name: "release holds", run: () => this.releaseReviewHolds() }]);
       const spendByKeeper = new Map<string, string[]>();
       for (const { id, keeperThreadId } of this.keeper.store.questsAwaitingSpendCheck()) {
         const ids = spendByKeeper.get(keeperThreadId);

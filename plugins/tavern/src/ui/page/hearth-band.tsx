@@ -61,7 +61,7 @@ export function HearthBand({ room, registry }: { room: Room; registry?: Registry
   const errands = room.keepers.flatMap(keeper => keeper.errands).length;
   const solos = room.solos.length;
   const lists = [errands && plural(errands, "errand"), solos && plural(solos, "solo")].filter(Boolean).join(" · ");
-  const review = <span>Review <b>{room.review.waiting} of {room.review.budget}</b></span>;
+  const review = <span>Review <b>{room.review.waiting} of {room.review.budget}</b> waiting for you</span>;
   const summary = keepers.map(({ member, mood }) => `${registry ? characterName(registry, member) : "A Keeper"} is ${mood === "waiting" ? "waiting" : mood === "working" ? "working" : "idle"} at the table`).join("; ") || "No Keeper at the table";
   return <div className="rm-sline" role="group" aria-label="Status" data-sec="status">
     <div className="tv-hearth-band">
@@ -84,7 +84,7 @@ export function HearthBand({ room, registry }: { room: Room; registry?: Registry
         <Jump to="rm-board-h" title="Scroll to the quest board"><span><b>{onRoad}</b> on the road</span></Jump>
         <span><b>{rest.length}</b> resting</span>
         <span><b>{stale}</b> quiet</span>
-        {room.review.waiting > 0 && <Jump to="rm-review" title="Scroll to the review queue">{review}</Jump>}
+        {room.review.items.length > 0 && <Jump to="rm-review" title="Scroll to the review queue">{review}</Jump>}
         {failed > 0 && <span data-stuck className="tv-bad"><b>{failed}</b> failed <AlertAction action={{ kind: "run", label: "Review failed members", run: () => jumpTo("rm-board-h") }} /></span>}
       </div>
     </div>

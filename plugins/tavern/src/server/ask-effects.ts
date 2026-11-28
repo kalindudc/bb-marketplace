@@ -42,6 +42,7 @@ export const ASK_EFFECTS: Record<AskEffect["type"], { act: Act; handler: keyof E
   "quest-start": { act: "answerAsk", handler: "quest-start" },
   "member-schedules": { act: "answerAsk", handler: "member-schedules" },
   "soft-limit": { act: "answerAsk", handler: "soft-limit" },
+  "review-allowance": { act: "allowReview", handler: "review-allowance" },
   "communication-hold": { act: "answerAsk", handler: "communication-hold", answerOnly: true },
   "pull-request-draft": { act: "answerAsk", handler: "pull-request-draft", answerOnly: true },
   "retry-stop": { act: "answerAsk", handler: "retry-stop", keeperRecovery: ["retry"] },

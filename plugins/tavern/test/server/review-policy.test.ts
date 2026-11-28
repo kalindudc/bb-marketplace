@@ -103,7 +103,7 @@ describe("additional dispatch and policy coverage", () => {
       runtime.hire("lead", "project", { ...input, brief: { ...brief, timeboxMinutes: 60 } }),
     ).rejects.toThrow(/time box/);
   });
-  it("blocks Smith hires when three real waypoints are waiting for review", async () => {
+  it("lets a Smith hire proceed when three real waypoints are waiting for the Keeper", async () => {
     const { k, runtime, port } = setup();
     const q = await seedQuest(k,"lead", "A", "A");
     const base = planInput(q.id);
@@ -159,7 +159,7 @@ describe("additional dispatch and policy coverage", () => {
         voice: null,
       });
     }
-    expect(runtime.review().waiting).toBe(3);
+    expect(runtime.review()).toMatchObject({ waiting: 0, items: Array.from({ length: 3 }, () => ({ waitingFor: { who: "keeper" } })) });
     await expect(
       runtime.hire("lead", "project", {
         classId: "smith",
@@ -168,7 +168,7 @@ describe("additional dispatch and policy coverage", () => {
         title: "Build",
         brief,
       }),
-    ).rejects.toThrow(/review budget/);
+    ).resolves.toBeTruthy();
   });
   it("H4 exposes full reports and answered asks through bounded status pages", () => {
     const { k, runtime } = setup();

@@ -21,7 +21,9 @@ async function fixture() {
 it("includes bounded review context without extra per-item queries", async () => {
   const f = await fixture();
   const query = vi.spyOn(f.k.store, "query");
-  const item = f.runtime.review().items[0]!;
+  const review = f.runtime.review();
+  expect(review.waiting).toBe(0);
+  const item = review.items[0]!;
   expect(item).toMatchObject({ questTitle: f.q.title, waypoint: { id: "w1", title: "Check the approved environment", doneWhen: "The sandbox checks pass" }, member: { threadId: "maker", displayName: "Juno II", classId: "smith" }, reportId: f.report.id, headline: f.report.outcome, evidenceCount: 1, reportedAt: f.report.createdAt, waitingFor: { who: "keeper" } });
   expect(item.title).toBe(f.report.outcome.slice(0, 160));
   expect(query.mock.calls.filter(([kind]) => kind === "reports")).toHaveLength(1);
@@ -30,7 +32,7 @@ it.each(["working", "idle", "waiting"] as const)("names the assigned %s checker"
   const f = await fixture();
   f.k.bind("checker", "warden", "vex", "project", { keeperThreadId: "lead", boardQuestId: f.q.id, waypointId: "w1", errand: false, title: "Check", displayName: "Vex III", brief: { outcome: "Check", mode: "make-it-work", outOfScope: "Production", doneWhen: "Verified", context: [], questions: [], timeboxMinutes: null } });
   f.k.activity("checker", state);
-  expect(f.runtime.review().items[0]).toMatchObject({ waitingFor: { who: "checker", name: "Vex III", working: state === "working" } });
+  expect(f.runtime.review()).toMatchObject({ waiting: 0, items: [{ waitingFor: { who: "checker", name: "Vex III", working: state === "working" } }] });
 });
 it("does not label an unrelated user gate as waiting for you", async () => {
   const f = await fixture();
@@ -62,5 +64,5 @@ it.each(["hold", "user"])("waits for you when the gate is %s", async gate => {
   const f = await fixture();
   const summary = f.k.summary(f.q.id);
   vi.spyOn(f.k, "summary").mockReturnValue({ ...summary, ...(gate === "hold" ? { checkerHandoffHold: { id: "h", routeId: "r", sourceMessageId: "m", sourceText: "Hold", reason: "Wait", createdAt: f.time(), release: null } } : { waypoints: summary.waypoints.map(w => ({ ...w, actor: "user" as const })) }) });
-  expect(f.runtime.review().items[0]).toMatchObject({ waitingFor: { who: "you" } });
+  expect(f.runtime.review("automatic")).toMatchObject({ waiting: 1, items: [{ waitingFor: { who: "you" } }] });
 });

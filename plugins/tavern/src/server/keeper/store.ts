@@ -752,6 +752,13 @@ export class KeeperStore {
       AND json_extract(data,'$.checkerHandoffHold.release') IS NULL ORDER BY rowid DESC`).all(keeperThreadId) as { data: string }[];
     return rows.map(row => JSON.parse(row.data) as BoardQuest);
   }
+  questsAwaitingReviewRoom(): { id: string; keeperThreadId: string }[] {
+    return this.db.prepare(`SELECT id, json_extract(data,'$.keeperThreadId') AS keeperThreadId
+      FROM tavern_records WHERE kind='quests' AND archived_at IS NULL
+      AND json_extract(data,'$.archivedAt') IS NULL AND json_extract(data,'$.endedAt') IS NULL
+      AND json_extract(data,'$.phase') NOT IN ('done','stopped','stopping')
+      AND json_extract(data,'$.reviewHoldAskId') IS NOT NULL`).all() as { id: string; keeperThreadId: string }[];
+  }
   questsAwaitingSpendCheck(): { id: string; keeperThreadId: string }[] {
     return this.db.prepare(`SELECT id, json_extract(data,'$.keeperThreadId') AS keeperThreadId
       FROM tavern_records WHERE kind='quests' AND archived_at IS NULL

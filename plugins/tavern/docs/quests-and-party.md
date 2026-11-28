@@ -68,7 +68,7 @@ A permanent member can have up to three daily or weekly schedules, set in the se
 ## Spend, review, and party limits
 
 - **Spend budget:** Set a dollar cap on the quest page or approve one with the plan. At the cap, Tavern holds new hires, briefs and scheduled rounds until you raise or remove it. Budgets count only measured spend (guarded local Pi receipts and Burn-reported sessions); uncovered remote sessions show as unknown, and already-admitted work can push spend past the cap.
-- **Review budget:** Caps open review-bound items (default 3). When full, builder hires pause until reviews clear or you click **Allow one more review** on the quest page.
+- **Review budget:** Only items waiting for you count (default 3). The room still lists work waiting for a checker or Keeper. A Smith plan shows the full queue before you approve it. If a hire is held, choose **Allow** on the ask to let the Keeper retry one hire, or **Wait** to leave hiring on hold until the queue has room and Tavern wakes the Keeper. You can also grant one hire with **Allow one more review** on the quest page. Tavern withdraws the ask when it is no longer needed.
 - **Party limits:** Settings enforce a hard per-Keeper party ceiling (default 5). Class limits and concurrent Ranger limits (default 3) are soft caps a Keeper can exceed by one with an undoable decision, never past the hard ceiling.
 
 ## Delegation, Always ask, and Undo brakes

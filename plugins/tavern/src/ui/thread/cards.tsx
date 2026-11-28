@@ -213,6 +213,11 @@ export function QuestMapCard({ detail, version, measurement }: { detail: BoardQu
   const isSealed = !!plan && !noStaffingGreenlight && ((detail.quest.greenlitVersion ?? 0) >= plan.version || currentChecks);
   // The seal stamps and the party is dealt once per device: when sealed here, or the first time this device sees it sealed.
   const moment = useMoment(card, { surface: `thread:${detail.quest.keeperThreadId ?? "chat"}`, kind: "party forms", rememberKey: `moment:seal:${detail.quest.id}:${plan?.version ?? 0}`, active: isSealed, className: "mo-seal", ms: 1200 });
+  const { data: authority } = experimental_useRpcQuery({
+    contract: rpcContract, method: "questAuthority", input: { boardQuestId: detail.quest.id },
+    enabled: !isSealed && plan?.version === detail.quest.planVersion && plan.party.some(slot => slot.classId === "smith"),
+  });
+  const review = authority?.review;
   if (!plan) return <p className="tavern problem" role="alert">This plan version is not available.</p>;
   const current = plan.version === detail.quest.planVersion;
   const greenlight = detail.asks.find(a => a.kind === "greenlight" && a.state === "open");
@@ -250,6 +255,8 @@ export function QuestMapCard({ detail, version, measurement }: { detail: BoardQu
       </PlanMapFold>
       <QueryState error={error} />
       {current && !sealed && <>
+        {review && review.used >= review.total && plan.party.some(slot => slot.classId === "smith") &&
+          <p className="qm-reply" role="status">Your review queue is full ({review.used} of {review.total}). Smith hires wait for space or your one-review allowance.</p>}
         {showScope && <p className="qm-reply m">Or reply in chat, e.g. “seal, 1 Monday”.</p>}
         <footer className="qm-f">
           {noStaffingGreenlight ? null : reviewLead && detail.quest.keeperThreadId ? <button type="button" className="btn" onClick={() => revealAsk(detail.quest.keeperThreadId, reviewLead.id)}>Review lead plan and limits</button> : greenlight && formOption ? <button type="button" className="btn pri seal" aria-label={sealLabel === "Form the party (greenlight)" ? `Approve: ${sealLabel}` : sealLabel} disabled={answer.isPending} onClick={() => void answer.mutate({ askId: greenlight.id, optionId: formOption.id, note: null, via: "chat" }).catch(setError)}><Glyph name="wax-seal" /><span className="qm-full">{sealLabel}</span><span className="qm-short" aria-hidden="true">{answer.isPending ? "Sealing…" : "Approve"}</span></button> : waitsForParent ? <span className="m small">Staffing waits for the hiring Keeper’s decision.</span> : <span className="m small">The greenlight ask is not open yet.</span>}

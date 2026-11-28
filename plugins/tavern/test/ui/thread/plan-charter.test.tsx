@@ -28,11 +28,12 @@ const plan: Plan = {
 };
 const detail = planDetail(plan, [plan]);
 
-function render(detail: BoardQuestDetail, version: number | null = null) {
+function render(detail: BoardQuestDetail, version: number | null = null, review = { used: 0, total: 3 }) {
   return renderSlot({ component: () => <QuestMapCard detail={detail} version={version} /> } as never, {}, {
     pluginId: "tavern", experimental_rpcContract: rpcContract,
     composer: { scope: { kind: "thread", threadId: "keeper-1" } },
-    rpc: { registry: () => fixtureRegistry, answerAsk: () => ({ ok: true }) },
+    rpc: { registry: () => fixtureRegistry, answerAsk: () => ({ ok: true }),
+      questAuthority: () => ({ keeperName: "Wren", rows: [], delegations: [], preapprovals: [], review, spendBudget: null }) },
   });
 }
 
@@ -60,6 +61,23 @@ it("keeps Done when open and puts the five questions in one ordered set of discl
     expect(slot.getByRole("button", { name: "Approve: Form the party (greenlight)" }).textContent).toContain("Approve");
     expect(slot.getByRole("button", { name: "Redirect in chat" }).textContent).toContain("Redirect");
     expect(slot.getByText("Approves the party and these checks.")).toBeTruthy();
+  } finally { slot.lifecycle.unmount(); }
+});
+
+it("shows a full review budget before approving a Smith plan", async () => {
+  const slot = render(detail, null, { used: 3, total: 3 });
+  try {
+    expect(await slot.findByText("Your review queue is full (3 of 3). Smith hires wait for space or your one-review allowance.")).toBeTruthy();
+    expect(slot.getByRole("button", { name: "Approve: Form the party (greenlight)" })).toBeTruthy();
+  } finally { slot.lifecycle.unmount(); }
+});
+
+it.each([false, true])("does not warn when there is headroom or no Smith (no Smith: %s)", async noSmith => {
+  const other = noSmith ? { ...plan, party: plan.party.filter(slot => slot.classId !== "smith") } : plan;
+  const slot = render(planDetail(other, [other]), null, { used: noSmith ? 3 : 2, total: 3 });
+  try {
+    expect(await slot.findByRole("button", { name: "Approve: Form the party (greenlight)" })).toBeTruthy();
+    expect(slot.queryByText(/Your review queue is full/)).toBeNull();
   } finally { slot.lifecycle.unmount(); }
 });
 

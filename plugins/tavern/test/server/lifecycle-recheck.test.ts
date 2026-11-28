@@ -59,10 +59,10 @@ it("visible reviews retain manually stopped Keepers while the automatic hire bud
   bind(f);
   f.port.linkedEntries = () => [waypointEntry("child", f.q.id)];
   f.k.store.patch("lead", { manualStopAt: f.time() });
-  expect(f.runtime.review()).toMatchObject({ waiting: 1, items: [{ boardQuestId: f.q.id }] });
-  expect(f.runtime.review("automatic").waiting).toBe(0);
+  expect(f.runtime.review().items).toMatchObject([{ boardQuestId: f.q.id }]);
+  expect(f.runtime.review("automatic").items).toHaveLength(0);
   patchThreadFixture(f.k.store, "lead", { archivedAt: f.time() });
-  expect(f.runtime.review().waiting).toBe(0);
+  expect(f.runtime.review().items).toHaveLength(0);
 });
 it("a stopping quest projects no next step or unasked outside-gate reminder", async () => {
   const f = await fixture();
@@ -223,7 +223,8 @@ it("the human-turn Keeper context uses the automatic review count while the user
   f.port.linkedEntries = () => [waypointEntry("child", f.q.id)];
   f.k.store.patch("lead", { manualStopAt: f.time() });
   f.k.bind("observer", "keeper", "wren", "project");
-  expect(f.runtime.review().waiting).toBe(1);
+  expect(f.runtime.review().items).toHaveLength(1);
+  expect(f.runtime.review("automatic").items).toHaveLength(0);
   expect(f.k.memory.review().waiting).toBe(0);
   expect(f.runtime.configure(makePluginAgentConfigurationContext({ thread: { id: "observer" } })).instructions).toContain("Review queue: 0 of 3");
 });
@@ -235,7 +236,8 @@ it("the Keeper tick uses the automatic review count while the user keeps the pre
   f.k.store.patch("lead", { manualStopAt: f.time() });
   f.k.bind("observer", "keeper", "wren", "project");
   f.k.store.event(f.time(), "observer", null, "promise.due", "Review the pending fact");
-  expect(f.runtime.review().waiting).toBe(1);
+  expect(f.runtime.review().items).toHaveLength(1);
+  expect(f.runtime.review("automatic").items).toHaveLength(0);
   await f.runtime.tick("observer");
   const sent = f.harness.inspection.sdk.callsTo("threads.send").map(call => (call.args[0] as { input: { text: string }[] }).input[0]!.text);
   expect(sent).toHaveLength(1);

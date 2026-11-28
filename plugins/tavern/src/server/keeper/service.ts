@@ -118,6 +118,7 @@ import { moveTime } from "../../shared/time";
 import { assertQuestTransition, transitionQuest, displayStage, nextNewsBy, storedPhase, partyFits, checksFit, approvedPartyReceipt } from "./quest-lifecycle";
 import { keeperSubject, rangerOnlyPlan, settled, verifiedWaypoint, waypointCheck } from "../../shared/waypoint";
 import { isCloseEffect, waiverWords } from "../../shared/closing";
+import { LimitPolicy } from "../limit-policy";
 import { assertUndoLane, readUndoLanes, undoAskProjection } from "../undo-record";
 import { captureLegacyForwarding, currentAskNames, forwardedAskQuestion } from "../quest-names";
 
@@ -1563,7 +1564,7 @@ export class Keeper {
     if (input.kind === "greenlight" && input.effect.type !== "greenlight" && (input.effect.type !== "lead-plan" || !trusted))
       throw new Error("A greenlight ask needs its typed plan version; propose the plan instead.");
     if (input.kind === "conclude" && !isCloseEffect(input.effect)) throw new Error("A conclude ask needs its typed draft; tell the quest result instead.");
-    if (["placement-blocker", "communication-hold", "repair-guard", "member-schedules", "quest-start"].includes(input.effect.type) && !trusted) throw new Error("Only Tavern may open this typed ask");
+    if (["placement-blocker", "communication-hold", "repair-guard", "member-schedules", "quest-start", "review-allowance"].includes(input.effect.type) && !trusted) throw new Error("Only Tavern may open this typed ask");
     if (input.kind === "drafts-as-you" && input.effect.type !== "communication-hold") throw new Error("Call the draft tool first so Tavern can record the exact arguments.");
     if (input.kind === "sends-as-you" && input.effect.type === "decision") input = { ...input,
       options: [{ id: "acknowledge", label: "I have the draft", detail: "Records your answer. The agent does not send anything.", recommended: false }, { id: "deny", label: "Dismiss", detail: "Nothing is sent.", recommended: false }],
@@ -1778,6 +1779,8 @@ export class Keeper {
     if (ask.effect?.type === "user-waypoint" && (by !== "user" || receipt?.act !== "answerAsk" || receipt.threadId || via === "cli" || via === "timer"))
       throw new Error("This waypoint needs your explicit answer on the card.");
     if (ask.effect?.type === "quest-start") assertQuestStartAnswer(ask, receipt, by, via);
+    if (ask.effect?.type === "review-allowance" && (by !== "user" || receipt?.act !== "answerAsk" || receipt.threadId || via === "timer"))
+      throw new Error("A review allowance needs your explicit answer.");
     const scheduleApproval = ask.effect?.type === "greenlight" ? ask.effect.scheduledSlots : ask.effect?.type === "lead-plan" ? ask.effect.request.scheduledSlots : undefined;
     if ((ask.effect?.type === "member-schedules" || scheduleApproval?.length) &&
         (by !== "user" || receipt?.act !== "answerAsk" || receipt.threadId || via === "cli" || via === "timer"))
@@ -1913,6 +1916,10 @@ export class Keeper {
             if (q.waypointJournal) this.recordWaypointAnswer(q, waypoint, ask.id, this.now(), option.label, note);
             this.withdrawClosingForWaypointChange(q);
           }
+        },
+        "review-allowance": () => {
+          if (!ask.boardQuestId) throw new Error("A review allowance needs its quest.");
+          if (optionId === "allow") new LimitPolicy(this).allowReview(ask.boardQuestId, via === "cli" ? receipt!.surface : `${via} (client, unattested)`, ask.id);
         },
         "soft-limit": effect => {
           if (effect.type !== "soft-limit" || optionId !== "approve") return;

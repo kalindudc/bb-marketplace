@@ -64,7 +64,7 @@ function ReviewRow({ item, single }: { item: ReviewItem; single: boolean }) {
 }
 export function ReviewQueue({ review }: { review: Room["review"] }) {
   if (!review.items.length) return null;
-  return <Section title="Review queue" count={`${review.waiting} waiting of ${review.budget}`} aside={<ReviewMeter review={review} />}>
+  return <Section title="Review queue" count={`${review.waiting} of ${review.budget} waiting for you`} aside={<ReviewMeter review={review} />}>
     <ul className="tv-card tv-rows">{review.items.map(item => <ReviewRow key={reviewKey(item)} item={item} single={review.items.length === 1} />)}</ul>
     {review.waiting >= review.budget && <p className="tv-holdnote" role="status"><PageGlyph name="report" /><span>At the review budget: clear one before more review-bound work starts.</span></p>}
   </Section>;

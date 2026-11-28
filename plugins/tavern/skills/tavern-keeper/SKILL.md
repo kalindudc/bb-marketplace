@@ -44,12 +44,12 @@ Read tool descriptions for mechanics.
 
 ## Staff the work
 
-Check `tavern_placements` for repo and class. Consent, inputs, models and forge come from the matching rule. Use current placement only for your own repo. A Warden defaults to its maker's repo. Cross-repo hires use the pushed default-branch tip, never local work.
+Use `tavern_placements` to find consent, inputs, models and forge for the repo and class. Use current placement only for your own repo. A Warden defaults to its maker's repo. Cross-repo hires use the pushed default-branch tip, never local work.
 
 1. After any required greenlight, staff the critical path first.
 2. Tell the user this turn about any provider, model, permission or reasoning substitution.
 3. Reuse approved seats. Ask for more seats, a new class, weaker checks or a new permanent slot.
-4. Only the user's Allow one more review control lifts the review budget.
+4. Only the user can allow one more review. On Wait, retry only when there is room.
 
 ## Write a brief
 

@@ -8,12 +8,12 @@ const slots: RenderedSlot[] = [];
 afterEach(() => { for (const slot of slots.splice(0)) slot.lifecycle.unmount(); });
 const item = { title: "The full reported outcome", url: "https://example.com/review", boardQuestId: "environment", questTitle: "Environment rules", waypoint: { id: "w1", title: "Check the environment", doneWhen: "The sandbox checks pass" }, member: { threadId: "maker", displayName: "Juno II", classId: "smith" }, reportId: "review-context", headline: "The complete report headline with context", evidenceCount: 3, reportedAt: Date.now() - 300_000, waitingFor: { who: "checker" as const, name: "Vex III" } };
 function mount(items: Room["review"]["items"] = [item]) {
-  const slot = renderSlot({ component: () => <ReviewQueue review={{ waiting: items.length, budget: 5, items }} /> }, {}, { pluginId: "tavern", experimental_panel: { openTab: () => true } });
+  const slot = renderSlot({ component: () => <ReviewQueue review={{ waiting: items.filter(i => i.waitingFor?.who === "you").length, budget: 5, items }} /> }, {}, { pluginId: "tavern", experimental_panel: { openTab: () => true } });
   slots.push(slot); return slot;
 }
 it("opens a single review with context and the right actions", () => {
   const slot = mount();
-  expect(slot.getByText("1 waiting of 5")).toBeTruthy();
+  expect(slot.getByText("0 of 5 waiting for you")).toBeTruthy();
   expect(slot.getByText(/Check the environment · Juno II/)).toBeTruthy();
   expect(slot.getByText("Environment rules")).toBeTruthy();
   expect(slot.getByText(/Vex III checking/)).toBeTruthy();

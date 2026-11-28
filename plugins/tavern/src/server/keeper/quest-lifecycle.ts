@@ -141,7 +141,10 @@ export function transitionQuest(store: KeeperStore, quest: BoardQuest, to: Phase
     if (to !== "held") delete result.held;
     if (to === "stopped") result.outcome = "stopped";
     if (cause === "reopen") { delete result.outcome; delete result.waivers; }
-    if (to === "done" || to === "stopping" || to === "stopped") result.reviewAllowance = result.reviewAllowance?.filter(grant => grant.usedBy !== null);
+    if (to === "done" || to === "stopping" || to === "stopped") {
+      delete result.reviewHoldAskId;
+      result.reviewAllowance = result.reviewAllowance?.filter(grant => grant.usedBy !== null);
+    }
     const cursors = { ...store.runtime(quest.keeperThreadId).heldNewsCursors };
     if (to === "held") cursors[quest.id] = { cursor: cursors[quest.id]?.cursor ?? store.eventSequence(quest.keeperThreadId) };
     if (from === "held" && !cursors[quest.id]) {

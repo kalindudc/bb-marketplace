@@ -47,10 +47,10 @@ it.each(["archived", "quiet"] as const)("review budget ignores a %s Keeper's aba
   const f = await fixture();
   f.k.plan("lead", planInput(f.q.id));
   f.port.linkedEntries = () => [waypointEntry("child", f.q.id)];
-  expect(f.runtime.review().waiting).toBe(1);
+  expect(f.runtime.review().items).toHaveLength(1);
   patchThreadFixture(f.k.store, "lead", state === "archived" ? { archivedAt: f.time() } : { manualStopAt: f.time() });
-  expect(f.runtime.review("automatic").waiting).toBe(0);
-  expect(f.runtime.review().waiting).toBe(state === "quiet" ? 1 : 0);
+  expect(f.runtime.review("automatic").items).toHaveLength(0);
+  expect(f.runtime.review().items).toHaveLength(state === "quiet" ? 1 : 0);
 });
 it("room keeps an old in-flight errand past 100 newer quest members and omits finished solos", async () => {
   const f = await fixture();

@@ -43,7 +43,7 @@ The main table uses snake_case paths for TOML. The Limits table uses the camelCa
 | `away.default_wake_production` | Preselects whether production asks can wake you while closed. | `false` | User; Plain |
 | `away.production_wake_hours` | Sets how long a production ask waits before it can wake you. | `2` | User; Plain |
 | `away.default_back_at_hour` | Sets the local hour for the suggested Back at time. | `8` | User; Plain |
-| `attention.review_budget` | Caps reviews unless the user explicitly allows another. | `3` | User; Plain |
+| `attention.review_budget` | Counts only items waiting for the user. When full, Smith hires pause unless the user allows one hire for that quest. | `3` | User; Plain |
 | `attention.notify` | Chooses whether to notify for consequential asks, all asks or none. `none` also turns off answer pushes. | `"consequential"` | User; Plain |
 | `attention.push_answers` | Also push new Keeper answers. Off by default; they still appear in the Ledger. | `false` | User; Plain |
 | `attention.answer_page_size` | Answers or unanswered messages loaded per page. | `12` | User; Granted |

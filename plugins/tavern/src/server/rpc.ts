@@ -576,7 +576,7 @@ export function rpcHandlers(
       }
       return { checkerHandoffHold };
     },
-    questAuthority: ({ boardQuestId }) => { const view = k.authority.view(boardQuestId); const review = runtime.review(); return { ...view, review: { used: review.waiting, total: review.budget } }; },
+    questAuthority: ({ boardQuestId }) => { const view = k.authority.view(boardQuestId); const review = runtime.review("automatic"); return { ...view, review: { used: review.waiting, total: review.budget } }; },
     delegateQuest: (input, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => { requireUserAct(context, "delegateQuest"); k.authority.delegate(input.boardQuestId, input.kind, receipt ? { ...receipt, surface: `${input.via} (client, unattested)` } : receipt!, input.kind === "drafts-as-you" ? input.targets : undefined); return { ok: true }; },
     preapproveQuest: ({ boardQuestId, via, ...input }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => { requireUserAct(context, "preapproveQuest"); k.authority.preapprove(boardQuestId, input, receipt ? { ...receipt, surface: `${via} (client, unattested)` } : receipt!); void runtime.applyStandingAnswers(boardQuestId).catch(error => runtime.bb.log.warn(`Tavern pre-approval: ${String(error)}`)); return { ok: true }; },
     revokeQuestAuthority: async ({ boardQuestId, id, via }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {

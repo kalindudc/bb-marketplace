@@ -575,7 +575,7 @@ export const rpcContract = defineContract({
     input: z.object({ boardQuestId: id, holdId: id, via: z.enum(["page", "banner"]) }).strict(),
     output: z.object({ checkerHandoffHold: checkerHandoffHoldSchema }),
   },
-  questAuthority: { input: z.object({ boardQuestId: id }).strict(), output: questAuthorityViewSchema, tags: ({ boardQuestId }: { boardQuestId: string }) => [tags.boardQuest(boardQuestId), tags.room(), tags.registry()] },
+  questAuthority: { input: z.object({ boardQuestId: id }).strict(), output: questAuthorityViewSchema, tags: ({ boardQuestId }: { boardQuestId: string }) => [tags.boardQuest(boardQuestId), tags.room(), tags.registry(), tags.settings()] },
   delegateQuest: { input: z.discriminatedUnion("kind", [delegateRequestSchema.options[0].extend(delegateContext), delegateRequestSchema.options[1].extend(delegateContext)]), output: ok },
   preapproveQuest: { input: preapprovalInputSchema.extend({ boardQuestId: id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
   revokeQuestAuthority: { input: z.object({ boardQuestId: id, id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
