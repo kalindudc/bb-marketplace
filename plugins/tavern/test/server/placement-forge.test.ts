@@ -56,6 +56,7 @@ it.each([[undefined, false, false], ["release", false, false], [undefined, true,
   const env = (name: string) => ({ id: name, projectId: "project", hostId: name, path: name === "home" ? home : source, status: "ready", hostLifecycle: "active", lifecycle: { phase: "active" }, branchName: name === "home" ? "main" : "member-work", baseBranch: "wrong-environment-base", environmentProviderId: "checkout" });
   const calls: string[] = [];
   let corruptTree = false;
+  let inspectedDraftHead = "0".repeat(40);
   const host = createFakePluginHost({ pluginId: "tavern", experimental_hostEntry: true, sdk: {
     threads: { get: async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, projectId: "project", environmentId: threadId === "keeper" ? "home" : "member" }) },
     environments: { get: async ({ environmentId }: { environmentId: string }) => env(environmentId) },
@@ -66,6 +67,7 @@ it.each([[undefined, false, false], ["release", false, false], [undefined, true,
     if (call.method === "inspect") return inspectHost(registry, hostContract.inspect.input.parse(call.input), call.signal);
     if (call.method === "draftPush") { const input = hostContract.draftPush.input.parse(call.input); return draftPush(registry, { ...input, tree: corruptTree ? "c".repeat(40) : input.tree }, call.signal!); }
     if (call.method === "draftOpen") return draftOpen(registry, hostContract.draftOpen.input.parse(call.input), call.signal!);
+    if (call.method === "forgePullRequest") return { state: "draft", headCommit: inspectedDraftHead };
     if (call.method in transport) return (transport[call.method as keyof typeof transport] as Function)(call.input, call.signal);
     throw new Error(call.method);
   } }); cleanup.push(() => host.harness.lifecycle.dispose());
@@ -112,6 +114,12 @@ it.each([[undefined, false, false], ["release", false, false], [undefined, true,
     store.update("placement", 1, value => ({ ...value, pullRequests: { at: "member" } }));
     expect(await forge.forThread("member", { title: "Recorded", url: "https://forge.example/pr/12" })).toContain("Draft PR: https://forge.example/pr/12");
     expect(keepers.all("pullRequests")[0]?.base).toBe("main");
+    const github = { title: "Recorded", url: "https://github.com/example/repo/pull/12" };
+    await expect(forge.forThread("member", github)).rejects.toThrow(/assigned branch.*pushed head/);
+    expect(keepers.all("pullRequests")[0]?.url).toBe("https://forge.example/pr/12");
+    inspectedDraftHead = memberHead;
+    await expect(forge.forThread("member", github)).resolves.toContain(github.url);
+    expect(keepers.all("pullRequests")[0]).toMatchObject({ url: github.url, forge: "gh", forgeVerified: true });
     store.update("placement", 1, value => ({ ...value, pullRequests: { at: "home", profile: "forge" } }));
   }
   const pushed = git(remote, "rev-parse", "refs/heads/member-work"); expect(member().draftPush!.homeHead).toBe(pushed);

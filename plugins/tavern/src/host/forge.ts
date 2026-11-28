@@ -3,6 +3,8 @@ import { gitRefSchema, type HostInput, type HostOutput } from "../host-contract"
 import { gitOidSchema } from "../shared/placement";
 import { z } from "zod";
 import { normalizeRemote } from "../scope/remote";
+import { prUrl, reviewNodeQuery, reviewNodeUrl } from "../scope/pr-policy";
+import { reviewCommentIdSchema, reviewThreadIdSchema } from "../shared/pull-request";
 import { hostContext, assertRepository } from "./context";
 import type { HostRegistry } from "./registry";
 import { runProcess } from "./process";
@@ -106,7 +108,7 @@ export async function forgePullRequest(registry: HostRegistry, input: HostInput<
       return result.stdout.trim();
     };
     if (profile.kind === "github") {
-      const path = target.pathname.match(/^\/([\w.-]+\/[\w.-]+)\/pull\/[1-9][0-9]*\/?$/);
+      const path = target.pathname.match(/^\/([\w.-]+\/[\w.-]+)\/pull\/([1-9]\d*)\/?$/);
       if (!path || target.protocol !== "https:" || target.search || target.hash) throw new Error("This is not a GitHub pull request URL.");
       const repo = normalizeRemote(`${target.origin}/${path[1]}`).toLowerCase();
       const remotes = (await ctx.git(["remote", "-v"])).split("\n").flatMap(line => line.match(/\t(\S+) \((?:fetch|push)\)$/)?.[1] ?? []);
@@ -117,7 +119,11 @@ export async function forgePullRequest(registry: HostRegistry, input: HostInput<
         return { headCommit: gh.headRefOid, state: gh.state === "OPEN" ? gh.isDraft ? "draft" as const : "ready" as const : gh.state === "MERGED" ? "merged" as const : "closed" as const };
       };
       const before = await view();
-      if (action === "inspect" || before.state === "closed" || before.state === "merged") return before;
+      if (action === "inspect") return before;
+      if (before.state === "closed" || before.state === "merged") {
+        if (action === "reply" || action === "resolve") throw new Error("This pull request is no longer open.");
+        return before;
+      }
       if (before.headCommit !== headCommit || before.state !== input.state) throw new Error("The head or review state changed after it was checked; confirm the current pull request before taking another action.");
       if (action === "close") {
         await run("gh", ["pr", "close", url]);
@@ -128,6 +134,30 @@ export async function forgePullRequest(registry: HostRegistry, input: HostInput<
       if (action === "comment") {
         if (!input.comment) throw new Error("A pull request comment needs its text.");
         await run("gh", ["pr", "comment", url, `--body=${input.comment}`]);
+        return view();
+      }
+      if (action === "reply" || action === "resolve") {
+        const hostname = "--hostname=" + target.hostname;
+        if (action === "reply") {
+          const commentId = reviewCommentIdSchema.parse(input.commentId);
+          if (!input.comment) throw new Error("A review reply needs its text.");
+          const endpoint = "repos/" + path[1] + "/pulls";
+          const apiBase = target.hostname === "github.com" ? "https://api.github.com" : target.origin + "/api/v3";
+          const parent = JSON.parse(await run("gh", ["api", endpoint + "/comments/" + commentId, hostname]));
+          if (parent?.pull_request_url !== apiBase + "/" + endpoint + "/" + path[2])
+            throw new Error("This review comment does not belong to the recorded pull request.");
+          await run("gh", ["api", endpoint + "/" + path[2] + "/comments/" + commentId + "/replies", hostname, "-X", "POST", "-f", "body=" + input.comment]);
+        } else {
+          const threadId = reviewThreadIdSchema.parse(input.threadId);
+          const resolved = z.boolean().parse(input.resolved);
+          const node = { id: threadId, kind: "PullRequestReviewThread" as const };
+          const actual = reviewNodeUrl(await run("gh", [...reviewNodeQuery(node), hostname]), node.kind);
+          if (actual !== prUrl(url)) throw new Error("This review thread does not belong to the recorded pull request.");
+          const verb = resolved ? "resolveReviewThread" : "unresolveReviewThread";
+          const result = JSON.parse(await run("gh", ["api", "graphql", hostname, "-f",
+            `query=mutation($id:ID!){${verb}(input:{threadId:$id}){clientMutationId}}`, "-f", "id=" + threadId]));
+          if (result?.errors?.length || !result?.data?.[verb]) throw new Error("The forge did not confirm the review thread change.");
+        }
         return view();
       }
       const confirm = async () => {

@@ -805,6 +805,11 @@ export class KeeperStore {
     const row = this.db.prepare("SELECT thread_id, text, at, accepted FROM tavern_messages WHERE id=?").get(id) as { thread_id: string; text: string; at: number; accepted: number } | undefined;
     return row && (!settled || row.accepted === 2 && row.text.trim()) && this.keeperEventOwners(keeperId).includes(row.thread_id) ? row : undefined;
   }
+  routesFromMessage(keeperId: string, receiptId: string) {
+    const rows = this.db.prepare("SELECT data FROM tavern_records WHERE kind='routes' AND json_extract(data,'$.keeperThreadId')=? AND json_extract(data,'$.sourceMessageId')=?")
+      .all(keeperId, receiptId) as { data: string }[];
+    return rows.map(row => this.decode("routes", row.data));
+  }
   messageWasCancelled(receiptId: string) {
     return !!this.db.prepare(`SELECT 1 FROM tavern_events WHERE type='route.cancelled'
       AND json_extract(data,'$.receiptId')=? LIMIT 1`).get(receiptId);
@@ -999,11 +1004,11 @@ export class KeeperStore {
     return rows.map(row => pullRequestSchema.parse(JSON.parse(row.data)));
   }
   openPullRequests(questId: string) { return this.pullRequestsForQuest(questId).filter(pr => pr.state === "draft" || pr.state === "ready"); }
-  changePullRequest(pr: PullRequest, at: number, askId?: string, change?: { actor: Actor; action: string; reason: string; receipt: string }) {
+  changePullRequest(pr: PullRequest, at: number, askId?: string, change?: { actor: Actor; action: string; reason: string; receipt: string; body?: string }) {
     return this.atomic(() => {
       this.put("pullRequests", pr.id, pr);
       const { actor, ...details } = change ?? {};
-      this.event(at, pr.keeperThreadId, pr.boardQuestId, "pull-request.changed", `Pull request ${pr.state}: ${pr.url}; owner ${pr.owner}`, { ...pr, ...details, ...(askId ? { askId } : {}) }, actor ?? (askId ? { kind: "user" } : { kind: "tavern" }));
+      this.event(at, pr.keeperThreadId, pr.boardQuestId, "pull-request.changed", change?.body ?? `Pull request ${pr.state}: ${pr.url}; owner ${pr.owner}`, { ...pr, ...details, ...(askId ? { askId } : {}) }, actor ?? (askId ? { kind: "user" } : { kind: "tavern" }));
       return pr;
     });
   }

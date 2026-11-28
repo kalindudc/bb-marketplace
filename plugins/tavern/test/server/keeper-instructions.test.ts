@@ -78,7 +78,13 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const { permanent, ...previousSlot } = slotProperties;
   expect(permanent).toBeDefined();
   const permanentSlotDelta = Buffer.byteLength(JSON.stringify(slotProperties)) - Buffer.byteLength(JSON.stringify(previousSlot));
-  const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + askSchemaDelta + waypointAskDelta + judgeBytes + checkpointDelta + permanentSlotDelta + tellDelta + answerSchemaDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
+  const pr = registered.mock.calls.find(([tool]) => tool.name === "tavern_pull_request")![0];
+  const { action: prAction, commentId, threadId: reviewThreadId, resolved, ...previousPr } = (pr.parameters as { properties: Record<string, unknown> }).properties;
+  const selector = prAction as { enum: string[] };
+  const prSchemaDelta = Buffer.byteLength(JSON.stringify({ ...previousPr, action: selector, commentId, threadId: reviewThreadId, resolved })) -
+    Buffer.byteLength(JSON.stringify({ ...previousPr, action: { ...selector, enum: selector.enum.filter(value => value !== "reply" && value !== "resolve") } }));
+  expect(prSchemaDelta).toBeGreaterThan(0);
+  const bytes = prSchemaDelta + Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + askSchemaDelta + waypointAskDelta + judgeBytes + checkpointDelta + permanentSlotDelta + tellDelta + answerSchemaDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
   const withTickGuidance = bytes + Buffer.byteLength(`\n${MEMBER_CHECK_IN}\n${TICK_REPLY_GUIDANCE}`);
   if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${withTickGuidance}\nMERGE_TARGET_SCHEMA_BYTES=${mergeTargetDelta}\n`);
   expect(withTickGuidance).toBeLessThanOrEqual(34754);

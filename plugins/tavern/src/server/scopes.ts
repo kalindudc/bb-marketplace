@@ -29,6 +29,7 @@ import { gitWorktreeRoot, needsWorktree } from "../scope/worktree";
 import { normalizeRemote } from "../scope/remote";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Ask, Member } from "../shared/schema";
+import { githubPullRequestUrl } from "../shared/pull-request";
 import { publishShellGrants, readShellGrants, removeShellGrantProjection, scopeRestartReason, shellGrantCapable, shellGrantTarget, shellGrantUse } from "../scope/shell-grants";
 import { actAskKind } from "../scope/act-routing";
 import { withMemoryCommandPolicy } from "../scope/memory-policy";
@@ -229,9 +230,16 @@ export class BackendScopes {
   private pullRequestPolicy(threadId: string) {
     const k = this.runtime.keeper, member = k.member(threadId);
     const keeper = member?.role === "keeper";
-    const owned = keeper || member?.classId === "wanderer" ? k.store.all("pullRequests").filter(pr =>
-      ["draft", "ready"].includes(pr.state) && pr.owner !== "user" && (keeper ? pr.keeperThreadId === threadId && !!pr.boardQuestId : pr.owner === threadId)
-    ).map(pr => pr.url).slice(-1000) : [];
+    const quests = keeper ? new Set(k.store.query("quests", "keeperThreadId", threadId).map(quest => quest.id)) : undefined;
+    const candidates = keeper || member?.classId === "wanderer" ? k.store.all("pullRequests").filter(pr =>
+      ["draft", "ready"].includes(pr.state) && pr.owner !== "user" && (keeper
+        ? pr.keeperThreadId === threadId && !!pr.boardQuestId && quests?.has(pr.boardQuestId) &&
+          (pr.owner === threadId || pr.owner === pr.memberThreadId)
+        : pr.owner === threadId)
+    ).slice(-1000) : [];
+    const owned = keeper ? candidates.filter(pr => pr.forge === "gh" && pr.forgeVerified && githubPullRequestUrl(pr.url)) : candidates;
+    const verifiedIds = new Set(owned.map(pr => pr.id));
+    const legacyOwned = keeper ? candidates.filter(pr => !verifiedIds.has(pr.id)).map(pr => pr.url) : [];
     const grants = keeper ? k.store.query("decisions", "keeperThreadId", threadId, 500).flatMap(decision => {
       if (!decision.pullRequestGrant || decision.undone || !decision.askId) return [];
       const ask = k.store.get("asks", decision.askId);
@@ -239,7 +247,9 @@ export class BackendScopes {
     }).slice(0, 100) : [];
     const alwaysAsk = this.runtime.config().keepers.alwaysAsk.includes("sends-as-you") ||
       (keeper && readUndoLanes(k.store, threadId).some(lane => lane.kind === "sends-as-you"));
-    return { alwaysAsk, owned, grants };
+    return { alwaysAsk, owned: owned.map(pr => pr.url), grants,
+      ...(keeper && owned.length ? { heads: Object.fromEntries(owned.map(pr => [pr.url, pr.head])) } : {}),
+      ...(legacyOwned.length ? { legacyOwned } : {}) };
   }
   refreshPullRequestPolicy(threadId: string) { return this.api.refreshPullRequestPolicy(threadId); }
   refreshPullRequestPolicies() {
@@ -926,10 +936,14 @@ export class BackendScopes {
     const key = `${member.threadId}:${observation.eventId}`;
     const saved = k.store.atomic(() => {
       if (k.store.get("scopeActObservations", key)) return false;
-      const record = { ...observation, keeperThreadId, boardQuestId: member.boardQuestId };
+      const pr = observation.pullRequestUrl && member.role === "keeper" ? k.store.all("pullRequests").find(
+        pr => pr.keeperThreadId === keeperThreadId && pr.url === observation.pullRequestUrl && pr.owner !== "user") : undefined;
+      const record = { ...observation, keeperThreadId, boardQuestId: pr?.boardQuestId ?? member.boardQuestId };
       k.store.put("scopeActObservations", key, record);
       if (record.preflight) k.store.event(k.now(), keeperThreadId, member.boardQuestId, "scope.act-held",
         `${k.name(member)}: held ${record.act}`, record, { kind: "tavern" });
+      if (pr?.boardQuestId && observation.command) k.store.event(observation.at, keeperThreadId, pr.boardQuestId, "pull-request.command",
+        observation.command, { pullRequestId: pr.id, url: pr.url, act: observation.act }, { kind: "agent", threadId: member.threadId });
       return true;
     });
     if (saved) k.changed(member.threadId, member.boardQuestId);

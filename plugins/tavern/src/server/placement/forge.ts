@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { hostContract, type HostInput, type HostMethod, type HostOutput } from "../../host-contract";
-import { pullRequestHead, pullRequestLine, type PullRequest } from "../../shared/pull-request";
+import { githubPullRequestUrl, pullRequestHead, pullRequestLine, type PullRequest } from "../../shared/pull-request";
 import type { ForgeProfile } from "../../shared/placement-settings";
 import { forgeFailure, HOME_FORGE_GIT } from "../../shared/forge-command";
 import type { TavernRuntime } from "../runtime";
@@ -39,7 +39,17 @@ export class PlacementForge {
     if (profile?.kind !== "github") throw new Error("This forge does not support Keeper comments through Tavern.");
     return this.pullRequestAction(pr, profile, "comment", { comment });
   }
-  private async pullRequestAction(pr: PullRequest, profile: ForgeProfile, action: HostInput<"forgePullRequest">["action"], extra: { reviewers?: string[]; comment?: string } = {}) {
+  async reply(pr: PullRequest, commentId: string, comment: string) {
+    const profile = this.profile(pr);
+    if (profile?.kind !== "github") throw new Error("This forge does not support review replies through Tavern.");
+    return this.pullRequestAction(pr, profile, "reply", { commentId, comment });
+  }
+  async resolve(pr: PullRequest, threadId: string, resolved: boolean) {
+    const profile = this.profile(pr);
+    if (profile?.kind !== "github") throw new Error("This forge does not support resolving review threads through Tavern.");
+    return this.pullRequestAction(pr, profile, "resolve", { threadId, resolved });
+  }
+  private async pullRequestAction(pr: PullRequest, profile: ForgeProfile, action: HostInput<"forgePullRequest">["action"], extra: Pick<HostInput<"forgePullRequest">, "reviewers" | "comment" | "commentId" | "threadId" | "resolved"> = {}) {
     if (pr.state !== "draft" && pr.state !== "ready") throw new Error("This pull request is no longer open.");
     const { bb } = this.runtime, host = this.runtime.placements().host;
     const { endpoint } = await readSourceIdentity(bb, pr.keeperThreadId, pr.projectId);
@@ -136,7 +146,9 @@ export class PlacementForge {
         return `Forge ${profile.name}: ${opened.failureClass}.\n${opened.lines}`;
       }
       const pr = runtime.keeper.store.recordPullRequest({ keeperThreadId: services.store.currentKeeper(record), boardQuestId: member.boardQuestId, projectId: record.projectId,
-        url: opened.url, forge: profile.kind === "github" ? "gh" : profile.id, head: branch, base, owner: threadId,
+        url: opened.url, forge: profile.kind === "github" ? "gh" : profile.id,
+        ...(profile.kind === "github" && githubPullRequestUrl(opened.url) ? { forgeVerified: true } as const : {}),
+        head: branch, base, owner: threadId,
         memberHead: inspection.head, pushedHead: pinned.homeCommit, verifiedCommit: null, state: opened.state === "merged" || opened.state === "closed" ? opened.state : "draft" }, runtime.keeper.now());
       event("member.draft-pr-opened", pullRequestLine(pr), { ...draftPush, url: opened.url });
       runtime.keeper.changed(threadId, pr.boardQuestId);
@@ -173,10 +185,21 @@ export class PlacementForge {
     if (!base || base === env.branchName) throw new Error("Name a base branch distinct from the member's own branch.");
     const existing = runtime.keeper.store.all("pullRequests").find(pr => pr.projectId === projectId && pr.head === env.branchName);
     if (existing && existing.base !== base) return `This branch's draft targets ${existing.base}; moving it comes later`;
+    const forge = input.forge ?? (new URL(input.url).hostname === "github.com" ? "gh" : null);
+    const verify = forge === "gh" && githubPullRequestUrl(input.url);
+    if (verify) {
+      const profile = { id: "gh", kind: "github" as const, enabled: true, name: "GitHub" };
+      const observation = hostContract.forgePullRequest.output.parse(await host.call(source.endpoint.hostId, "forgePullRequest", {
+        ...authority, operationId: randomUUID(), action: "inspect", profile, url: input.url,
+        head: env.branchName, base, headCommit: inspection.head, state: "draft",
+      }, { signal }));
+      if (observation.state !== "draft" || observation.headCommit !== inspection.head)
+        throw new Error("Record an open draft on your assigned branch at its current pushed head.");
+    }
     const current = runtime.keeper.member(threadId);
     if (!current?.keeperThreadId || current.boardQuestId !== member.boardQuestId) throw new Error("The member's pull request assignment changed.");
     const pr = runtime.keeper.store.recordPullRequest({ keeperThreadId: current.keeperThreadId, boardQuestId: current.boardQuestId, projectId,
-      url: input.url, forge: input.forge ?? (new URL(input.url).hostname === "github.com" ? "gh" : null), head: env.branchName, base, owner: threadId, memberHead: inspection.head, pushedHead: null, verifiedCommit: null, state: "draft" }, runtime.keeper.now());
+      url: input.url, forge, ...(verify ? { forgeVerified: true } as const : {}), head: env.branchName, base, owner: threadId, memberHead: inspection.head, pushedHead: null, verifiedCommit: null, state: "draft" }, runtime.keeper.now());
     runtime.keeper.changed(threadId, pr.boardQuestId);
     return pullRequestLine(pr);
   }

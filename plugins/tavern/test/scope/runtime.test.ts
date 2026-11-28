@@ -78,6 +78,19 @@ describe("scope persistence and env", () => {
   });
 });
 describe("provider-neutral watcher", () => {
+  it("forwards a local owned PR act and its command to the Ledger observer only once", async () => {
+    const { store, s } = fixture();
+    const url = "https://github.com/example/repo/pull/12";
+    const command = `gh pr comment ${url} --body 'Fix one'`;
+    store.write("t1", { ...s, role: "keeper", pullRequestPolicy: { alwaysAsk: true, owned: [url], grants: [] } });
+    const row = { id: "reply", type: "item/started", seq: 1, createdAt: Date.now(), data: { item: { type: "commandExecution", command, cwd: store.dataDir } } };
+    const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { events: { list: async () => [row] }, stop: async () => ({}) }, environments: {} } });
+    const onActObservation = vi.fn();
+    registerWatcher(bb, store, { onActObservation, onViolation: vi.fn() });
+    for (const sequence of [1, 1]) await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1" }), sequence });
+    expect(onActObservation).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ eventId: "reply:pr:0", pullRequestUrl: url, command, act: "publish" }));
+    await harness.lifecycle.dispose();
+  });
   it.each([["pi", "enforce"], ["codex", "watch"], ["pi", "off"]] as const)("records one redacted ordinary call in %s/%s even when delivered twice", async (providerId, mode) => {
     const { store, s } = fixture();
     store.write("t1", { ...s, mode });

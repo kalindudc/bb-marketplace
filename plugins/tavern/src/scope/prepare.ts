@@ -4,7 +4,7 @@ import { accessSync, constants, statSync } from "node:fs";
 import { basename, delimiter, resolve } from "node:path";
 import { normalizeRemote, pushSpec } from "./remote";
 import { draftEditKey, draftEditSelector } from "./github";
-import { prCallKey, prUrl, pullRequestWrite } from "./pr-policy";
+import { prCallKey, prUrl, pullRequestWrite, reviewNodeQuery, reviewNodeUrl } from "./pr-policy";
 import { isSink, normalizeToolPath, realPath } from "./paths";
 import { containmentRead, readonlyProgram, temporaryRoot, type ScopeCall } from "./engine";
 import type { Scope } from "./schema";
@@ -23,7 +23,7 @@ const commandReader = (root: string) => ((program: string, args: string[], cwd =
     const env = program === "gh" || program === "dt" ? gitEnvironmentSync(cwd, { childGit: true }) : undefined;
     return execFileSync(program, args, { ...options, env });
   });
-export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall {
+export function prepareCall({ questOwnedPrs: _untrustedPrs, ...call }: ScopeCall, deps: PrepareDeps = {}): ScopeCall {
   const cwd = realPath(call.cwd);
   const read = deps.readCommand ?? commandReader(cwd);
   const resolvedPaths: Record<string, string> = {};
@@ -33,7 +33,7 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
   const directories: string[] = [];
   const ownedDraftPrs: string[] = [];
   const ownedPrs: string[] = [];
-  const questOwnedPrs: string[] = [];
+  const questOwnedPrs: Record<string, string> = {};
   const add = (path: string, base: string) => {
     if (!/[\$`]/.test(path)) {
       const full = normalizeToolPath(path, base);
@@ -64,6 +64,8 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
     const memoryPaths = deps.scope && memoryCommandRule(deps.scope)?.argv?.[0];
     const memoryNames = new Set(Array.isArray(memoryPaths) ? memoryPaths.map(path => basename(path)) : []);
     let branchStable = true;
+    const prPolicy = deps.scope?.pullRequestPolicy;
+    const ownedUrls = prPolicy ? [...prPolicy.owned, ...prPolicy.legacyOwned ?? []] : [];
     const redirectedGithub = commands.some(cmd => cmd.githubEnvironment);
     for (const cmd of commands) {
       const stableHead = branchStable && !cmd.uncertain;
@@ -97,18 +99,20 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
           catch { /* A detached or unresolved HEAD is not an explicit branch destination. */ }
         }
       }
-      const write = pullRequestWrite(cmd);
-      if (stableHead && !redirectedGithub && deps.scope?.pullRequestPolicy?.owned.length && write && cmd.argv[1] === "pr" &&
-          (!write.target || cmd.repository) && draftEditSelector(cmd.argv) !== null) {
+      const write = pullRequestWrite(cmd, deps.scope?.role === "keeper");
+      if (stableHead && !redirectedGithub && !cmd.xargs && !cmd.cwdAlternative && ownedUrls.length && write && !write.typedReady && !write.fileSourced) {
         try {
-          const output = read(cmd.argv[0], ["pr", "view", ...(write.selector ? [write.selector] : []),
-            ...(cmd.repository ? ["--repo", cmd.repository] : []), "--json", "url"], cmd.cwd);
-          const target = prUrl(JSON.parse(output).url);
-          if (target && deps.scope.pullRequestPolicy.owned.some(url => prUrl(url) === target)) {
-            questOwnedPrs.push(prCallKey(cmd));
+          const target = write.node && !cmd.repository
+            ? reviewNodeUrl(read("gh", reviewNodeQuery(write.node), cmd.cwd), write.node.kind)
+            : cmd.argv[1] === "pr" && (!write.target || cmd.repository) && draftEditSelector(cmd.argv) !== null
+              ? prUrl(JSON.parse(read(cmd.argv[0], ["pr", "view", ...(write.selector ? [write.selector] : []),
+                  ...(cmd.repository ? ["--repo", cmd.repository] : []), "--json", "url"], cmd.cwd)).url)
+              : undefined;
+          if (target && ownedUrls.some(url => prUrl(url) === target)) {
+            questOwnedPrs[prCallKey(cmd)] = target;
             preservesBranch = true;
           }
-        } catch { /* An unresolved repository or PR number is not proof of ownership. */ }
+        } catch { /* An unresolved forge target is not proof of ownership. */ }
       }
       if (["gh", "dt"].includes(cmd.argv[0]) && cmd.argv[1] === "pr" && ["create", "edit", "comment"].includes(cmd.argv[2]) && stableHead && !redirectedGithub && (!deps.scope || deps.scope.github === "draft-pr-only" && deps.scope.preset !== "open")) {
         try {
@@ -134,5 +138,5 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
       branchStable &&= preservesBranch;
     }
   }
-  return { ...call, ...mergeFacts, cwd, resolvedPaths, pushTargets, pushHeads, gitRoots, directories, ownedDraftPrs, ownedPrs, ...(questOwnedPrs.length ? { questOwnedPrs } : {}) };
+  return { ...call, ...mergeFacts, cwd, resolvedPaths, pushTargets, pushHeads, gitRoots, directories, ownedDraftPrs, ownedPrs, ...(Object.keys(questOwnedPrs).length ? { questOwnedPrs } : {}) };
 }

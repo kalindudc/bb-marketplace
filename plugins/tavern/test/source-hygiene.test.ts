@@ -17,7 +17,7 @@ it("keeps source and skills independent of named machine command groups and priv
       for (const match of source.matchAll(/\b[a-z][a-z0-9-]*-machines\b/gi)) violations.push(`${file}: ${match[0]}`);
       for (const [url] of source.matchAll(/https?:\/\/[a-z0-9%\[][^\s"'`<>\\})]*/gi)) {
         const host = new URL(url).hostname.replace(/\.$/, "");
-        if (!allowed.has(host)) violations.push(`${file}: ${host}`);
+        if (!allowed.has(host) && !(file === "src/host/forge.ts" && host === "api.github.com")) violations.push(`${file}: ${host}`);
       }
     }
   }

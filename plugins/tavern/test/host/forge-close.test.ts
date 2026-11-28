@@ -26,6 +26,24 @@ async function fixture() {
   vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
   const input: HostInput<"forgePullRequest"> = { ...binding, operationId: "close", profile: { id: "gh", name: "GitHub", kind: "github", enabled: true }, action: "close", url: "https://github.com/example/demo/pull/12", head: "work", base: "main", headCommit: head, state: "draft" };
   writeFileSync(join(bin, "gh"), `#!/bin/sh
+if [ "$1" = api ]; then
+  case "$2" in
+    repos/example/demo/pulls/comments/*)
+        n=12; if [ "$2" = repos/example/demo/pulls/comments/999 ]; then n=13; fi
+        printf '{"pull_request_url":"https://api.github.com/repos/example/demo/pulls/%s"}\\n' "$n" ;;
+    repos/example/demo/pulls/12/comments/*/replies) printf '%s\\n' "$@" > reply ;;
+    graphql)
+        case "$*" in
+          *'query('*)
+              n=12; case "$*" in *id=PRRT_foreign*) n=13 ;; esac
+              printf '{"data":{"node":{"pullRequest":{"url":"https://github.com/example/demo/pull/%s"}}}}\\n' "$n" ;;
+          *'mutation('*) printf '%s\\n' "$@" > resolved; printf '{"data":{"resolveReviewThread":{"clientMutationId":null},"unresolveReviewThread":{"clientMutationId":null}}}\\n' ;;
+          *) exit 1 ;;
+        esac ;;
+    *) exit 1 ;;
+  esac
+  exit
+fi
 [ "$1" = pr ] || exit 1
 case "$2" in
   view) state=OPEN; if [ -f closed ]; then state=CLOSED; fi
@@ -60,6 +78,20 @@ it("makes only the recorded head ready, requests the specified reviewers, and re
   expect(await f.call({ action: "ready", operationId: "ready", reviewers: ["one", "example/team"] })).toEqual({ state: "ready", headCommit: f.input.headCommit });
   expect(readFileSync(join(f.repo, "reviewers"), "utf8").trim()).toBe(`pr edit ${f.input.url} --add-reviewer one,example/team`);
   expect(await f.call({ action: "draft", operationId: "draft", state: "ready" })).toEqual({ state: "draft", headCommit: f.input.headCommit });
+});
+
+it("checks reply and resolution targets in the forge before writing", async () => {
+  const f = await fixture();
+  await expect(f.call({ action: "reply", operationId: "reply-foreign", commentId: "999", comment: "Fixture" })).rejects.toThrow(/does not belong/i);
+  await expect(f.call({ action: "resolve", operationId: "resolve-foreign", threadId: "PRRT_foreign", resolved: true })).rejects.toThrow(/does not belong/i);
+  expect(existsSync(join(f.repo, "reply"))).toBe(false);
+  expect(existsSync(join(f.repo, "resolved"))).toBe(false);
+  await f.call({ action: "reply", operationId: "reply-own", commentId: "123", comment: "Fixture reply" });
+  expect(readFileSync(join(f.repo, "reply"), "utf8")).toContain("body=Fixture reply");
+  for (const [resolved, verb] of [[true, "resolveReviewThread"], [false, "unresolveReviewThread"]] as const) {
+    await f.call({ action: "resolve", operationId: verb, threadId: "PRRT_own", resolved });
+    expect(readFileSync(join(f.repo, "resolved"), "utf8")).toContain(verb + "(input");
+  }
 });
 
 it("passes the recorded target to the configured forge and confirms the result with its state command", async () => {

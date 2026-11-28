@@ -15,7 +15,7 @@ export function awayToolPatterns(kinds: readonly AwayStopKind[]): string[] {
 export function closingTool(scope: Scope, toolName: string, approvedDraft: boolean): boolean {
   if (!scope.shell.deny.some(rule => rule.id.startsWith("away:"))) return false;
   const kinds = selectedAwayGuards(scope) ?? AWAY_STOP_LIST;
-  return awayToolPatterns(kinds).some(pattern => !(pattern === "*send*" && approvedDraft) && glob(pattern, toolName));
+  return awayToolPatterns(kinds).some(pattern => !(pattern === "*send*" && approvedDraft) && glob(pattern, toolName.toLowerCase()));
 }
 
 const marker = /^away:([a-f0-9]{64}):policy:([1-9][0-9]?)$/;

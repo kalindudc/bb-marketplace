@@ -18,7 +18,7 @@ export const shellRuleSchema = z.object({
 }).strict().refine(rule => rule.argv !== undefined || rule.regex !== undefined, "A rule needs argv or regex");
 export const prGrantIdSchema = z.string().regex(/^[a-zA-Z\d_-]{1,120}$/);
 export const prGrantSchema = z.object({ id: prGrantIdSchema, digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
-export const pullRequestPolicySchema = z.object({ alwaysAsk: z.boolean(), owned: z.array(z.url()).max(1000), grants: z.array(prGrantSchema).max(100) }).strict();
+export const pullRequestPolicySchema = z.object({ alwaysAsk: z.boolean(), owned: z.array(z.url()).max(1000), legacyOwned: z.array(z.url()).max(1000).optional(), heads: z.record(z.url(), z.string()).optional(), grants: z.array(prGrantSchema).max(100) }).strict();
 export const scopeSchema = z.object({
   v: z.literal(1),
   threadId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),

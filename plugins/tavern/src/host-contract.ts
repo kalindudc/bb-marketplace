@@ -4,7 +4,7 @@ import { ACT_KINDS } from "./scope/acts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { forgeProfileSchema } from "./shared/placement-settings";
-import { pullRequestReviewerSchema } from "./shared/pull-request";
+import { pullRequestReviewerSchema, reviewCommentIdSchema, reviewThreadIdSchema } from "./shared/pull-request";
 import { setupLineSchema } from "./shared/setup";
 import { setupForgeInput } from "./shared/setup-forge";
 import { memoryPreflightInput, memoryPreflightOutput, memoryRunInput, memoryRunOutput } from "./shared/memory";
@@ -67,10 +67,10 @@ const scopeCall = z.object({
   resolvedPaths: z.record(z.string(), z.string()).optional(), pushTargets: z.record(z.string(), z.array(z.string())).optional(),
   pushHeads: z.record(z.string(), z.string()).optional(), gitRoots: z.record(z.string(), z.string()).optional(),
   directories: z.array(path).optional(), ownedDraftPrs: z.array(z.string()).optional(),
-  ownedPrs: z.array(z.string()).optional(), questOwnedPrs: z.array(z.string()).optional(), observationId: id.optional(), clusterObservation: z.string().max(160).optional(), draftObservation: z.string().max(160).optional(),
+  ownedPrs: z.array(z.string()).optional(), questOwnedPrs: z.record(z.string(), z.url()).optional(), observationId: id.optional(), clusterObservation: z.string().max(160).optional(), draftObservation: z.string().max(160).optional(),
 }).strict();
 export const scopeDecisionSchema = z.discriminatedUnion("allow", [
-  z.object({ allow: z.literal(true), check: z.boolean().optional(), inspectionUnavailable: z.literal(true).optional(), prGrant: id.optional(), acts: z.array(z.object({ kind: z.enum(ACT_KINDS), ruleId: id, why: text }).strict()).optional() }).strict(),
+  z.object({ allow: z.literal(true), check: z.boolean().optional(), inspectionUnavailable: z.literal(true).optional(), prGrant: id.optional(), acts: z.array(z.object({ kind: z.enum(ACT_KINDS), ruleId: id, why: text, ownedPullRequest: z.object({ url: z.url(), command: z.string() }).strict().optional() }).strict()).optional() }).strict(),
   z.object({ allow: z.literal(false), ruleId: id, reason: text, act: z.enum(ACT_KINDS).optional() }).strict(),
 ]);
 const empty = z.object({}).strict();
@@ -172,7 +172,7 @@ const hostOperations = defineRpcContract({
   setupForgeInspect: { input: setupForgeInput, output: z.array(setupLineSchema.extend({ resolvedPath: path.optional() })) },
   setupForgeProbe: { input: setupForgeInput, output: z.array(setupLineSchema) },
   forgePullRequest: {
-    input: authoritySchema.extend({ profile: forgeProfileSchema, action: z.enum(["inspect", "close", "ready", "draft", "comment"]), url: z.url(), head: baseBranch, base: baseBranch, headCommit: gitOidSchema, state: z.enum(["draft", "ready"]), reviewers: z.array(pullRequestReviewerSchema).max(10).optional(), comment: z.string().trim().min(1).max(8000).optional() }).strict(),
+    input: authoritySchema.extend({ profile: forgeProfileSchema, action: z.enum(["inspect", "close", "ready", "draft", "comment", "reply", "resolve"]), url: z.url(), head: baseBranch, base: baseBranch, headCommit: gitOidSchema, state: z.enum(["draft", "ready"]), reviewers: z.array(pullRequestReviewerSchema).max(10).optional(), comment: z.string().trim().min(1).max(8000).optional(), commentId: reviewCommentIdSchema.optional(), threadId: reviewThreadIdSchema.optional(), resolved: z.boolean().optional() }).strict(),
     output: z.object({ state: z.enum(["draft", "ready", "closed", "merged"]), headCommit: gitOidSchema.optional() }).strict(),
   },
   commitAll: {

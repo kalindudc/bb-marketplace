@@ -33,7 +33,7 @@ export interface WatchDeps {
   remoteForThread?(threadId: string): RemoteScopeObservation | undefined;
   onObservationHold?(hold: ScopeObservationHold): void | Promise<void>;
 }
-export type ActObservation = Pick<Violation, "threadId" | "eventId" | "at" | "mode"> & { act: ActKind; preflight?: true; command?: string; cwd?: string; resolvedAt?: number };
+export type ActObservation = Pick<Violation, "threadId" | "eventId" | "at" | "mode"> & { act: ActKind; preflight?: true; command?: string; cwd?: string; resolvedAt?: number; pullRequestUrl?: string };
 export type CallOutcome = "ordinary" | "inspection-unavailable" | "act-allowed" | "prevented" | "detected-after-dispatch" | "stop-failed";
 export type CallObservation = { threadId: string; providerId: string; eventId: string; seq: number; at: number; mode: "enforce" | "watch"; tool: string; outcome: CallOutcome };
 type Item = Record<string, unknown>;
@@ -277,8 +277,14 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
               deps.onObservedMerge?.(threadId, source, row.id, row.createdAt, item.exitCode === 0) === true;
             allowedAct ||= observed || reply.decision.allow && !!reply.decision.acts?.length;
             unavailable ||= reply.decision.allow && reply.decision.inspectionUnavailable === true;
-            if (reply.decision.allow || observed) for (const kind of reply.decision.allow ? (reply.decision.acts ?? []).map(act => act.kind) : ["merge" as const])
-              store.recordAct({ threadId, providerId, at: Date.now(), eventId: row.id, seq: row.seq, kind, call: reply.call, mode: modeFor(threadId) === "watch" ? "watch" : "enforce" });
+            const mode = modeFor(threadId) === "watch" ? "watch" : "enforce";
+            if (reply.decision.allow) {
+              for (const [index, act] of (reply.decision.acts ?? []).entries()) {
+                store.recordAct({ threadId, providerId, at: Date.now(), eventId: row.id, seq: row.seq, kind: act.kind, call: reply.call, mode });
+                if (act.ownedPullRequest) deps.onActObservation?.({ threadId, eventId: row.id + ":pr:" + index, at: row.createdAt, mode,
+                  act: act.kind, pullRequestUrl: act.ownedPullRequest.url, command: act.ownedPullRequest.command });
+              }
+            } else if (observed) store.recordAct({ threadId, providerId, at: Date.now(), eventId: row.id, seq: row.seq, kind: "merge", call: reply.call, mode });
             if (!reply.decision.allow && !observed) { violation = await contain(threadId, providerId, row.id, row.seq, row.createdAt, reply.decision, reply.call, expected); break; }
           }
           observe(threadId, providerId, row, rawCalls[0], violation ? violation.stopError ? "stop-failed" : "detected-after-dispatch" : allowedAct ? "act-allowed" : unavailable ? "inspection-unavailable" : "ordinary");
@@ -348,7 +354,12 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
           if (!decision.allow) { violation = await contain(threadId, providerId, row.id, row.seq, row.createdAt, decision, { ...call, input: {} }); break; }
           allowedAct ||= !!decision.acts?.length;
           unavailable ||= decision.inspectionUnavailable === true;
-          for (const act of decision.acts ?? []) store.recordAct({ threadId, providerId, at: Date.now(), eventId: row.id, seq: row.seq, kind: act.kind, call, mode: modeFor(threadId) === "watch" ? "watch" : "enforce" });
+          const mode = modeFor(threadId) === "watch" ? "watch" : "enforce";
+          for (const [index, act] of (decision.acts ?? []).entries()) {
+            store.recordAct({ threadId, providerId, at: Date.now(), eventId: row.id, seq: row.seq, kind: act.kind, call, mode });
+            if (act.ownedPullRequest) deps.onActObservation?.({ threadId, eventId: row.id + ":pr:" + index, at: row.createdAt, mode,
+              act: act.kind, pullRequestUrl: act.ownedPullRequest.url, command: act.ownedPullRequest.command });
+          }
         }
         observe(threadId, providerId, row, rawCalls[0], violation ? violation.stopError ? "stop-failed" : "detected-after-dispatch" : unavailable ? "inspection-unavailable" : allowedAct ? "act-allowed" : "ordinary");
         advance(!violation);

@@ -34,7 +34,7 @@ export function userControl(command: ShellCommand): boolean {
 }
 
 export { ACT_KINDS, type ActKind } from "./act-routing";
-export interface Act { kind: ActKind; ruleId: string; why: string }
+export interface Act { kind: ActKind; ruleId: string; why: string; ownedPullRequest?: { url: string; command: string } }
 interface ActDefinition extends Act { commands: string[]; matches(command: ShellCommand): boolean; fallback: RegExp }
 const pr = (command: ShellCommand, actions: string[]) => ["gh", "dt"].includes(command.argv[0]) && command.argv[1] === "pr" && actions.includes(command.argv[2]);
 export const kubectlRead = (a: string[]) => ["get", "describe", "logs", "events", "version", "api-resources", "api-versions", "explain", "cluster-info", "top", "wait", "kustomize", "completion"].includes(a[1])
@@ -187,18 +187,23 @@ const prReadyAct: Act = { kind: "publish", ruleId: "pr-keeper-ready", why: "Only
 const prReviewerAct: Act = { ...prReadyAct, kind: "send" };
 const prCloseAct: Act = { kind: "delete", ruleId: "pr-keeper-close", why: "Use tavern_pull_request to close a quest-owned pull request or draft the request for the user." };
 export const typedPullRequestAct = (act: Act) => act.ruleId === prReadyAct.ruleId || act.ruleId === prCloseAct.ruleId;
-export function pullRequestRoute(command: ShellCommand, owned: boolean): Act | undefined {
+export function pullRequestRoute(command: ShellCommand, owned: boolean, keeper?: { url?: string }): Act | undefined {
   if (command.argv.includes("--help") || command.argv.includes("--version")) return;
-  if (pr(command, ["ready"])) return prReadyAct;
+  const write = pullRequestWrite(command, !!keeper);
+  if (write?.typedReady || pr(command, ["ready"])) return prReadyAct;
   if (pr(command, ["create", "edit"]) &&
     command.argv.slice(3).some(arg => /^(?:--(?:add-)?reviewer(?:=|$)|-r)/.test(arg))) return prReviewerAct;
-  const write = pullRequestWrite(command);
+  const ownedUrl = keeper?.url;
+  if (ownedUrl && write?.keeperAction) return { ...ownPrAct, kind: write.operation === "close" ? "delete" : "publish",
+    ownedPullRequest: { url: ownedUrl, command: command.source ?? command.text } };
   if (!write) return;
   if (write.operation === "close" && owned) return prCloseAct;
   if (owned && (write.operation === "comment" || write.operation === "edit")) return ownPrAct;
   return prDraftAct;
 }
-export function fallbackPullRequestRoute(source: string): Act | undefined {
+export function fallbackPullRequestRoute(source: string, keeper = false): Act | undefined {
+  if (keeper && /\bgh\s+api\b[^;\n]*\brepos\/[^/\s]+\/[^/\s]+\/(?:pulls\/\d+|issues\/\d+\/comments)\b/.test(source))
+    return prDraftAct;
   if (/\b(?:gh|dt)\b[^;\n]*\bpr\s+ready\b/.test(source)) return prReadyAct;
   if (/\b(?:gh|dt)\b[^;\n]*\bpr\s+(?:create|edit)\b[^;\n]*\s(?:--(?:add-)?reviewer\b|-r\b)/.test(source)) return prReviewerAct;
   if (/\b(?:gh|dt)\b[^;\n]*\bpr\s+(?:close|comment|edit|review|approve)\b/.test(source)) return prDraftAct;

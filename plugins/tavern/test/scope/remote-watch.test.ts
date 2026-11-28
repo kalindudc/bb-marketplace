@@ -21,7 +21,7 @@ const denied: engine.Decision = { allow: false, ruleId: "git-push-main", reason:
 function setup(providerId = "codex", mode: "enforce" | "watch" | "off" = "enforce") {
   const root = mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "remote-watch-")); roots.push(root);
   const store = new ScopeStore(root); store.write("member", { ...scopeForClass("smith"), mode, threadId: "member", issuedAt: 1 });
-  const now = Date.now(), handlers = new Map<string, Function>(), stop = vi.fn(), onViolation = vi.fn(), onObservationHold = vi.fn();
+  const now = Date.now(), handlers = new Map<string, Function>(), stop = vi.fn(), onViolation = vi.fn(), onObservationHold = vi.fn(), onActObservation = vi.fn();
   const row = (seq: number, type = "item/started", extra: Record<string, unknown> = {}) => ({ id: "event-" + seq, seq, type, createdAt: now + seq, data: { item: { id: "call", type: "commandExecution", command: "git push origin main", cwd: "/guest/member", ...extra } } });
   let rows = [row(1)];
   const list = vi.fn(async ({ afterSeq }: { afterSeq: string }) => rows.filter(value => value.seq > Number(afterSeq)));
@@ -31,12 +31,12 @@ function setup(providerId = "codex", mode: "enforce" | "watch" | "off" = "enforc
   const fail = () => { throw new Error("A controller-local guest probe ran"); };
   const getThread = vi.fn(fail), getEnvironment = vi.fn(fail), cwdForThread = vi.fn(fail);
   const bb = { events: { on: (name: string, fn: Function) => handlers.set(name, fn) }, onDispose: vi.fn(), log: { warn: vi.fn() }, sdk: { threads: { stop, get: getThread, events: { list } }, environments: { get: getEnvironment } } } as unknown as BbPluginApi;
-  registerWatcher(bb, store, { onViolation, onObservationHold, cwdForThread, remoteForThread });
+  registerWatcher(bb, store, { onViolation, onObservationHold, onActObservation, cwdForThread, remoteForThread });
   vi.spyOn(checker, "bindChecks").mockImplementation(fail); vi.spyOn(engine, "evaluate").mockImplementation(fail);
   vi.spyOn(preparation, "prepareCall").mockImplementation(fail); vi.spyOn(worktree, "needsWorktree").mockImplementation(fail);
   vi.spyOn(worktree, "checkedWorktreeRoot").mockImplementation(fail); vi.spyOn(worktree, "gitWorktreeRoot").mockImplementation(fail); vi.spyOn(paths, "realPath").mockImplementation(fail);
   const isArmed = vi.spyOn(store, "isArmed").mockImplementation(fail);
-  return { root, store, row, prepare, remoteForThread, stop, onViolation, onObservationHold, cwdForThread, getThread, getEnvironment, isArmed, list,
+  return { root, store, row, prepare, remoteForThread, stop, onViolation, onObservationHold, onActObservation, cwdForThread, getThread, getEnvironment, isArmed, list,
     setExecution: (value: RemoteScopeObservation | undefined) => { execution = value; }, setRows: (value: typeof rows) => { rows = value; },
     emit: (sequence = 1) => handlers.get("experimental_thread.events")!({ thread: { id: "member", providerId }, sequence }) as Promise<void>,
   };
@@ -47,6 +47,16 @@ it("uses the acknowledged host decision without any local arm, PID, path or poli
   expect(f.stop).not.toHaveBeenCalled(); expect(f.store.violations()).toEqual([]); expect(f.store.progress("member").cursor).toBe(1);
   for (const probe of [f.cwdForThread, f.getThread, f.getEnvironment, f.isArmed]) expect(probe).not.toHaveBeenCalled();
 });
+it("forwards an owned PR act from the host decision to the Ledger observer", async () => {
+  const f = setup();
+  const url = "https://github.com/example/repo/pull/12", command = `gh pr comment ${url} -b fixed`;
+  f.setRows([f.row(1, "item/started", { command })]);
+  f.prepare.mockImplementationOnce(async call => ({ call, scopeRevision: binding.revision, scopeDigest: binding.scopeDigest,
+    decision: { allow: true, acts: [{ kind: "publish", ruleId: "pr-owned-write", why: "Owned PR", ownedPullRequest: { url, command } }] } }));
+  await f.emit(); await f.emit();
+  expect(f.onActObservation).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ eventId: "event-1:pr:0", pullRequestUrl: url, command, act: "publish" }));
+});
+
 it("does not demand a local Pi marker and evaluates only completion", async () => {
   const f = setup("pi"); await f.emit(); expect(f.prepare).not.toHaveBeenCalled(); expect(f.stop).not.toHaveBeenCalled();
   f.setRows([f.row(2, "item/completed")]); f.prepare.mockImplementation(async call => ({ call, scopeRevision: binding.revision, scopeDigest: binding.scopeDigest, decision: denied }));

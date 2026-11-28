@@ -2,7 +2,7 @@ import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { gitOidSchema } from "../shared/placement";
-import { pullRequestDraftOperationSchema, pullRequestHead, pullRequestReviewerSchema, type PullRequest } from "../shared/pull-request";
+import { pullRequestDraftOperationSchema, pullRequestHead, pullRequestReviewerSchema, reviewCommentIdSchema, reviewThreadIdSchema, type PullRequest } from "../shared/pull-request";
 import type { Decision } from "../shared/schema";
 import { windowStopKinds } from "../shared/away";
 import { normalizeRemote } from "../scope/remote";
@@ -19,6 +19,8 @@ export const pullRequestActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("ready"), pullRequestId: id, reason, reviewers: z.array(pullRequestReviewerSchema).max(10).default([]) }).strict(),
   z.object({ action: z.literal("close"), pullRequestId: id, reason }).strict(),
   z.object({ action: z.literal("comment"), pullRequestId: id, body }).strict(),
+  z.object({ action: z.literal("reply"), pullRequestId: id, commentId: reviewCommentIdSchema, body }).strict(),
+  z.object({ action: z.literal("resolve"), pullRequestId: id, threadId: reviewThreadIdSchema, resolved: z.boolean() }).strict(),
   z.object({ action: z.literal("draft"), boardQuestId: id.nullish(), operation: pullRequestDraftOperationSchema, url: z.url().regex(/^https?:\/\//).max(300), body, unsure: z.boolean().optional(), command: z.string().trim().min(1).max(12000).optional() }).strict(),
 ]);
 
@@ -142,7 +144,9 @@ export async function managePullRequest(runtime: TavernRuntime, threadId: string
       k.assertQuestNotHeld(questId);
       runtime.away.assertWork(questId, threadId);
       const window = runtime.away.store.snapshot().window;
-      if (window?.returnedAt === null && windowStopKinds(window).includes("other-writes")) throw new Error("This pull request action waits for your return from Closing time.");
+      if (window?.returnedAt === null && (windowStopKinds(window).includes("other-writes") ||
+          input.action === "close" && windowStopKinds(window).includes("delete")))
+        throw new Error("This pull request action waits for your return from Closing time.");
       if (input.action === "ready") k.liveQuest(threadId, questId);
       return pr;
     };
@@ -162,12 +166,19 @@ export async function managePullRequest(runtime: TavernRuntime, threadId: string
     }
     if (input.action === "ready" && pr.state === "ready" && !input.reviewers.length) return pr;
     const id = k.store.id("pr-act"), actor = { kind: "agent" as const, threadId };
-    const change = { action: input.action, reason: input.action === "comment" ? "Reply on the quest’s pull request" : input.reason, receipt: id, actor };
+    const reason = "reason" in input ? input.reason : input.action === "resolve"
+      ? input.resolved ? "Resolved a review thread" : "Reopened a review thread" : input.body;
+    const change = { action: input.action, reason, receipt: id, actor,
+      ...("body" in input ? { body: input.body } : {}),
+      ...(input.action === "reply" ? { commentId: input.commentId } : {}),
+      ...(input.action === "resolve" ? { threadId: input.threadId, resolved: input.resolved } : {}) };
     authorize(input.action === "ready" ? "readyPullRequest" : input.action === "close" ? "closePullRequest" : "replyPullRequest", { level: "keeper", receipt: id });
     k.store.event(k.now(), threadId, pr.boardQuestId, "pull-request.requested", change.reason, { ...change, pullRequestId: pr.id, head: pullRequestHead(pr) }, actor);
     const forge = runtime.placements().forge;
     try {
       const result = input.action === "close" ? await forge.close(pr) : input.action === "comment" ? await forge.comment(pr, input.body)
+        : input.action === "reply" ? await forge.reply(pr, input.commentId, input.body)
+        : input.action === "resolve" ? await forge.resolve(pr, input.threadId, input.resolved)
         : pr.state === "ready" ? { state: "ready" as const, headCommit: observedHead } : await forge.setReviewState(pr, "ready", []);
       if (input.action === "ready" && (result.state !== "ready" || result.headCommit !== observedHead)) throw new Error("The forge did not confirm readiness on the verified head.");
       if (input.action === "close" && result.state !== "closed" && result.state !== "merged") throw new Error("The forge did not confirm closure.");

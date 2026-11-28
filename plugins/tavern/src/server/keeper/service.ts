@@ -347,8 +347,8 @@ export class Keeper {
     }
     if (actor.kind !== "agent" || !messageId) throw new Error("Cite the user's own routed message for this quest");
     this.owned(actor.threadId, quest.id);
-    const route = this.store.db.prepare("SELECT data FROM tavern_records WHERE kind='routes' AND json_extract(data,'$.keeperThreadId')=? AND json_extract(data,'$.sourceMessageId')=?").all(actor.threadId, messageId) as { data: string }[];
-    const routed = route.map(row => JSON.parse(row.data) as Route).some(route => route.kind !== "question" && routeQuestIds(route).includes(quest.id) && !route.classSelectionOnly);
+    const routed = this.store.routesFromMessage(actor.threadId, messageId)
+      .some(route => route.kind !== "question" && routeQuestIds(route).includes(quest.id) && !route.classSelectionOnly);
     const message = this.store.messageReceipt(actor.threadId, messageId, true);
     if (!routed || !message) throw new Error("Cite the user's own routed message for this quest");
     if (this.store.db.prepare("SELECT 1 FROM tavern_events WHERE json_extract(data,'$.receipt.kind')='user-message' AND json_extract(data,'$.receipt.id')=?").get(messageId)) throw new Error("This message is already a lifecycle receipt");
@@ -2231,6 +2231,14 @@ export class Keeper {
   }
   private messageRule(threadId: string, text: string, questId: string | null, sourceMessageId?: string) {
     if (sourceMessageId) {
+      const own = this.store.messageReceipt(threadId, sourceMessageId, true);
+      if (own?.thread_id === threadId && !this.store.messageWasCancelled(sourceMessageId) &&
+          this.store.routesFromMessage(threadId, sourceMessageId).some(route =>
+            !route.classSelectionOnly && (!questId || routeQuestIds(route).includes(questId)))) {
+        if (own.text.trim() !== text.trim())
+          throw new Error(`Copy the user's rule verbatim from ${sourceMessageId} in ${threadId}.`);
+        return { sourceMessageId, sourceThreadId: threadId, at: own.at };
+      }
       const receipt = this.store.partyMessageReceipt(threadId, sourceMessageId);
       const member = receipt && this.member(receipt.thread_id);
       if (!receipt || member?.role !== "member" || member.keeperThreadId !== threadId ||

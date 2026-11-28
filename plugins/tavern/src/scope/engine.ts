@@ -13,13 +13,13 @@ import { glob, isSink, normalizeToolPath, within, writeAllowed } from "./paths";
 import { normalizeRemote, pushSpec } from "./remote";
 import { awkRead, fileRead, findRead, sedRead, xxdRead } from "./reads";
 import { draftEditKey, githubApiRead } from "./github";
-import { prCommandDigest, pullRequestOwned } from "./pr-policy";
+import { prCommandDigest, ownedPullRequestTarget, pullRequestWrite } from "./pr-policy";
 import { commandWritePaths, ruleMatches, shellCommands, type ShellCommand } from "./shell";
 import { memoryCommandRule, runsMemoryCommand } from "./memory-policy";
 import { explicitMerge, inspectMerge, protectedApiWrite, type MergeCall } from "./merge";
 import type { ActTarget } from "../shared/quest-authority";
 
-export interface ScopeCall { scopeFile?: string; draftApproved?: boolean; merge?: MergeCall | null; mergeMatches?: boolean; mergeHeadChanged?: boolean; mergeObserved?: boolean; clusterWriteApproved?: boolean; clusterObservation?: string; containment?: "sandbox"; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; shellGrants?: readonly ShellGrantProjection[]; prGrantAvailable?(id: string): boolean }
+export interface ScopeCall { scopeFile?: string; draftApproved?: boolean; merge?: MergeCall | null; mergeMatches?: boolean; mergeHeadChanged?: boolean; mergeObserved?: boolean; clusterWriteApproved?: boolean; clusterObservation?: string; containment?: "sandbox"; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: Record<string, string>; observationId?: string; shellGrants?: readonly ShellGrantProjection[]; prGrantAvailable?(id: string): boolean }
 export type Decision = { allow: true; check?: boolean; inspectionUnavailable?: true; acts?: Act[]; prGrant?: string; shellGrant?: string } | { allow: false; ruleId: string; reason: string; act?: ActKind };
 const allowed: Decision = { allow: true };
 export const BLOCK_MARKER = "[Tavern scope blocked]";
@@ -189,6 +189,24 @@ export function evaluate(scope: Scope, call: ScopeCall, _legacyWanderer = false)
   return evaluateShell(scope, call, false);
 }
 
+function ownedPullRequestPush(scope: Scope, call: ScopeCall, command: ShellCommand) {
+  const heads = scope.pullRequestPolicy?.heads;
+  if (!heads || scope.role !== "keeper" || command.gitEnvironment || command.uncertain || command.cwdAlternative) return;
+  const push = pushSpec(command.argv), targets = push && call.pushTargets?.[command.cwd + "\0" + push.remote];
+  if (!push?.refs.length || !targets?.length) return;
+  const branches = push.refs.map(ref => {
+    const target = ref.split(":").at(-1);
+    return target === "HEAD" ? call.pushHeads?.[command.cwd + "\0" + command.sequence] : target?.replace(/^refs\/heads\//, "");
+  });
+  const url = Object.entries(heads).find(([url, head]) => {
+    const repo = /^(https?:\/\/[^/]+\/[^/]+\/[^/]+)\/pull\/[1-9]\d*\/?$/.exec(url)?.[1];
+    if (!repo || !branches.every(branch => branch === head)) return false;
+    try { return targets.every(target => normalizeRemote(target) === normalizeRemote(repo)); }
+    catch { return false; }
+  })?.[0];
+  return url && { url, command: command.source ?? command.text };
+}
+
 function evaluateShell(scope: Scope, call: ScopeCall, remote: boolean): Decision {
   const authority = authorityDecision(scope, call, remote);
   if (authority) return authority;
@@ -203,7 +221,7 @@ function evaluateShell(scope: Scope, call: ScopeCall, remote: boolean): Decision
   const memoryPaths = memoryRule?.argv?.[0];
   let commands;
   try { commands = shellCommands(source, call.cwd, { temporaryRoot: temporaryRoot(scope), isRead: contained ? containmentRead : readonlyProgram, gitRoots: call.gitRoots, directories: call.directories, env: scope.env.variables, containment: contained ? "sandbox" : undefined }); } catch {
-    const route = fallbackPullRequestRoute(source);
+    const route = fallbackPullRequestRoute(source, scope.role === "keeper");
     const acts = route ? [route, ...fallbackActs(source)] : fallbackActs(source);
     const guarded = acts.filter(isGuardedAct);
     const refused = acts.find(act => closingAct(scope, act, source)) ?? guarded.find(act => scope.mode !== "off" &&
@@ -256,8 +274,12 @@ function evaluateShell(scope: Scope, call: ScopeCall, remote: boolean): Decision
       if (scope.mode !== "off") return blockedAct(source, act);
     }
     const smithOwned = Boolean(call.ownedPrs?.includes(draftEditKey(command)));
-    const questOwned = pullRequestOwned(command, scope.pullRequestPolicy?.owned ?? [], call.questOwnedPrs ?? []);
-    const route = scope.role === "keeper" && (call.mergeMatches || call.mergeObserved) && explicitMerge(command) ? undefined : pullRequestRoute(command, smithOwned || questOwned);
+    const keeper = scope.role === "keeper";
+    const write = pullRequestWrite(command, keeper), policy = scope.pullRequestPolicy, facts = call.questOwnedPrs ?? {};
+    const ownedUrl = ownedPullRequestTarget(command, write, policy?.owned ?? [], facts);
+    const legacyOwned = keeper && !write?.fileSourced && !!ownedPullRequestTarget(command, write, policy?.legacyOwned ?? [], facts);
+    const route = keeper && (call.mergeMatches || call.mergeObserved) && explicitMerge(command) ? undefined :
+      pullRequestRoute(command, smithOwned || legacyOwned || !keeper && !!ownedUrl, keeper ? { url: ownedUrl } : undefined);
     if (route && typedPullRequestAct(route) && scope.mode !== "off") return blocked(command.text, route.ruleId, route.why);
     if (route?.kind === "send" && scope.mode !== "off") {
       const prException = commands.length === 1 && !command.githubEnvironment && scope.pullRequestPolicy?.grants.find(g => g.digest === prCommandDigest(source) && call.prGrantAvailable?.(g.id));
@@ -276,7 +298,8 @@ function evaluateShell(scope: Scope, call: ScopeCall, remote: boolean): Decision
       const isApprovedClusterAct = approvedClusterWrite && act.kind === "cluster-write";
       if (!(isApprovedClusterAct && call.clusterObservation) && closingAct(scope, act, command)) return blocked(command.text, "closing-act", "Closing time: " + act.kind + " waits for your return");
       if (!isGuardedAct(act)) continue;
-      observed.push(act);
+      const ownedPush = !remote && act.kind === "publish" ? ownedPullRequestPush(scope, call, command) : undefined;
+      observed.push(ownedPush ? { ...act, ownedPullRequest: ownedPush } : act);
       if (scope.mode !== "off" && !isApprovedClusterAct && !baselineHolds(scope, call, command, act) && !excepted(act.ruleId)) {
         if (!matchesGrant(act)) return blockedAct(source, act);
         shellGrant = grant!.id;

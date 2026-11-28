@@ -34,11 +34,11 @@ Configure forge profiles in **Settings** under **Where work runs** (or by applyi
 
 | Kind | Commands | Supported actions |
 | --- | --- | --- |
-| `github` | Built-in `gh` CLI | Open draft, inspect state, mark ready, return to draft, request reviewers, comment, and close. |
+| `github` | Built-in `gh` CLI | Open draft, inspect state, mark ready, return to draft, request reviewers, comment, reply to review comments, resolve or reopen review threads, and close. |
 | `command` | Custom `open` (required), optional `state` and `close` | Open draft, inspect state when `state` is set, and close when `close` is set. |
 
 `bb tavern settings set` refuses forge edits, and imports and backup restores preserve existing profiles. Custom commands must be absolute executable paths outside agent checkouts and thread storage, and support read-only `--help` tested on **Apply**. For the script wire contract, see [`skills/tavern/references/forges.md`](../skills/tavern/references/forges.md).
 
-For from-home placement, Tavern carries a Smith's committed tree home (reporting excluded uncommitted files), builds one commit preserving message and author, pushes to the Smith's assigned branch (never the base or default branch, using `--force-with-lease` on updates), and opens or reuses a draft pull request. Member-machine Smiths open drafts with their own tools and record the URL.
+For from-home placement, Tavern carries a Smith's committed tree home (reporting excluded uncommitted files), builds one commit preserving message and author, pushes to the Smith's assigned branch (never the base or default branch, using `--force-with-lease` on updates), and opens or reuses a draft pull request. Member-machine Smiths open drafts with their own tools and record the URL. For GitHub, Tavern checks that it is an open draft on the Smith’s assigned branch at its pushed head.
 
-Releasing a Smith transfers open pull request ownership to its Keeper without closing it. Keepers can mark verified pull requests ready, request reviewers, reply, or close them after Tavern confirms the head matches the Warden verdict or a clean rebase. Closing a quest lets you keep (default), take over, or close each open pull request.
+Releasing a Smith transfers open pull request ownership to its Keeper without closing it. The Keeper can manage the quest's own pull request without asking you about each edit, reviewer request, reply or resolution. `tavern_pull_request` takes the recorded pull request ID and checks that a reply or resolution belongs to it. Readiness and reviewer requests go through this tool, which checks the Warden's verdict against the head or a clean rebase. Unverified records and custom or enterprise forge URLs keep their previous shell permissions. The merge guard is unchanged. Closing a quest lets you keep (default), take over, or close each open pull request.

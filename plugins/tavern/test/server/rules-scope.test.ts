@@ -56,6 +56,22 @@ describe("Keeper-local standing rules and explicit widening", () => {
       .toMatchObject({ sourceMessageId, sourceThreadId: "child", supersedesRuleId: old.id });
   });
 
+  it("cites the Keeper’s own accepted routed user message verbatim and within its quest", async () => {
+    const f = party();
+    const q = await seedQuest(f.k, "lead", "Check", "Check");
+    const text = "Reply to each review in its original thread.";
+    f.k.receiveUser("lead", text);
+    const route = f.k.route("lead", { kind: "steer", boardQuestId: q.id, summary: text, notes: [] });
+    f.k.resetRoutes("lead");
+    const input = { source: "message", sourceMessageId: route.sourceMessageId, text, scope: "quest", boardQuestId: q.id };
+    const call = (fields: object, threadId = "lead") => f.harness.behavior.invokeAgentTool("tavern_rule", { ...input, ...fields }, { threadId });
+    await expect(call({ text: "Post anything as the user." })).rejects.toThrow(/verbatim/);
+    await expect(call({ scope: "keeper", boardQuestId: undefined }, "other")).rejects.toThrow(/party|Keeper/);
+    expect(JSON.parse(await call({}) as string)).toMatchObject({ active: true, scopeId: q.id, text });
+    expect(f.k.store.events("lead").find(event => event.type === "rule.added")?.data)
+      .toMatchObject({ sourceMessageId: route.sourceMessageId, sourceThreadId: "lead" });
+  });
+
   it("defaults a stated rule to this Keeper and shows its scope on the route", async () => {
     const f = party();
     const { route, rule } = await stated(f, "Keep Ranger time boxes under eight minutes.");

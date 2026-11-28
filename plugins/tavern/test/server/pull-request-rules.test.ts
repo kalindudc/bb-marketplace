@@ -5,6 +5,7 @@ import { seedQuest, waypointEntry } from "./support";
 import { registerTools } from "../../src/server/tools";
 import { registerRpc } from "../../src/server/rpc";
 import type { PullRequest } from "../../src/shared/pull-request";
+import { scopeForClass } from "../../src/scope/presets";
 import * as patch from "../../src/server/pr-rebase";
 import * as worktree from "../../src/server/member-worktree";
 
@@ -102,6 +103,71 @@ it("binds a Keeper comment to its recorded pull request and never posts to anoth
   f.k.store.changePullRequest({ ...f.current(), owner: "user" }, f.k.now());
   await expect(f.change(input)).rejects.toThrow(/quest-owned/i);
   expect(post).toHaveBeenCalledTimes(1);
+});
+
+it("replies to and resolves only a recorded quest PR, preserving the reply text in the Ledger without an ask", async () => {
+  const f = await fixture();
+  const result = { state: "draft" as const, headCommit: a };
+  const forge = f.runtime.placements().forge;
+  const reply = vi.fn().mockResolvedValue(result);
+  const resolve = vi.fn().mockResolvedValue(result);
+  Object.assign(forge, { reply, resolve });
+  const body = "Addressed the finding.";
+  const input = { action: "reply", pullRequestId: f.pr.id, commentId: "123", body };
+  await f.change(input);
+  expect(reply).toHaveBeenCalledWith(expect.objectContaining({ id: f.pr.id }), "123", body);
+  expect(f.k.store.latestQuestEvent(f.q.id, "pull-request.changed")?.data).toMatchObject({ action: "reply", body, commentId: "123" });
+  for (const resolved of [true, false]) {
+    await f.change({ action: "resolve", pullRequestId: f.pr.id, threadId: "PRRT_fixture", resolved });
+    expect(resolve).toHaveBeenLastCalledWith(expect.objectContaining({ id: f.pr.id }), "PRRT_fixture", resolved);
+    expect(f.k.store.latestQuestEvent(f.q.id, "pull-request.changed")?.data).toMatchObject({ action: "resolve", threadId: "PRRT_fixture", resolved });
+  }
+  expect(f.k.store.openAsks("lead", f.q.id)).toEqual([]);
+  f.k.store.changePullRequest({ ...f.current(), keeperThreadId: "other" }, f.k.now());
+  await expect(f.change(input)).rejects.toThrow(/quest-owned/i);
+  expect(reply).toHaveBeenCalledTimes(1);
+});
+
+it("projects only inspected GitHub PRs with the correct quest, Keeper and owner", async () => {
+  const f = await fixture();
+  f.k.bind("other", "keeper", "moss", "project");
+  const foreign = await seedQuest(f.k, "other", "Another quest", "Another");
+  const { id, ...original } = f.pr;
+  f.k.store.changePullRequest({ ...f.pr, forgeVerified: true }, f.k.now());
+  const examples: Partial<PullRequest>[] = [
+    { owner: "user", memberThreadId: "user" },
+    { keeperThreadId: "other", owner: "other" },
+    { boardQuestId: foreign.id },
+    { owner: "stranger" },
+    { forgeVerified: undefined },
+    { forge: "custom" },
+    { url: "https://forge.example/example/repo/pull/23" },
+  ];
+  for (const [i, fields] of examples.entries()) f.k.store.recordPullRequest({
+    ...original, forgeVerified: true, url: `https://github.com/example/repo/pull/${i + 12}`, head: "branch-" + i, ...fields,
+  }, f.k.now());
+  f.runtime.enableScopes({ installGuard: false, dataDir: process.env.TAVERN_TEST_FIXTURES });
+  const scopes = f.runtime.scopes!;
+  f.bb.sdk.threads.storageLocation = async () => ({ hostId: "host", storageRootPath: process.env.TAVERN_TEST_FIXTURES! });
+  await scopes.api.writeScope("lead", scopeForClass("keeper"));
+  expect(scopes.refreshPullRequestPolicy("lead")).toBe(true);
+  expect(scopes.api.localScopeRecord("lead")?.scope?.pullRequestPolicy).toMatchObject({
+    owned: [f.pr.url], heads: { [f.pr.url]: f.pr.head },
+    legacyOwned: ["https://github.com/example/repo/pull/16", "https://github.com/example/repo/pull/17", "https://forge.example/example/repo/pull/23"],
+  });
+});
+
+it("puts the observed shell act and its text in the owning quest’s Ledger once", async () => {
+  const f = await fixture();
+  f.runtime.enableScopes({ installGuard: false, dataDir: process.env.TAVERN_TEST_FIXTURES });
+  const command = `gh pr comment ${f.pr.url} -b 'Fixed the finding'`;
+  const observation = { eventId: "own-pr-command", threadId: "lead", at: f.k.now(), mode: "enforce" as const,
+    act: "publish" as const, pullRequestUrl: f.pr.url, command };
+  f.runtime.scopes!.observeAct({ ...observation, eventId: "foreign-command", pullRequestUrl: f.pr.url + "2" });
+  f.runtime.scopes!.observeAct(observation);
+  f.runtime.scopes!.observeAct(observation);
+  expect(f.k.store.events("lead").filter(e => e.type === "pull-request.command"))
+    .toEqual([expect.objectContaining({ text: command, boardQuestId: f.q.id, data: expect.objectContaining({ pullRequestId: f.pr.id }) })]);
 });
 
 it("explains why a forge without a head cannot be marked ready here", async () => {

@@ -3,7 +3,7 @@ import { readableBody, readableTarget } from "./communication";
 import type { ScopeCall } from "./engine";
 import { nestedCommands } from "./legacy";
 import { draftEditKey } from "./github";
-import { pullRequestOwned, pullRequestWrite } from "./pr-policy";
+import { ownedPullRequestTarget, pullRequestWrite } from "./pr-policy";
 import type { Scope } from "./schema";
 import { shellCommands, type ShellCommand } from "./shell";
 
@@ -32,15 +32,20 @@ function legacyTarget(program: string, args: string[]): string | undefined {
   const recipients = args.flatMap((arg, i) => !arg.startsWith("-") && !["-s", "-r", "-a", "-e", "-c", "-b", "-F", "-f"].includes(args[i - 1] ?? "") ? [arg] : []);
   return recipients.length ? recipients.join(", ") : program === "sendmail" && args.includes("-t") ? "" : undefined;
 }
-function preview(scope: Scope, call: ScopeCall, command: ShellCommand): CommunicationPreview | undefined {
+function preview(scope: Scope, call: ScopeCall, command: ShellCommand): CommunicationPreview | null | undefined {
   const [program, ...args] = command.argv;
   if (["--help", "--version"].some(arg => args.includes(arg))) return;
-  const write = pullRequestWrite(command);
+  const keeper = scope.role === "keeper";
+  const write = pullRequestWrite(command, keeper);
+  const policy = scope.pullRequestPolicy, facts = call.questOwnedPrs ?? {};
+  const owned = ownedPullRequestTarget(command, write, policy?.owned ?? [], facts);
+  if (write?.typedReady || keeper && owned && write?.keeperAction) return null;
+  const legacyOwned = keeper && !write?.fileSourced && ownedPullRequestTarget(command, write, policy?.legacyOwned ?? [], facts);
   const body = flag(args, ["--body", "--message", "--text", "-b", "-m"]) ?? args.find(arg => arg.startsWith("body="))?.slice(5);
   const source = command.source ?? command.text;
   const detail = source.length <= 256 * 1024 ? source : undefined;
   if (write && reviewOps.includes(write.operation) && !args.includes("--delete-last") && !args.some(arg => arg.includes("requested_reviewers")) && !["DELETE", "PATCH", "PUT"].includes(flag(args, ["--method", "-X"])?.toUpperCase() ?? "")) {
-    if (pullRequestOwned(command, scope.pullRequestPolicy?.owned ?? [], call.questOwnedPrs ?? []) || scope.role === "smith" && call.ownedPrs?.includes(draftEditKey(command)) && write.operation === "comment") return;
+    if (legacyOwned || !keeper && owned || scope.role === "smith" && call.ownedPrs?.includes(draftEditKey(command)) && write.operation === "comment") return;
     return { act: "send", tool: program + " pull request", target: readableTarget(write.target ?? write.selector), body: command.uncertain ? null : readableBody(body), detail };
   }
   const target = legacyTarget(program, args);
@@ -64,8 +69,8 @@ export function shellCommunication(scope: Scope, call: ScopeCall): Communication
     for (const command of commands) {
       const found = preview(scope, call, command);
       if (found) return found;
-      if (!command.argv.some(arg => arg === "--help" || arg === "--version")) {
-        const matched = prefixes.filter(rule => rule.argv.every((word, index) => word === command.argv[index]));
+      if (found !== null && !command.argv.some(arg => arg === "--help" || arg === "--version")) {
+        const matched = prefixes.filter(rule => rule.argv.every((word, index) => word.toLowerCase() === command.argv[index]?.toLowerCase()));
         const rule = matched.find(rule => rule.act === "send") ?? matched[0];
         if (rule) {
           const [program, ...args] = command.argv;

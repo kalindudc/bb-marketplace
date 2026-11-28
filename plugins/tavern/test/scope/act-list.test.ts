@@ -64,7 +64,7 @@ const awayWindow = (stopList?: AwayStopKind[]) => awayWindowSchema.parse({
 });
 const namedTool = (toolName: string) => ({ kind: "tool" as const, toolName, cwd, input: {} });
 it.each([
-  ["mcp__github__merge_pull_request", "merge"], ["quick_deploy", "deploy"], ["vault_delete_page", "delete"],
+  ["mcp__github__merge_pull_request", "merge"], ["MergePR", "merge"], ["SendEmail", "sends-as-you"], ["quick_deploy", "deploy"], ["vault_delete_page", "delete"],
   ["git_push", "other-writes"], ["publish_package", "other-writes"],
 ] as const)("holds named tool %s only under its Closing time stop kind", (toolName, stopKind) => {
   const call = namedTool(toolName);
@@ -80,6 +80,12 @@ it.each([
     for (const window of [awayWindow([]), awayWindow([stopKind === "merge" ? "deploy" : "merge"])])
       expect(evaluate(narrowAwayScope(base, window), call)).toMatchObject({ allow: true });
   }
+});
+
+it("matches configured send names and shell prefixes without regard to case", () => {
+  const base = { ...scope("keeper"), sendTools: [{ pattern: "FixtureSend", act: "send" as const }, { shell: "fixture send", act: "send" as const }] };
+  expect(evaluate(base, namedTool("fixturesend"))).toMatchObject({ allow: false, ruleId: "send-guard" });
+  expect(evaluate(base, { ...namedTool("bash"), kind: "bash", input: { command: "Fixture SEND" } })).toMatchObject({ allow: false, ruleId: "send-guard" });
 });
 
 it("keeps the draft exception for a named send pattern without waiving approval", () => {

@@ -77,8 +77,10 @@ export function normalizeCommand(argv: string[]): { argv: string[]; directory?: 
   return { argv: [name, ...argv.slice(index)], directory, repository };
 }
 export function ruleMatches(rule: ShellRule, command: ShellCommand): boolean {
-  if (rule.argv && !rule.argv.every((pattern, i) => typeof pattern === "string" ? glob(pattern, command.argv[i] ?? "") : pattern.includes(command.argv[i]))) return false;
-  if (rule.regex && !new RegExp(rule.regex).test(command.text)) return false;
+  const away = rule.id.startsWith("away:");
+  const argv = away ? command.argv.map(arg => arg.toLowerCase()) : command.argv;
+  if (rule.argv && !rule.argv.every((pattern, i) => typeof pattern === "string" ? glob(pattern, argv[i] ?? "") : pattern.includes(argv[i]))) return false;
+  if (rule.regex && !new RegExp(rule.regex, away ? "i" : "").test(command.text)) return false;
   return !rule.requires || rule.requires.every(flag => command.argv.includes(flag));
 }
 interface Location { cwd: string; known: boolean; stack: string[]; alternates?: string[] }

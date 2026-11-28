@@ -577,7 +577,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_rule",
     "Proposed a standing rule",
-    "A source message rule is active immediately. Copy the user verbatim from a rule route or cite a party user.told-member receiptId as sourceMessageId. For a correction give supersedesRuleId in the same scope. Default to this Keeper; global requires explicit words covering all Keepers or Tavern threads. Proposals stay inactive until the user confirms.",
+    "Rules quoted verbatim are active immediately. Cite sourceMessageId from a routed message here or user.told-member. Corrections use supersedesRuleId in the same scope. Default to this Keeper; global needs explicit words. Proposals stay inactive until the user confirms.",
     z.object({
       scope: z.enum(["global", "project", "keeper", "quest"]).default("keeper"),
       boardQuestId: optionalQuest,
@@ -653,7 +653,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     () => {}, argumentError,
   );
   register("tavern_pull_request", "Recorded a pull request action",
-    "Manage a quest PR by id: ready (optional reviewers) needs the Warden’s full commit in journal review evidence; Undo returns it to draft. Close records why; comment replies on your quest’s PR. For others, draft the URL, operation and full text; in your lane, give the quest and the literal gh or dt command with full URL, allowed once. unsure:true asks the user.",
+    "Own PR by id: ready needs a Warden-verified head, close needs a reason, comment posts, reply takes a commentId, resolve takes threadId and resolved. No merge. For other PRs, draft the URL, operation and text; a literal gh or dt command with full URL can be granted once. unsure:true asks the user.",
     pullRequestActionSchema, (input, threadId) => managePullRequest(runtime, threadId, input),
   );
   register(

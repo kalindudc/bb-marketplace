@@ -125,10 +125,11 @@ describe("class character and quality policy", () => {
     mkdirSync(home);
     const path = join(home, "keeper.md");
     const source = readFileSync(join(shipped, "classes/keeper.md"), "utf8");
-    writeFileSync(path, source.replace("Open one quest.", "Open exactly one quest."));
+    expect(source).toContain("Open one quest");
+    writeFileSync(path, source.replace("Open one quest", "Open exactly one quest"));
     utimesSync(path, 1, 1);
     expect(r.olderClassOverrides()).toEqual([{ id: "keeper", path }]);
-    expect(r.read().classes.find(c => c.id === "keeper")?.body).toContain("Open exactly one quest.");
+    expect(r.read().classes.find(c => c.id === "keeper")?.body).toContain("Open exactly one quest");
     writeFileSync(path, source);
     utimesSync(path, 1, 1);
     expect(r.olderClassOverrides()).toEqual([]);
