@@ -26,6 +26,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 - Keepers can manage the quest’s own pull requests without separate asks for edits, replies, review thread resolutions, readiness, reviewer requests or closing. Tavern records the actions in the Ledger. Readiness and reviewer requests still check the Warden’s verdict. Merge approval is unchanged.
 - A Keeper can cite your routed message when recording a rule. Closing time holds also match tool names regardless of capitalization.
+- The merge guard also recognizes capitalized command names and requests to add a pull request to the merge queue.
 - Keepers can replace stale asks with a new question or withdraw them with a reason. The old card leaves **Need you** immediately and stays in the quest's History and Answers without recording your approval.
 - The quest map shows every waypoint with its full title, owner, status, and check. Roads stay between cards and highlight the unfinished chain with the most steps left. If the columns do not fit, the map shows a vertical trail instead.
 - Keeper strips show a signpost for each quest, including sealed quests until you archive them. Hover or focus a signpost for its name and progress, or click it to open the quest. Between turns, the Keeper rests at the camp hearth. The camp and its cat are decoration; they don't need any moves from you.

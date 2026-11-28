@@ -88,6 +88,27 @@ it("matches configured send names and shell prefixes without regard to case", ()
   expect(evaluate(base, { ...namedTool("bash"), kind: "bash", input: { command: "Fixture SEND" } })).toMatchObject({ allow: false, ruleId: "send-guard" });
 });
 
+it.each(["GH pr merge https://github.com/example/repo/pull/12", "Git push origin main"])("holds protected writes regardless of executable case: %s", command => {
+  const base = scope("keeper");
+  const call = { ...namedTool("bash"), kind: "bash" as const, input: { command } };
+  expect(evaluate(base, call)).toMatchObject({ allow: false, ruleId: "merge-approval" });
+  expect(evaluate(narrowAwayScope(base, awayWindow(["merge"])), { ...call, mergeMatches: true }))
+    .toMatchObject({ allow: false, ruleId: "closing-act" });
+});
+
+it("holds feature branch pushes at Closing time regardless of executable case", () => {
+  const call = { ...namedTool("bash"), kind: "bash" as const, input: { command: "Git push origin feature" } };
+  const base = scope("keeper");
+  expect(evaluate(base, call)).toMatchObject({ allow: true, acts: [{ ruleId: "git-push" }] });
+  expect(evaluate(narrowAwayScope(base, awayWindow(["other-writes"])), call)).toMatchObject({ allow: false, ruleId: "closing-act" });
+});
+
+it("treats adding a pull request to the merge queue as a merge", () => {
+  const command = "gh api graphql -f query='mutation { enqueuePullRequest(input:{pullRequestId:\"fixture\"}){clientMutationId} }'";
+  expect(bash(command, "keeper")).toMatchObject({ allow: false, ruleId: "merge-approval" });
+  expect(bash(command)).toMatchObject({ allow: false, ruleId: "merge-approval" });
+});
+
 it("keeps the draft exception for a named send pattern without waiving approval", () => {
   const base = narrowAwayScope(scope("keeper"), awayWindow(["sends-as-you"]));
   const call = namedTool("mcp__mail__send_draft");

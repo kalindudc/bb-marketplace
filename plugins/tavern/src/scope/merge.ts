@@ -24,7 +24,7 @@ const ref = (read: ReadMerge, cwd: string, name: string) => probe(read, "git", [
 const prApi = /(?:^|\/)repos\/([^/]+\/[^/]+)\/pulls\/([^/]+)\/merge\/?(?:\?.*)?$/;
 const branchApi = /(?:^|\/)repos\/([^/]+\/[^/]+)\/(?:merges|merge-upstream)\/?(?:\?.*)?$/;
 const writeApi = /(?:^|\/)repos\/([^/]+\/[^/]+)\/(git\/refs(?:\/heads\/([^?]+))?|contents(?:\/[^?]*)?)(?:\?.*)?$/;
-const graphqlMerge = /\b(?:mergePullRequest|enablePullRequestAutoMerge|mergeBranch)\b/;
+const graphqlMerge = /\b(?:mergePullRequest|enablePullRequestAutoMerge|enqueuePullRequest|mergeBranch)\b/;
 const graphqlWrite = /\bcreateCommitOnBranch\b/;
 const graphql = (arg: string) => /(?:^|\/)graphql(?:\?.*)?$/.test(arg);
 const field = (args: string[], name: string) => args.map(arg => new RegExp(`(?:^|[=&])${name}=([\\w./-]+)$|["']?${name}["']?\\s*:\\s*["']([\\w./-]+)["']`).exec(arg)).find(Boolean)?.slice(1).find(Boolean);

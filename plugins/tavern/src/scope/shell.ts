@@ -49,9 +49,9 @@ export function stripWrappers(words: string[], chdir?: (path: string) => void, w
 export function normalizeCommand(argv: string[]): { argv: string[]; directory?: string; repository?: string } {
   let directory: string | undefined, repository: string | undefined;
   const values: Record<string, string[]> = { gcloud: ["--project", "--account", "--configuration", "--impersonate-service-account", "--billing-project", "--access-token-file", "--flags-file"], bb: ["--project", "--host", "--server", "--url", "--token", "--new-machine", "--machine", "--environment-provider"], git: ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"], gh: ["-R", "--repo", "--hostname"], kubectl: ["--context", "--namespace", "-n", "--kubeconfig", "--cluster", "--user", "--server", "-s", "--token"], helm: ["--burst-limit", "--color", "--colour", "--content-cache", "--kube-apiserver", "--kube-as-group", "--kube-as-user", "--kube-ca-file", "--kube-context", "--kube-tls-server-name", "--kube-token", "--kubeconfig", "--namespace", "-n", "--qps", "--registry-config", "--repository-cache", "--repository-config"], terraform: ["-chdir"], kapp: ["-a", "--app", "-n", "--namespace", "--kubeconfig-context", "--kubeconfig"], dev: ["--context", "--namespace", "--project"], dt: ["--cluster", "--context", "-R", "--repo"] };
-  const name = argv[0];
-  const flags = /[$`]/.test(name ?? "") ? [...values.kubectl, ...values.helm, ...values.kapp, ...values.terraform] : values[name === "k" ? "kubectl" : name === "tofu" || name === "terragrunt" ? "terraform" : name];
-  if (!flags) return { argv };
+  const name = argv[0]?.toLowerCase() ?? "";
+  const flags = /[$`]/.test(name) ? [...values.kubectl, ...values.helm, ...values.kapp, ...values.terraform] : values[name === "k" ? "kubectl" : name === "tofu" || name === "terragrunt" ? "terraform" : name];
+  if (!flags) return { argv: argv.length ? [name, ...argv.slice(1)] : argv };
   if (name === "gh" || name === "dt") {
     const normalized = [name];
     for (let i = 1; i < argv.length; i++) {
