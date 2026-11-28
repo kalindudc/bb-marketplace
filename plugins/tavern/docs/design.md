@@ -70,6 +70,8 @@ Tavern moves source code through clean Git snapshots without touching your local
 
 The Ledger is Tavern's SQLite database and the single source of truth for every Keeper. On the next actionable tick after compaction, reload, or a new provider session, Tavern sends the full Ledger. Between those points, ticks carry only changed lines unless the full Ledger is shorter or its truncated text changed. The Ledger tab shows the same quests, asks, rules, decisions, and guardrails.
 
+On Pi threads with Tavern's guard shim, Tavern keeps the class rules, class body and character in the system prompt. The journal and live quest or assignment context arrive in a message stored in the Pi session but hidden from chat. If a tick already carries the change, the message is unnecessary. If compaction drops that context, Tavern queues it as a hidden message for the active run or restores it on the next prompt if Pi is idle. BB supplies fresh context when it starts or reloads the Pi process; within a running process, Keeper ticks carry new facts. Tavern leaves other plugins' instructions, user and workspace instructions, and unrecognized prompt replacements alone. Other providers keep their existing context delivery.
+
 Tavern also keeps Durable memory for project notes that outlive a single quest (built-in by default, or connected to an external note store) and lasting Service records that track each character's verified work across returned quests.
 
 ## The Common room, The map, and the strip

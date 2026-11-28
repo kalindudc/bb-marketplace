@@ -6,6 +6,8 @@ export type SpendSession = {
   getSessionFile(): string | undefined;
   getHeader?(): { timestamp: string; parentSession?: string } | null | undefined;
   getEntries(): unknown[];
+  getBranch?(): unknown[];
+  buildContextEntries?(): unknown[];
   getEntry(id: string): unknown;
 };
 

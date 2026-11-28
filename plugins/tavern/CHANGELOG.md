@@ -25,6 +25,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 ### Changed
 
 - Keeper ticks carry changed Ledger lines instead of repeating the full Ledger on a timer. The next actionable tick after compaction, reload, or a new provider session carries the full Ledger. Members still appear in the Ledger when they have no recent evidence, but that alone no longer wakes the Keeper.
+- On Pi, Tavern keeps class rules in the system prompt and sends changing quest and journal context in messages hidden from chat. Other plugins and providers are unchanged.
 - Keepers can manage the quest’s own pull requests without separate asks for edits, replies, review thread resolutions, readiness, reviewer requests or closing. Tavern records the actions in the Ledger. Readiness and reviewer requests still check the Warden’s verdict. Merge approval is unchanged.
 - A Keeper can cite your routed message when recording a rule. Closing time holds also match tool names regardless of capitalization.
 - The merge guard also recognizes capitalized command names and requests to add a pull request to the merge queue.

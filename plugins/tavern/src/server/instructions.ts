@@ -1,5 +1,6 @@
 import { localClock } from "./clock";
 import { CLASS_BODY_LIMIT, classRules, type TavernRole } from "../shared/class-rules";
+import { PI_STATE_BEGIN, PI_STATE_END } from "../shared/text";
 export function utf8Limit(text: string, limit: number): string {
   let bytes = 0;
   let end = 0;
@@ -33,17 +34,26 @@ export function instructions(
   journal: string,
   data: string,
   kind: TavernRole = "solo",
+  framePiState = false,
 ): string {
   const body = Buffer.byteLength(role) > CLASS_BODY_LIMIT
     ? "The class body exceeds Tavern’s 12000-byte limit. Ask the user to shorten it; do not act on an incomplete role."
     : role;
-  const fixed = [
+  const stable = [
     classRules(kind),
     body,
     `Character: ${JSON.stringify(characterName ?? "Unnamed")}.`,
-    utf8Limit(journal, 7000),
   ].join("\n\n");
-  const available = Math.max(1000, 32_000 - Buffer.byteLength(fixed) - 4);
+  const journalText = utf8Limit(journal, 7000);
+  const escapeFrame = (text: string) => text
+    .replaceAll(PI_STATE_BEGIN, PI_STATE_BEGIN.replace("[", "[\u200b"))
+    .replaceAll(PI_STATE_END, PI_STATE_END.replace("[", "[\u200b"));
+  const fixed = framePiState
+    ? escapeFrame(stable) + PI_STATE_BEGIN + (journalText ? escapeFrame(journalText) + "\n\n" : "")
+    : stable + "\n\n" + journalText + "\n\n";
+  const end = framePiState ? PI_STATE_END : "";
+  if (framePiState) data = escapeFrame(data);
+  const available = Math.max(1000, 32_000 - Buffer.byteLength(fixed + end) - 2);
   const fence = data.indexOf("```text\n");
   if (
     Buffer.byteLength(data) > available &&
@@ -54,7 +64,6 @@ export function instructions(
     const inner = data.slice(fence + 8, -4);
     return (
       fixed +
-      "\n\n" +
       header +
       dataFence(
         boundedData(
@@ -62,8 +71,8 @@ export function instructions(
           available - Buffer.byteLength(header) - 20,
           LEDGER_OVERFLOW,
         ),
-      )
+      ) + end
     );
   }
-  return fixed + "\n\n" + boundedData(data, available, LEDGER_OVERFLOW);
+  return fixed + boundedData(data, available, LEDGER_OVERFLOW) + end;
 }

@@ -16,15 +16,17 @@ import { bindChecks } from "../../src/scope/checker";
 import { bindWorktree, gitWorktreeRoot, needsWorktree, readerFallback } from "../../src/scope/worktree";
 import { receiveSpend, type SpendSession } from "./spend";
 import { allowPiTool, trimPiPrompt, type PiPromptOptions } from "./loadout";
+import { piState, type PiStateMessage, type PiStateTrigger } from "./state";
 
 // Structural API keeps the installed shim independent of a second copy of pi.
 interface PiContext { cwd: string; sessionManager?: SpendSession }
-interface PiEvent { toolName?: string; toolCallId?: string; input?: Record<string, unknown>; content?: unknown[]; structuredContent?: unknown; messageEntryId?: string; systemPromptOptions?: PiPromptOptions }
+interface PiEvent extends PiStateTrigger { toolName?: string; toolCallId?: string; input?: Record<string, unknown>; content?: unknown[]; structuredContent?: unknown; messageEntryId?: string; systemPromptOptions?: PiPromptOptions }
 export interface PiGuardApi {
-  on(name: "session_start" | "before_agent_start" | "tool_call" | "tool_result" | "turn_end", handler: (event: PiEvent, ctx: PiContext) => unknown): unknown;
+  on(name: "session_start" | "session_before_compact" | "session_compact" | "before_agent_start" | "agent_start" | "agent_settled" | "tool_call" | "tool_result" | "turn_end", handler: (event: PiEvent, ctx: PiContext) => unknown): unknown;
   getActiveTools(): string[];
   getAllTools?(): { name: string; exposure?: string }[];
   setActiveTools(names: string[]): void;
+  sendMessage?(message: PiStateMessage, options: { deliverAs: "steer" }): void | Promise<void>;
 }
 export default function tavernGuard(pi: PiGuardApi): void {
   const file = process.env.TAVERN_SCOPE_FILE;
@@ -113,7 +115,19 @@ export default function tavernGuard(pi: PiGuardApi): void {
     ? { block: true, reason: `${BLOCK_MARKER} This tool is not in the Pi loadout. Use a listed tool or ask your Keeper to include it in a hire.\nTavern scope rule: pi-loadout` }
     : undefined;
   const spend = receiveSpend(file);
+  const state = piState();
+  const liveEntries = (manager: SpendSession) => {
+    if (manager.buildContextEntries) return manager.buildContextEntries();
+    const history = manager.getBranch?.() ?? manager.getEntries();
+    for (let i = history.length - 1; i >= 0; i--) {
+      if ((history[i] as { type?: unknown } | null)?.type === "compaction") return history.slice(i + 1);
+    }
+    return history;
+  };
+  let runActive = false;
   pi.on("session_start", (_event, ctx) => {
+    runActive = false;
+    state.start(ctx?.sessionManager ? liveEntries(ctx.sessionManager) : undefined);
     worktree = undefined;
     localArm = undefined;
     suppressed.clear();
@@ -121,12 +135,26 @@ export default function tavernGuard(pi: PiGuardApi): void {
     filterLoadout();
     if (ctx?.sessionManager) spend.backfill(ctx.sessionManager);
   });
+  // Pi also reports itself busy during manual and pre-run compaction.
+  pi.on("agent_start", () => { runActive = true; });
+  pi.on("agent_settled", () => { runActive = false; });
+  pi.on("session_before_compact", (_event, ctx) => {
+    state.beforeCompaction(runActive && ctx?.sessionManager ? liveEntries(ctx.sessionManager) : undefined);
+  });
+  pi.on("session_compact", async (_event, ctx) => {
+    const message = state.compacted(runActive && !!pi.sendMessage, ctx?.sessionManager && liveEntries(ctx.sessionManager));
+    if (message) await pi.sendMessage?.(message, { deliverAs: "steer" });
+  });
   pi.on("turn_end", (event, ctx) => {
     if (ctx.sessionManager && event.messageEntryId) spend.turn(ctx.sessionManager, event.messageEntryId);
   });
-  pi.on("before_agent_start", event => {
+  pi.on("before_agent_start", (event, ctx) => {
     refresh();
-    filterLoadout(event?.systemPromptOptions);
+    const options = event?.systemPromptOptions;
+    const moveState = lastLoadoutScope && options ? state.prepare(options, event) : undefined;
+    filterLoadout(options);
+    const manager = ctx?.sessionManager;
+    return moveState?.(manager && (() => liveEntries(manager)));
   });
   pi.on("tool_call", (event, ctx) => {
     const name = event.toolName ?? "unknown";

@@ -2,6 +2,9 @@ import { glob } from "../../src/scope/paths";
 import type { Scope } from "../../src/scope/schema";
 
 export interface PiPromptOptions {
+  appendSystemPrompt?: string;
+  sections?: Record<string, string>;
+  forceSystemPrompt?: string;
   selectedTools?: string[];
   skills?: { name: string; description: string }[];
 }
