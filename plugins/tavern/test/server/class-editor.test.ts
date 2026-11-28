@@ -142,6 +142,16 @@ describe("class editor: handlers", () => {
     expect(invalidate).toHaveBeenCalled();
   });
 
+  it.each(["global", "project"] as const)("lets the Classes page save a %s tool list override", async target => {
+    const project = directory(), projectId = "project";
+    const { h, home } = await handlers({ projectPath: () => project, registryProjectName: () => "Fixture project" });
+    const { revision } = await h.classEditor({ classId: "smith", projectId });
+    const input = { classId: "smith", projectId, target, edit: { piTools: ["read"] }, revision };
+    expect(await h.saveClass(input, client)).toMatchObject({ code: "ok", class: { piTools: ["read"] } });
+    const file = join(target === "global" ? home : join(project, ".agents/tavern"), "classes/smith.md");
+    expect(readFileSync(file, "utf8")).toMatch(/piTools:\s+- read/);
+  });
+
   it("answers stale without writing or recording when the class changed, and records a removal", async () => {
     const { h, recordExternal, home } = await handlers();
     expect(await h.saveClass({ classId: "smith", projectId: null, target: "global", edit: { label: "Mason" }, revision: "old" }, client)).toEqual({ code: "stale" });

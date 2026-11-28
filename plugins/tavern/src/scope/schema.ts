@@ -28,6 +28,7 @@ export const scopeSchema = z.object({
   v: z.literal(1),
   threadId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),
   role: z.string().min(1),
+  keeperClass: z.literal(true).optional(),
   preset: z.enum(PRESETS),
   issuedAt: z.number().int().nonnegative(),
   failClosed: z.literal(true),

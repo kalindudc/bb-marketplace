@@ -16,6 +16,7 @@ it.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec"))
     const writes = [join(root, "work", "ok"), join(root, "outside", "ok"), join(projectPolicy, "scopes.yml.example")];
     const controls = [join(root, "scopes", "member.json.grants"), join(projectPolicy, "scopes.yml"),
       join(projectPolicy, "settings.toml"), join(root, ".agents", "tavern", "settings.toml"),
+      join(projectPolicy, "classes", "member.md"), join(root, ".agents", "tavern", "characters", "member.md"),
       join(root, ".pi", "agent", "extensions", "tavern-guard", "index.ts")];
     for (const path of [...writes, ...controls]) mkdirSync(dirname(path), { recursive: true });
     scope.writes.deny.push(join(root, "outside"));
@@ -31,6 +32,10 @@ it.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec"))
       expect(result.stderr).toContain("Operation not permitted");
       expect(existsSync(path)).toBe(false);
     }
+    const keeperPath = join(projectPolicy, "classes", "keeper.md");
+    const keeper = spawnSync("/bin/bash", ["-c", sandboxCommand({ ...scope, role: "keeper" }, "printf ok > " + shellQuote(keeperPath))], { cwd: root, encoding: "utf8" });
+    expect(keeper.status, keeper.stderr).toBe(0);
+    expect(readFileSync(keeperPath, "utf8")).toBe("ok");
     const device = run("echo device-ok > /dev/stderr; echo fd-ok > /dev/fd/2");
     expect(device.status).toBe(0);
     expect(device.stderr).toContain("device-ok");

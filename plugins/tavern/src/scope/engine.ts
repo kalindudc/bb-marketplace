@@ -176,7 +176,7 @@ export function authorityDecision(scope: Scope, call: ScopeCall, remote = false)
     }
   }
 }
-const controlBlock = () => blocked("file change", "tavern-control-files", "Tavern settings, rules, receipts and guard files are protected");
+const controlBlock = () => blocked("file change", "tavern-control-files", "This Tavern control file is protected; manage overrides and settings from the Tavern page");
 const makerBlock = () => blocked("file change", "checker-write", "the maker's checkout is read-only for its Warden");
 const stateBlock = (why: string) => blocked("shared-state command", "terraform-state", why);
 

@@ -179,6 +179,26 @@ it("does not accept even an observed cluster receipt on an implicit Kubernetes t
   expect(target("kubectl --context fixture -n app apply -f sample")).toMatchObject({ allow: true, acts: [expect.objectContaining({ kind: "cluster-write" })] });
 });
 
+it.each(["enforce", "watch", "off"] as const)("protects class and character overrides from member writes in %s", mode => {
+  for (const directory of ["classes", "characters"]) {
+    for (const path of [`~/.agents/tavern/${directory}/override.md`, `.agents/tavern/${directory}/override.md`]) {
+      expect(edit(path, "smith", mode), path).toMatchObject({ allow: false, ruleId: "tavern-control-files" });
+      expect(bash(`printf x > ${path}`, "smith", mode), path).toMatchObject({ allow: false, ruleId: "tavern-control-files" });
+      expect(edit(path, "keeper", mode), path).toMatchObject({ allow: true });
+      expect(bash(`printf x > ${path}`, "keeper", mode), path).toMatchObject({ allow: true });
+    }
+  }
+  expect(edit(".agents/tavern/classes-note.md", "smith", mode)).toMatchObject({ allow: true });
+  expect(bash("mv .agents/tavern .agents/old-tavern", "smith", mode)).toMatchObject({ allow: false, ruleId: "tavern-control-files" });
+});
+
+it("preserves the override exception for a trusted custom Keeper class", () => {
+  const keeper = { ...scope("guide"), keeperClass: true as const };
+  const call = { kind: "write" as const, toolName: "edit", cwd, input: { path: ".agents/tavern/classes/guide.md" } };
+  expect(evaluate(keeper, call)).toMatchObject({ allow: true });
+  expect(evaluate(keeper, { ...call, input: { path: ".agents/tavern/settings.toml" } })).toMatchObject({ allow: false, ruleId: "tavern-control-files" });
+});
+
 it.each(["enforce", "watch", "off"] as const)("keeps control files and Terraform standing rules in %s", mode => {
   for (const path of ["/tavern/scopes/member.json.act-grants", "/home/member/.agents/tavern/settings.toml", "/work/member/.agents/tavern/scopes.yml", "/home/member/.pi/agent/extensions/tavern-guard/index.ts"])
     expect(edit(path, "keeper", mode), path).toMatchObject({ allow: false, ruleId: "tavern-control-files" });

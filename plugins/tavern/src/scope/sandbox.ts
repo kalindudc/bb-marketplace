@@ -51,19 +51,19 @@ export function guardedShellSource(command: string): string {
   return match ? match[2].slice(1, -1).replaceAll("'\\''", "'") : command;
 }
 
-export function sandboxCommand(scope: Scope, command: string, checking = false, file?: string): string {
+export function sandboxCommand(scope: Scope, command: string, checking = false, file?: string, cwd?: string): string {
   if (process.platform !== "darwin") return command;
   if (!existsSync("/usr/bin/sandbox-exec")) {
     if (checking) throw new Error("macOS sandbox-exec is unavailable for this check");
     return command;
   }
   const maker = !checking && checkerWorktree(scope);
-  const roots = [...controlPaths(scope, file), ...(maker ? [maker, ...gitWriteRoots(maker)] : [])], ancestors = new Set<string>();
+  const roots = [...controlPaths(scope, file, cwd), ...(maker ? [maker, ...gitWriteRoots(maker)] : [])], ancestors = new Set<string>();
   for (const root of roots) for (let parent = dirname(root); parent !== dirname(parent); parent = dirname(parent)) ancestors.add(parent);
   const profile = [checking ? checkerProfile(scope) : "(version 1)\n(allow default)",
     ...roots.map(path => "(deny file-write* (subpath " + JSON.stringify(path) + "))"),
     ...[...ancestors].map(path => "(deny file-write-unlink (literal " + JSON.stringify(path) + "))"),
-    "(deny file-write* (regex " + regexLiteral(".*" + projectControl) + "))",
+    "(deny file-write* (regex " + regexLiteral(".*" + projectControl(scope)) + "))",
   ].join("\n");
   return sandboxPrefix + shellQuote(profile) + " /bin/bash -c " + shellQuote(command);
 }
