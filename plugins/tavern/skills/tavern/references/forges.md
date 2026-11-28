@@ -8,6 +8,8 @@ Use this reference when opening or recording draft pull requests as a Smith or c
 - **Member-machine or unplaced Smith:** Open a draft pull request with your own tools as scope allows, then call `tavern_draft_pr` with `url`, `title`, optional `base`, and optional `forge` (`gh` or an enabled profile ID; omit to record unknown). This records the pull request without pushing. Reuse the same pull request for the same head branch.
 - **Ownership on release:** Releasing a Smith hands open pull request ownership to its Keeper without closing the pull request; undoing release does not transfer it back.
 
+Keepers use [`tavern_pull_request`](../../tavern-keeper/references/asks-and-merges.md#merge-approvals) with the recorded ID for readiness or reviewer requests on the quest’s own pull request, after the Warden checks the current head or a clean rebase. This does not authorize merging.
+
 ## Forge profiles and authority
 
 Forge profiles live under `machines.forges` (`id`, `name`, `enabled`, `kind`: `github` or `command`). The user configures profiles in Settings under Where work runs or by applying a reviewed setup proposal. Tavern-managed threads MUST NOT change forge profiles directly, and `bb tavern settings set`, TOML imports, and backup restores leave existing profiles unchanged.

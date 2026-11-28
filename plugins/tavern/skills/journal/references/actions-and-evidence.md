@@ -9,16 +9,16 @@ Use this reference for the full `journal` tool action table, evidence schema, re
 | `add` | `description` or `descriptions[]`, optional `owner` | Add top-level entries in one atomic action. Set `owner` to the delegate's thread id (`thr_…`) for work another agent does. |
 | `split`, `add_step` | `id`, `descriptions[]`, optional `owner` | Add steps under an open top-level entry. Returns their ids on a `New ids:` line. |
 | `list` | optional `filter: open, mine, blocked` | Read all entries or a filtered view. |
-| `get` | `id` | Read one entry with notes and evidence. A Keeper can target another thread with `threadId` for linked entries on its own quests. |
+| `get` | `id`, optional `threadId` | Read one entry with notes and evidence. Keepers and Wardens can use `threadId` to read authorized linked work on their quest. |
 | `start` | `id` or `ids[]`, optional `owner` | Set doing. To hand several entries to the same delegate at once, pass `ids` and the delegate's thread id as `owner`. Start your own work one entry at a time: your other unowned doing entry returns to todo. Delegated entries with an owner stay doing side by side. Dependencies must be complete. |
-| `done` | `id` or `ids[]`, optional `evidence[]` | Set done idempotently. Linked entries REQUIRE evidence and are reported done, not yet verified. Unlinked entries can finish without evidence; attach proof when available. |
+| `done` | `id` or `ids[]`, optional `evidence[]` | Set done idempotently. Linked entries REQUIRE evidence. For work that needs a check, this submits the entry for review; it is not a verdict. No-check work can settle on submission. Unlinked entries can finish without evidence. |
 | `block` | `id` or `ids[]`, `reason` | Set blocked and record why. |
 | `reopen` | `id` or `ids[]` | Set todo idempotently. A completed parent reopens too. Reopening verified work needs the assigned Warden or the Keeper. To reopen Keeper-accepted or skipped work, give one `id`, `threadId` if needed, and a `reason`. |
 | `toggle` | `id` or `ids[]` | Compatibility action: open becomes done, done or verified becomes todo. Unlike `done`, repeating it flips again. |
 | `verify` | `id`, optional `threadId`, `evidence[]` for a Warden or `reason` for a Keeper | The Keeper can accept a done entry when the plan calls for a Keeper check. An active Warden on the same quest can verify another maker's done entry awaiting review, without a checker slot for that waypoint. A new verdict cannot overwrite an existing verification. Include your own evidence. Same-family checks refuse; unknown independence is labelled. Machine-placed work needs a Warden with its pinned snapshot. Placed Wardens can only check their pinned targets. |
 | `reject` | `id`, `reason`, optional `threadId` | The same Warden rules apply to rejection of a submitted entry. The journal preserves the previous note, records the reason, and notifies the owner. `start` or `done` moves the entry on. |
 | `update` | `id`, `description`, optional `owner`, `after[]`, `links[]` | Update text, ownership, dependencies, or artifact links. Dependencies cannot cycle. Changing verified work reopens it, so it requires the assigned Warden or the Keeper. |
-| `note` | `id`, `note` or `null`, optional `mode: replace` | Add a timed line to the entry's running note (keeps the newest 2,000 characters). Use it for progress, decisions, and follow-ups. `replace` rewrites the whole note; `null` clears it. |
+| `note` | `id`, `note` or `null`, optional `mode: replace` | Add a timed line to the entry's running note (keeps the newest text up to `limits.journal.noteKeepChars`). Use it for progress, decisions, and follow-ups. `replace` rewrites the whole note; `null` clears it. |
 | `settle` | `id` or `ids[]`, optional `reason`, `evidence[]` | Record that a delegate reported (for example its "SOURCE SETTLED" message). The entry stays doing and shows as awaiting your check, with the reason quoted. Then close it with `done` or `reopen` it. |
 | `wait` | `id` or `ids[]` | Clear a delegate's mark without closing anything when its message was an acknowledgement or a question. |
 | `link` | `id`, `link: {boardQuestId, waypointId}` or `null` | An active member can link an unlinked entry of their own to an assigned waypoint on their quest. Only the Keeper or Tavern can change or remove the link. A link cannot change staffing or scope. Artifact references go in `links` or `evidence`. |
@@ -44,6 +44,6 @@ For a planned Warden check, a submitted entry stays reported until an eligible W
 
 ## Limits and IDs
 
-- Each entry holds at most 30 member evidence items, plus up to 30 separate Warden review evidence items with reviewer and timestamp.
-- Each `ref` and `detail` holds at most 2,000 characters; descriptions hold at most 500 characters; active journals hold at most 200 entries. Legacy overflow and full over-long descriptions stay preserved in the import archive.
+- Maker evidence and Warden evidence are stored separately, with the reviewer and timestamp on the verdict. Use just enough evidence to repeat or check the work.
+- Settings under Limits control `limits.journal.entriesMax` (default 200), `limits.journal.noteKeepChars` (default 2,000 characters), and `limits.intake.proseChars` for descriptions and evidence details. Tavern shortens oversized prose with a notice. Lowering the entry limit does not drop existing entries. Legacy overflow and over-long imported descriptions stay preserved in the import archive.
 - IDs are never reused, even after `delete` and `undo`. New IDs are two-digit lowercase hex through `ff`, then grow to three or more characters; imported hex and previously issued base36 IDs keep their spelling.

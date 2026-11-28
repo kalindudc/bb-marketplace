@@ -14,7 +14,7 @@ Every thread in bb also gets a Journal, which is a live checklist with steps, ev
 
 A Keeper is a lead thread that holds one goal for you. Keepers delegate by default and act directly only for tiny one-turn work or when you ask.
 
-A Keeper opens one board quest. Tavern records whether your message is a steer, a question, an aside, a new goal or a standing rule. A new goal in an occupied Keeper thread gets a placement card, not another quest in that thread. Refreshing a Keeper moves its existing quests and open requests to the new thread. Existing threads with multiple quests keep them.
+A Keeper opens one board quest. Tavern records whether your message is a steer, a question, an aside, a new goal or a standing rule. A question, aside or rule does not block work already underway. A new goal in an occupied thread gets a placement card for a side quest or a new Keeper, not another quest in that thread. Refreshing a Keeper moves its existing quests and open requests to the new thread. Existing threads with multiple quests keep them.
 
 ## Members and classes
 
@@ -38,13 +38,13 @@ When a Keeper briefs a member, Tavern attaches your exact opening request and ro
 
 ## Asks and greenlights
 
-An ask is a recorded request waiting in Needs you, answerable from the Common room, the quest page, or the widget above your composer. Explicit plan approval, called a greenlight, is the default before building begins. Consequential acts such as merges, deployments, deletes, credentials, production writes, and messages sent as you never default on a timer.
+An ask is a recorded request waiting in Needs you, answerable from the Common room, the quest page, or the widget above your composer. The Keeper can replace or withdraw its own stale asks without recording your consent. The quest’s History and Answers keep the old card. Explicit plan approval, called a greenlight, is the default before building begins. Consequential acts such as merges, deployments, deletes, credentials, production writes, and messages sent as you never default on a timer.
 
 Reversible calls inside approved work appear in Decided for you, each with Undo. If you undo two of a Keeper's last ten calls of the same kind, Tavern pauses that Keeper's autonomy for that kind until you reset the lane in the Ledger.
 
 ## The journal
 
-Every bb thread gets a Journal in its context row and Journal side tab. Threads use it to track deliverables, steps, blockers, and observed evidence with grouped Undo. Tavern can link work when a Keeper assigns it, and active members can link their own entries to assigned waypoints. Linked work needs evidence before it can be submitted. A Keeper accepts it in the journal when the plan calls for a Keeper check. A same-quest Warden can check another maker’s submission without a checker slot; known same-family checks refuse and placed checks still use the exact snapshot. The quest page, plan card and widget show To do, Doing, Blocked, Waiting for a check, Done, or Skipped from the same journal entries. A user’s qualifying answer supplies its own evidence; an outside reply still needs a Keeper check. Reports deliver news without changing journal proof. Ranger check-ins still wait for the Keeper. A permanent member records routine duty rounds on plain journal entries; Keeper status reads the latest completed round, and only required work goes on the map. Release does not change the journal’s proof. Unsubmitted work from a released maker stays in the journal, but stops holding the waypoint open once a replacement links work there.
+Every bb thread gets a Journal in its context row and Journal side tab. Threads use it to track deliverables, steps, blockers, and observed evidence with grouped Undo. Tavern can link work when a Keeper assigns it, and active members can link their own entries to assigned waypoints. Linked work needs evidence before it can be submitted. A Keeper accepts it in the journal when the plan calls for a Keeper check. A same-quest Warden can check another maker’s submission without a checker slot; known same-family checks refuse and placed checks still use the exact snapshot. The quest page, plan card and widget show To do, Doing, Blocked, Waiting for a check, Done, or Skipped from the same journal entries. A user’s qualifying answer supplies its own evidence; an outside reply still needs a Keeper check. Reports deliver news without changing journal proof. Ranger check-ins still wait for the Keeper. A permanent member records routine duty rounds on plain journal entries. Keeper status reads the latest completed round, and only required work goes on the map. Release does not erase a submission or turn it into proof. Unsubmitted work from a released maker stays in the journal, but stops holding the waypoint open once a replacement submits proof that satisfies the check.
 
 Back up Tavern with its records before upgrading this journal format. The upgrade copies provable completions on open quests once. An old acceptance of a whole waypoint keeps its original authority and evidence without naming individual reviewed entries. Concluded quests stay historical until reopened, when Tavern tries the same upgrade. If a quest's upgrade fails, Tavern logs why and retries at the next startup. Journal checks for agent work, optional skips and Undo remain available on the old path; outside replies need a successful upgrade before the Keeper can accept them. To downgrade, restore the pre-upgrade backup.
 
@@ -68,7 +68,7 @@ Tavern moves source code through clean Git snapshots without touching your local
 
 ## The Ledger, memory, and service records
 
-The Ledger is Tavern's SQLite database and the single source of truth for every Keeper. On the next actionable tick after compaction, reload, or a new provider session, Tavern sends the full Ledger. Between those points, ticks carry only changed lines unless the full Ledger is shorter or its truncated text changed. The Ledger tab shows the same quests, asks, rules, decisions, and guardrails.
+The Ledger is Tavern's SQLite database and the single source of truth for every Keeper. On the next actionable tick after compaction, reload, or a new provider session, Tavern sends the full Ledger. Between those points, ticks carry changed lines unless the full Ledger is shorter or its truncated text changed. No tick is sent just to repeat context. A missing update stays visible in the Ledger without, by itself, waking the Keeper. The Ledger tab shows the same quests, asks, rules, decisions, and guardrails.
 
 On Pi threads with Tavern's guard shim, Tavern keeps the class rules, class body and character in the system prompt. The journal and live quest or assignment context arrive in a message stored in the Pi session but hidden from chat. If a tick already carries the change, the message is unnecessary. If compaction drops that context, Tavern queues it as a hidden message for the active run or restores it on the next prompt if Pi is idle. BB supplies fresh context when it starts or reloads the Pi process; within a running process, Keeper ticks carry new facts. Tavern leaves other plugins' instructions, user and workspace instructions, and unrecognized prompt replacements alone. Other providers keep their existing context delivery.
 
@@ -78,7 +78,7 @@ Tavern also keeps Durable memory for project notes that outlive a single quest (
 
 - **The Common room** is Tavern's home page: a live hearth, a summary of what changed since your last visit, the Needs you queue, Decided for you, the review queue, and all active and returned quests.
 - **The map** shows live connections across four columns (Keepers, Quests, Party and asks, and Waiting on) so you can trace any quest at a glance.
-- **The character strip and widget** sit above your chat composer. The strip shows quest work as a road with stops where characters work and wait. The widget gives you live quest controls.
+- **The character strip and widget** sit above your chat composer. Member strips show quest work as a road with stops where characters work and wait. Keeper strips show quest signposts and a camp where the Keeper rests between turns. The widget gives you live quest controls even if you turn off the strip.
 
 ## How a goal flows through Tavern
 

@@ -28,14 +28,15 @@ plugins/tavern/
 ## Runtime architecture and core invariants
 
 - **No separate daemon:** `server.ts` runs on bb's main server thread sharing its SQLite WAL database (`data.db`). Keep work non-blocking with async Git execution and frozen cached store reads (`src/server/freeze-json.ts`).
-- **One background loop:** A five-second sweep handles ticks, stale checks, retries, and deferred cleanup; wake events trigger the same gated tick path so reports and ask answers do not wait out the sweep.
+- **One background loop:** A five-second sweep checks for news, stale work, retries, and deferred cleanup. Wake events such as reports and ask answers enter the same gated path. The sweep and the tick cooldown never start a turn just to repeat the Ledger.
 - **Native host worker (`host.ts`):** Bundled by `bb plugin build` as a self-contained Node 22 ESM artifact that executes Git transport, snapshot capture and carry, forge commands, and portable Pi guard setup on the target host.
+- **Stable Pi context:** `adapters/pi/` keeps Tavern’s class instructions in the system prompt and handles changing Tavern context separately for recognized prompts. Other providers and other plugins’ instructions are unchanged.
 - **Never edit shipped migrations:** bb validates shipped migration text verbatim (`SEED_QUEST_CHANGE_SEEN` has no trailing semicolon). Add new migrations instead.
 - **Respect the Keeper instruction budget:** `test/server/keeper-instructions.test.ts` enforces a 34,754-byte cap across the Keeper prompt, skill, and tool deltas. Pay for additions by trimming rather than raising the cap.
 - **Never mutate cached store records in place:** Stores return frozen snapshots; editing `data.db` outside Tavern requires a plugin reload.
 - **Keep authority explicit:** User-only controls flow through `src/shared/authority.ts` and `src/server/authority.ts`. Never infer human attribution from unmarked client calls or bypass approval gates.
 - **Stay provider- and company-agnostic:** Machine placement and model lists come from bb's catalog; never hardcode internal hosts, providers, or forge tools.
-- **Respect the UI motion contract:** Follow the "Never animate" list in `src/ui/kit/README.md` so asks, counts, evidence, and reduced-motion views stay still.
+- **Respect the UI kit:** Use the shared control sizes and follow the "Never animate" list in `src/ui/kit/README.md` so asks, counts, evidence, and reduced-motion views stay still.
 
 ## Build, test, and marketplace checks
 
@@ -74,13 +75,13 @@ Worker setup installs a Node filesystem tripwire that fails tests on any write o
 
 ## Steer replay
 
-Manual two-goal live replay printed by `bb tavern steer-test` and paired with `test/server/steer.test.ts`:
+The two-goal replay covers legacy threads that already held more than one quest. New Keeper threads cannot open a second quest. The automated test seeds the old records; start here for a fresh checkout:
 
 ```sh
 node node_modules/vitest/vitest.mjs run test/server/steer.test.ts
 ```
 
-To run the live check, start a Keeper manually with two harmless, private goals named **Index rebuild** and **Proxy retry**. Record both initial plan versions, then send these ten messages in order while the party works:
+Only run the manual replay in an isolated fixture that already has two open quests on the same Keeper. `bb tavern steer-test` prints the sequence. The table uses **Index rebuild** and **Proxy retry** as examples; replace their prefixes with your fixture’s actual quest names. Record both initial plan versions, then send these messages in order while the party works:
 
 | # | Message | Expected read-as | Expected plan change |
 | --- | --- | --- | --- |

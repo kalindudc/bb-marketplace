@@ -5,7 +5,7 @@ Tavern is a bb plugin that lets you hand a goal to a lead agent, called a Keeper
 ## Guides
 
 - [How Tavern works](design.md): Start here for the architecture diagram, key concepts, and the path a quest takes from start to finish.
-- [Quests, party, and characters](quests-and-party.md): Learn to steer quests, use quest controls, set budgets, delegate work, and manage Keeper chains, classes, and service records.
+- [Quests, party, and characters](quests-and-party.md): Learn to steer quests, delegate through side quests, set budgets, and manage quest controls, classes, and service records.
 - [Safety and controls](safety-and-controls.md): See how scopes, the Pi guard, the send guard, cluster writes, `scopes.yml`, Closing time, and Stop all protect your work.
 - [Machines and forges](machines-and-forges.md): Set machine rules and per-class models, and see how clean Git snapshots and draft pull requests work from home.
 - [Settings, memory, backups, and CLI](settings-and-data.md): Find guided setup, contextual speech, Durable memory, backups, and `bb tavern` commands.

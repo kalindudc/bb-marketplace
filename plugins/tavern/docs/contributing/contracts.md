@@ -55,11 +55,11 @@ Missing keys inherit from the next layer down. Lists and objects replace the fie
 
 Effective values resolve in order (later wins): code defaults (`DEFAULT_SETTINGS`), explicit user settings in SQLite, saved `[tuned]` values (when `tuning.mode !== "off"` and unpinned), active per-quest overrides for `staleMinutes` and `reportBatchSeconds`, and user pins (`[tuning.pinned]`), which always freeze the five tunable knobs.
 
-`GUARDRAIL_SETTING_KEYS` blocks Tavern-managed threads from modifying sensitive keys even when `tavern.agents_may_change_settings` is enabled: `scopes.*`, `away.*`, `machines.*`, `keepers.alwaysAsk`, `keepers.greenlight`, `keepers.partyMax`, `keepers.decisionTimerMax`, `tavern.agentsMayChangeSettings`, `tavern.paused`, `tavern.gitProgram`, `tavern.piProgram`, `attention.reviewBudget`, `attention.notify`, `attention.quietHours`, `tuning.mode`, `knobs.typingHoldSeconds`, `knobs.afterMessageHoldSeconds`, and `knobs.rangerTimeboxMaxMinutes`. `machines.forges` is stricter still: editable only in Settings or through an applied setup proposal, never via `bb tavern settings set`, TOML import, or backup restore.
+`GUARDRAIL_SETTING_KEYS` in `src/shared/settings.ts` is the authority list. Tavern-managed threads cannot change those keys, including `limits.*`, even when `tavern.agents_may_change_settings` is enabled. The [settings reference](../../skills/tavern/references/settings.md) marks who may change each key. `machines.forges` is stricter still: editable only in Settings or through an applied setup proposal, never via `bb tavern settings set`, TOML import, or backup restore.
 
 | Control | Default | Range | Tunable or quest override |
 | --- | --- | --- | --- |
-| `knobs.tickSeconds` | `60` s | `30–300` | Tunable |
+| `knobs.tickSeconds` (cooldown between delivered ticks) | `60` s | `30–300` | Tunable |
 | `knobs.typingHoldSeconds` | `45` s | `15–180` | Tunable |
 | `knobs.afterMessageHoldSeconds` | `60` s | `15–180` | Tunable |
 | `knobs.staleMinutes` | `20` min | `10–120` | Tunable and quest override |
@@ -73,7 +73,6 @@ Effective values resolve in order (later wins): code defaults (`DEFAULT_SETTINGS
 | `keepers.successionRecoverySeconds` | `600` s | `30–3,600` | No |
 | `attention.reviewBudget` | `3` | `1–30` | No |
 | `machines.maxMakers` / `maxCheckers` | `2` / `2` | `1–1,000` | No |
-| `tavern.speechThreadLimit` / `speechInstallLimit` | `12` / `100` | `1–100` / `1–500` | No |
 | `data.historyDays` / `autoArchiveDays` | `0` / `0` | `0–3,650` | No |
 | `data.backupKeep` | `14` | `0–365` (`0` keeps all) | No |
 
@@ -100,6 +99,7 @@ TOML files use `snake_case` keys while CLI commands use `camelCase`. Imports pre
 - **Insights (`src/shared/insights.ts`):** `insights`.
 - **Memory (`src/shared/memory.ts`):** `memorySettings`, `memoryConfigure`, `memoryProjects`, `memoryList`, `memoryPrevious`, `memoryManage`.
 - **Backups (`src/shared/backup.ts`):** `backupList`, `backupSave`, `backupExport`, `backupRestore`, `registryFile`, `registryExportFolder`.
+- **Registry overrides (`src/server/registry-rpc.ts`):** `previewOverrideReset` and `resetOverride` both require a user client. Apply the reset with the preview’s revision. A changed-fields override can reset one saved field or the whole file.
 - **Closing time (`src/shared/away-rpc.ts`):**
 
 | RPC | Purpose |

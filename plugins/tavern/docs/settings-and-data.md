@@ -8,8 +8,9 @@ Configure Tavern on the **Settings** page or with `bb tavern` commands. Search S
 | --- | --- |
 | **Setup** | Start a guided setup agent thread and review pending setup proposals. |
 | **Tavern** | Pause every Keeper, choose a default class, set a direct local Git path (empty uses `PATH`), and control whether agents may edit non-guardrail settings. |
-| **Your attention** | Review budget (default 3), notifications (`consequential`, `all`, or `none`), quiet hours, and **Send a test alert** to verify device delivery. |
-| **Keepers and decisions** | Plan greenlight (`explicit` or `by-size`), Always ask kinds, party ceiling (default 5), linked party ceiling (12), resting reminder, stale strikes, cluster expiry (15 minutes), refresh wait, and memory limits. |
+| **Your attention** | Review budget (default 3), notifications (`consequential`, `all`, or `none`), answer alerts and page size, quiet hours, and **Send a test alert** to verify device delivery. |
+| **Keepers and decisions** | Plan greenlight (`explicit` or `by-size`), Always ask kinds, party ceilings, rest reminders, private nudges for unreported work, permanent-member quiet window, cluster expiry, refresh wait, and memory limits. |
+| **Limits** | Storage and delivery budgets for long prose, briefs, the Journal, drafts, and tool results. Search by setting, tool name, or a pasted `Limit:` notice. Changes apply to new calls, not saved work. |
 | **Classes and models** | Per-class provider, model, and reasoning overrides, plus Warden reopen counts and rates by model. |
 | **Scopes** | Scope mode (`enforce`, `watch`, or `off`) and `scopes.send_tools` patterns or prefixes. |
 | **Where work runs** | Remote maker and checker slots (default 2 each), machine placement rules, and forge profiles. |
@@ -24,7 +25,7 @@ Configure Tavern on the **Settings** page or with `bb tavern` commands. Search S
 ## Guided setup and tuning
 
 - **Guided setup:** Click **Ask an agent to set up Tavern** under **Setup**. The agent discovers checkouts, providers, and models, then stages a minimal TOML patch with per-key reasons (up to 50 open proposals) for you to **Apply** (running forge `--help` checks first) or **Dismiss**.
-- **Tuning and Insights:** Automatic tuning (`tuning.mode`, default `off`) suggests or applies measured edits to five pacing knobs after 20 samples while respecting user pins and never lowering memory limits. **Insights** reports phase timing, Warden reopen stats by model, service records, and Burn costs when installed.
+- **Tuning and Insights:** Automatic tuning (`tuning.mode`, default `off`) suggests or applies measured edits to five pacing knobs once it has enough samples (20 by default). It respects user pins and never changes the Keeper memory or tick facts limits. **Insights** reports phase timing, Warden reopen stats by model, service records, and Burn costs when installed.
 
 ## Contextual speech
 
@@ -95,4 +96,4 @@ Run `bb tavern <command> --help` for full options. User-only controls refuse exe
 | `bb tavern settings get\|set\|export\|import` | Read, preview, or apply dotted edits, or export and import TOML settings. |
 | `bb tavern setup discover\|propose` | Discover environment facts or stage a settings proposal. |
 | `bb tavern backup save\|export\|list\|show\|restore` | Manage private server-local backups. |
-| `bb tavern steer-test` | Print the two-goal steer replay script. |
+| `bb tavern steer-test` | Print the legacy two-goal steer replay script for existing multi-quest threads. |

@@ -25,9 +25,9 @@ bb tavern guard status
 ## Run your first quest
 
 1. **Open Tavern** in bb’s left navigation and choose **Start a quest** to open a new Keeper draft. Give your Keeper the goal, what done looks like, and any boundaries.
-2. **Approve the plan.** The Keeper hires Rangers to scout, then proposes a quest map of deliverables (waypoints), check methods, and an optional spend cap. Explicit approval is the default before building starts.
-3. **Steer from the same thread.** Keep talking to the Keeper. Name the quest if an older Keeper holds more than one. Questions, asides, and standing rules stay separate from plan changes.
-4. **Answer Needs you.** Handle open asks on the Common room, quest page, or composer widget, and open member reports in the side panel for evidence.
+2. **Approve the plan.** The Keeper hires Rangers to scout, then proposes a plan with deliverables (waypoints), check methods, and an optional spend cap. Explicit approval is the default before building starts.
+3. **Steer from the same thread.** Keep talking to the Keeper. A Keeper opens one quest. For a separate goal, choose a side quest or a draft for a new Keeper. Name the quest if an older Keeper holds more than one. Questions, asides, and standing rules stay separate from plan changes.
+4. **Answer Needs you.** Handle open asks on the Common room, quest page, or composer widget, and open member reports in the side panel for news. The Journal holds the proof that moves waypoints.
 5. **Conclude and read the tale.** A quest never closes itself. Your answer to the Keeper's closing ask writes the tale and archives the party without committing, pushing, or merging for you.
 
 > Scouting and coordination use model turns too. Set a spend budget on the quest or plan if you want Tavern to hold new hires at a dollar cap.
@@ -41,7 +41,7 @@ bb tavern guard status
 See the [documentation index](docs/README.md) for the user guides and contributor references in one place.
 
 - [How Tavern works](docs/design.md) — architecture diagram, concepts, and end-to-end quest flow.
-- [Quests, party, and characters](docs/quests-and-party.md) — steering, controls, budgets, delegation, Keeper chains, classes, and service records.
+- [Quests, party, and characters](docs/quests-and-party.md) — steering, side quests, controls, budgets, delegation, classes, and service records.
 - [Safety and controls](docs/safety-and-controls.md) — scopes, Pi guard, send guard, cluster writes, `scopes.yml`, Closing time, and Stop all.
 - [Machines and forges](docs/machines-and-forges.md) — machine rules, per-class models, clean Git snapshots, and draft pull requests from home.
 - [Settings, memory, backups, and CLI](docs/settings-and-data.md) — Settings, guided setup, contextual speech, Durable memory, backups, and `bb tavern` commands.

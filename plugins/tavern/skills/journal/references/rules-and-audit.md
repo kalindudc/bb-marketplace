@@ -8,11 +8,11 @@ Use this reference for authorization invariants, quiet timers, reminder cadence,
 - A parent is done only after all its steps are done. A batch call is checked in its final state.
 - Link and review permissions come from Tavern's recorded quest, member and assignment state, NEVER from thread metadata or a claim in a prompt. Ordinary verdicts need an active Warden on the quest, not a checker-slot assignment. The snapshot and scope checks for placed work still apply.
 - The SQLite journal is the source of truth. The `quests.progress` metadata is only a compatibility mirror.
-- The server marks a doing entry of your own quiet after ten minutes without a journal change or tool activity; owned delegated entries never mark your thread quiet. Quiet is a signal for a Keeper to check progress, not permission to interrupt the member.
+- The server marks a doing entry of your own quiet after `journal.journal_quiet_minutes` (default ten minutes) without a journal change or tool activity; owned delegated entries never mark your thread quiet. Quiet is a signal for a Keeper to check progress, not permission to interrupt the member.
 
 ## Reminders and delivery
 
-- Tavern can send an agent-only `[Journal]` note during a running turn when no entry status changed since the previous message (from the user, another agent, or bb), or when a delegate's mark has waited unchecked for ten minutes. The note flags unchecked marks, entries reworded three times without a status change, and open entries whose text reads as finished. It sends at most once per stale stretch and never twice within 15 minutes.
+- Tavern can send an agent-only `[Journal]` note during a running turn when no entry status changed since the previous message (from the user, another agent, or bb), or when a delegate's mark has waited unchecked for `journal.report_grace_minutes` (default ten minutes). The note flags unchecked marks, entries reworded three times without a status change, and open entries whose text reads as finished. It sends at most once per stale stretch, with the minimum spacing set by `journal.remind_every_minutes` (default 15 minutes).
 - If the journal is empty, Tavern can send one hint after about 15 pieces of work with no journal calls. It does not repeat unless the user steers the thread, and never twice in the same turn.
 - User edits and Warden verdicts are acknowledged once in the next journal result or in an agent-only `[Journal]` note during an active turn. A session snapshot may repeat current state and is not a delivery receipt. Notes MUST NOT start turns.
 - Keeper threads receive no automatic journal steers; board phases drive their mirrors while pending human edits remain visible in the next journal result and session instructions.

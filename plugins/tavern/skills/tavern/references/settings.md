@@ -48,14 +48,14 @@ The main table uses snake_case paths for TOML. The Limits table uses the camelCa
 | `attention.push_answers` | Also push new Keeper answers. Off by default; they still appear in the Ledger. | `false` | User; Plain |
 | `attention.answer_page_size` | Answers or unanswered messages loaded per page. | `12` | User; Granted |
 | `attention.quiet_hours` | Suppresses ordinary notifications during a period with `start`, `end` and an IANA `time_zone`. In TOML, use `"none"` to clear it. | `null` | User; Plain |
-| `keepers.unreported_nudges` | Privately nudges a member that ends a turn without a report, at most once per brief. | `true` | User; Granted |
+| `keepers.unreported_nudges` | Privately nudges an idle member that ends a turn without a report, at most once per brief. Skips pending wake-ups, declared waits and stopped or held work. | `true` | User; Granted |
 | `keepers.permanent_quiet_minutes` | Names a quiet permanent member in the Keeper's next tick after this many minutes without a report or journal evidence. Zero turns this check off. | `1440` | User; Granted |
 | `keepers.rest_minutes` | Waits this many minutes before reminding the Keeper about a resting member. | `30` | User; Granted |
 | `keepers.greenlight` | Chooses explicit plan approval or the policy based on size. | `"explicit"` | User; Plain |
 | `keepers.decision_timer_max` | Caps the length of a Keeper decision timer, in minutes. | `10080` | User; Plain |
 | `keepers.party_max` | Sets the hard party ceiling. | `5` | User; Plain |
 | `keepers.stale_strikes` | Sets how many stale turns a member can have before the Keeper raises the issue. | `2` | User; Granted |
-| `keepers.always_ask` | Selects kinds that go to the user by default, without changing verdict requirements. | `["production","merge","credential","sends-as-you","destructive"]` | User |
+| `keepers.always_ask` | Selects kinds that go to the user by default. Supported work on the quest’s own pull request is not a send as you. Readiness and reviewer requests still require a Warden check; merge approval is unchanged. | `["production","merge","credential","sends-as-you","destructive"]` | User |
 | `keepers.chain_members` | Caps the whole linked party, including leads and reserved hires but not the root Keeper. | `12` | User; Granted |
 | `keepers.cluster_grant_minutes` | Sets how many minutes a confirmed cluster command can wait before it needs a new ask. | `15` | User; Granted |
 | `keepers.restatement_bytes` | Caps how much Keeper memory fits in a restatement. Lowering this can lose important context. | `28000` | User; Granted |
@@ -92,7 +92,7 @@ The main table uses snake_case paths for TOML. The Limits table uses the camelCa
 | `tuning.min_samples` | Sets how much evidence tuning needs before it suggests a change. | `20` | User; Granted |
 | `tuning.window_days` | Sets how many days of evidence tuning reads. | `30` | User; Granted |
 | `tuning.cooldown_days` | Sets how long to wait between automatic changes. | `7` | User; Granted |
-| `knobs.tick_seconds` | Sets the Keeper tick interval. | `60` | User; Granted; Tuned |
+| `knobs.tick_seconds` | Sets the cooldown between Keeper ticks. A quiet sweep does not send a tick. | `60` | User; Granted; Tuned |
 | `knobs.typing_hold_seconds` | Holds ticks while you type. | `45` | User; Plain; Tuned |
 | `knobs.after_message_hold_seconds` | Holds ticks for a time after your message. | `60` | User; Plain; Tuned |
 | `knobs.stale_minutes` | Sets how long a quiet member has before it is stale. A Keeper can set a bounded quest override. | `20` | User; Granted; Tuned |

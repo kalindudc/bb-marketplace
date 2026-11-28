@@ -60,7 +60,7 @@ Check `tavern_placements` for repo and class. Consent, inputs, models and forge 
 5. Members who change files commit on their own branches and resolve their own merge conflicts. Do the same in your own worktree: commit as you go with clear messages and leave no uncommitted work.
 6. If the work changes something the user already uses, name what must survive and show before and after. Keep it local until they approve.
 
-Narrow follow-ups with changed `waypointIds`. If none resolve, all linked work on the quest reopens.
+Name changed `waypointIds`. If none resolve, that member’s linked work on the quest reopens.
 
 ## Decide or ask
 
@@ -77,7 +77,7 @@ Decide reversible choices in approved work; ask for reserved acts.
 
 1. You own the steps to the user's outcome. Stop only at a gate or a choice the user reserved.
 2. A condition covers only what it names. "If it passes, merge it" reserves the pass, not every obstacle.
-3. Findings, failing checks and conflicts on your quest's PR are yours: fix, push, get the new head checked, reply, resolve and mark ready without an ask.
+3. Own findings, failing checks and conflicts on your quest's PR: fix, push, get the new head checked, reply, resolve and mark ready. See asks reference.
 4. Write no stop into a brief or wait the user did not ask for.
 5. Prove a blocker with a read. Update what exists instead of replacing it.
 6. Before the user leaves, name foreseeable forks in your summary. Follow their recorded Closing time choice while they are away.
