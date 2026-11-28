@@ -50,9 +50,12 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const noteMetadata = note.name + (noteLabel ?? "") + note.description;
   const ask = registered.mock.calls.find(([tool]) => tool.name === "tavern_ask")![0];
   const askProperties = (ask.parameters as { properties: Record<string, unknown> & { target: { properties: Record<string, unknown> } } }).properties;
-  const { waypointId, completeOn, operation, mergeAskId, action, reason, ...previousAsk } = askProperties;
-  expect(operation).toMatchObject({ enum: expect.arrayContaining(["merge"]) });
-  for (const field of [mergeAskId, action, reason]) expect(field).toMatchObject({ description: "Required for merge." });
+  const { waypointId, completeOn, operation, mergeAskId, action, reason, askId, replaces, ...previousAsk } = askProperties;
+  expect(operation).toMatchObject({ enum: expect.arrayContaining(["merge", "withdraw"]) });
+  for (const field of [mergeAskId, action]) expect(field).toMatchObject({ description: "Required for merge." });
+  expect(reason).toMatchObject({ description: "Required for merge, withdraw." });
+  expect(askId).toMatchObject({ description: "Required for withdraw." });
+  expect(replaces).toMatchObject({ type: "array", description: "Optional for open." });
   expect(waypointId).toBeDefined();
   expect(completeOn).toBeDefined();
   const waypointAskDelta = Buffer.byteLength(JSON.stringify({ waypointId, completeOn, ...previousAsk })) - Buffer.byteLength(JSON.stringify(previousAsk));
@@ -60,7 +63,7 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const { merge, ...priorTarget } = targetProperties;
   expect(merge).toMatchObject({ required: ["repository", "targetBranch"] });
   const mergeTargetDelta = Buffer.byteLength(JSON.stringify(targetProperties)) - Buffer.byteLength(JSON.stringify(priorTarget));
-  const mergeAskSchemaDelta = 1 + Buffer.byteLength(JSON.stringify({ operation, mergeAskId, action, reason })) + mergeTargetDelta;
+  const askSchemaDelta = 1 + Buffer.byteLength(JSON.stringify({ operation, mergeAskId, action, reason, askId, replaces })) + mergeTargetDelta;
   const structure = Buffer.byteLength(JSON.stringify(keep)) - Buffer.byteLength(keep.name + keep.description + "Kept a party member")
     + Buffer.byteLength(JSON.stringify(refresh)) - Buffer.byteLength(refresh.name + refresh.description + "Requested Keeper refresh");
   const briefWarning = briefSteerFact("Wren XVIII", { at: 0, excerpt: "x".repeat(160), memberThreadId: "thr_abcdefghij" });
@@ -75,7 +78,7 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const { permanent, ...previousSlot } = slotProperties;
   expect(permanent).toBeDefined();
   const permanentSlotDelta = Buffer.byteLength(JSON.stringify(slotProperties)) - Buffer.byteLength(JSON.stringify(previousSlot));
-  const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + mergeAskSchemaDelta + waypointAskDelta + judgeBytes + checkpointDelta + permanentSlotDelta + tellDelta + answerSchemaDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
+  const bytes = Buffer.byteLength(metadata + noteMetadata + read("classes/keeper.md") + skill) + structure + questSchemaDelta + replacementSchemaDelta + askSchemaDelta + waypointAskDelta + judgeBytes + checkpointDelta + permanentSlotDelta + tellDelta + answerSchemaDelta + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
   const withTickGuidance = bytes + Buffer.byteLength(`\n${MEMBER_CHECK_IN}\n${TICK_REPLY_GUIDANCE}`);
   if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${withTickGuidance}\nMERGE_TARGET_SCHEMA_BYTES=${mergeTargetDelta}\n`);
   expect(withTickGuidance).toBeLessThanOrEqual(34754);

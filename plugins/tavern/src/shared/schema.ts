@@ -662,7 +662,9 @@ export function askFields(limit: IntakeLimits) {
   state: z.enum(["open", "answered", "defaulted", "withdrawn"]),
   draftApprovalInvalidated: z.literal(true).optional(),
   withdrawnAt: epochMs.nullable().optional(),
-  withdrawnCause: z.enum(["quest-stopped", "quest-returned", "plan-superseded", "keeper-archived", "turn-recovered", "scope-cleared", "backup-restored", "conclude-stale-at-upgrade", "closing-stale", "merge-moot"]).nullable().optional(),
+  withdrawnCause: z.enum(["quest-stopped", "quest-returned", "plan-superseded", "keeper-archived", "turn-recovered", "scope-cleared", "backup-restored", "conclude-stale-at-upgrade", "closing-stale", "merge-moot", "replaced", "keeper-withdrawn"]).nullable().optional(),
+  replacedByAskId: id.optional(),
+  withdrawnReason: z.string().optional(),
   answer: z
     .object({
       surface: z.string().optional(),

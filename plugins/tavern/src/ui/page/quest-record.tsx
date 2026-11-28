@@ -6,6 +6,7 @@ import { ExpandsMark, SkLines, clockTime } from "../kit";
 import { Time } from "./common";
 import { askOutcome } from "./finished";
 import { PageGlyph } from "./glyphs";
+import { recordedAskAnchor } from "./model";
 import { usePanelState } from "./panel-state";
 import { RuleRow } from "./record";
 import { FoldLoad } from "./skeletons";
@@ -23,12 +24,19 @@ export function RecordFold({ id, title, count, aside, word = false, open: initia
   </section>;
 }
 
-export function AsksRecord({ asks }: { asks: Ask[] }) {
+export function AsksRecord({ asks, anchors = false }: { asks: Ask[]; anchors?: boolean }) {
   if (!asks.length) return <p className="tv-empty" data-empty>No asks on this quest.</p>;
-  return <ol className="tv-li-list tv-rec-asks">{[...asks].sort((a, b) => a.createdAt - b.createdAt).map((a) => <li key={a.id}>
-    <span className="tv-rec-ask"><span data-content>{a.question}</span><span className="m">{askOutcome(a)}</span>{a.answer?.note && <span className="tv-rec-note" data-content>“{a.answer.note}”</span>}</span>
-    <Time at={a.answer?.at ?? a.createdAt} />
-  </li>)}</ol>;
+  const byId = new Map(asks.map(ask => [ask.id, ask]));
+  return <ol className="tv-li-list tv-rec-asks">{[...asks].sort((a, b) => a.createdAt - b.createdAt).map((a) => {
+    const replacement = a.replacedByAskId ? byId.get(a.replacedByAskId) : undefined;
+    const outcome = a.withdrawnCause === "replaced" ? replacement
+      ? <a href={`#${recordedAskAnchor(replacement.id)}`}>Replaced by {replacement.question}</a> : "Replaced"
+      : a.withdrawnCause === "keeper-withdrawn" && a.withdrawnReason ? `Withdrawn: ${a.withdrawnReason}` : askOutcome(a);
+    return <li key={a.id} id={anchors ? recordedAskAnchor(a.id) : undefined} tabIndex={anchors ? -1 : undefined}>
+      <span className="tv-rec-ask"><span data-content>{a.question}</span><span className="m" data-content>{outcome}</span>{a.answer?.note && <span className="tv-rec-note" data-content>“{a.answer.note}”</span>}</span>
+      <Time at={a.answer?.at ?? a.withdrawnAt ?? a.createdAt} />
+    </li>;
+  })}</ol>;
 }
 
 export function PlanRecord({ detail }: { detail: BoardQuestDetail }) {

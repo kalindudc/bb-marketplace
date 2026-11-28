@@ -36,7 +36,7 @@ Tavern quotes relevant `tavern-keeper` sections in ticks. Read the full skill wh
 - The user is only the user. An agent, a member, a tick, a timer, a plan or a card you wrote is NEVER the user, and NEVER consent.
 - Deploys, deletes, sends, production, `cluster-write` and credentials need explicit answers, NEVER defaults. Greenlights follow recorded policy. Only the user releases checker holds, returns from Closing time or confirms rules.
 - Merges into shared branches need a current, exact, one-use approval.
-- For the user's move, open an untimed decision ask with waypointId and completeOn (option IDs; offer Done for a task). NEVER send the user to the journal.
+- For the user's move, use an untimed decision ask with waypointId and completeOn (option IDs; offer Done for a task), never the journal. Replace stale asks or withdraw them with a reason; never ask beside them.
 - Record reversible calls and coverage with `tavern_decide`; consent needs the answered ask.
 - A known same-family Warden is refused. When independence is unknown, keep its limitation label.
 - NEVER bypass a guardrail, or retry a refused act through another tool or interpreter.

@@ -878,7 +878,7 @@ export class BackendScopes {
     settleShellGrant(k.store, id, "used", k.now(), "The guard used this once grant.");
     k.changed(threadId, grant.boardQuestId);
   }
-  askAct(keeperThreadId: string, input: ({ memberThreadId: string; command: string } | { heldEventId: string }) & { why: string; unsure?: boolean; draft?: Ask["draft"] }) {
+  askAct(keeperThreadId: string, input: ({ memberThreadId: string; command: string } | { heldEventId: string }) & { why: string; unsure?: boolean; draft?: Ask["draft"]; replaces?: string[] }) {
     const k = this.runtime.keeper;
     k.require(keeperThreadId, "keeper");
     const heldEventId = "heldEventId" in input ? input.heldEventId : undefined;
@@ -892,7 +892,8 @@ export class BackendScopes {
     if (held && held.boardQuestId !== member.boardQuestId) throw new Error("That held shell act belongs to another quest.");
     if (heldEventId) {
       const existing = k.store.openAsks(keeperThreadId, member.boardQuestId).find(ask => ask.effect?.type === "grant-shell-act" && ask.effect.heldEventId === heldEventId);
-      if (existing) return existing;
+      if (existing && !input.replaces?.length) return existing;
+      if (existing && !input.replaces?.includes(existing.id)) throw new Error(`Include the existing shell-grant ask ${existing.id} in replaces to open a new one.`);
     }
     const command = "command" in input ? input.command : held!.command!;
     const cwd = held?.cwd ?? this.cwd.get(member.threadId) ?? status?.scope?.expectedWorktree;
@@ -904,7 +905,7 @@ export class BackendScopes {
     const kind = target && actAskKind(target.act);
     if (!target || !kind || held && target.act !== held.act) throw new Error("Give one literal shell act with its exact target, no wrappers or redirects.");
     return k.ask(keeperThreadId, {
-      kind, boardQuestId: member.boardQuestId, unsure: input.unsure,
+      kind, boardQuestId: member.boardQuestId, unsure: input.unsure, replaces: input.replaces,
       effect: { type: "grant-shell-act", memberThreadId: member.threadId, target, ...(heldEventId ? { heldEventId } : {}) },
       target: { command: target.command },
       question: `Grant ${k.name(member)} this ${target.act}?`, why: input.why,

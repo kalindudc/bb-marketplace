@@ -84,7 +84,7 @@ export function History({ detail, registry, room, bare = false }: { detail: Boar
   const filters: [HistoryFilter, string][] = [["all", "All"], ["steers", "Steers"], ["anchors", "Re-anchors"], ["decided", "Decided"], ["reports", "Reports"], ["asks", "Asks"]];
   const seg = <SegFilter label="Filter history" value={filter} onChange={setFilter} options={filters.filter(([f]) => f === "all" || count(f)).map(([f, label]) => ({ id: f, label, count: count(f) }))} />;
   const body = <>
-    <EventList lines={more ? shown : shown.slice(0, 10)} registry={registry} />
+    <EventList lines={more ? shown : shown.slice(0, 10)} registry={registry} linkAsks />
     {shown.length > 10 && <button type="button" className="tv-fold act" aria-expanded={more} onClick={() => setMore(!more)}><ExpandsMark open={more} />{more ? "Show fewer" : plural(shown.length - 10, "earlier event")}</button>}
     {!shown.length && <p className="tv-empty" data-empty>No events in this view.</p>}
   </>;

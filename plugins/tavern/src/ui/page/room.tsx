@@ -11,7 +11,7 @@ import { DecidedForYou, NeedsYouQueue } from "./asks";
 import { ArchiveFold, ArchiveReceiptLine, useArchive } from "./archive";
 import { Ago, CrestOf, InlineLink, PageButton, Section, SegFilter, StateMark, characterName, classLabel, type Registry, plural } from "./common";
 import { PageGlyph, type PageGlyphName } from "./glyphs";
-import { eventContext, eventLines, needYouCount, questsIn, type EventLine } from "./model";
+import { eventContext, eventLines, needYouCount, questsIn, recordedAskAnchor, type EventLine } from "./model";
 import { ClassStartCards } from "./start";
 import { usePanelState } from "./panel-state";
 import { Rail } from "./rail";
@@ -77,7 +77,7 @@ export function SafeLink({ href, children }: { href: string; children: ReactNode
 }
 
 const EVENT_GLYPH: Record<EventLine["icon"], PageGlyphName> = { steer: "steer", question: "question", aside: "aside", quest: "quest", plan: "plan", ask: "you", answer: "done", decided: "seal", undo: "undo", rule: "rule", report: "report", hire: "hire", told: "told", stale: "stale", failed: "fail", anchor: "anchor", stop: "stop", skip: "skip", wrap: "wrap", phase: "phase", tick: "tick", note: "note" };
-export function EventRow({ line, registry, compact = false }: { line: EventLine; registry: Registry; compact?: boolean }) {
+export function EventRow({ line, registry, compact = false, linkAsks = false }: { line: EventLine; registry: Registry; compact?: boolean; linkAsks?: boolean }) {
   const who = line.actor.kind === "you" ? "You" : line.actor.kind === "tavern" ? "Tavern" : line.actor.kind === "unknown" ? "" : line.actorLabel ?? characterName(registry, line.actor.member);
   const repeats = (line.repeats ?? 1) > 1 ? <span className="num" aria-label={`${line.repeats} occurrences`}>×{line.repeats}</span> : null;
   return <li className={`tv-ev t-${line.tone}${compact ? " tv-ev-compact" : ""}`}>
@@ -85,14 +85,17 @@ export function EventRow({ line, registry, compact = false }: { line: EventLine;
     {compact ? <span className="tv-ev-brief"><Clamp text={[who, line.head].filter(Boolean).join(" ")} more={line.detail ?? undefined} lines={1} className="tv-ev-preview" />{repeats}</span> : <span className="tv-ev-b">
       <span className="tv-ev-h">{line.actor.kind === "member" || line.actor.kind === "keeper" ? <span className="tv-ev-who"><CrestOf member={line.actor.member} registry={registry} size={14} /><b>{who}</b></span> : line.actor.kind === "you" ? <b className="tv-ev-you">You</b> : line.actor.kind === "tavern" ? <b className="m">Tavern</b> : null} <span title={line.note}>{line.head}</span>{repeats}</span>
       {line.detail && <span className="tv-ev-d" data-content title={line.detail}>{line.detail}</span>}
+      {line.replacement && <span className="tv-ev-d" data-content>{linkAsks
+        ? <a href={`#${recordedAskAnchor(line.replacement.id)}`}>Replaced by {line.replacement.question}</a>
+        : `Replaced by ${line.replacement.question}`}</span>}
     </span>}
     <Ago at={line.at} />
   </li>;
 }
 
 /** A plain list of events, newest first. */
-export function EventList({ lines, registry, compact }: { lines: EventLine[]; registry: Registry; compact?: boolean }) {
-  return <ol className="tv-evs">{lines.map((line) => <EventRow key={line.id} line={line} registry={registry} compact={compact} />)}</ol>;
+export function EventList({ lines, registry, compact, linkAsks }: { lines: EventLine[]; registry: Registry; compact?: boolean; linkAsks?: boolean }) {
+  return <ol className="tv-evs">{lines.map((line) => <EventRow key={line.id} line={line} registry={registry} compact={compact} linkAsks={linkAsks} />)}</ol>;
 }
 
 /** Events grouped by quest: each quest is named once, as a quiet link, with its latest events under it. */

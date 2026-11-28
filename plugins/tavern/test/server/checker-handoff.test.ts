@@ -10,7 +10,7 @@ import { boardQuestSchema } from "../../src/shared/schema";
 import { registerRpc, rpcHandlers } from "../../src/server/rpc";
 import { readStatus, statusInput } from "../../src/server/status";
 import { Keeper } from "../../src/server/keeper/service";
-import { planInput, waypointEntry } from "./support";
+import { planInput, seedLegacyQuest, waypointEntry } from "./support";
 import Database from "better-sqlite3";
 import { MIGRATIONS } from "../../src/server/migrations";
 import { BackupRecords } from "../../src/server/backup/records";
@@ -191,10 +191,32 @@ describe("user checker-handoff holds", () => {
     const f = await goal(); registerTools(f.bb, f.runtime);
     const definition = f.harness.inspection.registrations.agentTools.find(tool => tool.name === "tavern_ask")!;
     expect(JSON.stringify(definition)).not.toContain("releaseHoldId");
-    await f.harness.behavior.invokeAgentTool("tavern_ask", { ...askInput, boardQuestId: f.q.id, releaseCheckerHandoff: true }, { threadId: "lead" });
-    expect(f.k.store.openAsks("lead", f.q.id)[0]?.releaseHoldId).toBe(f.q.checkerHandoffHold!.id);
+    const call = (extra: object = {}) => f.harness.behavior.invokeAgentTool("tavern_ask",
+      { ...askInput, boardQuestId: f.q.id, releaseCheckerHandoff: true, ...extra }, { threadId: "lead" });
+    await call();
+    const ask = f.k.store.openAsks("lead", f.q.id)[0]!;
+    expect(ask.releaseHoldId).toBe(f.q.checkerHandoffHold!.id);
+    await expect(call({ replaces: ["unrelated"] })).rejects.toThrow(/existing checker-handoff ask/);
+    await call({ replaces: [ask.id] });
+    expect(f.k.store.openAsks("lead", f.q.id)).toMatchObject([{ releaseHoldId: ask.releaseHoldId }]);
+    expect(f.k.store.get("asks", ask.id)).toMatchObject({ state: "withdrawn", answer: null });
+    expect(f.k.quest(f.q.id).checkerHandoffHold?.release).toBeNull();
     const output = await f.harness.behavior.invokeAgentTool("tavern_status", { section: "holds" }, { threadId: "lead" });
     expect(JSON.stringify(output)).not.toContain(f.q.checkerHandoffHold!.id);
+  });
+
+  it("cannot use a checker-handoff replacement before routing pending user input", async () => {
+    const f = await goal();
+    registerTools(f.bb, f.runtime);
+    const call = (extra: object = {}) => f.harness.behavior.invokeAgentTool("tavern_ask",
+      { ...askInput, boardQuestId: f.q.id, releaseCheckerHandoff: true, ...extra }, { threadId: "lead" });
+    await call();
+    const old = f.k.store.openAsks("lead", f.q.id)[0]!;
+    seedLegacyQuest(f.k, "lead", "Earlier work", "Earlier");
+    f.k.store.patch("lead", { routes: [], lastRouteId: null });
+    f.k.receiveUser("lead", "There is a change of plan.");
+    await expect(call({ replaces: [old.id] })).rejects.toThrow(/Route the oldest unrouted user message/);
+    expect(f.k.store.openAsks("lead", f.q.id)).toEqual([old]);
   });
 
   it("exposes the hold in the existing page and thread-card quest DTOs", async () => {

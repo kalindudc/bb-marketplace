@@ -7,6 +7,7 @@ import { Glyph, plural, QueryState, TimeAgo } from "../kit";
 import { SummaryCard } from "../kit/summary-card";
 import { PageButton, Section } from "./common";
 import { AnswerResults, AnswerSearchForm, UnansweredMessages } from "./answers";
+import { AsksRecord } from "./quest-record";
 
 function useSummaryVisit(questId: string, summaries: SummaryEntry[] | undefined) {
   const seen = experimental_useRpcMutation({ contract: rpcContract, method: "markSummariesSeen" });
@@ -93,6 +94,8 @@ function SummaryHistory({ detail, focusId, tale, query = "", onSearch = () => {}
   const cursor = pages ? pages.nextCursor : detail.summariesNextCursor;
   const left = Math.max(0, totals.current - current.length);
   const linkedOutsideList = focusId && !current.some(item => item.id === focusId || item.supersedes === focusId);
+  const withdrawn = tale ? [] : detail.asks.filter(ask => ask.withdrawnCause === "replaced" || ask.withdrawnCause === "keeper-withdrawn");
+  const askIds = new Set(withdrawn.flatMap(ask => ask.replacedByAskId ? [ask.id, ask.replacedByAskId] : [ask.id]));
   if (tale && !current.length && !linkedOutsideList) return null;
   const load = () => {
     if (!cursor) return;
@@ -113,6 +116,10 @@ function SummaryHistory({ detail, focusId, tale, query = "", onSearch = () => {}
       {!tale && cursor && left > 0 && <button type="button" className="btn sm tv-sum-more" disabled={older.isPending} onClick={load}>Show {left} older</button>}
       <QueryState error={older.error} />
     </>}
+    {askIds.size > 0 && <section className="tv-unanswered" aria-label="Withdrawn asks">
+      <h3>Withdrawn asks</h3>
+      <AsksRecord asks={detail.asks.filter(ask => askIds.has(ask.id))} anchors />
+    </section>}
   </Section>;
 }
 

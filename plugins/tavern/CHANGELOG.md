@@ -24,6 +24,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Changed
 
+- Keepers can replace stale asks with a new question or withdraw them with a reason. The old card leaves **Need you** immediately and stays in the quest's History and Answers without recording your approval.
 - The quest map shows every waypoint with its full title, owner, status, and check. Roads stay between cards and highlight the unfinished chain with the most steps left. If the columns do not fit, the map shows a vertical trail instead.
 - Keeper strips show a signpost for each quest, including sealed quests until you archive them. Hover or focus a signpost for its name and progress, or click it to open the quest. Between turns, the Keeper rests at the camp hearth. The camp and its cat are decoration; they don't need any moves from you.
 - The sidebar keeps the Common room and what needs you in view. Each active quest shows what needs you and has a separate shortcut to its Keeper’s thread. Closing time shows **Away** while you are out. Open **More places** for Classes, While closed and Where work runs. On narrow pages, **Tavern pages** opens the same navigation.

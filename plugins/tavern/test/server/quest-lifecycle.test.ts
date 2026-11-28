@@ -30,7 +30,7 @@ describe("quest lifecycle", () => {
         quest.greenlitVersion = 1;
         store.db.prepare("UPDATE tavern_records SET data=? WHERE id=?").run(JSON.stringify(quest), quest.id);
       }
-      const actor = row.actors.includes("user") ? { kind: "user" as const } : row.actors.includes("agent") ? { kind: "agent" as const, threadId: "k" } : { kind: "tavern" as const };
+      const actor = row.actors[0] === "user" ? { kind: "user" as const } : row.actors[0] === "agent" ? { kind: "agent" as const, threadId: "k" } : { kind: "tavern" as const };
       const receipt = { kind: row.receipt, id: row.cause === "ranger-plan" ? "q:1" : "receipt" };
       const patch = row.cause === "ranger-plan" ? { checkPlanVersion: 1 } : undefined;
       if (patch) {
@@ -82,6 +82,9 @@ describe("quest lifecycle", () => {
     const { store, quest } = fixture();
     expect(() => transitionQuest(store, quest, "held", "hold", { kind: "agent", threadId: "k" }, { kind: "user-act", id: "page" }, 2)).toThrow();
     expect(() => transitionQuest(store, quest, "held", "hold", { kind: "user" }, { kind: "plan", id: "x" }, 2)).toThrow();
+    const closing = fixture("closing");
+    expect(() => transitionQuest(closing.store, closing.quest, "build", "conclude-withdrawn",
+      { kind: "agent", threadId: "k" }, { kind: "ask", id: "fake" }, 2)).toThrow(/own open ask/);
   });
   it("no other writer can change the stored field, regardless of spelling", () => {
     const { store, quest } = fixture();

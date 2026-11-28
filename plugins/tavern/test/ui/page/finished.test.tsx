@@ -96,6 +96,38 @@ describe("a stopped quest's record", () => {
     fireEvent.click(within(record).getByRole("button", { name: /Asks and answers/ }));
     expect(within(record).getAllByText("withdrawn").length).toBe(2);
   });
+  it("links to a replacing question and shows the withdrawal reason in history and Answers", async () => {
+    const [first, second] = stopped.asks;
+    const question = "Does the newer build work?";
+    const reason = "The newer build was pulled";
+    const asks = boardQuestDetailSchema.shape.asks.parse([
+      { ...first!, withdrawnCause: "replaced", replacedByAskId: second!.id },
+      { ...second!, question, withdrawnCause: "keeper-withdrawn", withdrawnReason: reason },
+    ]);
+    const events: BoardQuestDetail["events"] = [
+      { ...stopEvent, id: 9992, type: "ask.withdrawn", text: first!.question, actor: { kind: "agent", threadId: vault.quest.keeperThreadId }, data: { cause: "replaced", askId: first!.id, replacedByAskId: second!.id, replacementQuestion: question } },
+      { ...stopEvent, id: 9993, type: "ask.withdrawn", text: reason, actor: { kind: "agent", threadId: vault.quest.keeperThreadId }, data: { cause: "keeper-withdrawn", askId: second!.id } },
+    ];
+    const slot = await open(`quest/${vault.quest.id}`, scenes.richRoom, { ...stopped, asks, events });
+    const answers = within(await slot.findByRole("region", { name: /Answers/ }, LOADED));
+    const link = answers.getByRole("link", { name: `Replaced by ${question}` });
+    const target = document.getElementById(link.getAttribute("href")!.slice(1));
+    expect(target?.textContent).toContain(question);
+    expect(answers.getByText(`Withdrawn: ${reason}`)).toBeTruthy();
+    const history = within(slot.getByRole("region", { name: /History/ }));
+    expect(history.getByRole("link", { name: `Replaced by ${question}` }).getAttribute("href")).toBe(link.getAttribute("href"));
+    expect(history.getByText(`Withdrawn: ${reason}`)).toBeTruthy();
+  });
+
+  it("keeps an older merge withdrawal and its reason in History", async () => {
+    const reason = "The branch was merged outside Tavern";
+    const events = [{ ...stopEvent, type: "ask.withdrawn", actor: { kind: "agent" as const, threadId: vault.quest.keeperThreadId }, data: { cause: "merge-moot" }, text: reason }];
+    const slot = await open(`quest/${vault.quest.id}`, scenes.richRoom, { ...stopped, events });
+    const history = within(await slot.findByRole("region", { name: /History/ }, LOADED));
+    expect(history.getByText("ask withdrawn")).toBeTruthy();
+    expect(history.getByText(reason)).toBeTruthy();
+  });
+
   it("has no tale: the tale route says so and points to the record", async () => {
     const slot = await open(`tale/${vault.quest.id}`, scenes.richRoom, stopped);
     await slot.findByText("This quest was stopped, so it has no tale. The quest record has what was done and left.", undefined, LOADED);

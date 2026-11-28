@@ -24,6 +24,8 @@ Updated cards and the quest page show changes since the last plan, starting with
 
 When the Keeper needs you to finish a move, answer its ask instead of ticking a Journal entry. The ask shows which choices finish the move. Declining or choosing another direction leaves it open. Existing Journal entries still work.
 
+If work changes while a Keeper's own card is open, the Keeper can replace it with a new question or withdraw it with a reason. Tavern's cards, such as plan approval and scope changes, keep their own controls. The old card leaves **Need you** at once. Follow its replacement or read the reason in the quest's **History** and **Answers**. Withdrawal does not answer the question or finish a waypoint.
+
 ## Steering and verbatim wording
 
 Keep talking in the same Keeper thread to steer its quest. If an older Keeper holds more than one quest, name the quest you mean. Tavern keeps questions, asides and standing rules separate from plan changes.

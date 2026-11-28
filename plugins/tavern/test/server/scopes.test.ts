@@ -964,7 +964,14 @@ describe("backend scope integration", () => {
     mkdirSync(cwd);
     scopes.observeAct({ threadId: "child", eventId: "exact", at: f.time(), mode: "enforce", preflight: true, act: "publish", command, cwd });
     expect(f.k.restatement("lead")).toContain('heldEventId="child:exact"');
-    const ask = scopes.askAct("lead", { heldEventId: "child:exact", why: "The plan calls for this package." });
+    const input = { heldEventId: "child:exact", why: "The plan calls for this package." };
+    const stale = scopes.askAct("lead", input);
+    expect(scopes.askAct("lead", input).id).toBe(stale.id);
+    expect(() => scopes.askAct("lead", { ...input, replaces: ["unrelated"] })).toThrow(/existing shell-grant ask/);
+    const ask = scopes.askAct("lead", { ...input, replaces: [stale.id] });
+    expect(ask.id).not.toBe(stale.id);
+    expect(f.k.store.get("asks", stale.id)).toMatchObject({ state: "withdrawn", answer: null, replacedByAskId: ask.id });
+    expect(f.k.store.get("scopeActObservations", input.heldEventId)?.resolvedAt).toBeUndefined();
     expect(ask.effect).toMatchObject({ type: "grant-shell-act", target: { command, cwd: realpathSync(cwd) }, heldEventId: "child:exact" });
     f.k.decide("lead", { askId: ask.id, optionId: "deny", boardQuestId: f.q.id, text: "Do not publish", why: "Keep the dry run.", source: "keeper", reversible: true });
     expect(f.k.restatement("lead")).not.toContain('heldEventId="child:exact"');

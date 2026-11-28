@@ -475,7 +475,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_ask",
     "Opened an ask",
-    "Ask for a user choice or move. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. Cluster writes need target.command, change, known undo and runThreadId for a member. Approve and confirm each run on its card. Use shellGrant.heldEventId for held shell acts or heldCommunicationAskId for held messages (dismiss:true to discard). Give the full sends-as-you draft and recipient. For checker handoff use blocker, boardQuestId and releaseCheckerHandoff:true. Give options as labels or objects (use objects for ids and recommendations), what continues and held waypoints. For an existing merge, give mergeAskId, action ask-user or withdraw, and reason. Chat and timers give no approval. Never use native question tools. Answers do not execute acts or supply credentials.",
+    "Use this, not native question tools. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. Cluster writes need exact command, change, undo, runThreadId for members, and in-card approval then confirmation. Use shellGrant.heldEventId for held acts, heldCommunicationAskId for held messages (dismiss:true discards), and full drafts and recipients for sends. Checker handoff: blocker with releaseCheckerHandoff:true. Merge: mergeAskId, action ask-user or withdraw, reason. Open with replaces for stale ask IDs; withdraw with askId and reason. Chat and timers cannot approve; answers never execute acts or supply credentials.",
     limit => {
       const ask = askFields(limit);
       return z.union([ask.pick({
@@ -488,6 +488,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       .extend({
         options: askOptionsInput(ask.shape.options),
         boardQuestId: optionalQuest,
+        replaces: z.array(id).optional(),
         releaseCheckerHandoff: z.literal(true).optional(),
         waypointId: id.optional(),
         completeOn: z.array(askSchema.shape.options.element.shape.id).min(1).optional(),
@@ -506,9 +507,14 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       }).strict(),
       z.object({ heldCommunicationAskId: id, dismiss: z.literal(true).optional() }).strict(),
       z.object({ mergeAskId: id, action: z.enum(["ask-user", "withdraw"]), reason: z.string().trim().min(1).max(500) }).strict(),
+      z.object({ askId: id, reason: limit.prose(z.string().trim().min(1).regex(/^[^\r\n\u2028\u2029]+$/, "Give a one-line reason.")) }).strict(),
       ]).meta({ type: "object" });
     },
     (input, threadId) => {
+      if ("askId" in input) {
+        const ask = k.withdrawKeeperAsk(threadId, input.askId, input.reason);
+        return `Ask ${ask.id} withdrawn. No answer was recorded.`;
+      }
       if ("mergeAskId" in input) {
         const ask = k.changeMergeAsk(threadId, input.mergeAskId, input.action, input.reason);
         return input.action === "withdraw" ? `Merge ask ${ask.id} withdrawn; no run is authorized.` : `Merge ask ${ask.id} now waits for the user.\n::tavern-ask{id="${ask.id}"}`;
@@ -522,7 +528,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         if (input.waypointId || input.completeOn) throw new Error("A shell grant cannot close a user waypoint.");
         if (!runtime.scopes) throw new Error("Shell grants are unavailable.");
         if (input.proceedInMinutes != null) throw new Error("Shell grant asks never default.");
-        const ask = runtime.scopes.askAct(threadId, { ...input.shellGrant, why: input.why, unsure: input.unsure, draft: input.draft });
+        const ask = runtime.scopes.askAct(threadId, { ...input.shellGrant, why: input.why, unsure: input.unsure, draft: input.draft, replaces: input.replaces });
         return `Ask recorded. Continue unrelated work. Write on its own line:\n::tavern-ask{id="${ask.id}"}`;
       }
       if (input.kind === "scope")
@@ -540,7 +546,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         return `Merge ask ${ask.id} is in the Keeper lane, not shown to the user. Use tavern_decide with source keeper after the Warden verdict, or hand it to the user with tavern_ask: mergeAskId "${ask.id}", action "ask-user", and reason.`;
       return `Ask recorded. Continue the work that does not depend on it. Write on its own line:\n::tavern-ask{id="${ask.id}"}`;
     },
-    "keeper", askArgumentError, ["open", "held-message", "merge"],
+    "keeper", askArgumentError, ["open", "held-message", "merge", "withdraw"],
   );
   register(
     "tavern_decide",

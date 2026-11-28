@@ -20,7 +20,7 @@ export const QUEST_TRANSITIONS: readonly Row[] = [
   ...rows(["build"], ["greenlight"], "undo", ["user"], "undo", "decision.undone"),
   ...rows(["scout", "greenlight", "build"], ["closing"], "close", ["agent"], "ask", "ask.opened"),
   ...rows(["build"], ["closing"], "conclude-open-at-upgrade", ["tavern"], "ask", "ask.opened"),
-  ...rows(["closing"], ["scout", "greenlight", "build"], "conclude-withdrawn", ["tavern"], "ask", "ask.withdrawn"),
+  ...rows(["closing"], ["scout", "greenlight", "build"], "conclude-withdrawn", ["tavern", "agent"], "ask", "ask.withdrawn"),
   ...rows(["closing"], ["scout", "greenlight", "build"], "keep-open", ["user"], "ask-answer", "quest.kept-open"),
   ...rows(["closing"], ["build"], "extensions", ["user"], "ask-answer", "quest.extended"),
   ...rows(["closing"], ["done"], "conclude", ["user"], "ask-answer", "quest.wrapped"),
@@ -97,6 +97,12 @@ export function assertQuestTransition(store: KeeperStore, quest: BoardQuest, to:
           !link || link.childQuestId !== quest.id || link.generation !== record.generation ||
           (actor.kind === "agent" && link.parentKeeperThreadId !== actor.threadId))
         throw new Error("This child needs the current exact lead-plan approval.");
+    }
+    if (cause === "conclude-withdrawn" && actor.kind === "agent") {
+      const ask = store.get("asks", receipt.id);
+      if (actor.threadId !== current?.keeperThreadId || ask?.keeperThreadId !== actor.threadId ||
+          ask.boardQuestId !== current.id || ask.kind !== "conclude" || ask.state !== "open")
+        throw new Error("Withdrawing a closing card requires this Keeper's own open ask.");
     }
     if (cause === "conclude-lead") {
       const ask = store.get("asks", receipt.id);

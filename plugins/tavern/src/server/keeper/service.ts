@@ -96,7 +96,11 @@ export type AskInput = Pick<
   waypointId?: string;
   completeOn?: string[];
   reversible?: boolean;
+  replaces?: string[];
 };
+const keeperEditableAskEffects = new Set<AskEffect["type"]>([
+  "decision", "user-waypoint", "release-hold", "grant-shell-act", "pull-request-draft", "conclude", "close-early",
+]);
 export { partyCounts } from "./quest-lifecycle";
 export const routeQuestIds = (
   route: Pick<Route, "boardQuestId"> & { boardQuestIds?: string[] },
@@ -1371,15 +1375,47 @@ export class Keeper {
   ): Ask | null {
     const ask = this.store.get("asks", id);
     if (!ask || ask.state !== "open" && !(cause === "merge-moot" && ask.kind === "merge" && ask.state === "answered" && ask.mergeApproval && !ask.mergeUse)) return null;
-    const withdrawn = this.store.atomic(() => {
-      const closing = ask.kind === "conclude" && ask.boardQuestId && this.quest(ask.boardQuestId).phase === "closing";
-      if (closing)
-        transitionQuest(this.store, this.quest(ask.boardQuestId!), isCloseEffect(ask.effect) ? ask.effect.draft.returnTo ?? "build" : "build", "conclude-withdrawn", { kind: "tavern" }, { kind: "ask", id }, at, { text, data: { ...data, askId: id, withdrawnCause: cause } });
-      if (!closing) this.store.event(at, ask.keeperThreadId, ask.boardQuestId, "ask.withdrawn", text ?? ask.question, { ...data, askId: id, cause }, actor);
-      return this.store.put("asks", id, { ...ask, state: "withdrawn", withdrawnAt: at, withdrawnCause: cause });
-    });
+    const withdrawn = this.store.atomic(() => this.recordAskWithdrawal(ask, cause, at, actor, text, data));
     const target = askMemberTarget(ask);
     if (target) this.invalidate([tags.thread(target)]);
+    return withdrawn;
+  }
+  private recordAskWithdrawal(
+    ask: Ask,
+    cause: NonNullable<Ask["withdrawnCause"]>,
+    at: number,
+    actor: Actor,
+    text?: string,
+    data: Record<string, unknown> = {},
+    record: Pick<Ask, "replacedByAskId" | "withdrawnReason"> = {},
+  ) {
+    const id = ask.id;
+    const quest = ask.kind === "conclude" && ask.boardQuestId ? this.quest(ask.boardQuestId) : null;
+    if (quest?.phase === "closing") {
+      const lifecycleActor = cause === "replaced" || cause === "keeper-withdrawn" ? actor : { kind: "tavern" as const };
+      transitionQuest(this.store, quest, isCloseEffect(ask.effect) ? ask.effect.draft.returnTo ?? "build" : "build", "conclude-withdrawn", lifecycleActor, { kind: "ask", id }, at, { text, data: { ...data, askId: id, withdrawnCause: cause } });
+    } else this.store.event(at, ask.keeperThreadId, ask.boardQuestId, "ask.withdrawn", text ?? ask.question, { ...data, askId: id, cause }, actor);
+    return this.store.put("asks", id, { ...ask, ...record, state: "withdrawn", withdrawnAt: at, withdrawnCause: cause });
+  }
+  private ownOpenAsk(threadId: string, id: string, questId?: string | null) {
+    const ask = this.store.get("asks", id);
+    if (!ask || ask.keeperThreadId !== threadId) throw new Error(`Ask ${id} is not owned by this Keeper. Read tavern_status section=asks.`);
+    if (questId !== undefined && ask.boardQuestId !== questId) throw new Error(`Ask ${id} must be in the same quest as its replacement.`);
+    if (ask.state !== "open") throw new Error(`Ask ${id} is no longer open (${ask.state}). Read its outcome in tavern_status section=asks.`);
+    if (!ask.effect || !keeperEditableAskEffects.has(ask.effect.type)) throw new Error(`Tavern owns this card (${id}); use its original flow.`);
+    return ask;
+  }
+  withdrawKeeperAsk(threadId: string, id: string, reason: string) {
+    this.require(threadId, "keeper");
+    const withdrawn = this.store.atomic(() => {
+      const ask = this.ownOpenAsk(threadId, id);
+      if (ask.boardQuestId) this.liveQuest(threadId, ask.boardQuestId);
+      this.guard(threadId, ask.boardQuestId);
+      return this.recordAskWithdrawal(ask, "keeper-withdrawn", this.now(), { kind: "agent", threadId }, reason, {}, { withdrawnReason: reason });
+    });
+    this.changed(threadId, withdrawn.boardQuestId);
+    const target = askMemberTarget(withdrawn);
+    if (target && !withdrawn.boardQuestId) this.invalidate([tags.thread(target)]);
     return withdrawn;
   }
   private detachQuestStartAsk(ask: Ask) {
@@ -1461,6 +1497,7 @@ export class Keeper {
     trusted = false,
   ) {
     const questId = input.boardQuestId ?? null;
+    const replaces = new Set(input.replaces);
     const stopRetry = trusted && input.effect.type === "retry-stop" && questId !== null;
     const callingKeeper = stopRetry ? this.member(threadId) : this.require(threadId, "keeper");
     if (!callingKeeper || stopRetry && (this.quest(questId).phase !== "stopping" || this.quest(questId).keeperThreadId !== threadId))
@@ -1476,17 +1513,16 @@ export class Keeper {
       const quest = this.liveQuest(threadId, questId);
       if (quest.checkerHandoffHold?.id !== input.releaseHoldId || quest.checkerHandoffHold.release !== null) throw new Error("This checker-handoff hold is no longer current");
       const existing = this.store.openAsks(threadId, questId).find(ask => ask.releaseHoldId === input.releaseHoldId);
-      if (existing) return existing;
+      if (existing && !replaces.size) return existing;
+      if (existing && !replaces.has(existing.id)) throw new Error(`Include the existing checker-handoff ask ${existing.id} in replaces to open a new one.`);
       input = { ...input, effect: { type: "release-hold", holdId: input.releaseHoldId }, question: `Release the checker handoff for “${quest.title}”?`,
         why: "Only your explicit answer releases this hold. A request for a check result is not a release.",
         options: [{ id: "release", label: "Release checker handoff", detail: "Allow this quest's checker handoff; other guards still apply.", recommended: false },
           { id: "keep-held", label: "Keep held", detail: "Keep waiting for your explicit release.", recommended: false }],
         holds: [], meanwhile: "Maker work and the Keeper conversation can continue; checker handoff stays held." };
     }
-    if (questId) {
-      if (!stopRetry) this.liveQuest(threadId, questId);
-      if (!trusted && !input.releaseHoldId) this.guard(threadId, questId);
-    }
+    if (questId && !stopRetry) this.liveQuest(threadId, questId);
+    if (replaces.size || questId && !trusted && !input.releaseHoldId) this.guard(threadId, questId);
     if (input.waypointId !== undefined || input.completeOn !== undefined) {
       if (!questId || input.kind !== "decision" || input.effect.type !== "decision" || input.target || input.draft || input.runThreadId)
         throw new Error("A user waypoint needs a plain decision ask for its quest.");
@@ -1498,7 +1534,7 @@ export class Keeper {
       const quest = this.summary(questId);
       const waypoint = quest.waypoints.find(w => w.id === input.waypointId && w.actor === "user");
       if (!waypoint || settled(waypoint)) throw new Error("Name an open user waypoint in the current quest plan.");
-      if (waypoint.askId) throw new Error(`This user waypoint already has an open ask: ${waypoint.askId}.`);
+      if (waypoint.askId && !replaces.has(waypoint.askId)) throw new Error(`This user waypoint already has an open ask: ${waypoint.askId}.`);
       input = { ...input, effect: { type: "user-waypoint", waypointId: waypoint.id, planVersion: quest.planVersion, completeOn } };
     } else if (input.effect.type === "user-waypoint") throw new Error("A user waypoint ask must be bound to the current plan.");
     if (input.kind !== "decision" && input.proceedInMinutes != null)
@@ -1595,6 +1631,7 @@ export class Keeper {
       createdAt: this.now(),
     });
     if (isNoticeEffect(input.effect)) {
+      if (replaces.size) throw new Error("Only a new open ask can replace other asks.");
       const moved = this.store.atomic(() => this.moveNoticeAsk(ask));
       this.changed(threadId, questId);
       return moved;
@@ -1602,7 +1639,12 @@ export class Keeper {
     const projected = undoAskProjection(this.store)(ask);
     const recovery = keeperRecoveryOptions(input.effect);
     const keeperBlock = keeperOwnsBlock(input.effect);
-    this.store.atomic(() => {
+    const replaced = this.store.atomic(() => {
+      const stale = [...replaces].map(id => this.ownOpenAsk(threadId, id, questId));
+      for (const previous of stale) {
+        this.recordAskWithdrawal(previous, "replaced", ask.createdAt, { kind: "agent", threadId }, previous.question,
+          { replacedByAskId: ask.id, replacementQuestion: ask.question }, { replacedByAskId: ask.id });
+      }
       this.store.put("asks", ask.id, ask);
       if (ask.kind === "conclude" && questId && this.quest(questId).phase !== "closing") {
         transitionQuest(this.store, this.quest(questId), "closing", "close", { kind: "agent", threadId }, { kind: "ask", id: ask.id }, this.now(), { text: ask.question, data: { askId: ask.id, ...eventData } });
@@ -1615,12 +1657,15 @@ export class Keeper {
         { askId: ask.id, lane: projected.lane, keeperName: this.name(callingKeeper), ...(keeperBlock ? { reason: ask.why, options: recovery } : {}), ...eventData },
         keeperBlock ? { kind: "tavern" } : { kind: "agent", threadId },
       );
+      return stale;
     });
     const standing = this.authority.match(ask);
     if (standing && ask.effect?.type === "greenlight") this.answerAsk(ask.id, standing.optionId, null, "timer", "preapproval");
     this.changed(threadId, questId);
-    const target = askMemberTarget(ask);
-    if (target && !questId) this.invalidate([tags.thread(target)]);
+    if (!questId) {
+      const targets = [...new Set([ask, ...replaced].map(askMemberTarget).filter(id => id !== undefined))];
+      if (targets.length) this.invalidate(targets.map(tags.thread));
+    }
     void Promise.resolve()
       .then(() => {
         const current = this.store.get("asks", ask.id);

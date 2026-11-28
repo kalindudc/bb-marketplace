@@ -32,8 +32,10 @@ it.each(cases)("keeps the prompt plain for %s", async (_situation, cls, characte
   const tool = f.harness.inspection.registrations.agentTools.find(t => t.name === toolName)!;
   const body = readFileSync(new URL(`../../classes/${cls}.md`, import.meta.url), "utf8");
   expect(config.instructions).toMatch(/Character: "[^"]+"/);
-  expect(body + config.instructions + tool.description).toMatch(work);
-  expect(body + config.instructions + tool.description).not.toMatch(modelVoice);
+  const guidance = toolName === "tavern_ask" ? readFileSync(new URL("../../skills/tavern-keeper/SKILL.md", import.meta.url), "utf8") : "";
+  const prompt = body + config.instructions + tool.description + guidance;
+  expect(prompt).toMatch(work);
+  expect(prompt).not.toMatch(modelVoice);
 });
 
 it("keeps all shipped classes and Tavern tools free of writing-in-character instructions", () => {

@@ -81,7 +81,8 @@ export const openAskCount = (room: Room) => room.asks.filter((ask) => ask.state 
 // ---------- Events: what happened, in words for people ----------
 
 export type EventIcon = "steer" | "question" | "aside" | "quest" | "plan" | "ask" | "answer" | "decided" | "undo" | "rule" | "report" | "hire" | "told" | "stale" | "failed" | "anchor" | "stop" | "skip" | "wrap" | "phase" | "tick" | "note";
-export type EventLine = { repeats?: number; memberKeeperIds?: string[]; id: number; at: number; icon: EventIcon; tone: "plain" | "steer" | "you" | "bad" | "warn" | "done"; actorLabel?: string; actor: { kind: "you" } | { kind: "member"; member: Member } | { kind: "keeper"; member: Member } | { kind: "tavern" } | { kind: "unknown" }; head: string; detail: string | null; questId: string | null; filter: "steers" | "decided" | "reports" | "asks" | "other"; note?: string; fold?: { key: string; names: string[]; verb: string } };
+export type EventLine = { repeats?: number; memberKeeperIds?: string[]; id: number; at: number; icon: EventIcon; tone: "plain" | "steer" | "you" | "bad" | "warn" | "done"; actorLabel?: string; actor: { kind: "you" } | { kind: "member"; member: Member } | { kind: "keeper"; member: Member } | { kind: "tavern" } | { kind: "unknown" }; head: string; detail: string | null; questId: string | null; filter: "steers" | "decided" | "reports" | "asks" | "other"; note?: string; replacement?: { id: string; question: string }; fold?: { key: string; names: string[]; verb: string } };
+export const recordedAskAnchor = (id: string) => `tv-recorded-ask-${id}`;
 type EventContext = { members: Map<string, Member>; characterName: (characterId: string) => string | null; memberName: (member: Member) => string; questShort: (id: string) => string | null; decisions: Map<string, string>; waypoints?: (questId: string) => ReadonlyMap<string, string> };
 
 /** Agent-facing bookkeeping that says nothing a person needs: raw user text (the route says what it meant), tool chatter and nudges. */
@@ -199,6 +200,15 @@ function describeRaw(e: TavernEvent, ctx: EventContext): EventLine | null {
     case "plan.proposed": { const v = data.version; return { ...base, icon: "plan", tone: str("routeId") ? "steer" : "plain", filter: str("routeId") ? "steers" : "other", actor: leadActor, head: `drew quest map v${typeof v === "number" ? v : "?"}${str("routeId") ? " from your steer" : ""}` }; }
     case "quest.phase": return { ...base, icon: "phase", actor: leadActor, head: `moved the quest to ${prefixed(e.text, "Board quest moved to ")}` };
     case "ask.opened": if (data.lane === "keeper") return { ...base, icon: "ask", filter: "asks", actor: leadActor, head: `is waiting on ${str("keeperName") ?? "the Keeper"}`, detail: e.text }; return { ...base, icon: "ask", tone: "you", filter: "asks", actor: leadActor, head: "asks you", detail: e.text };
+    case "ask.withdrawn": {
+      const cause = str("withdrawnCause") ?? str("cause");
+      if (cause !== "replaced" && cause !== "keeper-withdrawn") break;
+      const id = str("replacedByAskId"), question = str("replacementQuestion");
+      const head = cause === "replaced" ? "replaced an ask" : "withdrew an ask";
+      return { ...base, icon: "ask", filter: "asks", actor: lead ? leadActor : { kind: "unknown" },
+        head: lead ? head : `The Keeper ${head}`, detail: cause === "replaced" ? e.text : `Withdrawn: ${e.text}`,
+        ...(id && question ? { replacement: { id, question } } : {}) };
+    }
     case "ask.answered": case "ask.defaulted": {
       const preapproval = data.preapproval as { at?: unknown; surface?: unknown } | undefined;
       if (typeof preapproval?.at === "number" && typeof preapproval.surface === "string") return { ...base, icon: "answer", tone: "done", filter: "asks", actor: { kind: "tavern" }, head: `Pre-approved by you at ${moveTime(preapproval.at, Date.now())} (${preapproval.surface.replace("client (unattested)", "client, unattested")})`, detail: e.text };
@@ -239,8 +249,8 @@ function describeRaw(e: TavernEvent, ctx: EventContext): EventLine | null {
     case "quest.wrapped": return { ...base, icon: "wrap", tone: "done", actor: leadActor, head: e.data.closure === "closed-early" ? "closed early at your request" : "returned with the loot", detail: e.text };
     case "tick.sent": return { ...base, icon: "tick", actor: { kind: "tavern" }, head: "sent a tick" };
     case "tick.held": return { ...base, icon: "tick", actor: { kind: "tavern" }, head: "held a tick while you typed", detail: e.text };
-    default: return { ...base, icon: "note", actor: leadActor, head: e.type.replace(/[._-]/g, " "), detail: e.text };
   }
+  return { ...base, icon: "note", actor: leadActor, head: e.type.replace(/[._-]/g, " "), detail: e.text };
 }
 
 export function eventLines(events: TavernEvent[], ctx: EventContext, { collapseRepeats = false, trackParties = false } = {}) {

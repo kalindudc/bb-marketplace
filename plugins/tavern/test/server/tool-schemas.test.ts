@@ -46,7 +46,7 @@ it("exposes object roots without top-level composition on every registered tool"
       tavern_note: ["op", ["add", "done"]],
       tavern_release: ["operation", ["release", "confirm-retirement"]],
       tavern_scope: ["operation", ["override", "repair-guard"]],
-      tavern_ask: ["operation", ["open", "held-message", "merge"]],
+      tavern_ask: ["operation", ["open", "held-message", "merge", "withdraw"]],
       tavern_pull_request: ["action", ["ready", "close", "comment", "draft"]],
     } as const;
     for (const [name, [key, values]] of Object.entries(selectors)) {
