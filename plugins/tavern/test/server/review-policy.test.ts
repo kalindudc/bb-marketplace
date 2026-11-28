@@ -93,7 +93,7 @@ describe("additional dispatch and policy coverage", () => {
     for (let i = 0; i < 2; i++) member(k, `w${i}`, "wanderer");
     await expect(runtime.hire("lead", "project", input)).rejects.toThrow(/party budget/);
   });
-  it("requires a bounded Ranger brief even for an aside", async () => {
+  it("requires a bounded Ranger brief even for an errand", async () => {
     const { runtime } = setup();
     const input = { classId: "ranger", errand: true, title: "Scout", brief };
     await expect(

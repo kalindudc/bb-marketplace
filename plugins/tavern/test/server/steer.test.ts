@@ -17,21 +17,21 @@ beforeEach(() => {
 
 describe("two-quest steer replay", () => {
   it("changes only the named quest; questions and asides change neither plan", async () => {
-    const a = await seedQuest(keeper,"lead", "Vault cutover", "Vault");
+    const a = await seedQuest(keeper,"lead", "Index rebuild", "Index");
     const b = seedLegacyQuest(keeper,"lead", "Proxy retry", "Proxy");
     keeper.plan("lead", { ...planInput(a.id) });
     keeper.plan("lead", { ...planInput(b.id) });
     const replay = [
-      ["Vault: stage first", "steer", a.id],
+      ["Index: stage first", "steer", a.id],
       ["What is waiting?", "question", null],
-      ["Look up lunch menus", "aside", null],
+      ["Thanks for the update", "aside", null],
       ["Proxy: retry only once", "steer", b.id],
       ["Which model checks it?", "question", null],
-      ["Vault: keep the rollback", "steer", a.id],
-      ["Check the weather", "aside", null],
+      ["Index: keep the rollback", "steer", a.id],
+      ["That reminds me of the old setup", "aside", null],
       ["Proxy: stop the extra rollout", "steer", b.id],
       ["What is the ETA?", "question", null],
-      ["Vault: test staging again", "steer", a.id],
+      ["Index: test staging again", "steer", a.id],
     ] as const;
     for (const [text, kind, boardQuestId] of replay) {
       const versions = [keeper.quest(a.id).planVersion, keeper.quest(b.id).planVersion];

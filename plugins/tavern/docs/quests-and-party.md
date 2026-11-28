@@ -28,9 +28,9 @@ If work changes while a Keeper's own card is open, the Keeper can replace it wit
 
 ## Steering and verbatim wording
 
-Keep talking in the same Keeper thread to steer its quest. If an older Keeper holds more than one quest, name the quest you mean. Tavern keeps questions, asides and standing rules separate from plan changes. They don’t pause work on the existing plan.
+Keep talking in the same Keeper thread to steer its quest. If an older Keeper holds more than one quest, name the quest you mean. Tavern keeps questions, asides and standing rules separate from plan changes. They don’t pause work on the existing plan. An aside asks for no work, like a greeting or a thank-you.
 
-For an outside goal, the Keeper offers a choice: **Side quest** records the goal under the named parent for the Keeper to handle. **New Keeper thread** opens a same-project draft with your goal. You can edit it before sending. If there is no open parent, the card offers only the new thread. If the parent ends while you’re deciding, the new-thread choice stays open. Folding the card starts nothing. A returned, stopped or cellared quest still takes that thread’s one slot. Reopen the same quest for follow-up work.
+If you ask for work outside the current quest’s goal, even a small task, the Keeper offers a choice: **Side quest** records the goal under the named parent for the Keeper to handle. **New Keeper thread** opens a same-project draft with your goal. You can edit it before sending. If there is no open parent, the card offers only the new thread. If the parent ends while you’re deciding, the new-thread choice stays open. Folding the card starts nothing. A returned, stopped or cellared quest still takes that thread’s one slot. Reopen the same quest for follow-up work.
 
 Standing rules remain local to that Keeper until you widen them in the Ledger. To send one unchanged message to several Keepers at once, use **Tell selected Keepers** on the Common room.
 

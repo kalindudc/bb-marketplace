@@ -127,7 +127,7 @@ function RuleScopeOnReceipt({ rule, questTitle }: { rule: Rule; questTitle: stri
     </>;
 }
 const ROUTE_WORD: Record<Route["kind"], string> = { steer: "steer", question: "question", aside: "aside", "new-quest": "new quest", rule: "standing rule" };
-const ROUTE_HELP: Record<Route["kind"], string> = { steer: "It changes a board quest; the Keeper updates the plan", question: "Record an answer without changing the quest", aside: "Unrelated; a quick answer or an errand, goals untouched", "new-quest": "Start the first quest or ask where the new goal should go", rule: "A standing rule in your words; active at once, shown in the ledger" };
+const ROUTE_HELP: Record<Route["kind"], string> = { steer: "It changes a board quest; the Keeper updates the plan", question: "Record an answer without changing the quest", aside: "Asks for no work and leaves goals untouched", "new-quest": "Start the first quest or ask where the new goal should go", rule: "A standing rule in your words; active at once, shown in the ledger" };
 
 export function MessageRouteTab({ threadId, params }: ExperimentalThreadTabProps & { params: JsonValue | null }) {
     const query = experimental_useRpcQuery({ contract: rpcContract, method: "routes", input: { threadId } });

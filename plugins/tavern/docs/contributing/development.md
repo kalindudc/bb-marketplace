@@ -87,13 +87,15 @@ Only run the manual replay in an isolated fixture that already has two open ques
 | --- | --- | --- | --- |
 | 1 | `Index: stage first` | steer, Index | Index only |
 | 2 | `What is waiting?` | question | Neither |
-| 3 | `Look up lunch menus` | aside | Neither |
+| 3 | `Thanks for the update` | aside | Neither |
 | 4 | `Proxy: retry only once` | steer, Proxy | Proxy only |
 | 5 | `Which model checks it?` | question | Neither |
 | 6 | `Index: keep the rollback` | steer, Index | Index only |
-| 7 | `Check the weather` | aside | Neither |
+| 7 | `That reminds me of the old setup` | aside | Neither |
 | 8 | `Proxy: stop the extra rollout` | steer, Proxy | Proxy only |
 | 9 | `What is the ETA?` | question | Neither |
 | 10 | `Index: test staging again` | steer, Index | Index only |
 
-Verify that every reply is concise with the right routing tag, only steer messages create a new plan version (and only for the named quest), and any aside helper thread has no board-quest or waypoint link.
+Verify that every reply has the right routing tag and that only steers revise the named plan. An aside asks for no work and starts no helper.
+
+In a separate fixture with one active quest, ask for a small unrelated task, such as `Separately, add a CONTRIBUTING.md that says how to run the tests.` The Keeper should route it as `new-quest` and show a side quest or new Keeper choice without starting the work.

@@ -7,7 +7,7 @@ import { fixtureAsk, fixtureBoard, fixtureClass, fixtureDecor, fixtureDetail, fi
 import { JournalTab } from "../../../src/ui/thread/tabs";
 import { registerThreadSurfaces } from "../../../src/ui/thread/register";
 import { directiveAttributes } from "../../../src/ui/thread/cards";
-import { routeForMetadata } from "../../../src/ui/thread/metadata";
+import { MessageRouteTab, routeForMetadata } from "../../../src/ui/thread/metadata";
 import { safeHref } from "../../../src/ui/kit";
 afterEach(cleanup);
 const load = () => loadPluginApp(definePluginApp(registerThreadSurfaces));
@@ -76,6 +76,12 @@ describe("Tavern surfaces", () => {
         expect(routeForMetadata([fixtureRoute], 9999, "Skip  the audience check")).toEqual(fixtureRoute);
         expect(routeForMetadata([fixtureRoute, { ...fixtureRoute, id: "r2" }], 9999, "skip the audience check")).toBeNull();
         expect(routeForMetadata([fixtureRoute], 9999, "an unrelated aside")).toBeNull();
+    });
+    it("describes an aside as asking for no work in the route-correction panel", async () => {
+        await load();
+        const slot = renderSlot({ component: MessageRouteTab }, { threadId: "keeper-1", environment: null, params: null }, { rpc: { routes: () => ({ routes: [fixtureRoute], boardQuests: [] }) } });
+        expect(slot.getByRole("radio", { name: /^aside.*asks for no work/i })).toBeTruthy();
+        slot.lifecycle.unmount();
     });
     it("journal edits use RPC and do not mark linked work done without evidence", async () => {
         const app = await load();

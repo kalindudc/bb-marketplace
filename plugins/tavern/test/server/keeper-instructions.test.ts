@@ -187,6 +187,21 @@ it("defines all five route kinds and retains steer authority", () => {
   expect(route).toContain("following Keeper turn ends");
 });
 
+it("routes even small outside work as a new quest, not an aside", () => {
+  const route = tools.get("tavern_route")!;
+  expect(route).toMatch(/aside: asks for no work/i);
+  expect(route).toMatch(/new-quest:[^.]*outside the current quest's goal, however small/i);
+  expect(route).toMatch(/new-quest:[^.]*choice card/i);
+  expect(route).not.toMatch(/aside:[^.]*hire/i);
+});
+
+it("teaches Keepers to use a choice card for work outside the current quest", () => {
+  const pacing = read("skills/tavern-keeper/references/pacing-and-closure.md");
+  const routing = pacing.split("\n").find(line => line.startsWith("- **Routing:**"));
+  expect(routing).toMatch(/aside asks for no work/i);
+  expect(routing).toMatch(/work outside the current quest's goal, however small.*`new-quest`.*`tavern_quest op: choice` card/i);
+});
+
 describe("R11 tool rules remain at the tool boundary", () => {
   const rules: Record<string, RegExp[]> = {
     tavern_tune: [/staleMinutes.*reportBatchSeconds/, /user pins/, /user-only budget/],

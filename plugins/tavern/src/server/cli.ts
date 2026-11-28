@@ -160,7 +160,7 @@ export function registerCli(bb: BbPluginApi, runtime: TavernRuntime, backups?: B
           run: () => ({
             exitCode: 0,
             stdout:
-              "Run node node_modules/vitest/vitest.mjs run test/server/steer.test.ts in plugins/tavern.\nLive replay: docs/contributing/development.md#steer-replay\nVault: stage first\nWhat is waiting?\nLook up lunch menus\nProxy: retry only once\nWhich model checks it?\nVault: keep the rollback\nCheck the weather\nProxy: stop the extra rollout\nWhat is the ETA?\nVault: test staging again",
+              "Run node node_modules/vitest/vitest.mjs run test/server/steer.test.ts in plugins/tavern.\nLive replay: docs/contributing/development.md#steer-replay\nIndex: stage first\nWhat is waiting?\nThanks for the update\nProxy: retry only once\nWhich model checks it?\nIndex: keep the rollback\nThat reminds me of the old setup\nProxy: stop the extra rollout\nWhat is the ETA?\nIndex: test staging again",
           }),
         }),
       },

@@ -12,9 +12,9 @@ Every thread in bb also gets a Journal, which is a live checklist with steps, ev
 
 ## The Keeper
 
-A Keeper is a lead thread that holds one goal for you. Keepers delegate by default and act directly only for tiny one-turn work or when you ask.
+A Keeper is a lead thread that holds one goal for you. Keepers delegate by default and act directly within their quest only for tiny one-turn work or when you ask.
 
-A Keeper opens one board quest. Tavern records whether your message is a steer, a question, an aside, a new goal or a standing rule. A question, aside or rule does not block work already underway. A new goal in an occupied thread gets a placement card for a side quest or a new Keeper, not another quest in that thread. Refreshing a Keeper moves its existing quests and open requests to the new thread. Existing threads with multiple quests keep them.
+A Keeper opens one board quest. Tavern records whether your message is a steer, a question, an aside, a new goal or a standing rule. An aside asks for no work. Questions, asides and rules do not block work already underway. A request for work outside the quest's goal, however small, gets a choice card for a side quest or a new Keeper, not another quest in that thread. Refreshing a Keeper moves its existing quests and open requests to the new thread. Existing threads with multiple quests keep them.
 
 ## Members and classes
 
