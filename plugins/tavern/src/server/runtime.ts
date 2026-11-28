@@ -2949,7 +2949,7 @@ export class TavernRuntime {
   private keeperStayReason(threadId: string) {
     if (this.keeper.store.query("leadLinks", "parentKeeperThreadId", threadId, 500).some(holdsLeadSeat)) return "it still has a lead in its party";
     if (this.keeper.store.all("quests").some(q => q.keeperThreadId === threadId && q.deletedAt == null && q.archivedAt == null)) return "it has another quest on the board";
-    if (this.keeper.store.all("members").some(member => member.keeperThreadId === threadId && member.errand && member.state !== "failed" && isLiveMember(this.keeper.store, member))) return "it has a side quest out";
+    if (this.keeper.store.all("members").some(member => member.keeperThreadId === threadId && member.errand && member.state !== "failed" && isLiveMember(this.keeper.store, member))) return "it has an errand out";
     return null;
   }
   private async archiveQuestThreads(ids: string[], cause: "quest.archived" | "quest.deleted") {
@@ -3860,7 +3860,6 @@ export class TavernRuntime {
         ] : [
           { id: "conclude", label: "Conclude the quest", detail: "Tell the tale, archive the party and free its slots.", recommended: true },
           { id: "hold", label: "Keep open for other work", detail: "Keep the quest and its party open; nothing is told yet.", recommended: false },
-          ...(returnTo === "build" ? [{ id: "extensions", label: "Open extensions or side quests", detail: "Keep this quest open and add bounded follow-up work.", recommended: false }] : []),
         ],
         meanwhile: "The quest stays open until you answer.", holds: unsettled.map(w => w.waypointId),
       }, { closeType: early ? "close-early" : "conclude", ...(fromSteer ? { fromSteer } : {}), ...(early ? { unsettled } : {}), ...(noPlan ? { noPlan: true } : {}) });

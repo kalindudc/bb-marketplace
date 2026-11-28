@@ -62,7 +62,7 @@ describe("the work mark", () => {
 describe("controls inside a clickable row", () => {
   const css = readFileSync("src/ui/kit/components.css", "utf8");
   it("keep the row unlit while Tale or Cellar is hovered or focused, and light as their own box", () => {
-    expect(css).toContain(".tavern.qrow:hover:not(:has(:is(.qrow-tale, .qrow-x):is(:hover, :focus-visible))) { background: var(--tavern-hover); }");
+    expect(css).toContain(".tavern.qrow:hover:not(:has(:is(.qrow-tale, .qrow-x, .side-quest-parent):is(:hover, :focus-visible))) { background: var(--tavern-hover); }");
     expect(css).toMatch(/\.tavern\.qrow :is\(\.qrow-tale, \.qrow-x\)\.act:is\(:hover, :focus-visible\):not\(:disabled\) \{[^}]*background: var\(--tavern-inner-hover\);[^}]*box-shadow: inset 0 0 0 1px var\(--tavern-muted\);[^}]*cursor: pointer;/);
   });
   it("leave the Keeper row's decided count part of the row, explained in the row's tooltip", async () => {

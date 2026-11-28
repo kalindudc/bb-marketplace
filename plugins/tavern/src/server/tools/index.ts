@@ -179,7 +179,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     summaryDraftSchema,
     (input, threadId) => {
       const summary = k.postSummary(threadId, input);
-      if (!summary.childQuestId) void runtime.push(threadId, "New Keeper answer", summary.title, undefined, "answer");
+      void runtime.push(threadId, "New Keeper answer", summary.title, undefined, "answer");
       return `Posted. Put this card on its own line in your reply:\n::tavern-summary{id="${summary.id}"}`;
     },
   );

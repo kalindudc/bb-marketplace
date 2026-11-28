@@ -1,6 +1,6 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { fireEvent, waitFor } from "@testing-library/react";
+import { fireEvent, waitFor, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { rpcContract, tags } from "../../../src/shared/contract";
 import { TavernPage, TavernSidebar, registerPageSurfaces } from "../../../src/ui/page/register";
@@ -59,6 +59,21 @@ it("renames on the quest page, validates inline, retains the draft on refusal an
     expect(await page.findByRole("button", { name: /^Tavern pages: Repair the signal lamp/ })).toBeTruthy();
     expect(await page.findByText("renamed the quest")).toBeTruthy();
     expect(page.getByText(`Renamed “${detail.quest.title}” to “${quest.title}” · Short name: “${detail.quest.short}” to “${quest.short}”`)).toBeTruthy();
+  } finally { page.lifecycle.unmount(); }
+});
+
+it.each(["build", "done"] as const)("links the parent from the side quest header in %s", async phase => {
+  const parent = { parentQuestId: "parent", parentTitle: "Restore the harbor bell", parentKeeperThreadId: "lead",
+    limits: { members: 1, rangers: 0, depth: 1 }, parentDecisions: [], authority: [] };
+  const quest = { ...detail.quest, phase, leadChain: { seat: parent, children: [] } };
+  const page = renderSlot({ component: QuestPage }, { detail: { ...detail, quest }, registry, room });
+  try {
+    const header = within((await page.findByRole("heading", { level: 1, name: quest.title })).closest("header")!);
+    const openParent = header.getByRole("button", { name: "Side quest of Restore the harbor bell" });
+    expect(page.getAllByRole("button", { name: "Side quest of Restore the harbor bell" })).toHaveLength(1);
+    expect(header.getByRole("button", { name: /Talk to/ }).classList.contains("pri")).toBe(phase === "build");
+    fireEvent.click(openParent);
+    expect(page.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "tavern", options: { subPath: "quest/parent" } });
   } finally { page.lifecycle.unmount(); }
 });
 

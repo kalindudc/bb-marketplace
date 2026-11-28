@@ -58,7 +58,7 @@ export function boardQuestState(keeper: Room["keepers"][number], quest: BoardQue
   return keeper.archived ? "needs-keeper" : "active";
 }
 export const activeQuests = (room: Room) => room.keepers.flatMap(k => k.boardQuests.filter(q => boardQuestState(k, q) === "active"));
-export const workingQuests = (room: Room) => activeQuests(room).filter((q) => q.phase !== "stopping");
+export const workingQuests = (room: Room) => activeQuests(room).filter((q) => q.phase !== "stopping" && !q.leadChain?.seat);
 /** A stop keeps running even if the Keeper is no longer present. */
 export const stoppingQuests = (room: Room) => questsIn(room).filter(q => q.phase === "stopping" && q.archivedAt == null && q.deletedAt == null);
 export const returnedQuests = (room: Room) => questsIn(room).filter((q) => q.phase === "done").sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt));
@@ -353,7 +353,7 @@ export function graphFor(room: Room, registry: Parameters<typeof memberName>[1],
     const more = (history?.total ?? 0) - known.size;
     if (more > 0 && !filter.only) add({ id: `more:${id}`, kind: "more", label: `+${more} more`, detail: "Quests in the cellar", layer: 1, subPath: "archive", quiet: true }, k);
     if (keeper.archived) continue;
-    for (const member of keeper.errands.filter((m) => !hasEndedEngagement(m))) add({ id: `member:${member.threadId}`, kind: "errand", label: name(member), detail: `Side quest (errand) · ${memberActivityWord(member)}`, classId: member.classId, layer: 1, threadId: member.threadId, member }, k);
+    for (const member of keeper.errands.filter((m) => !hasEndedEngagement(m))) add({ id: `member:${member.threadId}`, kind: "errand", label: name(member), detail: `Errand · ${memberActivityWord(member)}`, classId: member.classId, layer: 1, threadId: member.threadId, member }, k);
     for (const ask of room.asks.filter((a) => a.keeperThreadId === keeper.member.threadId && a.boardQuestId === null && a.state === "open")) add({ id: `ask:${ask.id}`, kind: "ask", label: ask.question, detail: `Needs you · ${ask.kind}`, layer: 2, threadId: keeper.member.threadId, ask }, k);
   }
   for (const quests of cellar.values()) for (const quest of quests) addFinished(quest);
@@ -367,7 +367,7 @@ export function oneHop(nodes: MapNode[], edges: [string, string][], focus: strin
 
 export type PictureNode = { id: string; col: number; row: number; kind: "keeper" | "quest" | "returned" | "more" | "errand" | "member" | "you" | "blocked" | "gate" | "outside" | "solo"; node?: MapNode; label: string; sub: string; asks?: Ask[]; folded?: number; questId?: string; hot: boolean; quiet?: boolean };
 /**
- * The picture: Keepers, their quests and side quests, then the focused quest's party, asks and gates, then who they wait on.
+ * The picture: Keepers, their quests and errands, then the focused quest's party, asks and gates, then who they wait on.
  * Other quests fold their party into a count but keep your asks. Laid out leaf by leaf, so no two edges cross.
  */
 export function mapPicture(graph: ReturnType<typeof graphFor>, focusQuestId: string | null) {

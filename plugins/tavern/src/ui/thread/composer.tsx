@@ -586,7 +586,7 @@ function MemberParts({ data, registry, open, toggle, onQuest, onThread }: { data
   const keeperName = data.keeper ? memberIdentityLabel(data.keeper, registry ?? { classes: [], characters: [] }) : null;
   return <>
     {m.errand || !data.boardQuest
-      ? <span className="tw-fact" title={m.title ?? undefined}><b>Side quest</b> <span className="anc">errand</span></span>
+      ? <span className="tw-fact" title={m.title ?? undefined}><b>Errand</b></span>
       : <button type="button" className="tw-chip tw-where act" title={`Open the quest page: ${data.boardQuest.title} · ${wp}${m.title ? ` · ${m.title}` : ""}`} aria-label={`Open the quest page for ${data.boardQuest.title}, ${wp}`} onClick={() => onQuest(data.boardQuest!.id)}><b>{data.boardQuest.short}</b>{current && <span className="tw-w">· {wp}</span>}<OpensMark /></button>}
     {keeperId && data.keeper && <button type="button" className="tw-chip tw-keeper act" title={`Open ${keeperName}’s thread: Keeper (lead) of this member`} aria-label={`Open ${keeperName}’s thread, the Keeper (lead) this member reports to`} onClick={() => onThread(data.keeper!.threadId)}><Crest {...keeperId} size={14} /><span className="tw-kn">{keeperName}</span><OpensMark /></button>}
     {m.permanent && <span className="tw-fact" title={m.permanent.why}>Permanent</span>}

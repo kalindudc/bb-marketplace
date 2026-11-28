@@ -73,7 +73,8 @@ function QuestNav({ room, registry, route, go, openThread }: { room: Room; regis
   return <>
     <h2 className="tv-shead tv-shead-q"><span>Quests on the board</span><span className="tv-snav-c">{active.length} active</span></h2>
     {active.map(q => {
-      const keeper = keepers.get(q.keeperThreadId);
+      const conversationId = q.leadChain?.seat?.parentKeeperThreadId ?? q.keeperThreadId;
+      const keeper = keepers.get(conversationId);
       const name = keeper && registry ? characterName(registry, keeper) : keeper?.displayName ?? "Keeper";
       const n = questNeedYouCount(q);
       return <div key={q.id} className="tv-sentry" data-attention={n > 0 || undefined}>
@@ -83,8 +84,8 @@ function QuestNav({ room, registry, route, go, openThread }: { room: Room; regis
           {n > 0 && <span className="tv-squest-n"><PageGlyph name="you" size={12} />{n}</span>}
           <span className="tv-sage" id={`${agePrefix}-${q.id}`}><TimeAgo at={q.updatedAt} showTitle={false} /></span>
         </button>
-        <button type="button" className="tv-skeeper act" onClick={() => openThread(q.keeperThreadId)} aria-label={`${name}, Keeper: open thread`}>
-          <span aria-hidden="true">{keeper && registry ? <CrestOf member={keeper} registry={registry} size={16} /> : <PageGlyph name="shield" size={16} />}<OpensMark /></span><span className="tv-skeeper-name">{name}</span>
+        <button type="button" className="tv-skeeper act" onClick={() => openThread(conversationId)} aria-label={`${name}, ${q.leadChain?.seat ? "lead Keeper" : "Keeper"}: open thread`}>
+          <span aria-hidden="true">{keeper && registry ? <CrestOf member={keeper} registry={registry} size={16} /> : <PageGlyph name="shield" size={16} />}<OpensMark /></span><span className="tv-skeeper-name" title={name}>{name}</span>
         </button>
       </div>;
     })}
@@ -151,9 +152,9 @@ export function TavernNavItems({ subPath, room, registry, loading, error, onPage
     <div className="tv-sbody">
       <div className="tv-sboard">
         {room ? <QuestNav room={room} registry={registry} route={route} go={go} openThread={openThread} /> : loading}
-        {errands.length > 0 && <div className="tv-serrands"><h2 className="tv-shead"><span>Side quests <span className="anc">errands</span></span><span className="tv-snav-c">{errands.length} out</span></h2>
+        {errands.length > 0 && <div className="tv-serrands"><h2 className="tv-shead"><span>Errands</span><span className="tv-snav-c">{errands.length} out</span></h2>
           {errands.map(m => <button type="button" key={m.threadId} className="tv-squest tv-serrand act" onClick={() => openThread(m.threadId)}>
-            <span aria-hidden="true">{registry && <CrestOf member={m} registry={registry} size={18} />}</span><span className="tv-squest-t">{m.title ?? m.doing ?? "Side quest"}</span><TimeAgo at={m.lastActiveAt ?? m.createdAt} showTitle={false} />
+            <span aria-hidden="true">{registry && <CrestOf member={m} registry={registry} size={18} />}</span><span className="tv-squest-t">{m.title ?? m.doing ?? "Errand"}</span><TimeAgo at={m.lastActiveAt ?? m.createdAt} showTitle={false} />
           </button>)}
         </div>}
       </div>

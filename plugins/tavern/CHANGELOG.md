@@ -35,6 +35,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 - New class and character saves keep only the fields you change, so untouched fields still pick up newer defaults. Older whole-file copies keep their behavior, and backups restore either format.
 - Members who change files commit as they go on their own branches and resolve their own merge conflicts. Pushes, merges into shared branches, and publishing still need their usual approvals.
 - A Keeper can hire another Keeper for an approved side seat and forward your exact steers. The side Keeper reports back without marking work done, and the hiring Keeper posts the linked answer. Side Keepers cannot hire another Keeper. Older class files and settings still load; Keeper hiring no longer has a class switch or a chain depth setting.
+- Side quests appear on the board with a link back to their parent. The parent map shows the side quest's phase separately from its own check, and the lead's controls let you answer the original card once. The Common room and sidebar call jobs outside quests **Errands**. Choose **Keep open for other work** on a conclude card to continue the same quest.
 - A Keeper thread opens one quest. Existing threads with several quests keep them. If you bring an outside goal to a Keeper, choose a side quest under the named parent or open an editable draft for a new Keeper. The choice alone starts nothing.
 - Member reports deliver news without changing waypoint progress. Use the journal to submit, check, skip or reopen work. Ranger check-ins still go to the Keeper, and Keeper status shows the latest journal round for permanent duties.
 - The quest page, plan card and widget read waypoint progress from the journal. Keeper checks, optional skips, qualifying user answers and outside replies are recorded there. Proof survives release, and ambiguous old completions stay open for another check. Blocked waypoints show the blocking line, not the whole running note.
@@ -59,6 +60,7 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ### Fixed
 
+- Side quest answers follow your answer-alert setting and do not post twice for the same steer. Navigation keeps the quest title readable and shows clipped Keeper names in full on hover, and an override save error uses the saved class name.
 - Plan revisions use less memory when comparing long notes and still show the same changes.
 - Closing time holds named tools that match your stop list again, including merge, deploy and delete tools. Ordinary tool calls still run.
 - Scope grants follow the same directory after a rename when the old name still links to it. Members can write to their own thread storage, use `mktemp` under allowed temporary roots, and write to `scratch/<quest id>` under their Keeper's storage on the same local host. Other thread storage is not shared.

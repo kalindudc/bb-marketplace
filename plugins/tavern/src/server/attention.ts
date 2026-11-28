@@ -13,6 +13,10 @@ import { currentAskNames } from "./quest-names";
 export const DECIDED_FOR_YOU_SQL = "(json_extract(r.data,'$.source')='keeper' OR json_type(r.data,'$.checkChange')='object')";
 
 export type AttentionScope = { keeperThreadId?: string; boardQuestId?: string };
+const keeperKey = (id: string) => `keeper:${id}`;
+const questKey = (id: string) => `quest:${id}`;
+const scopeKey = (scope: AttentionScope) => scope.boardQuestId ? questKey(scope.boardQuestId) : scope.keeperThreadId ? keeperKey(scope.keeperThreadId) : "room";
+
 export function askNeedsUser(store: KeeperStore, ask: Ask) {
   if (ask.lane === "keeper" || ask.lane === "tavern") return false;
   const effect = ask.effect ?? legacyAskEffect(ask, store.get("askMeta", ask.id), store.runtime(ask.keeperThreadId));
@@ -39,8 +43,31 @@ function attentionRows(store: KeeperStore, scope: AttentionScope, ordinals?: Map
     const args = [kind];
     const questField = kind === "rules" ? "CASE WHEN json_extract(r.data,'$.scope')='quest' THEN json_extract(r.data,'$.scopeId') END" : "json_extract(r.data,'$.boardQuestId')";
     let where = `r.kind=? AND ${state} AND ${quest ? "r.archived_at IS NULL AND json_extract(r.data,'$.deletedAt') IS NULL" : visible.replace("json_extract(r.data,'$.boardQuestId')", questField)}`;
-    if (scope.keeperThreadId) { where += ` AND ${kind === "rules" ? origin : "json_extract(r.data,'$.keeperThreadId')"}=?`; args.push(scope.keeperThreadId); }
-    if (scope.boardQuestId) { where += ` AND ${quest ? "r.id" : questField}=?`; args.push(scope.boardQuestId); }
+    const own: string[] = [], lead: string[] = [], targets: string[] = [];
+    if (scope.keeperThreadId) {
+      own.push(`${kind === "rules" ? origin : "json_extract(r.data,'$.keeperThreadId')"}=?`);
+      lead.push("json_extract(link.data,'$.parentKeeperThreadId')=?");
+      targets.push(scope.keeperThreadId);
+    }
+    if (scope.boardQuestId) {
+      own.push(`${quest ? "r.id" : questField}=?`);
+      lead.push("parent.id=?");
+      targets.push(scope.boardQuestId);
+    }
+    if (own.length) {
+      const forwarded = kind === "asks" ? ` OR EXISTS (SELECT 1 FROM tavern_records link
+        JOIN tavern_records parent ON parent.kind='quests' AND parent.id=json_extract(link.data,'$.parentQuestId')
+        WHERE link.kind='leadLinks' AND json_extract(link.data,'$.childQuestId')=${questField}
+        AND json_extract(link.data,'$.childKeeperThreadId')=json_extract(r.data,'$.keeperThreadId')
+        AND json_extract(link.data,'$.state') IN ('linked','retirement-requested')
+        AND json_extract(parent.data,'$.keeperThreadId')=json_extract(link.data,'$.parentKeeperThreadId')
+        AND parent.archived_at IS NULL AND json_extract(parent.data,'$.deletedAt') IS NULL
+        AND json_extract(parent.data,'$.endedAt') IS NULL AND json_extract(parent.data,'$.phase')<>'stopping'
+        AND ${lead.join(" AND ")})` : "";
+      where += ` AND (${own.join(" AND ")}${forwarded})`;
+      args.push(...targets);
+      if (forwarded) args.push(...targets);
+    }
     return (store.db.prepare(`SELECT ${data} AS data${extra},r.id,r.rowid AS ordinal FROM tavern_records r WHERE ${where} ORDER BY r.rowid`).all(...args) as { id: string; ordinal: number; data: string; origin?: string | null }[]).map(row => {
       if (kind === "decisions" || kind === "summaries") ordinals?.set(row.id, row.ordinal);
       return { ...JSON.parse(row.data), ...(row.origin ? { keeperThreadId: row.origin } : {}) } as T;
@@ -150,7 +177,9 @@ export class AttentionSnapshot {
     if (!scope.keeperThreadId) for (const change of unseenQuestChanges(store, scope.boardQuestId)) add(change);
     items.sort((a, b) => Number(isNew(a)) - Number(isNew(b)) || (isNew(a) ? ordinals.get(a.id)! - ordinals.get(b.id)! : a.since - b.since || a.id.localeCompare(b.id)));
     this.decisionById = new Map(this.decisions.map(decision => [decision.id, decision]));
-    for (const item of items) for (const key of ["room", item.keeperThreadId && `keeper:${item.keeperThreadId}`, item.questId && `quest:${item.questId}`]) {
+    // Scoped ask reads include side asks, but the card keeps its original quest and Keeper.
+    for (const item of items) for (const key of new Set(["room", item.keeperThreadId && keeperKey(item.keeperThreadId),
+      item.questId && questKey(item.questId), item.kind === "ask" && scopeKey(scope)])) {
       if (!key) continue;
       const group = this.groups.get(key) ?? { need: [], held: [], changes: [], summaries: [], calls: [] };
       (item.kind === "summary" ? group.summaries : item.kind === "decided" ? group.calls : item.kind === "held" ? group.held : item.kind === "quest-changed" ? group.changes : group.need).push(item);
@@ -182,7 +211,7 @@ export class AttentionSnapshot {
     return { summaries: summaries.length, decided: calls.length, changedQuests: changes.length, quests: [...quests.values()] };
   }
   private group(scope: AttentionScope) {
-    return this.groups.get(scope.boardQuestId ? `quest:${scope.boardQuestId}` : scope.keeperThreadId ? `keeper:${scope.keeperThreadId}` : "room");
+    return this.groups.get(scopeKey(scope));
   }
   calls(scope: AttentionScope = {}, limit = 20) {
     const group = this.group(scope);

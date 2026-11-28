@@ -60,7 +60,7 @@ export function HearthBand({ room, registry }: { room: Room; registry?: Registry
   const stale = quests.flatMap(quest => quest.members).filter(member => member.strikes > 0).length;
   const errands = room.keepers.flatMap(keeper => keeper.errands).length;
   const solos = room.solos.length;
-  const lists = [errands && plural(errands, "side quest"), solos && plural(solos, "solo")].filter(Boolean).join(" · ");
+  const lists = [errands && plural(errands, "errand"), solos && plural(solos, "solo")].filter(Boolean).join(" · ");
   const review = <span>Review <b>{room.review.waiting} of {room.review.budget}</b></span>;
   const summary = keepers.map(({ member, mood }) => `${registry ? characterName(registry, member) : "A Keeper"} is ${mood === "waiting" ? "waiting" : mood === "working" ? "working" : "idle"} at the table`).join("; ") || "No Keeper at the table";
   return <div className="rm-sline" role="group" aria-label="Status" data-sec="status">

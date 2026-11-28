@@ -102,7 +102,7 @@ describe("Tavern page surfaces", () => {
     const slot = await page();
     await slot.findByRole("heading", { name: /The quest board/ });
     expect(slot.container.querySelector('[data-thread-chat], [data-composer]')).toBeNull();
-    expect(slot.getByRole("heading", { name: /Side quests/ })).toBeTruthy();
+    expect(slot.getByRole("heading", { name: /^Errands/ })).toBeTruthy();
     expect(slot.getByRole("heading", { name: /Review queue/ })).toBeTruthy();
   });
   it("keeps age, readable quest, Keeper and held work in collapsed ask summaries", async () => {
@@ -153,7 +153,7 @@ describe("Tavern page surfaces", () => {
     expect(slot.container.querySelectorAll(".tv-hearth .tavern-crest").length).toBe(registry.characters.length);
     const activity = slot.container.querySelector(".tv-empty-fold") as HTMLDetailsElement;
     expect(activity.open).toBe(false);
-    for (const heading of slot.getAllByRole("heading", { name: /Needs you|Decided for you|Side quests|Solos|Returned|Recent events/ })) expect(activity.contains(heading)).toBe(true);
+    for (const heading of slot.getAllByRole("heading", { name: /Needs you|Decided for you|Errands|Solos|Returned|Recent events/ })) expect(activity.contains(heading)).toBe(true);
     fireEvent.click(start);
     await waitFor(() => expect(slot.inspection.navigateCalls).toContainEqual({ method: "toCompose", options: { projectId: "p1", focusPrompt: true } }));
     expect(slot.inspection.composer.text).toContain("Move Vault safely");

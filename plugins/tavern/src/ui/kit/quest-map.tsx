@@ -12,6 +12,7 @@ import { buildQuestGraph, gutterFits, gutterLayout, orderWaypoints, PORT_Y, trai
 export { layoutWaypoints } from "./quest-map-layout";
 import { verifiedOf, verifiedWords } from "./rows";
 import { StatusPill } from "./primitives";
+import { SideQuestLine } from "./side-quest";
 
 type WaypointView = BoardQuestSummary["waypoints"][number];
 
@@ -202,13 +203,14 @@ function QuestRoute({ quest, mode, dealt = false, memberCredits: credits, stretc
           const proof = w.state === "accepted" ? `Accepted by ${w.acceptedBy ?? "the Keeper"}; no Warden check`
             : !credit && verifiedWaypoint(w) ? `Verified by ${verifier ? memberName(verifier, registry.data ?? { classes: [], characters: [] }) : "a Warden"}` : null;
           const ask = askId && onOpenAsk && <button type="button" className="btn sm wp-ask" aria-label={`Answer ask: ${w.title}`} onClick={() => onOpenAsk(askId)}><Glyph name="ask" />Answer ask</button>;
+          const side = w.sideQuest && <SideQuestLine side={w.sideQuest} />;
           if (!layout) return <li key={w.id} className={`wp${settled(w) ? " settled" : ""}${w.state === "doing" ? " cur" : ""}${yourMove ? " your-move" : ""}`}>
             <span className="qm-crest" aria-hidden="true"><Mark owner={owner} size={20} /></span>
             <div className="qm-row-text" data-content><b>{w.title}</b>
               <span className="qm-row-meta m">{credit || (yourMove ? "Your move" : owner.kind === "outside" ? `Waits on ${ownerName}` : ownerName)}{showChecks && <> · <span className="wp-check">{checkWord(w)}</span></>} · {timing}{mode === "tale" && !credits && ` · ${w.evidenceCount} evidence`}</span>
               {proof && <span className="qm-row-meta m">{proof}</span>}
               {w.rejectedReason && <span className="qm-row-meta m">Rejected: {w.rejectedReason}</span>}
-              {w.resolutionReason && <span className="qm-row-meta m">{w.resolutionReason}</span>}{ask}
+              {w.resolutionReason && <span className="qm-row-meta m">{w.resolutionReason}</span>}{ask}{side}
             </div>
             {!(mode === "plan" && w.state === "planned") && <StatusPill status={w.state} mark={w.state === "done" ? "·" : undefined}>{waypointLabel(w.state)}</StatusPill>}
           </li>;
@@ -232,6 +234,7 @@ function QuestRoute({ quest, mode, dealt = false, memberCredits: credits, stretc
               {w.resolutionReason && <p className="qm-detail m" data-content>{w.resolutionReason}</p>}
               {!w.resolutionReason && w.state === "done" && <span className="sr">{resolutionWords(w)}</span>}
               {ask}
+              {side}
             </div>
           </li>;
         })}

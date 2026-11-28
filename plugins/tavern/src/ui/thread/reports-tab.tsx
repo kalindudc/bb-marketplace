@@ -58,7 +58,7 @@ function ErrandReports({ memberThreadId }: { memberThreadId: string }) {
   return <div className="tavern tv-reports"><div className="rv-reps">
     <header className="rv-reps-h">
       {who ? <Crest {...who} size={28} /> : <span />}
-      <div className="rv-reps-who"><b>{name}</b><span className="m">{who && <>{who.cls.label} <span className="anc">{who.cls.plain}</span> · </>}{["Side quest (errand)", reports.data ? plural(list.length, "report") : null].filter(Boolean).join(" · ")}</span></div>
+      <div className="rv-reps-who"><b>{name}</b><span className="m">{who && <>{who.cls.label} <span className="anc">{who.cls.plain}</span> · </>}{["Errand", reports.data ? plural(list.length, "report") : null].filter(Boolean).join(" · ")}</span></div>
       <button type="button" className="lnk-btn act" title={`Open ${name}’s thread`} onClick={() => navigate.toThread(memberThreadId)}><span>Open thread</span><OpensMark /></button>
     </header>
     <QueryState error={reports.error} loading={reports.isLoading} retry={() => void reports.refetch()} label="the reports" skeleton={<>{Array.from({ length: rows }, (_, i) => <SkReport key={i} section />)}</>} />

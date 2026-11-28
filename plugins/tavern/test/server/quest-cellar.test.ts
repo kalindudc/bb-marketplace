@@ -29,7 +29,7 @@ describe("quest cellar threads", () => {
     f.threads.set("errand", makeThreadResponse({ id: "errand", status: "active" }));
     f.k.store.put("members", "lead", { ...f.k.member("lead")!, displayName: "Moss" });
     const result = await f.runtime.archiveBoardQuests([f.q.id], true);
-    expect(result.notes).toEqual(["Moss stays: it has a side quest out"]);
+    expect(result.notes).toEqual(["Moss stays: it has an errand out"]);
     expect(f.archive).toHaveBeenCalledExactlyOnceWith({ threadId: "child" });
   });
   it.each(["done", "failed", "released"] as const)("does not keep a Keeper open for a %s side quest", async status => {

@@ -83,6 +83,7 @@ export const tags = {
 };
 
 export const registrySchema = z.object({
+  showCharacters: z.boolean().optional(),
   ambientMotion: z.enum(["calm", "lively", "off"]).optional(),
   voice: voiceModeSchema.optional(),
   levels: z.boolean().optional(),
@@ -95,9 +96,16 @@ export const registrySchema = z.object({
   problems: z.array(z.object({ path: z.string(), message: z.string() })),
 });
 
+const sideQuestSchema = z.object({
+  linkId: id, leadName: z.string(), state: leadLinkSchema.shape.state, error: z.string().optional(),
+  quest: z.object({ id, title: z.string(), phase: z.enum(PHASES) }).nullable(),
+});
+export type SideQuest = z.infer<typeof sideQuestSchema>;
+
 /** A waypoint with its live state, derived from the linked journal entries of its owner. */
 export const waypointViewSchema = waypointSchema.extend({
   askId: id.optional(),
+  sideQuest: sideQuestSchema.optional(),
   // added by Builder B: contact is a server-recorded fact, not a plan-author assertion.
   gate: gateRecordSchema.nullable().optional(),
   state: z.enum(WAYPOINT_STATES),
@@ -127,12 +135,9 @@ export const boardQuestSummarySchema = boardQuestSchema.extend({
   plan: planSchema.nullable(),
   leadPlanLane: z.enum(["keeper", "user"]).optional(),
   leadChain: z.object({
-    seat: z.object({ parentQuestId: id, parentTitle: z.string(), limits: leadEnvelopeSchema,
+    seat: z.object({ parentQuestId: id, parentTitle: z.string(), parentKeeperThreadId: threadId, limits: leadEnvelopeSchema,
       parentDecisions: z.array(z.string()), authority: questAuthorityViewSchema.shape.rows }).optional(),
-    children: z.array(z.object({ linkId: id, leadName: z.string(), waypointTitle: z.string(), checkState: z.enum(WAYPOINT_STATES).nullable(),
-      state: leadLinkSchema.shape.state, error: z.string().optional(),
-      quest: z.object({ id, title: z.string(), phase: z.enum(PHASES), party: z.number().int().nonnegative() }).nullable() })),
-    asks: z.array(z.object({ id, title: z.string(), questId: id })),
+    children: z.array(sideQuestSchema.extend({ waypointTitle: z.string(), current: z.boolean() })),
   }).optional(),
   waypoints: z.array(waypointViewSchema),
   members: z.array(memberSchema),
@@ -560,7 +565,7 @@ export const rpcContract = defineContract({
     output: z.object({ count: z.number().int().nonnegative() }),
     tags: () => [tags.attentionCount(), tags.room(), tags.settings()],
   },
-  // added by Builder C: directive digests and side quests need reports without a board quest.
+  // Directive digests and errands can have reports outside a board quest.
   reports: {
     input: z.object({ ids: z.array(id).max(30).default([]), memberThreadId: threadId.nullable().default(null) }).strict(),
     output: z.object({ reports: z.array(reportSchema), pullRequests: z.array(pullRequestSchema).optional() }),

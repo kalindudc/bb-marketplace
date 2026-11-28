@@ -67,7 +67,7 @@ function layoutMap(picture: ReturnType<typeof mapPicture>, registry: Registry, k
     const keeper = crossParty && m?.keeperThreadId ? keepers.get(m.keeperThreadId) : undefined;
     if (n.kind === "member" && m) return memberSub(registry, m, n.sub, keeper);
     if (n.kind === "errand" && m) {
-      const task = `Side quest · ${m.title ?? m.state}`;
+      const task = `Errand · ${m.title ?? m.state}`;
       return keeper ? memberSub(registry, m, task, keeper) : task;
     }
     if (n.kind === "returned" && n.node?.quest) { const q = n.node.quest; const v = verifiedOf(q); return `${q.archivedAt != null ? "Archived · " : ""}${phaseWord(q.phase)}${v ? ` · ${verifiedWords(v)}` : ""} · ${timeAgo(q.endedAt ?? q.updatedAt, now)}`; }
@@ -245,7 +245,7 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   const order = (m: Member) => m.state === "failed" ? 0 : m.state === "working" ? 1 : m.state === "waiting" ? 2 : 3;
   for (const n of [...members].sort((a, b) => order(a.member) - order(b.member))) {
     const m = n.member;
-    rows.push({ key: n.id, tone: m.state === "failed" ? "bad" : m.strikes > 0 ? "bad" : m.state === "working" ? "work" : m.engagement === "resting" ? "done" : "wait", member: m, title: `${n.label} · ${m.doing ?? m.title ?? m.state}`, place: n.kind === "errand" ? "Side quest" : quest(n.questId)?.short ?? "", sub: memberSub(registry, m, n.detail, crossPartyList && m.keeperThreadId ? keepers.get(m.keeperThreadId) : undefined), run: () => navigate.toThread(m.threadId), label: `Open ${n.label}'s thread` });
+    rows.push({ key: n.id, tone: m.state === "failed" ? "bad" : m.strikes > 0 ? "bad" : m.state === "working" ? "work" : m.engagement === "resting" ? "done" : "wait", member: m, title: `${n.label} · ${m.doing ?? m.title ?? m.state}`, place: n.kind === "errand" ? "Errand" : quest(n.questId)?.short ?? "", sub: memberSub(registry, m, n.detail, crossPartyList && m.keeperThreadId ? keepers.get(m.keeperThreadId) : undefined), run: () => navigate.toThread(m.threadId), label: `Open ${n.label}'s thread` });
   }
   const archivedRows: ListRow[] = [];
   for (const k of room.keepers) {
@@ -268,7 +268,7 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   const moreQuests = quests.filter((q) => !segQuests.includes(q));
   const focusQuest = quest(focus ?? undefined);
   const shownNote = `${drawnCount} of ${plural(drawable.length, "quest")} · ${drawable.length - drawnCount} hidden`;
-  const caption = `${shownActive.length > 0 ? `Focus plus one hop${focusQuest ? `: ${focusQuest.short}` : ""} · other quests folded into counts` : showReturned ? "Keepers and finished quests" : "Keepers and side quests"}${filtered ? ` · ${shownNote}` : ""}`;
+  const caption = `${shownActive.length > 0 ? `Focus plus one hop${focusQuest ? `: ${focusQuest.short}` : ""} · other quests folded into counts` : showReturned ? "Keepers and finished quests" : "Keepers and active quests"}${filtered ? ` · ${shownNote}` : ""}`;
   const exportAs = async (kind: "png" | "svg" | "outline") => {
     const el = ref.current;
     if (!el) return;
@@ -311,7 +311,7 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
     <h1 className="sr">The map (connections)</h1>
     <div className="tv-map-controls">
       <div className="tv-sline">
-        <div className="tv-hero"><b className="num">{room.keepers.length}</b><span>Keeper{room.keepers.length === 1 ? "" : "s"} · {quests.length} active quest{quests.length === 1 ? "" : "s"} · {errands.length} side quest{errands.length === 1 ? "" : "s"}</span></div>
+        <div className="tv-hero"><b className="num">{room.keepers.length}</b><span>Keeper{room.keepers.length === 1 ? "" : "s"} · {quests.length} active quest{quests.length === 1 ? "" : "s"} · {errands.length} errand{errands.length === 1 ? "" : "s"}</span></div>
         {waitingOn && <div className="tv-facts"><span className="tv-facts-long"><span className="tv-nowrap">waiting on</span> <b>{waitingOn}</b></span></div>}
         <span className="tv-sp" />
         {quests.length > 0 && <div className="segc tv-mapfocus" role="group" aria-label="Focus on a quest">{segQuests.map((q) => <button type="button" className={`seg ${hidden.has(q.id) ? "tv-seg-off" : ""}`} key={q.id} aria-pressed={focus === q.id} onClick={() => setFocus(q.id)} title={hidden.has(q.id) ? `Hidden by your filter. Focus on ${q.title} to show it again` : `Focus on ${q.title}`} aria-label={`Focus on ${q.title} · ${phaseWord(q.phase)} · ${q.move.text}${hidden.has(q.id) ? " · hidden by your filter" : ""}`}>{q.short}</button>)}
@@ -358,7 +358,7 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
           note={quests.length === 0 ? <p className="tv-map-quiet"><PageGlyph name="map" size={16} /><span><b>No active quests.</b> {room.keepers.some(k => !k.archived) ? "Live Keepers stay on the map." : "There are no live Keepers to draw."}</span></p> : shownActive.length === 0 ? <p className="tv-map-quiet"><PageGlyph name="map" size={16} /><span><b>Every active quest is hidden by your filters.</b></span><button type="button" className="lnk act tv-clear" onClick={clearFilters}>Clear filters</button></p> : undefined}>
           <MapPicture layout={layout} registry={registry} setFocus={setFocus} />
         </MapViewport>
-        <figcaption className="tv-mapcap"><span className="tv-mapkey"><span><PageGlyph name="you" size={12} className="tv-mn-you" /><span>your move</span></span><span><span className="tv-key-dash" /><span>outside or side quest</span></span><span><span className="tv-key-hot" /><span>focused</span></span></span><span className="tv-sp" /><span className="tv-mv-hint">Drag to move · Ctrl or ⌘ and scroll to zoom · 0 fits</span></figcaption>
+        <figcaption className="tv-mapcap"><span className="tv-mapkey"><span><PageGlyph name="you" size={12} className="tv-mn-you" /><span>your move</span></span><span><span className="tv-key-dash" /><span>outside or errand</span></span><span><span className="tv-key-hot" /><span>focused</span></span></span><span className="tv-sp" /><span className="tv-mv-hint">Drag to move · Ctrl or ⌘ and scroll to zoom · 0 fits</span></figcaption>
       </figure>
       {list}
     </div>

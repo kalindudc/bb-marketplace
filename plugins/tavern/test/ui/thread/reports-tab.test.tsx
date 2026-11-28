@@ -48,7 +48,7 @@ describe("Report card and report tab", () => {
     const errand = { ...fixtureReport, id: "report-9", boardQuestId: null, waypointId: null, outcome: "Lead time is 70 minutes." };
     const slot = renderSlot(tab as never, { threadId: "keeper-1", environment: null, params: { memberThreadId: "member-1", questId: null } }, { rpc: { reports: () => ({ reports: [errand, rawId] }), registry: () => fixtureRegistry, crests: () => ({ crests: [] }) } });
     await slot.findByText(/Lead time is 70 minutes/);
-    expect(slot.getByText(/Side quest \(errand\) · 1 report/)).toBeTruthy();
+    expect(slot.getByText(/Errand · 1 report/)).toBeTruthy();
     expect(slot.container.textContent).not.toMatch(/Checked another thread/);
     slot.lifecycle.unmount();
   });

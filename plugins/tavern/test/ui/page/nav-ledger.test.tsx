@@ -37,7 +37,20 @@ it("counts a plan and review in both the room and quest, and gives each quest it
   expect(slot.getAllByRole("button", { name: "Wren, Keeper: open thread" })).toHaveLength(2);
   fireEvent.click(quest.nextElementSibling!);
   expect(slot.inspection.navigateCalls).toContainEqual({ method: "toThread", threadId: audit.keeperThreadId });
-  expect(slot.container.querySelector("[title], svg > title")).toBeNull();
+  expect(slot.container.querySelector("[title]:not(.tv-skeeper-name), svg > title")).toBeNull();
+});
+
+it("opens the lead Keeper's thread from the side quest's conversation shortcut", async () => {
+  const root = richRoom.keepers.find(k => k.member.threadId === audit.keeperThreadId)!;
+  const child = { ...audit, leadChain: { seat: { parentQuestId: "parent", parentTitle: "Restore the harbor bell",
+    parentKeeperThreadId: "lead", limits: { members: 1, rangers: 0, depth: 1 }, parentDecisions: [], authority: [] }, children: [] } };
+  const lead = { ...root, member: { ...root.member, threadId: "lead", displayName: "Thistlewick of Lantern Hall" }, boardQuests: [] };
+  const keepers = [...room.keepers.map(k => ({ ...k, boardQuests: k.boardQuests.map(q => q.id === child.id ? child : q) })), lead];
+  const slot = mount({ ...room, keepers });
+  const shortcut = await slot.findByRole("button", { name: "Thistlewick of Lantern Hall, lead Keeper: open thread" });
+  expect(within(shortcut).getByText("Thistlewick of Lantern Hall").getAttribute("title")).toBe("Thistlewick of Lantern Hall");
+  fireEvent.click(shortcut);
+  expect(slot.inspection.navigateCalls).toContainEqual({ method: "toThread", threadId: "lead" });
 });
 
 it.each([false, true])("shows a review-only quest badge when room details are clipped: %s", async clipped => {

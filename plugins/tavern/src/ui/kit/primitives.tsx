@@ -19,7 +19,7 @@ import { PlacementFacts } from "./placement";
 
 export const VOCABULARY = {
   quest: ["Quest", "goal"], board: ["Board quest", "goal"], journal: ["Journal", "checklist"], party: ["The party", "team"], map: ["Quest map", "greenlight"],
-  ledger: ["The Keeper’s ledger", "what the lead knows"], ledgerShort: ["Ledger", "lead state"], tale: ["The tale", "credits"], errand: ["Side quest", "errand"],
+  ledger: ["The Keeper’s ledger", "what the lead knows"], ledgerShort: ["Ledger", "lead state"], tale: ["The tale", "credits"], errand: ["Errand", "outside a quest"],
   keeper: ["Keeper", "lead"], ranger: ["Ranger", "scout"], smith: ["Smith", "builder"], warden: ["Warden", "checker"], wanderer: ["Wanderer", "general"],
   road: ["On the road", "working"], table: ["At the table", "idle or waiting"], rest: ["Resting", "done"], decided: ["Decided for you", "reversible calls"],
   questBoard: ["The quest board", "goals"], commonRoom: ["The common room", "home"], connections: ["The map", "connections"], closing: ["Closing time", "away"],
@@ -27,7 +27,7 @@ export const VOCABULARY = {
 } as const;
 /** Plural forms, where the word has one; `Vocabulary` and `vocab` fall back to the singular. */
 export const VOCABULARY_PLURAL: Partial<Record<keyof typeof VOCABULARY, readonly [string, string]>> = {
-  quest: ["Quests", "goals"], board: ["Board quests", "goals"], journal: ["Journals", "checklists"], errand: ["Side quests", "errands"],
+  quest: ["Quests", "goals"], board: ["Board quests", "goals"], journal: ["Journals", "checklists"], errand: ["Errands", "outside quests"],
   keeper: ["Keepers", "leads"], ranger: ["Rangers", "scouts"], smith: ["Smiths", "builders"], warden: ["Wardens", "checkers"], wanderer: ["Wanderers", "general"],
 };
 export type VocabWord = keyof typeof VOCABULARY;

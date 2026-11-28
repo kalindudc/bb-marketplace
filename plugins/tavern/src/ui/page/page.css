@@ -270,7 +270,7 @@
 .tavern.tv-page .tv-sentry[data-attention] { border-left: 2px solid var(--attention); }
 .tavern.tv-page :is(.tv-snav, .tv-squest, .tv-skeeper, .tv-sfold, .tv-slink, .tv-spicker) { min-width: 0; border: 0; background: transparent; text-align: left; }
 .tavern.tv-page :is(.tv-snav, .tv-sfold, .tv-slink, .tv-spicker) { display: flex; align-items: center; gap: 8px; width: 100%; min-height: var(--tavern-control-standard); padding: 4px 8px; color: var(--foreground); }
-.tavern.tv-page :is(.tv-snav-l, .tv-squest-t, .tv-skeeper-name, .tv-home-facts, .tv-spicker strong) { min-width: 0; overflow-wrap: anywhere; }
+.tavern.tv-page :is(.tv-snav-l, .tv-squest-t, .tv-home-facts, .tv-spicker strong) { min-width: 0; overflow-wrap: anywhere; }
 .tavern.tv-page .tv-snav-l { flex: 1; }
 .tavern.tv-page :is(.tv-snav, .tv-sfold) > .tv-g { color: var(--tv-nav-muted); }
 .tavern.tv-page .tv-squest { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; grid-template-areas: "c t t" "c p a"; gap: 4px 6px; align-content: center; align-items: center; width: 100%; min-height: 48px; padding: 4px 8px; }
@@ -287,7 +287,7 @@
 .tavern.tv-page .tv-squest-n .tv-g { color: var(--attention); }
 .tavern.tv-page .tv-skeeper { display: grid; align-content: center; justify-items: center; gap: 1px; width: 58px; min-height: 44px; padding: 4px; border-left: 1px solid var(--tv-nav-hair); color: var(--tv-nav-muted); font-size: 11px; text-align: center; }
 .tavern.tv-page .tv-skeeper > :first-child { display: flex; align-items: center; gap: 3px; }
-.tavern.tv-page .tv-skeeper-name { max-width: 100%; }
+.tavern.tv-page .tv-skeeper-name { min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tavern.tv-page .tv-sfold { font-size: 12px; font-weight: 650; }
 .tavern.tv-page .tv-sfold .tv-snav-c { margin-left: auto; font-weight: 400; }
 .tavern.tv-page .tv-sdone-s { grid-area: p; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--tv-nav-muted); }
@@ -861,6 +861,7 @@
 
 /* ---------- Archive: quiet row actions, the inline receipt, the fold ---------- */
 .tavern.tv-page .tv-frow { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-width: 0; }
+.tavern.tv-page .tv-frow > .side-quest-parent { margin-inline-start: 12px; }
 .tavern.tv-page .tv-frow + .tv-frow { border-top: 1px dashed var(--tavern-line); }
 .tavern.tv-page .tv-qbtn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: var(--tavern-control-compact); min-height: var(--tavern-control-compact); padding: 0 6px; border: 0; background: transparent; color: var(--tv-text-2); font-size: 11px; cursor: pointer; }
 .tavern.tv-page .tv-qbtn:hover, .tavern.tv-page .tv-qbtn:focus-visible { color: var(--foreground); background: var(--tavern-hover); }

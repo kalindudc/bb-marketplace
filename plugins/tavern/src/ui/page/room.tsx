@@ -136,7 +136,7 @@ function useSinceLastVisit() {
   useEffect(() => { try { window.localStorage.setItem(SEEN_KEY, String(Date.now())); } catch { /* Arrival cues are optional without local storage. */ } }, []);
   return since;
 }
-export function SideQuests({ room, registry }: { room: Room; registry: Registry }) {
+export function Errands({ room, registry }: { room: Room; registry: Registry }) {
   const navigate = useBbNavigate();
   const errands = room.keepers.flatMap((k) => k.errands.map((m) => ({ m, keeper: k.member })));
   const live = errands.filter(({ m }) => !hasEndedEngagement(m));
@@ -145,9 +145,9 @@ export function SideQuests({ room, registry }: { room: Room; registry: Registry 
   if (!errands.length) return null;
   return <Section title={<Vocabulary word="errand" plural />} count={`${live.length} out`} aside="kept apart from quests" level={3}>
     <div className="tv-errands">{live.map(({ m, keeper }) => <Fragment key={m.threadId}><button type="button" className="tv-erow act" onClick={() => navigate.toThread(m.threadId)} title={`Open ${characterName(registry, m)}'s thread`}>
-      <CrestOf member={m} registry={registry} size={16} /><span className="tv-erow-t"><b>{m.title ?? m.doing ?? "Side quest"}</b> <span className="m">· {characterName(registry, m)} for {characterName(registry, keeper)}</span></span><StateMark tone={m.state === "failed" ? "bad" : m.state === "working" ? "work" : "wait"}>{memberActivityWord(m)}</StateMark><OpensMark />
+      <CrestOf member={m} registry={registry} size={16} /><span className="tv-erow-t"><b>{m.title ?? m.doing ?? "Errand"}</b> <span className="m">· {characterName(registry, m)} for {characterName(registry, keeper)}</span></span><StateMark tone={m.state === "failed" ? "bad" : m.state === "working" ? "work" : "wait"}>{memberActivityWord(m)}</StateMark><OpensMark />
     </button><PlacementFacts placement={m.placement} memberName={characterName(registry, m)} /></Fragment>)}
-      {done.length > 0 && <details className="tv-fold-d" open={doneOpen} onToggle={(event) => { const now = (event.currentTarget as HTMLDetailsElement).open; if (now !== doneOpen) setDoneOpen(now); }}><summary className="tv-fold act"><ExpandsMark open={doneOpen} />{done.length} done · {done.map(({ m }) => m.title ?? characterName(registry, m)).join(", ")}</summary>{done.map(({ m }) => <Fragment key={m.threadId}><button type="button" className="tv-erow done act" onClick={() => navigate.toThread(m.threadId)}><CrestOf member={m} registry={registry} size={16} /><span className="tv-erow-t"><b>{m.title ?? "Side quest"}</b> <span className="m" data-content>· {m.doing}</span></span><StateMark tone="done">done</StateMark><OpensMark /></button><PlacementFacts placement={m.placement} memberName={characterName(registry, m)} /></Fragment>)}</details>}
+      {done.length > 0 && <details className="tv-fold-d" open={doneOpen} onToggle={(event) => { const now = (event.currentTarget as HTMLDetailsElement).open; if (now !== doneOpen) setDoneOpen(now); }}><summary className="tv-fold act"><ExpandsMark open={doneOpen} />{done.length} done · {done.map(({ m }) => m.title ?? characterName(registry, m)).join(", ")}</summary>{done.map(({ m }) => <Fragment key={m.threadId}><button type="button" className="tv-erow done act" onClick={() => navigate.toThread(m.threadId)}><CrestOf member={m} registry={registry} size={16} /><span className="tv-erow-t"><b>{m.title ?? "Errand"}</b> <span className="m" data-content>· {m.doing}</span></span><StateMark tone="done">done</StateMark><OpensMark /></button><PlacementFacts placement={m.placement} memberName={characterName(registry, m)} /></Fragment>)}</details>}
     </div>
   </Section>;
 }
@@ -166,7 +166,7 @@ export function Solos({ room, registry }: { room: Room; registry: Registry }) {
 const EMPTY_SECTIONS = [
   ["Needs you", "Asks waiting on you, oldest first, answered in place."],
   ["Decided for you", "Reversible calls a Keeper made alone, each with Undo."],
-  ["Side quests", "Quick errands a Keeper sends out, kept apart from quests."],
+  ["Errands", "Quick jobs a Keeper sends out, kept apart from quests."],
   ["Solos", "Your own typed threads that belong to no Keeper."],
   ["Returned", "Finished quests, each with its tale and verified loot."],
   ["What happened", "Steers, reports, answers and decisions, in plain words."],
@@ -227,7 +227,7 @@ function RoomActivity({ room, registry }: { room: Room; registry: Registry }) {
     <HearthBand room={room} registry={registry} />
     <SinceVisit visit={room.sinceVisit} foldOnNarrow={asks > 0} />
     <RoomAwayNotes room={room} registry={registry} />
-    <TellKeepers keepers={room.keepers} registry={registry} />
+    <TellKeepers keepers={room.keepers.filter(k => !k.member.leadLinkId)} registry={registry} />
     <ArchiveReceiptLine api={api} />
     {(asks > 0 || attentionView(room.attention).heldByYou > 0) && <div data-sec="needs"><NeedsYouQueue room={room} registry={registry} /></div>}
     <Rail calm={!asks && !attentionView(room.attention).new}
@@ -243,7 +243,7 @@ function RoomActivity({ room, registry }: { room: Room; registry: Registry }) {
           {folded > 0 && <button type="button" className="tv-fold act" aria-expanded={showCellar} onClick={() => setShowCellar(!showCellar)}><ExpandsMark open={showCellar} /><span>{showCellar ? "Fold the cellar's events" : `${plural(folded, "event")} from quests in the cellar folded out`}</span></button>}
         </div>
         {(errands > 0 || room.solos.length > 0) && <div id="rm-lists" className="rm-stackcol">
-          {errands > 0 && <RoomFold name="errands" label="Side quests" count={errands}><div data-sec="errands"><SideQuests room={room} registry={registry} /></div></RoomFold>}
+          {errands > 0 && <RoomFold name="errands" label="Errands" count={errands}><div data-sec="errands"><Errands room={room} registry={registry} /></div></RoomFold>}
           {room.solos.length > 0 && <RoomFold name="solos" label="Solos" count={room.solos.length}><div data-sec="solos"><Solos room={room} registry={registry} /></div></RoomFold>}
         </div>}
       </div>}

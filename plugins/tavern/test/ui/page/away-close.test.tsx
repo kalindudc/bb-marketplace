@@ -37,6 +37,18 @@ const closedState = (revision: number, over: Partial<AwayControl> = {}) => contr
 function control(over: Partial<AwayControl> = {}): AwayControl {
   return { revision: 0, window: null, status: { closed: false, until: null, dueBack: false, windowId: null }, watchedCount: 2, heldCount: 0, pendingStops: [], resumeRequired: [], ...over };
 }
+it("does not ask for a separate Closing time plan for a side quest", () => {
+  const [keeper, ...others] = open.keepers;
+  const parent = keeper!.boardQuests[0]!;
+  const child = { ...parent, id: "child", phase: "build" as const, leadChain: { children: [], seat: {
+    parentQuestId: parent.id, parentTitle: parent.title, parentKeeperThreadId: keeper!.member.threadId,
+    limits: { members: 1, rangers: 0, depth: 1 }, parentDecisions: [], authority: [],
+  } } };
+  const room = { ...open, keepers: [{ ...keeper!, boardQuests: [...keeper!.boardQuests, child] }, ...others] };
+  expect(activeQuests(room).some(q => q.id === child.id)).toBe(true);
+  expect(workingQuests(room).map(q => q.id)).toEqual(workingQuests(open).map(q => q.id));
+});
+
 const inPlay = (m: Pick<Room["solos"][number], "engagement" | "state">) => m.engagement === "active" && m.state !== "failed";
 const vault = scenes.richRoom.keepers.flatMap((k) => k.boardQuests).find((q) => q.id === "vault")!;
 const vaultOnRoad = vault.members.filter((m) => m.role === "member" && !m.errand && inPlay(m)).length;
@@ -63,7 +75,7 @@ describe("what closing would do (the confirm's lines)", () => {
       const none = closePlan(open, control({ eligibleByQuest: [] , soloCount: 0 }), opts);
       expect(none.unattached).toBeNull();
     });
-    it("shows the side-quest rule without a number while the server counts side quests inside their quest, and with one when it splits them", () => {
+    it("shows the attached errand rule without a number while the server counts them inside the quest, and with one when it splits them", () => {
       const lumped = closePlan(open, control({ eligibleByQuest: [{ questId: "audit", members: 3, watchedCount: 0 }] }), opts);
       expect(lumped.sideQuests.pausing).toBeNull();
       const split = closePlan(open, control({ eligibleByQuest: [{ questId: "audit", members: 3, watchedCount: 0, errands: 1 } as never, { questId: "vault", members: 2, watchedCount: 0, errands: 0 } as never] }), opts);
@@ -83,8 +95,8 @@ describe("what closing would do (the confirm's lines)", () => {
     expect(plan.unattached).toBe("Errands that belong to no quest pause: 1, 1 of them watched.");
     expect(plan.solos.text).toBe("Solo threads keep running. Where a solo is guarded, the stop list still applies; a watched solo isn't stopped, only watched.");
     expect(plan.solos.running).toBe(scenes.richRoom.solos.filter((m) => inPlay(m)).length);
-    // Each kind is said once: the side-quest line counts only side quests whose quest pauses; the errands line carries the rest.
-    expect(plan.sideQuests.text).toBe("Side quests follow their quest: a paused or unselected quest pauses its side quests.");
+    // Each kind is said once: the attached errand line counts only errands whose quest pauses; the unattached line carries the rest.
+    expect(plan.sideQuests.text).toBe("Attached errands follow their quest: a paused or unselected quest pauses its errands.");
     expect(plan.sideQuests.text).not.toMatch(/no quest/);
     const attachedPausing = open.keepers.flatMap((k) => k.errands).filter((m) => inPlay(m) && (m.boardQuestId === "audit" || m.boardQuestId === "rollout")).length;
     expect(plan.sideQuests.pausing).toBe(attachedPausing);

@@ -464,7 +464,7 @@ export class KeeperStore {
     return rows.map(row => this.decode("leadLinks", row.data));
   }
   leadLinksBy(field: "parentQuestId" | "childQuestId", questId: string): LeadLink[] {
-    const rows = this.db.prepare(`SELECT data FROM tavern_records WHERE kind='leadLinks' AND json_extract(data,'$.${field}')=?`).all(questId) as { data: string }[];
+    const rows = this.db.prepare(`SELECT data FROM tavern_records WHERE kind='leadLinks' AND json_extract(data,'$.${field}')=? ORDER BY rowid`).all(questId) as { data: string }[];
     return rows.map(row => this.decode("leadLinks", row.data));
   }
   chainSeats(questId: string): { members: number; rangers: number } {

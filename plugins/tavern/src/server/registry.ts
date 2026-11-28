@@ -31,7 +31,7 @@ const scopeOrder = ["readonly", "checker", "worktree", "keeper", "open"];
 const presetOf = (role: ClassDef) => (typeof role.scope === "string" ? role.scope : role.scope?.preset) ?? scopeForClass(role.id).preset;
 const missing = (e: unknown) => (e as NodeJS.ErrnoException).code === "ENOENT";
 const incompatible = (role: ClassDef, scope: Map<string, Resolved>) => role.characters.filter(id => !(scope.get(keyFor("character", id))?.definition as CharacterDef | undefined)?.classes.includes(role.id));
-function poolError(role: ClassDef, ids: string[]) { return new Error(`Unknown or incompatible character in the ${role.label} pool: ${ids.join(", ")}`); }
+function poolError(label: string, ids: string[]) { return new Error(`Unknown or incompatible character in the ${label} pool: ${ids.join(", ")}`); }
 
 function atomicWrite(path: string, raw: string) {
   mkdirSync(dirname(path), { recursive: true });
@@ -87,7 +87,7 @@ export class Registry {
         if (row.entry.kind !== "class" || row.entry.record.format !== "patch") continue;
         const role = row.definition as ClassDef, invalid = incompatible(role, resolved);
         // A broken pool blocks hiring, not the patch's scope or any other saved field.
-        if (invalid.length) poolProblems.set(key, { path: row.entry.path, message: poolError(role, invalid).message });
+        if (invalid.length) poolProblems.set(key, { path: row.entry.path, message: poolError(role.label, invalid).message });
       }
       layers.push({ source, root, entries, byKey, paths, resolved, poolProblems });
     }
@@ -234,19 +234,21 @@ export class Registry {
 
   private validateChange(kind: RegistryKind, id: string, where: ClassTarget, path: string, text: string | null, baseline: Loaded) {
     const result = this.load(where.projectPath, new Map([[path, text]]));
-    const failure = result.snapshot.problems.find(p => p.path === path);
+    const poolProblems = new Set(result.layers.at(-1)?.poolProblems.values());
+    const failure = result.snapshot.problems.find(p => p.path === path && !poolProblems.has(p));
     if (failure) throw new Error(failure.message);
     for (const layer of result.layers.filter(l => l.source !== "shipped" && (where.target === "global" || l.source === "project"))) {
       const previous = baseline.layers.find(old => old.source === layer.source);
-      for (const [key, problem] of layer.poolProblems) {
-        if (!same(previous?.poolProblems.get(key), problem)) throw new Error(problem.message);
-      }
-      for (const row of layer.resolved.values()) {
+      for (const [key, row] of layer.resolved) {
         if (row.entry.kind !== "class") continue;
         const role = row.definition as ClassDef;
         if (kind === "class" ? role.id !== id : !role.characters.includes(id)) continue;
         const invalid = incompatible(role, layer.resolved);
-        if (invalid.length) throw poolError(role, invalid);
+        const saved = previous?.resolved.get(key)?.definition;
+        if (invalid.length) throw poolError((saved as ClassDef | undefined)?.label ?? role.label, invalid);
+      }
+      for (const [key, problem] of layer.poolProblems) {
+        if (!same(previous?.poolProblems.get(key), problem)) throw new Error(problem.message);
       }
     }
     return result;
@@ -278,7 +280,7 @@ export class Registry {
     }
     if (kind === "class" && !changes.length) {
       const invalid = incompatible(definition as ClassDef, s.layer.resolved);
-      if (invalid.length) throw poolError(definition as ClassDef, invalid);
+      if (invalid.length) throw poolError((definition as ClassDef).label, invalid);
     }
     return { definition, text, changes, path: s.path, shadowedBy: s.shadowed ? "project" as const : null };
   }

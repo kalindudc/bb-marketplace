@@ -276,7 +276,7 @@ export const memberSchema = z.object({
   // added by Builder B: a fallback review must never be presented as an independent check.
   checkIndependence: z.enum(["independent", "same-family", "not-established"]).optional(),
   guardPosture: guardPostureSchema.optional(),
-  /** A side quest: a one-off helper hired for an aside, outside any board quest. */
+  /** An errand: a one-off job for an aside, outside any board quest. */
   errand: z.boolean(),
   title: z.string().nullable(),
   state: z.enum(MEMBER_STATES),

@@ -18,6 +18,10 @@ async function closing() {
 }
 it.each(["conclude", "hold", "extensions"])("H1 adopts an upgrade conclude ask before %s", async option => {
   const f = await closing(); putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "wrap" });
+  if (option === "extensions") {
+    const ask = f.k.store.openAsks("lead", f.q.id).find(candidate => candidate.id === f.askId)!;
+    f.k.store.put("asks", ask.id, { ...ask, options: [...ask.options, { id: "extensions", label: "Open extensions or side quests", detail: "", recommended: false }] });
+  }
   await f.runtime.reconcile();
   expect(f.k.quest(f.q.id).phase).toBe("closing");
   expect(f.k.store.events("lead").find(e => e.data.cause === "conclude-open-at-upgrade")?.data.receipt).toMatchObject({ id: f.askId });

@@ -7,8 +7,8 @@ import { registerJournal } from "../../src/server/journal";
 import { SettingsStore } from "../../src/server/settings/store";
 import { InsightsReader } from "../../src/server/insights";
 import { setup } from "./runtime-fixture";
-import { planInput, seedQuest } from "./support";
-import { roomSchema } from "../../src/shared/contract";
+import { planInput, putQuestFixture, seedQuest } from "./support";
+import { boardQuestDetailSchema, roomSchema } from "../../src/shared/contract";
 
 const brief = { outcome: "Coordinate two parallel tracks", mode: "make-it-work" as const, outOfScope: "No deployment", doneWhen: "Both checks pass", context: [], questions: [], timeboxMinutes: null };
 const workSlot = (index: number) => ({ classId: "smith", characterId: null, model: null, purpose: `Build track ${index}`, waypointIds: ["w1"] });
@@ -137,13 +137,37 @@ it.each(["new", "legacy"] as const)("shows the renamed parent on a %s forwarded 
   const room = roomSchema.parse(await f.harness.invokeRpc("room", {}));
   expect(room.asks).toContainEqual(row);
   expect(room.attention?.items).toContainEqual(expect.objectContaining({ id: ask.id, title: question }));
-  expect(await f.harness.invokeRpc("boardQuest", { id: f.parent.id })).toMatchObject({ quest: { leadChain: {
-    asks: expect.arrayContaining([expect.objectContaining({ id: ask.id, title: question })]),
-  } } });
+  expect(room.attention?.items.filter(item => item.id === ask.id)).toHaveLength(1);
+  expect(room.keepers.flatMap(keeper => keeper.boardQuests).filter(quest => quest.id === f.child.id)).toMatchObject([
+    { leadChain: { seat: { parentQuestId: f.parent.id, parentTitle: "Restore the harbor bell", parentKeeperThreadId: "lead" } } },
+  ]);
+  expect(await f.harness.invokeRpc("boardQuest", { id: f.parent.id })).toMatchObject({
+    attention: { items: expect.arrayContaining([expect.objectContaining({ id: ask.id, questId: f.child.id, keeperThreadId: f.lead.threadId })]) },
+    asks: expect.arrayContaining([row]),
+  });
+  expect(await f.harness.invokeRpc("decor", { threadId: "lead" })).toMatchObject({ keeperView: { openAsks: [row] } });
   expect(f.k.store.get("asks", ask.id)?.forwardedQuestion).toMatchObject({ parentQuestId: f.parent.id, body });
   expect(f.k.restatement("lead")).toContain(`Bell: harbor: ${body}`);
   expect(await f.harness.invokeRpc("ledger", { threadId: f.lead.threadId })).toMatchObject({ asks: expect.arrayContaining([row]) });
   expect(await f.harness.invokeRpc("awayDigest", {})).toMatchObject({ asks: expect.arrayContaining([expect.objectContaining({ ask: row })]) });
+  await f.answer(ask.id, "wait");
+  expect(f.k.store.get("asks", ask.id)).toMatchObject({ state: "answered", keeperThreadId: f.lead.threadId, boardQuestId: f.child.id });
+  expect(await f.harness.invokeRpc("decor", { threadId: "lead" })).toMatchObject({ keeperView: { openAsks: [] } });
+});
+
+it("projects the current seat beside the waypoint and keeps old attempts in history", async () => {
+  const f = await fixture("warden");
+  const current = f.k.store.get("leadLinks", f.lead.leadLinkId!)!;
+  const previous = { ...f.child, id: "earlier-quest", title: "Earlier check", phase: "stopped" as const, endedAt: f.time() };
+  putQuestFixture(f.k.store, previous.id, previous);
+  f.k.store.put("leadLinks", "earlier-seat", { ...current, id: "earlier-seat", hireToken: "earlier-hire", childQuestId: previous.id, state: "stopped" });
+  f.k.store.put("leadLinks", current.id, { ...current, state: "retiring", cleanupError: "Thread stop not confirmed" });
+  const { quest } = boardQuestDetailSchema.parse(await f.harness.invokeRpc("boardQuest", { id: f.parent.id }));
+  expect(quest.waypoints.find(w => w.id === "w1")).toMatchObject({ sideQuest: { linkId: current.id, state: "retiring",
+    quest: { id: f.child.id, phase: f.child.phase }, error: "Thread stop not confirmed" } });
+  expect(quest.leadChain?.children.find(side => side.linkId === "earlier-seat")).toMatchObject({
+    current: false, quest: { id: previous.id, phase: "stopped" },
+  });
 });
 
 it("cannot use an ordinary greenlight or hire outside the linked child", async () => {
@@ -221,7 +245,7 @@ it.each([["keeper", "reported"], ["warden", "reported"], ["none", "done"]] as co
   }
   expect(f.k.quest(f.child.id)).toMatchObject({ phase: "done", outcome: "concluded" });
   await expect(f.harness.invokeRpc("ledger", { threadId: "lead" })).resolves.toMatchObject({ boardQuests: [
-    expect.objectContaining({ id: f.parent.id, leadChain: { children: [expect.objectContaining({ quest: expect.objectContaining({ id: f.child.id }) })], asks: [] } }),
+    expect.objectContaining({ id: f.parent.id, leadChain: expect.objectContaining({ children: [expect.objectContaining({ quest: expect.objectContaining({ id: f.child.id }) })] }) }),
   ] });
   expect(f.k.summary(f.parent.id).waypoints[0]).toMatchObject({ state, evidenceCount: 1, checkedBy: [] });
   expect(f.k.store.events("lead").filter(event => event.type === "lead.outcome")).toHaveLength(1);

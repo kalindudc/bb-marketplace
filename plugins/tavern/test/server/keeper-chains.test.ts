@@ -185,9 +185,14 @@ it("binds the accepted side choice once, forwards only the exact steer, and retu
   expect(f.k.summary(f.q.id).waypoints[0]?.state).not.toMatch(/reported|verified|done/);
   const draft = { boardQuestId: f.q.id, title: "Guide moved", body: "The guide now lives under /handbook.", links: [], answers: [steer.id] };
   expect(() => f.k.postSummary("lead", { ...draft, childQuestId: f.q.id })).toThrow(/only a side quest/);
-  const answer = f.k.postSummary("lead", { ...draft, childQuestId: child.id });
+  const push = vi.spyOn(f.runtime, "push").mockResolvedValue(undefined);
+  await tools.invokeAgentTool("tavern_summary", { ...draft, childQuestId: child.id }, { threadId: "lead" });
+  expect(push).toHaveBeenCalledExactlyOnceWith("lead", "New Keeper answer", draft.title, undefined, "answer");
+  const answer = f.k.store.all("summaries").find(summary => summary.childQuestId === child.id)!;
   expect(() => f.k.postSummary("lead", { ...draft, childQuestId: child.id })).toThrow(/already has an answer/);
-  expect(searchAnswers(f.k.store, "Guide moved", 10, f.q.id).answers).toMatchObject([{ id: answer.id, childQuestId: child.id }]);
+  expect(() => f.k.postSummary("lead", draft)).toThrow(/already has an answer/);
+  expect(f.k.postSummary("lead", { ...draft, childQuestId: child.id, supersedes: answer.id })).toMatchObject({ supersedes: answer.id });
+  expect(searchAnswers(f.k.store, "Guide moved", 10, f.q.id).answers).toEqual(expect.arrayContaining([expect.objectContaining({ id: answer.id, childQuestId: child.id })]));
 });
 
 it("refuses a side seat in a child despite historical depth settings", async () => {

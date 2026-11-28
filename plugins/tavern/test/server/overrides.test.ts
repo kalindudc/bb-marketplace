@@ -151,6 +151,8 @@ it("keeps a project patch's narrower scope after resetting a supporting characte
   const problem = expect.stringMatching(/incompatible character.*wren/i);
   expect(registry.overrideSheet("class", "smith", project)).toMatchObject({ problem, canReset: true });
   expect(registry.overrides(project)).toMatchObject({ rows: [expect.objectContaining({ id: "smith", canReset: true })], problems: [{ path: file, message: problem }] });
+  expect(() => registry.saveClass("smith", { label: "Draft Smith" }, { ...project, revision: registry.classLayers("smith", projectPath).revision }))
+    .toThrow("Unknown or incompatible character in the Archive Smith pool: wren");
   expect(readFileSync(file, "utf8")).toBe(saved);
   const repair = registry.previewReset("class", "smith", project, "characters");
   expect(repair.widening).toBe(false);

@@ -207,7 +207,6 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
                 : <p className={`lg-move who-${q.move.who}`} title={q.move.text}><span className="lbl">{q.move.who === "you" ? "Your move" : q.move.who === "outside" ? "Waiting outside" : "Next"}</span>{q.move.askId ? <button type="button" className="lnk-btn act mt" onClick={() => revealAsk(threadId, q.move.askId!)} title={q.move.text}>Answer ask: {q.move.text}</button> : <span className="mt">{q.move.text}</span>}</p>}
               {q.plan?.fromSteer && <Clamp className="lg-steer" lines={1} text={`From your steer, ${clockTime(q.plan.fromSteer.at)}: “${q.plan.fromSteer.text}”`} />}
               <GateRows waypoints={q.waypoints} />
-              <LeadChainRows chain={q.leadChain} onOpenQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} />
               {registry.data && q.members.length > 0 && <PartyPicture ambientMotion={decor.data?.ambientMotion} repeatSeconds={decor.data?.repeatSeconds} members={q.members} quests={[q]} registry={registry.data} mini onOpen={id => navigate.toThread(id)} />}
               {q.briefSteers?.map(steer => {
                 const member = q.members.find(m => m.threadId === steer.memberThreadId);
@@ -218,6 +217,7 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
               {q.members.filter(m => m.checkIndependence === "same-family" || m.checkIndependence === "not-established" || m.guardPosture?.mode === "detection-only").map(m => <p className="lg-indep" key={m.threadId}><b>{registry.data ? characterName(registry.data, m) : m.displayName ?? m.classId}</b><CheckIndependence member={m} /><GuardPosture member={m} /></p>)}
               <button type="button" className="fold" aria-expanded={mapOpen === q.id} onClick={() => setMapOpen(mapOpen === q.id ? null : q.id)}><Glyph name="chevron" size={12} className={mapOpen === q.id ? "down" : ""} /><span><Vocabulary word="map" /> · {q.waypoints.length} waypoints</span></button>
               {mapOpen === q.id && <QuestMap quest={q} mode="live" rowsOnly onOpenAsk={id => revealAsk(threadId, id)} />}
+              <LeadChainRows chain={q.leadChain} map={mapOpen === q.id ? q.waypoints : undefined} />
             </section>
           ))}
           <KeptInMind notes={notes} total={data.notesTotal} older={data.olderPromises} short={short} />

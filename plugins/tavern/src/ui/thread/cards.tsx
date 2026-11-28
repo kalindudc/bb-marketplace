@@ -392,7 +392,7 @@ function ReportDigest({ threadId, messageId, ids, memberThreadId }: CardSource &
   // How many of the card's reports carried a confidence line, so those report shapes draw it too.
   const confident = useSkeletonCount(memberThreadId ? "skel:thread:card:errand:conf" : `skel:thread:card:reports:${ids[0] ?? ""}:${ids.length}:conf`, query.data ? reports.filter(r => r.confidence).length : undefined, 0);
   return (
-    <section className="tavern digest" data-tavern-report-thread={threadId} aria-label={memberThreadId ? "Side quest result (errand)" : `${count} report${count === 1 ? "" : "s"} from the party`}>
+    <section className="tavern digest" data-tavern-report-thread={threadId} aria-label={memberThreadId ? "Errand result" : `${count} report${count === 1 ? "" : "s"} from the party`}>
       <h3 className="dg-h">{memberThreadId ? <><Vocabulary word="errand" /> · result</> : <>{count} report{count === 1 ? "" : "s"} from the party</>}</h3>
       <QueryState error={query.error} loading={query.isLoading} retry={() => void query.refetch()} label={memberThreadId ? "the errand result" : "the reports"} skeleton={<>{Array.from({ length: Math.min(8, rows) }, (_, i) => <SkReportCard key={i} confidence={i < confident} />)}</>} />
       {questIds.map(qid => <QuestReports source={{ threadId, messageId }} cardType={memberThreadId ? "errand" : "reports"} pullRequests={query.data?.pullRequests} key={qid ?? "errand"} questId={qid} reports={reports.filter(r => r.boardQuestId === qid)} who={who} onOpen={tid => navigate.toThread(tid)} onView={r => panel.openTab({ tab: REPORTS_TAB, params: { memberThreadId: r.memberThreadId, questId: r.boardQuestId, reportId: r.id } })} />)}

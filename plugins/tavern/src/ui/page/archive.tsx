@@ -7,6 +7,7 @@ import { PageGlyph } from "./glyphs";
 import { questsIn } from "./model";
 import { usePanelState } from "./panel-state";
 import { FoldLoad } from "./skeletons";
+import { SideQuestParentLink } from "../kit/side-quest";
 
 /** Returned and stopped quests still on the board, newest first. */
 export const finishedQuests = (room: Room) => questsIn(room).filter((q) => (q.phase === "done" || q.phase === "stopped") && q.archivedAt == null && q.deletedAt == null).sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt));
@@ -68,6 +69,7 @@ export function FinishedRow({ quest, registry, action }: { quest: BoardQuestSumm
       <span className="tv-wrow-a"><span>{stopped ? "The quest" : "The tale"}</span><OpensMark /></span>
     </button>
     {action && <button type="button" className="tv-qbtn act tv-frow-x" onClick={action.run} disabled={action.disabled} aria-label={`${action.label}: ${quest.short}`} title={`${action.label}: ${quest.short}`}><PageGlyph name={action.label === CELLAR.send ? "archive" : "undo"} size={13} /><span className="tv-qbtn-l">{action.label}</span></button>}
+    {quest.leadChain?.seat && <SideQuestParentLink parent={quest.leadChain.seat} />}
   </div>;
 }
 

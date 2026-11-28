@@ -341,6 +341,6 @@ function statusData(
       ...(r.childQuestId ? { childQuestId: r.childQuestId, sourceRouteId: r.sourceRouteId } : {}),
     })),
     review: { ...review, items: review.items.map(({ title, url, boardQuestId }) => ({ title, url, boardQuestId })) },
-    more: (releasedRows.length ? "Use tavern_release on releasedNotArchived members to archive them. " : "") + "Use section=errands for in-flight and recent side quests with owners, asks and states. Other sections: reports, asks, events or pending with offset/limit (afterEventId for events). Full report: reportId and character offset.",
+    more: (releasedRows.length ? "Use tavern_release on releasedNotArchived members to archive them. " : "") + "Use section=errands for in-flight and recent errands with owners, asks and states. Other sections: reports, asks, events or pending with offset/limit (afterEventId for events). Full report: reportId and character offset.",
   };
 }

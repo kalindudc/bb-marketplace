@@ -177,7 +177,9 @@ export class Keeper {
     return stale;
   }
   private questChangeTags(questId: string): string[] {
-    return [tags.boardQuest(questId), ...this.store.query("members", "boardQuestId", questId).map(m => tags.thread(m.threadId))];
+    const [lead] = this.store.leadLinksBy("childQuestId", questId);
+    return [tags.boardQuest(questId), ...this.store.query("members", "boardQuestId", questId).map(m => tags.thread(m.threadId)),
+      ...(lead ? [tags.boardQuest(lead.parentQuestId), tags.thread(lead.parentKeeperThreadId)] : [])];
   }
   private syncJournalBoard(keeperId: string | null | undefined, member: Member | null) {
     const keepers = new Set([keeperId, ...(member?.leadLinkId ? [member.threadId] : [])]);

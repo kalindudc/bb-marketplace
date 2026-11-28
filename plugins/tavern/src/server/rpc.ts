@@ -133,12 +133,12 @@ export function rpcHandlers(
     registry: async ({ projectId }) => {
       const snapshot = projectId ? await runtime.prepareRegistry(projectId) : runtime.snapshot();
       const serviceRecords = runtime.serviceRecords.read();
-      const { levels, voice, ambientMotion, hearthFlicker } = runtime.config().tavern;
+      const { levels, voice, ambientMotion, hearthFlicker, characters } = runtime.config().tavern;
       return {
         ...snapshot,
         ...readCharacterPresentation(runtime.registry, snapshot, k.store),
         serviceRecords,
-        levels, voice, ambientMotion: hearthFlicker ? ambientMotion : "off",
+        levels, voice, showCharacters: characters, ambientMotion: hearthFlicker ? ambientMotion : "off",
       };
     },
     reports: ({ ids, memberThreadId }) => ({
@@ -420,7 +420,10 @@ export function rpcHandlers(
           events.sort((a, b) => a.id - b.id);
         }
       }
-      const asks: BoardQuestDetail["asks"] = k.store.query("asks", "boardQuestId", id, 500).map(undoAskProjection(k.store)).map(ask => currentAskNames(k.store, ask));
+      const asks: BoardQuestDetail["asks"] = [
+        ...snapshot.asks.filter(ask => ask.boardQuestId !== id),
+        ...k.store.query("asks", "boardQuestId", id, 500).map(undoAskProjection(k.store)).map(ask => currentAskNames(k.store, ask)),
+      ];
       return {
         ...historyPage,
         ...(visitChangeId ? { visitChangeId } : {}),
@@ -537,21 +540,24 @@ export function rpcHandlers(
         ambientMotion: hearthFlicker ? ambientMotion : "off",
         repeatSeconds,
         archivedCount: k.store.archivedQuestCount(),
-        keepers: members.filter(m => m.role === "keeper" && runtime.succession.state.current(m.threadId) === m.threadId).map(m => {
+        keepers: members.flatMap(m => {
+          if ((!m.leadLinkId && m.role !== "keeper") || runtime.succession.state.current(m.threadId) !== m.threadId) return [];
+          const boardQuests = quests(m.threadId, snapshot, project, summaryOf);
+          if (m.leadLinkId && !boardQuests.length) return [];
           const thread = k.store.runtime(m.threadId);
-          return {
+          return [{
             member: project(m),
             freeHands: freeHands(k, m.threadId, context).length,
             succession: runtime.succession.view(m.threadId),
-            archived: !isLiveKeeper(k.store, m, "present"),
+            archived: m.leadLinkId ? thread.archivedAt != null || thread.deletedAt != null : !isLiveKeeper(k.store, m, "present"),
             threadTitle: thread.threadTitle ?? null,
             threadCreatedAt: thread.threadCreatedAt ?? null,
             quietSince: thread.manualStopAt ?? null,
             attention: snapshot.view({ keeperThreadId: m.threadId }, 0, 0, false),
-            boardQuests: quests(m.threadId, snapshot, project, summaryOf),
+            boardQuests,
             errands: errands(m.threadId, project),
             status: status(m.threadId, thread, m),
-          };
+          }];
         }),
         asks: snapshot.asks.filter(ask => askIds.has(ask.id)),
         ...snapshot.calls(),

@@ -13,6 +13,7 @@ import { CELLAR, TimeAgo, clockTime, useToday, useNow, plural } from "./primitiv
 import { memberIdentity, type Registry } from "./registry";
 import { ArrivalMark } from "./arrival";
 import { memberPlace } from "../../shared/member-place";
+import { SideQuestParentLink } from "./side-quest";
 
 // ---- Quest and Keeper state, shared by the page, the rows and the thread surfaces ----
 
@@ -202,13 +203,17 @@ const moveNames = (registry: Registry, keeper: Member) => ({ keeper: characterNa
 
 /** One quest, in a notice, the Ledger or a list. The quest's name opens its quest page and the whole row is that target; "Tale ›" and the cellar action sit above it. At most one bordered control (none). */
 /** `arrival` gives the row a still "new" mark when the quest changed since the last look (the room's `since`); a your-move row's mark never fades in. */
-export function QuestRow({ quest, room, registry, keeper, showKeeper = false, onArchive, pending = false, arrival }: { quest: BoardQuestSummary; room: Pick<Room, "asks">; registry: Registry; keeper: Keeper; showKeeper?: boolean; onArchive?: (quest: BoardQuestSummary) => void; pending?: boolean; arrival?: { since: number | undefined } }) {
+export function QuestRow({ quest, room, registry, keeper, showKeeper = false, onArchive, pending = false, arrival }: { quest: BoardQuestSummary; room: Pick<Room, "asks"> & Partial<Pick<Room, "keepers">>; registry: Registry; keeper: Keeper; showKeeper?: boolean; onArchive?: (quest: BoardQuestSummary) => void; pending?: boolean; arrival?: { since: number | undefined } }) {
   const navigate = useBbNavigate();
   const open = (sub: string) => navigate.toPluginPanel("tavern", { subPath: sub });
   const now = useNow();
   const path = pathProgress(quest), verified = verifiedOf(quest), change = pathChangeWords(quest);
   const unread = attentionView(quest.attention).summaries ?? 0;
   const summaryCount = unread > 0 && <span className="qrow-unread m">{summaryCountWords(unread)}</span>;
+  const parent = quest.leadChain?.seat;
+  const lead = parent && room.keepers?.find(k => k.member.threadId === parent.parentKeeperThreadId)?.member;
+  const crest = lead && registry.showCharacters !== false && memberIdentity(registry, lead);
+  const parentLink = parent && <SideQuestParentLink parent={parent} crest={crest && <Crest {...crest} size={13} />} />;
   const name = (detail?: string, askId?: string) => <button type="button" className="qrow-name act" data-quest-name onClick={() => open(`quest/${quest.id}${askId ? `/ask/${encodeURIComponent(askId)}` : ""}`)} title={`${askId ? "Open your ask" : isFinished(quest.phase) ? "Open the quest record" : "Open the quest page"}: ${quest.title}${detail ? `\n${detail}` : ""}`}><b data-content>{quest.short}</b></button>;
   if (isFinished(quest.phase)) {
     const returned = quest.phase === "done";
@@ -220,6 +225,7 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
       <TimeAgo at={quest.endedAt ?? quest.updatedAt} />
       {returned && <button type="button" className="lnk-btn act qrow-tale" onClick={() => open(`tale/${quest.id}`)} title={`Open the tale: ${quest.title}`}><span>Tale</span><OpensMark /></button>}
       {onArchive && <button type="button" className="qrow-x act" onClick={() => onArchive(quest)} disabled={pending} aria-label={`${CELLAR.send}: ${quest.short}`} title={`${CELLAR.send}: ${quest.short}`}><Glyph name="archive" size={13} /><span className="qrow-xl">Cellar</span></button>}
+      {parentLink}
     </div>;
   }
   const move = questMove(quest, room.asks, moveNames(registry, keeper.member), { keeperArchived: keeper.archived === true, now });
@@ -242,6 +248,7 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
       {/* Whose move and the verb are the state and never cut; only the waypoint's title truncates, with the whole phrase in the tooltip. */}
       <span className="qrow-mv"><b>{move.who}</b>{move.task !== undefined ? ` ·${move.verb ? ` ${move.verb}` : ""}\u00a0` : move.next ? ` · ${move.next}` : ""}</span>{move.task !== undefined && <span className="qrow-mt" data-content>{move.task}</span>}
     </StateMark></span>{summaryCount}</span>
+    {parentLink}
   </div>;
 }
 

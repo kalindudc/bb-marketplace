@@ -43,7 +43,7 @@ it("reports the summary and asks the user instead of concluding the quest", asyn
   expect(reply).not.toContain("::tavern-tale");
   const ask = f.k.store.openAsks("lead", f.q.id).find(candidate => candidate.kind === "conclude")!;
   expect(f.k.quest(f.q.id).phase).toBe("closing");
-  expect(ask.options.map(option => option.id)).toEqual(["conclude", "hold", "extensions"]);
+  expect(ask.options.map(option => option.id)).toEqual(["conclude", "hold"]);
   expect(ask.options.find(option => option.id === "hold")!.label).toBe("Keep open for other work");
   expect(ask.proceedAt).toBeNull();
   expect(reply).toContain(`::tavern-ask{id="${ask.id}"}`);
@@ -62,6 +62,10 @@ it("concludes only after the user answers, then tells the tale", async () => {
 it.each(["hold", "extensions"] as const)("keeps the quest open and tells no tale on %s", async optionId => {
   const f = await fixture();
   await f.wrap();
+  if (optionId === "extensions") {
+    const ask = f.k.store.openAsks("lead", f.q.id).find(candidate => candidate.kind === "conclude")!;
+    f.k.store.put("asks", ask.id, { ...ask, options: [...ask.options, { id: "extensions", label: "Open extensions or side quests", detail: "", recommended: false }] });
+  }
   await f.answer(optionId);
   expect(f.k.quest(f.q.id).phase).not.toBe("done");
   expect(f.k.store.events("lead").some(event => event.type === "quest.wrapped")).toBe(false);

@@ -34,9 +34,10 @@ export function appendSummary(store: KeeperStore, keeperThreadId: string, draft:
         throw new Error("Link an accepted route from this Keeper for this quest.");
       }
       if (draft.childQuestId && route.kind !== "steer") throw new Error("Link an accepted parent steer for a side quest answer.");
-      if (draft.childQuestId && store.db.prepare(`SELECT 1 FROM tavern_records r, json_each(r.data,'$.answers') answer
+      if (route.kind === "steer" && store.db.prepare(`SELECT 1 FROM tavern_records r, json_each(r.data,'$.answers') answer
         WHERE r.kind='summaries' AND json_extract(r.data,'$.boardQuestId')=? AND answer.value=?
-        AND r.id<>? AND ${CORRECTION_ID_SQL} IS NULL LIMIT 1`).get(boardQuestId, id, supersedes ?? ""))
+        AND (? OR json_extract(r.data,'$.childQuestId') IS NOT NULL)
+        AND r.id<>? AND ${CORRECTION_ID_SQL} IS NULL LIMIT 1`).get(boardQuestId, id, Number(!!draft.childQuestId), supersedes ?? ""))
         throw new Error("This steer already has an answer. Correct the existing answer instead.");
     }
     const summary = summarySchema.parse({ ...draft, answers, id: store.id("summary"), keeperThreadId, createdAt });

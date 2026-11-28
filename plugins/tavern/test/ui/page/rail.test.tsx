@@ -86,12 +86,12 @@ describe("the status line", () => {
   it("names the side lists' jump with both forms and both counts, and shows it only when the lists have something", async () => {
     const slot = await room();
     const errands = scenes.richRoom.keepers.flatMap((k) => k.errands).length, solos = scenes.richRoom.solos.length;
-    const lists = `${errands} side quest${errands === 1 ? "" : "s"} · ${solos} solo${solos === 1 ? "" : "s"}`;
+    const lists = `${errands} errand${errands === 1 ? "" : "s"} · ${solos} solo${solos === 1 ? "" : "s"}`;
     const jump = slot.getByRole("button", { name: `${errands + solos} threads: ${lists}` });
     expect(jump.querySelector(".rm-lists-long")!.textContent).toBe(lists);
     expect(jump.querySelector(".rm-lists-short")!.textContent).toBe(`${errands + solos} threads`);
     fireEvent.click(jump);
-    expect(document.activeElement?.textContent).toMatch(/^Side quests/);
+    expect(document.activeElement?.textContent).toMatch(/^Errands/);
     slots.splice(0).forEach((s) => s.lifecycle.unmount());
     const bare = await room({ ...scenes.richRoom, solos: [], keepers: scenes.richRoom.keepers.map((k) => ({ ...k, errands: [] })) });
     expect(within(bare.getByRole("group", { name: "Status" })).queryByRole("button", { name: /threads:/ })).toBeNull();

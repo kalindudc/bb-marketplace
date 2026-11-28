@@ -51,6 +51,18 @@ describe("QuestRow", () => {
     expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "tavern", options: { subPath: `quest/${live.id}` } });
   });
 
+  it("keeps the row's side quest and parent destinations separate", async () => {
+    const quest = { ...live, leadChain: { seat: { parentQuestId: "lead-quest", parentTitle: "Restore the harbor bell",
+      parentKeeperThreadId: "lead", limits: { members: 2, rangers: 0, depth: 1 }, parentDecisions: [], authority: [] }, children: [] } };
+    const slot = await mount(() => <QuestRow quest={quest} room={richRoom} registry={registry} keeper={keeper} />);
+    fireEvent.click(await slot.findByRole("button", { name: "Side quest of Restore the harbor bell" }));
+    fireEvent.click(slot.getByRole("button", { name: quest.short }));
+    expect(slot.inspection.navigateCalls).toEqual([
+      { method: "toPluginPanel", path: "tavern", options: { subPath: "quest/lead-quest" } },
+      { method: "toPluginPanel", path: "tavern", options: { subPath: `quest/${quest.id}` } },
+    ]);
+  });
+
   it("gives a returned quest one line with the tale and the cellar, and a stopped one no tale", async () => {
     const onArchive = vi.fn();
     const slot = await mount(() => <><QuestRow quest={returned} room={richRoom} registry={registry} keeper={keeper} onArchive={onArchive} /><QuestRow quest={stopped} room={richRoom} registry={registry} keeper={keeper} onArchive={onArchive} /></>);

@@ -20,7 +20,7 @@ export const SKEL = {
   finished: (questId: string) => `skel:page:finished:${questId}`,
   /** How tall each top block of a surface stood, per width; see useRememberShape. */
   shape: (surface: string) => `skel:page:shape:${surface}`,
-  /** The sidebar's space between its home link and "The tavern", in px: the quests and side quests. */
+  /** The sidebar's space between its home link and "The tavern", in px: the quests and errands. */
   sideNav: "skel:page:sidenav",
 } as const;
 

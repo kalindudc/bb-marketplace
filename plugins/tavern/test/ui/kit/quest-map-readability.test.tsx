@@ -67,6 +67,21 @@ describe("the quest map's readability", () => {
     expect(yourMove!.classList.contains("your-move")).toBe(true);
   });
 
+  it.each([false, true])("links a side quest without replacing the journal state (compact: %s)", rowsOnly => {
+    const waypoint = { ...fixtureDetail.quest.waypoints[0]!, state: "reported" as const, sideQuest: {
+      linkId: "seat", leadName: "Alder", state: "retiring" as const, error: "Stop not confirmed",
+      quest: { id: "calibration", title: "Calibrate the rain gauge", phase: "stopping" as const },
+    } };
+    const quest = { ...fixtureDetail.quest, waypoints: [{ ...waypoint, dependsOn: [] }] };
+    const slot = renderSlot({ component: () => <QuestMap quest={quest} mode="live" rowsOnly /> }, {}, { rpc: { registry: () => fixtureRegistry } });
+    const card = within(slot.getByRole("listitem"));
+    expect(card.getByText("Waiting for a check")).toBeTruthy();
+    expect(card.getByText(/Cleanup pending/)).toBeTruthy();
+    expect(card.getByText(/Stop not confirmed/)).toBeTruthy();
+    fireEvent.click(card.getByRole("button", { name: "Side quest: Calibrate the rain gauge" }));
+    expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "tavern", options: { subPath: "quest/calibration" } });
+  });
+
   it("shows every full title and puts the named ask action inside its step", () => {
     const onOpenAsk = vi.fn();
     const title = "Replace the old route without losing the record of the checks, the names of the reviewers, or the answers to earlier asks";

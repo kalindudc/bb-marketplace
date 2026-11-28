@@ -11,7 +11,7 @@ import { DecidedForYou, KIND, heldTitles } from "./asks";
 import { ArchiveReceiptLine, ArchivedList, FinishedRow, finishedQuests, useArchive } from "./archive";
 import { Ago, CrestOf, MemberLink, PageButton, PhaseStrip, Section, SegFilter, StateMark, ThreadButton, characterName, classLabel, type Registry, plural } from "./common";
 import { PageGlyph } from "./glyphs";
-import { durationWords, stopperOf, endedCounts, isFinished, keeperStatus, mapAside, pathProgress, phaseWord, questMove, visibleMembers, waypointMove } from "./model";
+import { durationWords, stopperOf, endedCounts, isFinished, keeperStatus, mapAside, pathProgress, phaseWord, questMove, questsIn, visibleMembers, waypointMove } from "./model";
 
 import { MemberIdentity, PartyPicture as KitPartyPicture } from "../kit";
 import { MemberSchedules } from "../kit/member-schedules";
@@ -33,6 +33,7 @@ import { recordedStop } from "./quest-road";
 import { PlacementFacts } from "../kit/placement";
 import { PlanChanges } from "../kit/plan-changes";
 import { LeadChainRows } from "../thread/lead-chain-rows";
+import { SideQuestParentLink } from "../kit/side-quest";
 
 
 
@@ -135,6 +136,9 @@ export function QuestPage({ detail, registry, room, summaryId, askId, recheck }:
   const roadStop = recordedStop(detail);
   const keeper = room?.keepers.find((k) => k.member.threadId === quest.keeperThreadId) ?? null;
   const keeperName = keeper ? characterName(registry, keeper.member) : "the Keeper";
+  const seat = quest.leadChain?.seat;
+  const lead = seat && room?.keepers.find(k => k.member.threadId === seat.parentKeeperThreadId);
+  const leadName = lead ? characterName(registry, lead.member) : "the lead Keeper";
   const move = questMove(quest, detail.asks, { keeper: keeperName, member: (m) => characterName(registry, m) }, { keeperArchived: !!keeper?.archived, now });
   const path = pathProgress(quest), change = pathChangeWords(quest);
   const briefSteers = new Map(quest.briefSteers?.map(steer => [steer.memberThreadId, steer]));
@@ -148,6 +152,8 @@ export function QuestPage({ detail, registry, room, summaryId, askId, recheck }:
   const openAsks = detail.asks.filter(a => attention.items.some(item => item.kind === "ask" && item.id === a.id));
   const moveAsk = openAsks.find(a => a.id === quest.move.askId);
   const focusId = openAsks.find(a => a.id === askId)?.id;
+  const askQuest = new Map(room ? questsIn(room).map(q => [q.id, q]) : []);
+  askQuest.set(quest.id, quest);
   useEffect(() => { if (focusId) focusAsk(focusId); }, [focusId]);
   const finished = isFinished(quest.phase);
   const [promisesMore, setPromisesMore] = usePanelState("quest.promises.more", false);
@@ -171,6 +177,7 @@ export function QuestPage({ detail, registry, room, summaryId, askId, recheck }:
     <header className={`tv-ghead ${finished ? "" : "lit"}`} style={finished ? undefined : glowVars(`quest:${quest.id}`)}>
       <div className="tv-gh-l">
         <h1 className="tv-qtitle" data-content>{quest.title}</h1>
+        {seat && <SideQuestParentLink parent={seat} />}
         {quest.phase !== "held" && <PhaseStrip phase={quest.phase} tone={move.tone} stoppedAt={roadStop.position} proven={roadStop.proven} />}
         <div className="tv-facts">
           {finished ? <><StateMark tone={move.tone}><b>{quest.phase === "stopped" ? stopper ? `Stopped by ${stopper}` : "Stopped" : "Returned"}</b></StateMark><span><Ago at={quest.endedAt ?? quest.updatedAt} /></span><span>{quest.phase === "done" ? "took" : "after"} <b>{durationWords((quest.endedAt ?? quest.updatedAt) - quest.createdAt)}</b></span></>
@@ -189,8 +196,13 @@ export function QuestPage({ detail, registry, room, summaryId, askId, recheck }:
 
         {quest.phase === "done" && <PageButton path={`tale/${quest.id}`} glyph="report">The tale</PageButton>}
         {finished && <CellarQuest key={quest.id} quest={quest} />}
-        {keeper && status && <MemberLink member={keeper.member} registry={registry} size={28} sub={<StateMark tone={status.tone}>{status.label}</StateMark>} />}
-        <ThreadButton id={quest.keeperThreadId} name={keeperName} label={keeper ? `Open ${keeperName}'s thread` : "Open the Keeper's thread"} className={finished || keeper?.archived ? "" : "pri"} quiet={finished || !!keeper?.archived} />
+        {seat ? <>
+          <button type="button" className={finished || lead?.archived ? "lnk-btn act" : "btn pri"} onClick={() => navigate.toThread(seat.parentKeeperThreadId)}><PageGlyph name="thread" />Talk to {leadName}<OpensMark /></button>
+          {keeper && status && <MemberLink member={keeper.member} registry={registry} size={20} sub={<StateMark tone={status.tone}>{status.label}</StateMark>} />}
+        </> : <>
+          {keeper && status && <MemberLink member={keeper.member} registry={registry} size={28} sub={<StateMark tone={status.tone}>{status.label}</StateMark>} />}
+          <ThreadButton id={quest.keeperThreadId} name={keeperName} label={keeper ? `Open ${keeperName}'s thread` : "Open the Keeper's thread"} className={finished || keeper?.archived ? "" : "pri"} quiet={finished || !!keeper?.archived} />
+        </>}
         {!finished && quest.phase !== "stopping" && room && room.review.waiting >= room.review.budget && <AllowReview id={quest.id} />}
         {!finished && quest.phase !== "stopping" && quest.phase !== "closing" && <QuestHold quest={quest} />}
         {stop.button}
@@ -206,7 +218,10 @@ export function QuestPage({ detail, registry, room, summaryId, askId, recheck }:
       <CheckerHold quest={quest} asks={openAsks} />
       {handBacks.length > 0 && <div className="tv-grp"><KeeperNoteRows notes={handBacks} label="Handed back to you" /></div>}
       {attention.needYou > 0 && <div className="tv-grp"><div className="tv-grp-h"><StateMark tone="you">Needs you</StateMark><span className="num m">{attention.needYou} need you</span></div>
-        <div className="tv-asks">{openAsks.map((ask) => <details key={ask.id} id={askAnchor(ask.id)} open className={`tv-ask-disclosure ${ask.kind === "blocker" ? "blk" : ""}`}><summary className="tv-askrow"><PageGlyph name={ask.kind === "blocker" ? "fail" : "you"} size={13} className="tv-askrow-g" /><span className="tv-askrow-t"><span className="tv-askrow-q" data-content>{ask.question}</span><span className="tv-askrow-s">{KIND[ask.kind]} · {heldTitles(ask, quest).length ? `holds ${heldTitles(ask, quest).join(", ")}` : ask.why}</span></span><span className="tv-askrow-a"><Ago at={ask.createdAt} /></span></summary><AskCard ask={ask} via="page" headless /></details>)}</div></div>}
+        <div className="tv-asks">{openAsks.map(ask => {
+          const holds = heldTitles(ask, ask.boardQuestId ? askQuest.get(ask.boardQuestId) : undefined);
+          return <details key={ask.id} id={askAnchor(ask.id)} open className={`tv-ask-disclosure ${ask.kind === "blocker" ? "blk" : ""}`}><summary className="tv-askrow"><PageGlyph name={ask.kind === "blocker" ? "fail" : "you"} size={13} className="tv-askrow-g" /><span className="tv-askrow-t"><span className="tv-askrow-q" data-content>{ask.question}</span><span className="tv-askrow-s">{KIND[ask.kind]} · {holds.length ? `holds ${holds.join(", ")}` : ask.why}</span></span><span className="tv-askrow-a"><Ago at={ask.createdAt} /></span></summary><AskCard ask={ask} via="page" headless /></details>;
+        })}</div></div>}
       {groups.map((group) => { const items = quest.waypoints.filter((w) => groupOf(w) === group); if (!items.length) return null; if (group === "Done" && !showDone) return <button key={group} type="button" className="tv-fold act" aria-expanded={false} onClick={() => setShowDone(true)}><ExpandsMark open={false} />Done · {items.length}</button>; return <div className="tv-grp" key={group}><div className="tv-grp-h"><StateMark tone={groupTone[group]}>{group}</StateMark><span className="num m">{items.length}</span></div><ul className="tv-items">{items.map((w) => {
         const owner = w.actor === "user" ? "You" : w.ownerMember ? characterName(registry, w.ownerMember) : w.owner ?? "Unassigned";
         const report = detail.reports.find((r) => r.waypointId === w.id);
@@ -252,10 +267,10 @@ export function QuestPage({ detail, registry, room, summaryId, askId, recheck }:
         <RecordFold id="quest.history" title="History" count={plural(history.length, "event")} open><History detail={detail} registry={registry} room={room} bare /></RecordFold>
       </div>
       <aside className="tv-col" aria-label="Party and ledger">
-        <LeadChainRows chain={quest.leadChain} onOpenQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} />
         <RecordFold id="quest.party" title={<Vocabulary word="party" />} count={plural(quest.members.length, "member")} open={!finished}>
           {finished ? <div className="tv-credits-w"><ol className="tv-credits n-1">{quest.members.map((member, i) => <CreditCard identity key={member.threadId} member={member} index={i} detail={detail} registry={registry} />)}</ol></div> : <KitPartyPicture members={quest.members} registry={registry} quests={[quest]} renderMember={(member, summary) => <><div className="tv-party-identity"><CrestOf member={member} registry={registry} size={20} /><MemberIdentity member={member} registry={registry} compact briefSteer={briefSteers.get(member.threadId)} scope={detail.scopes?.find(s => s.threadId === member.threadId)} violations={detail.violations?.filter(v => v.threadId === member.threadId)} /><button type="button" className="lnk-btn act" onClick={() => navigate.toThread(member.threadId)} aria-label={`Open ${characterName(registry, member)}’s thread`} title={summary}><OpensMark /></button></div>{member.permanent?.schedules?.length ? <MemberSchedules member={member} controls /> : null}</>} />}
         </RecordFold>
+        <LeadChainRows chain={quest.leadChain} map={showMap ? quest.waypoints : undefined} showParent={false} />
         <RecordFold id="quest.kept" title="Kept in mind" count={plural(keptNotes.filter(n => n.state === "open").length, "note")} open={false}>
           <KeptInMind headless notes={keptNotes} newestFirst folds={{ promises: [promisesMore, setPromisesMore], facts: [factsMore, setFactsMore] }} />
         </RecordFold>

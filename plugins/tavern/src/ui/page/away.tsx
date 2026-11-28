@@ -24,7 +24,7 @@ export const REOPEN_LINE = "Answering an ask or messaging any Tavern thread, a s
 export const NOTHING_ENDED_LINE = "Nothing is ended; paused work waits for your return.";
 export const NOTHING_RUNNING_LINE = "Nothing is running now. Closing changes only what starts while you're away: new work waits until you return.";
 export const SOLOS_LINE = "Solo threads keep running. Where a solo is guarded, the stop list still applies; a watched solo isn't stopped, only watched.";
-export const SIDE_QUESTS_LINE = "Side quests follow their quest: a paused or unselected quest pauses its side quests.";
+const ATTACHED_ERRANDS_LINE = "Attached errands follow their quest: a paused or unselected quest pauses its errands.";
 
 /** A member still in play: what closing can pause or let keep drafting. */
 const inPlay = (m: Pick<Member, "engagement" | "state">) => m.engagement === "active" && m.state !== "failed";
@@ -37,7 +37,7 @@ export type ClosePlan = {
   watchedTotal: string | null;
   /** Errands that belong to no quest: they always pause, with the server's watched count for them. Null when there are none. */
   unattached: string | null;
-  /** A line whose count is 0 is left out of the confirm. `pausing` is null when the server counts side quests inside their quest's members and gives no split: the rule shows without a number. */
+  /** A line whose count is 0 is left out of the confirm. `pausing` is null when the server counts attached errands inside their quest's members and gives no split: the rule shows without a number. */
   sideQuests: { text: string; pausing: number | null; shown: boolean };
   solos: { text: string; running: number };
   /** Null when no ask is open. */
@@ -59,7 +59,7 @@ export function closePlan(room: Room, control: Pick<AwayControl, "watchedCount" 
   const eligible = control?.eligibleByQuest;
   const exemptions = new Map(control?.exemptByQuest?.map(row => [row.questId, row.members]));
   const watchedIn = (questId: string | null) => (byQuest ? byQuest.find((w) => w.questId === questId)?.watchedCount ?? 0 : null);
-  /** The server's count for one quest (null: errands that belong to no quest). A missing row is 0; `errands` is the side-quest subset when the server splits it. */
+  /** The server's count for one quest (null: errands that belong to no quest). A missing row is 0; `errands` is the attached errand subset when the server splits it. */
   const eligibleIn = (questId: string | null) => { const row = eligible?.find((r) => r.questId === questId) as (NonNullable<typeof eligible>[number] & { errands?: number }) | undefined; return { members: row?.members ?? 0, watched: row?.watchedCount ?? 0, errands: row?.errands ?? null }; };
   const split = !eligible || eligible.every((r) => typeof (r as { errands?: unknown }).errands === "number");
   const errands = room.keepers.flatMap((k) => k.errands).filter(inPlay);
@@ -89,7 +89,7 @@ export function closePlan(room: Room, control: Pick<AwayControl, "watchedCount" 
     quests,
     watchedTotal: byQuest || eligible || !control || !control.watchedCount ? null : `${plural(control.watchedCount, "watched member")} ${input.allowWatched ? s(control.watchedCount, "keeps drafting, watched", "keep drafting, watched") : s(control.watchedCount, "holds", "hold")} across all quests.`,
     unattached: looseCount ? `Errands that belong to no quest pause: ${looseCount}${looseWatched ? `, ${looseWatched} of them watched` : ""}.` : null,
-    sideQuests: { text: quests.some(q => q.exemption) ? "Side quests follow their quest. Only side quests with their own guarded exemption can keep working under Pause." : SIDE_QUESTS_LINE,
+    sideQuests: { text: quests.some(q => q.exemption) ? "Attached errands follow their quest. Only errands with their own guarded exemption can keep working under Pause." : ATTACHED_ERRANDS_LINE,
       pausing, shown: pausing === null ? attached.length > 0 : pausing > 0 },
     solos: { text: SOLOS_LINE, running: solos },
     asks: open ? `${plural(open, "ask")} ${s(open, "waits", "wait")} for you. ${wakes}` : null,
@@ -361,7 +361,7 @@ export function AwayForm({ room, registry }: { room: Room; registry: Registry })
         {plan.nothingRunning && <li data-line="nothing-running"><span>{NOTHING_RUNNING_LINE}</span></li>}
         {plan.watchedTotal && <li data-line="watched-total"><span>{plan.watchedTotal}</span></li>}
         {plan.stopping && <li data-line="stopping"><span>{plan.stopping}</span></li>}
-        {plan.sideQuests.shown && <li data-line="side-quests"><span>{plan.sideQuests.text}{plan.sideQuests.pausing !== null && <> <b className="num">{plan.sideQuests.pausing}</b> {s(plan.sideQuests.pausing, "side quest pausing", "side quests pausing")}.</>}</span></li>}
+        {plan.sideQuests.shown && <li data-line="side-quests"><span>{plan.sideQuests.text}{plan.sideQuests.pausing !== null && <> <b className="num">{plan.sideQuests.pausing}</b> {s(plan.sideQuests.pausing, "errand pausing", "errands pausing")}.</>}</span></li>}
         {plan.unattached && <li data-line="unattached"><span>{plan.unattached}</span></li>}
         {plan.solos.running > 0 && <li data-line="solos"><span>{plan.solos.text} <b className="num">{plan.solos.running}</b> {s(plan.solos.running, "solo running", "solos running")}.</span></li>}
         {plan.asks && <li data-line="asks"><span>{plan.asks}</span></li>}

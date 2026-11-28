@@ -554,7 +554,10 @@ html.dark .tavern .btn.seal { box-shadow: 0 0 18px -6px color-mix(in oklab, var(
 .tavern .lg-chain { min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
 .tavern .lg-chain .lg-row { padding-block: 5px; }
 .tavern .lg-chain .lg-row > span:first-child { flex: 1; min-width: 0; }
+.tavern .lg-chain .lg-rows > li { display: block; }
 .tavern .lg-chain .lg-chain-detail { margin: 0 4px 6px; color: var(--tavern-muted); }
+.tavern .side-quest-line { display: grid; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.tavern .side-quest-line > .lnk-btn { width: fit-content; max-width: 100%; min-height: var(--tavern-control-compact); white-space: normal; text-align: start; }
 .tavern .lg-row .lg-q { flex: none; font-size: 11px; padding: 1px 5px; background: var(--tavern-recessed); }
 .tavern .lg-row .lg-go { flex: none; display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--tavern-muted); }
 .tavern .lg-rows .src { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--tavern-muted); white-space: nowrap; }
@@ -781,7 +784,7 @@ html.dark .tavern .btn.seal { box-shadow: 0 0 18px -6px color-mix(in oklab, var(
 /* ---- QuestRow: the quest's name is the row's target; "Tale ›" and the cellar sit above it. Its own container. ---- */
 .tavern.qrow { position: relative; display: grid; align-items: center; gap: 4px 12px; min-width: 0; border-top: 1px solid var(--tavern-line); container: qrow / inline-size; }
 /* A control inside a clickable row has its own hover and never shares the row's: while one is hovered or focused the row stays unlit. */
-.tavern.qrow:hover:not(:has(:is(.qrow-tale, .qrow-x):is(:hover, :focus-visible))) { background: var(--tavern-hover); }
+.tavern.qrow:hover:not(:has(:is(.qrow-tale, .qrow-x, .side-quest-parent):is(:hover, :focus-visible))) { background: var(--tavern-hover); }
 .tavern .qrow-name { min-width: 0; min-height: var(--tavern-control-compact); border: 0; background: transparent; padding: 0; text-align: left; font-size: 13px; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .tavern .qrow-name::after { content: ""; position: absolute; inset: 0; }
 /* The row carries the hover, so the name button inside it adds none of its own (a translucent hover would stack into a second box). */
@@ -818,7 +821,10 @@ html.dark .tavern .btn.seal { box-shadow: 0 0 18px -6px color-mix(in oklab, var(
 .tavern .qrow-g { color: var(--success); }
 .tavern.qrow-done.stopped .qrow-g { color: var(--tavern-muted); }
 .tavern .qrow-f { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--tavern-muted); font-size: 11px; white-space: nowrap; }
-.tavern :is(.qrow-tale, .qrow-x) { position: relative; z-index: 1; }
+.tavern :is(.qrow-tale, .qrow-x, .side-quest-parent) { position: relative; z-index: 1; }
+.tavern.qrow-done:has(.side-quest-parent) { flex-wrap: wrap; }
+.tavern .side-quest-parent { grid-column: 1 / -1; justify-self: start; min-height: var(--tavern-control-compact); max-width: 100%; white-space: normal; font-size: 12px; text-align: start; overflow-wrap: anywhere; }
+.tavern.qrow-done > .side-quest-parent { flex-basis: 100%; }
 .tavern .qrow-tale { min-height: var(--tavern-control-compact); font-size: 12px; }
 .tavern .qrow-x { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: var(--tavern-control-compact); min-height: var(--tavern-control-compact); padding: 0 6px; border: 0; background: transparent; color: var(--tavern-muted); font: inherit; font-size: 11px; cursor: pointer; }
 /* Its own box on hover: an inset edge in the muted text colour (3:1 or more on the row in every theme) and a fill stronger than the row's hover. */

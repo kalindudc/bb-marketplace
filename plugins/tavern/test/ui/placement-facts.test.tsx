@@ -9,7 +9,7 @@ import { pendingPlacement, readyPlacement, blockedPlacement, placementHolds } fr
 import { detail, registry, room } from "../../src/ui/page/fixtures";
 import { settingsView } from "../../src/ui/page/fixtures-insights";
 import { machineVolumes, machinesCatalog, previewFixture } from "./fixtures/machines";
-import { SideQuests } from "../../src/ui/page/room";
+import { Errands } from "../../src/ui/page/room";
 import { PartyPicture } from "../../src/ui/kit";
 import { QuestPage } from "../../src/ui/page/quest";
 import { MemberPanel } from "../../src/ui/thread/member-brief";
@@ -40,7 +40,7 @@ function mount(surface: typeof surfaces[number], placement: PlacementView | null
   const f = placed(placement);
   const settings = settingsViewSchema.parse(settingsView);
   const Component = () => surface === "room party" ? <PartyPicture members={[f.member]} registry={registry} quests={[f.quest]} />
-    : surface === "side quests" ? <SideQuests room={f.currentRoom} registry={registry} />
+    : surface === "side quests" ? <Errands room={f.currentRoom} registry={registry} />
     : surface === "quest party" || surface === "returned quest" ? <QuestPage detail={surface === "returned quest" ? { ...f.questDetail, quest: { ...f.quest, phase: "done" } } : f.questDetail} registry={registry} />
     : surface === "member panel" ? <MemberPanel data={f.decor} registry={registry} scopeDetails={null} onQuest={() => {}} />
     : surface === "thread widget" ? <ThreadWidget threadId={f.member.threadId} />
